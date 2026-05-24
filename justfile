@@ -6,7 +6,7 @@ tmp_dir := root_dir + "/tmp"
 export TMPDIR := tmp_dir
 
 [private]
-_project-version-env:
+_project-git-env:
     #!/bin/sh
     set -eu
 
@@ -26,13 +26,6 @@ _project-version-env:
       printf '\n'
     }
 
-    version_base="$(tr -d '[:space:]' < "$project_root/VERSION")"
-    if ! printf '%s\n' "$version_base" | grep -E -q '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-      echo "VERSION must contain a base semantic version like x.y.z." >&2
-      exit 1
-    fi
-
-    txing_version="$version_base"
     txing_git_sha="$(git -C "$project_root" rev-parse --short=12 HEAD 2>/dev/null || true)"
     txing_git_dirty="false"
     txing_git_dirty_hash=""
@@ -54,8 +47,6 @@ _project-version-env:
       fi
     fi
 
-    export_line TXING_VERSION_BASE "$version_base"
-    export_line TXING_VERSION "$txing_version"
     export_line TXING_GIT_SHA "$txing_git_sha"
     export_line TXING_GIT_DIRTY "$txing_git_dirty"
     export_line TXING_GIT_DIRTY_HASH "$txing_git_dirty_hash"
@@ -144,7 +135,7 @@ _project-aws-env scope='aws' stack_name='':
         ;;
     esac
 
-    eval "$(just --justfile "$project_root/justfile" _project-version-env)"
+    eval "$(just --justfile "$project_root/justfile" _project-git-env)"
 
     aws_region="$(resolve_aws_cli_region)"
     requested_stack_name="{{ stack_name }}"
@@ -220,8 +211,6 @@ _project-aws-env scope='aws' stack_name='':
     thing_name="$txing_thing_id"
 
     export_line TXING_PROJECT_ROOT "$project_root"
-    export_line TXING_VERSION_BASE "$TXING_VERSION_BASE"
-    export_line TXING_VERSION "$TXING_VERSION"
     export_line TXING_GIT_SHA "$TXING_GIT_SHA"
     export_line TXING_GIT_DIRTY "$TXING_GIT_DIRTY"
     export_line TXING_GIT_DIRTY_HASH "$TXING_GIT_DIRTY_HASH"

@@ -29,7 +29,12 @@ build:
     set -eu
     cd "{{rig_dir}}"
     install -d -m 755 "{{bin_dir}}"
-    version="$(tr -d '[:space:]' < "{{project_root}}/VERSION")"
+    version_file="{{project_root}}/release/versions/rig"
+    version="$(tr -d '[:space:]' < "$version_file")"
+    if ! printf '%s\n' "$version" | grep -E -q '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+      echo "$version_file must contain a semantic version like x.y.z." >&2
+      exit 1
+    fi
     go build -ldflags "-X github.com/mparkachov/txing/rig/internal/version.Version=$version" \
       -o "{{bin_dir}}/txing-sparkplug-manager" ./cmd/txing-sparkplug-manager
     go build -ldflags "-X github.com/mparkachov/txing/rig/internal/version.Version=$version" \

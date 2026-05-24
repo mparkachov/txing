@@ -98,13 +98,13 @@ publish release='latest':
     #!/bin/sh
     set -eu
     case "{{release}}" in
-      latest|v[0-9]*|[0-9]*) ;;
+      latest|lambda-v[0-9]*|v[0-9]*|[0-9]*) ;;
       *=*)
-        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        echo "release must be latest, lambda-vX.Y.Z, vX.Y.Z, or X.Y.Z." >&2
         exit 1
         ;;
       *)
-        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        echo "release must be latest, lambda-vX.Y.Z, vX.Y.Z, or X.Y.Z." >&2
         exit 1
         ;;
     esac
@@ -138,13 +138,13 @@ publish-lambda release='latest':
     #!/bin/sh
     set -eu
     case "{{release}}" in
-      latest|v[0-9]*|[0-9]*) ;;
+      latest|lambda-v[0-9]*|v[0-9]*|[0-9]*) ;;
       *=*)
-        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        echo "release must be latest, lambda-vX.Y.Z, vX.Y.Z, or X.Y.Z." >&2
         exit 1
         ;;
       *)
-        echo "release must be latest, vX.Y.Z, or X.Y.Z." >&2
+        echo "release must be latest, lambda-vX.Y.Z, vX.Y.Z, or X.Y.Z." >&2
         exit 1
         ;;
     esac

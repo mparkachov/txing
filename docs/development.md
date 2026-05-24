@@ -29,17 +29,14 @@ board runtime setup, including read-only rootfs, lives in
 
 ## Version And Artifact Channels
 
-`VERSION` is the release version for the repository. It must stay a base
-semantic version such as `x.y.z`.
-
-Production release artifacts use `VERSION` exactly. Git SHA and dirty state are
-exported separately for diagnostics. Create releases with the manual
-`Txing Release` GitHub Actions workflow from the selected branch after bumping
-and pushing the managed version files yourself. The workflow reads that branch's
-root `VERSION`, fails unless it is newer than the latest existing `v*` tag,
-publishes the GitHub Release, and also publishes the board, rig, and Lambda
-artifacts. It does not commit or push version changes back to the selected
-branch.
+Release versions are component-scoped under `release/versions/`. Git SHA and
+dirty state are exported separately for diagnostics. Create artifact releases
+with the manual `Release rig`, `Release lambda`, or `Release unit` GitHub
+Actions workflow from the selected branch after bumping and pushing the managed
+component version files yourself. Each workflow reads that branch's component
+version file, fails unless it is newer than the latest existing tag with the
+same component prefix, and publishes only that component's artifacts. It does
+not commit or push version changes back to the selected branch.
 
 After a release workflow finishes, the operator Mac applies AWS infrastructure
 changes and then asks the AWS-hosted publisher Lambda to publish Lambda
@@ -53,7 +50,8 @@ just aws::publish latest
 Development direction for installable host tools and board-side native
 artifacts:
 
-- release artifacts point at the artifact built from `VERSION`, for example `x.y.z`.
+- release artifacts point at the component artifact built from its
+  `release/versions/<component>` value, for example `x.y.z`.
 - GitHub release assets should be immutable for each exact artifact version.
 - Board and rig host binaries use mise's GitHub backend directly; Lambda code
   is uploaded to AWS Lambda from GitHub release assets; see
@@ -61,6 +59,14 @@ artifacts:
 - Board and rig binary updates are manual writable-root maintenance actions. The
   installed systemd service starts offline from root-owned mise shims and does
   not call GitHub during normal service restart.
+- `latest` is component scoped: rig hosts use `rig-v*`, board hosts use
+  `unit-v*`, and Lambda publishing uses `lambda-v*`. Existing host mise configs
+  are forward-only manual state; replace old configs that do not set
+  `version_prefix = "rig-v"` or `version_prefix = "unit-v"` before relying on
+  `latest`.
+- Office tracks its version for Cloudflare Pages metadata only. Bump
+  `release/versions/office` and the managed office package/runtime surfaces,
+  but do not create a GitHub Release or release asset for office.
 
 ## Operator AWS Config
 

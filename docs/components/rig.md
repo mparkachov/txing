@@ -101,6 +101,12 @@ Each archive contains one root-level executable with the same command name.
 Service starts are offline by design. A systemd restart does not invoke `mise`
 or GitHub.
 
+Rig tools are released from the `rig` component stream. Root-owned `mise`
+configs must set `version_prefix = "rig-v"` so `latest` resolves from `rig-v*`
+GitHub Releases instead of the repository-wide latest release. This release
+model is forward-only; replace old host configs manually if they do not include
+the component prefix.
+
 ## Fresh Rig Install
 
 From a root shell on the rig, install host packages and root-owned `mise`:
@@ -130,10 +136,12 @@ txing-ble-connectivity = "github:mparkachov/txing"
 
 [tools.txing-sparkplug-manager]
 version = "latest"
+version_prefix = "rig-v"
 asset_pattern = "txing-sparkplug-manager-linux-aarch64.tar.gz"
 
 [tools.txing-ble-connectivity]
 version = "latest"
+version_prefix = "rig-v"
 asset_pattern = "txing-ble-connectivity-linux-aarch64.tar.gz"
 EOF
 
@@ -225,7 +233,7 @@ journalctl -u txing-sparkplug-manager.service -u txing-ble-connectivity.service 
 
 ## Upgrade
 
-Publish a new immutable project release first. On the rig, enter a root shell
+Publish a new immutable `rig-vX.Y.Z` release first. On the rig, enter a root shell
 while the filesystem is writable and run:
 
 ```bash

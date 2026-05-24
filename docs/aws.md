@@ -104,9 +104,12 @@ parameter for custom-resource service tokens. The cloud MCU stack publishes
 stack reads those parameters for SQS access.
 
 `just aws::publish latest` invokes the AWS-hosted publisher Lambda, which
-downloads public GitHub release assets, uploads runtime Lambda artifacts, and
-updates existing runtime Lambda functions. Run it after the `Txing Release`
-workflow and after the standalone Lambda stacks exist.
+resolves `latest` from `lambda-v*` GitHub Releases, downloads public Lambda
+release assets, uploads runtime Lambda artifacts, and updates existing runtime
+Lambda functions. Run it after the `Release lambda` workflow and after the
+standalone Lambda stacks exist. Explicit `lambda-vX.Y.Z` and bare `X.Y.Z`
+references select the Lambda component stream; exact legacy `vX.Y.Z` references
+remain available only for manual rollback to old combined releases.
 The publisher receives its target Lambda names from `/txing/stack/...`
 parameters created by the runtime Lambda stacks.
 
@@ -178,9 +181,9 @@ Cloudflare Pages:
 
 `VITE_TXING_VERSION`, `VITE_DEVICE_THING_NAME`, and
 `VITE_SPARKPLUG_EDGE_NODE_ID` are intentionally absent from Cloudflare
-configuration. The version is injected by the Vite build from the root
-`VERSION` file, and the admin SPA discovers rigs and devices from the configured
-town.
+configuration. The version is injected by the Vite build from
+`office/package.json`, which is kept aligned with `release/versions/office`.
+The admin SPA discovers rigs and devices from the configured town.
 
 The environment stack reads `WebAppUrl` from `/txing/stack/WebAppUrl`.
 Cognito callback URLs are:

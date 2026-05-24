@@ -36,10 +36,12 @@ txing-ble-connectivity = "github:$owner/$repo"
 
 [tools.txing-sparkplug-manager]
 version = "latest"
+version_prefix = "rig-v"
 asset_pattern = "txing-sparkplug-manager-linux-aarch64.tar.gz"
 
 [tools.txing-ble-connectivity]
 version = "latest"
+version_prefix = "rig-v"
 asset_pattern = "txing-ble-connectivity-linux-aarch64.tar.gz"
 EOF
 

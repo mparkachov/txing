@@ -6,11 +6,8 @@ project_root := canonicalize(release_dir + "/..")
 tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
 
-bump target:
-    uv run --project "{{ release_dir }}" txing-release bump "{{ target }}"
-
-check:
-    uv run --project "{{ release_dir }}" txing-release check
+bump component target:
+    uv run --project "{{ release_dir }}" txing-release bump "{{ component }}" "{{ target }}"
 
 build:
     uv build --project "{{ release_dir }}"

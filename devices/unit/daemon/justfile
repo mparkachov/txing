@@ -374,9 +374,10 @@ docker-build:
       exit 1
     fi
 
-    version="$(tr -d '[:space:]' < "$project_root/VERSION")"
+    version_file="$project_root/release/versions/unit"
+    version="$(tr -d '[:space:]' < "$version_file")"
     if ! printf '%s\n' "$version" | grep -E -q '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
-      echo "VERSION must contain a base semantic version like x.y.z." >&2
+      echo "$version_file must contain a semantic version like x.y.z." >&2
       exit 1
     fi
     commit="$(git -C "$project_root" rev-parse HEAD)"

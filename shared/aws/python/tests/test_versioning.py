@@ -108,13 +108,12 @@ def _native_aws_env(bin_dir: Path, *, stack: str | None = "town") -> dict[str, s
 
 
 class VersionEnvironmentTests(unittest.TestCase):
-    def test_project_version_env_uses_plain_version_and_reports_dirty_state(self) -> None:
+    def test_project_git_env_reports_dirty_state_without_root_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
             root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
             version_recipe = root_justfile.split("\n[private]\n_project-aws-env", 1)[0]
             (repo / "justfile").write_text(version_recipe, encoding="utf-8")
-            (repo / "VERSION").write_text("1.2.3\n", encoding="utf-8")
             subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
             subprocess.run(
                 ["git", "config", "user.email", "test@example.com"],
@@ -122,7 +121,7 @@ class VersionEnvironmentTests(unittest.TestCase):
                 check=True,
             )
             subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
-            subprocess.run(["git", "add", "VERSION", "justfile"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "justfile"], cwd=repo, check=True)
             subprocess.run(
                 ["git", "commit", "-m", "initial"],
                 cwd=repo,
@@ -131,25 +130,25 @@ class VersionEnvironmentTests(unittest.TestCase):
             )
 
             clean = subprocess.run(
-                ["just", "--justfile", str(repo / "justfile"), "_project-version-env"],
+                ["just", "--justfile", str(repo / "justfile"), "_project-git-env"],
                 cwd=repo,
                 check=True,
                 text=True,
                 stdout=subprocess.PIPE,
             ).stdout
-            self.assertIn("export TXING_VERSION='1.2.3'", clean)
             self.assertIn("export TXING_GIT_DIRTY='false'", clean)
+            self.assertNotIn("TXING_VERSION", clean)
 
             (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
             dirty = subprocess.run(
-                ["just", "--justfile", str(repo / "justfile"), "_project-version-env"],
+                ["just", "--justfile", str(repo / "justfile"), "_project-git-env"],
                 cwd=repo,
                 check=True,
                 text=True,
                 stdout=subprocess.PIPE,
             ).stdout
-            self.assertIn("export TXING_VERSION='1.2.3'", dirty)
             self.assertIn("export TXING_GIT_DIRTY='true'", dirty)
+            self.assertNotIn("TXING_VERSION", dirty)
             self.assertNotIn("+g", dirty)
 
     def test_project_aws_env_uses_txing_stack_and_native_cli_region(self) -> None:
@@ -173,6 +172,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("export TXING_AWS_STACK='town'", result.stdout)
         self.assertIn("export TXING_AWS_BASE_STACK='town-aws-base'", result.stdout)
         self.assertIn("export TXING_AWS_REGION='eu-central-1'", result.stdout)
+        self.assertIn("export TXING_GIT_DIRTY=", result.stdout)
+        removed_version_env = "TXING_" + "VERSION"
+        self.assertNotIn(removed_version_env, result.stdout)
+        self.assertNotIn(removed_version_env + "_BASE", result.stdout)
         self.assertNotIn("AWS_STACK_NAME", result.stdout)
         self.assertNotIn("AWS_SELECTED_PROFILE", result.stdout)
         self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", result.stdout)
@@ -339,148 +342,184 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock", env_template)
         self.assertIn("TXING_BLE_NO_BLE=false", env_template)
 
-    def test_release_publishes_only_project_assets(self) -> None:
-        workflow = (
-            REPO_ROOT / ".github" / "workflows" / "release.yml"
-        ).read_text(encoding="utf-8")
+    def test_component_release_workflows_publish_only_component_assets(self) -> None:
+        workflow_dir = REPO_ROOT / ".github" / "workflows"
+        self.assertFalse((workflow_dir / "release.yml").exists())
+
+        rig_workflow = (workflow_dir / "release-rig.yml").read_text(encoding="utf-8")
+        lambda_workflow = (workflow_dir / "release-lambda.yml").read_text(encoding="utf-8")
+        unit_workflow = (workflow_dir / "release-unit.yml").read_text(encoding="utf-8")
         release_cli = (
             REPO_ROOT / "release" / "src" / "txing_release" / "cli.py"
         ).read_text(encoding="utf-8")
+        root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+        rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
+        unit_daemon_justfile = (
+            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile"
+        ).read_text(encoding="utf-8")
+        artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
+            encoding="utf-8"
+        )
+        development_docs = (REPO_ROOT / "docs" / "development.md").read_text(
+            encoding="utf-8"
+        )
 
-        self.assertIn("name: Release", workflow)
-        self.assertIn("metadata:", workflow)
-        self.assertIn("build-go-unit-daemon:", workflow)
-        self.assertIn("build-go-rig-binary:", workflow)
-        self.assertIn("build-lambda:", workflow)
-        self.assertIn("build-kvs-master:", workflow)
-        self.assertIn("build-hardware-worker:", workflow)
-        self.assertNotIn("package-rig-deploy:", workflow)
-        self.assertIn("publish:", workflow)
-        self.assertIn("strategy:", workflow)
-        self.assertIn("matrix:", workflow)
-        self.assertIn("actions/upload-artifact@v7", workflow)
-        self.assertIn("actions/download-artifact@v8", workflow)
-        self.assertIn("merge-multiple: true", workflow)
-        self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", workflow)
-        self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", workflow)
-        self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", workflow)
-        self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", workflow)
-        self.assertIn("KVS_MASTER_BINARY: txing-unit-kvs-master", workflow)
-        self.assertIn("HARDWARE_WORKER_BINARY: txing-unit-hardware-worker", workflow)
-        self.assertIn("name: Build txing-unit-daemon", workflow)
-        self.assertIn("cd devices/unit/daemon", workflow)
-        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", workflow)
+        workflows = {
+            "rig": rig_workflow,
+            "lambda": lambda_workflow,
+            "unit": unit_workflow,
+        }
+        for component, workflow in workflows.items():
+            self.assertIn(f"name: Release {component}", workflow)
+            self.assertIn("workflow_dispatch:", workflow)
+            self.assertIn(f"group: txing-release-{component}-${{{{ github.ref }}}}", workflow)
+            self.assertIn(f"RELEASE_COMPONENT: {component}", workflow)
+            self.assertIn(f"RELEASE_VERSION_FILE: release/versions/{component}", workflow)
+            self.assertIn(f"RELEASE_TAG_PREFIX: {component}-v", workflow)
+            self.assertIn("version=\"$(tr -d '[:space:]' < \"$RELEASE_VERSION_FILE\")\"", workflow)
+            self.assertIn('git tag --list "$RELEASE_TAG_PREFIX*"', workflow)
+            self.assertIn('tag="${RELEASE_TAG_PREFIX}${version}"', workflow)
+            self.assertIn('gh release view "$TAG"', workflow)
+            self.assertIn('git ls-remote --exit-code --tags origin "refs/tags/$TAG"', workflow)
+            self.assertIn('gh release create "$TAG"', workflow)
+            self.assertIn("actions/upload-artifact@v7", workflow)
+            self.assertIn("actions/download-artifact@v8", workflow)
+            self.assertIn("merge-multiple: true", workflow)
+            self.assertIn("--latest=false", workflow)
+            self.assertNotIn("inputs:", workflow)
+            self.assertNotIn("Pushed " + "VERSION", workflow)
+            self.assertNotIn("< " + "VERSION", workflow)
+            self.assertNotIn("git tag --list 'v*'", workflow)
+            self.assertNotIn("python3 release/src/txing_release/cli.py check", workflow)
+            self.assertNotIn("Prune old project releases", workflow)
+            self.assertNotIn("gh release delete", workflow)
+            self.assertNotIn("Release workflow is only allowed from main", workflow)
+            self.assertNotIn("release/src/txing_release/cli.py bump", workflow)
+            self.assertNotIn("Commit release bump", workflow)
+            self.assertNotIn("git push origin", workflow)
+            self.assertNotIn("VERSION_INPUT", workflow)
+            self.assertNotIn("workflow-input", workflow)
+            self.assertNotIn("curl git just", workflow)
+            self.assertNotIn("JUST_VERSION", workflow)
+
+        self.assertIn("build-go-rig-binary:", rig_workflow)
+        self.assertIn("package_path: ./cmd/txing-sparkplug-manager", rig_workflow)
+        self.assertIn("package_path: ./cmd/txing-ble-connectivity", rig_workflow)
+        self.assertIn("txing-sparkplug-manager-linux-aarch64.tar.gz", rig_workflow)
+        self.assertIn("txing-ble-connectivity-linux-aarch64.tar.gz", rig_workflow)
+        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go test ./...", rig_workflow)
+        self.assertIn("github.com/mparkachov/txing/rig/internal/version.Version=${{ needs.metadata.outputs.version }}", rig_workflow)
+        self.assertNotIn("build-lambda:", rig_workflow)
+        self.assertNotIn("build-go-unit-daemon:", rig_workflow)
+        self.assertNotIn("build-kvs-master:", rig_workflow)
+        self.assertNotIn("build-hardware-worker:", rig_workflow)
+        self.assertNotIn("txing-unit-daemon-linux-aarch64.tar.gz", rig_workflow)
+        self.assertNotIn("txing-witness-lambda-linux-aarch64.zip", rig_workflow)
+        self.assertNotIn("txing-aws-connectivity-linux-aarch64.tar.gz", rig_workflow)
+        self.assertNotIn("txing-rig-deploy-linux-aarch64.tar.gz", rig_workflow)
+
+        self.assertIn("build-lambda:", lambda_workflow)
+        self.assertIn("package_path: ./cmd/txing-witness-lambda", lambda_workflow)
+        self.assertIn("package_path: ./cmd/txing-cloud-rig-lambda", lambda_workflow)
+        self.assertIn("package_path: ./cmd/txing-cloud-mcu-lambda", lambda_workflow)
+        self.assertIn("txing-witness-lambda-linux-aarch64.zip", lambda_workflow)
+        self.assertIn("txing-cloud-rig-lambda-linux-aarch64.zip", lambda_workflow)
+        self.assertIn("txing-cloud-mcu-lambda-linux-aarch64.zip", lambda_workflow)
+        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags lambda.norpc ./...", lambda_workflow)
+        self.assertIn('go build -trimpath -tags lambda.norpc -ldflags="-s -w"', lambda_workflow)
+        self.assertIn("ELF 64-bit LSB executable, ARM aarch64", lambda_workflow)
+        self.assertIn("statically linked", lambda_workflow)
+        self.assertIn('zip -q "$asset_path" bootstrap', lambda_workflow)
+        self.assertIn('archive_listing="$(unzip -Z1 "$asset_path")"', lambda_workflow)
+        self.assertNotIn("build-go-rig-binary:", lambda_workflow)
+        self.assertNotIn("build-go-unit-daemon:", lambda_workflow)
+        self.assertNotIn("build-kvs-master:", lambda_workflow)
+        self.assertNotIn("build-hardware-worker:", lambda_workflow)
+        self.assertNotIn("txing-sparkplug-manager-linux-aarch64.tar.gz", lambda_workflow)
+        self.assertNotIn("txing-unit-daemon-linux-aarch64.tar.gz", lambda_workflow)
+        self.assertNotIn("txing-enlist-lambda-linux-aarch64.zip", lambda_workflow)
+
+        self.assertIn("build-go-unit-daemon:", unit_workflow)
+        self.assertIn("build-kvs-master:", unit_workflow)
+        self.assertIn("build-hardware-worker:", unit_workflow)
+        self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
+        self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", unit_workflow)
+        self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", unit_workflow)
+        self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
+        self.assertIn("KVS_MASTER_BINARY: txing-unit-kvs-master", unit_workflow)
+        self.assertIn("HARDWARE_WORKER_BINARY: txing-unit-hardware-worker", unit_workflow)
+        self.assertIn("name: Build txing-unit-daemon", unit_workflow)
+        self.assertIn("cd devices/unit/daemon", unit_workflow)
+        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", unit_workflow)
         self.assertIn(
             "-X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=${{ needs.metadata.outputs.version }}",
-            workflow,
+            unit_workflow,
         )
-        self.assertIn("-o \"$RUNNER_TEMP/txing-unit-daemon\"", workflow)
-        self.assertIn("Package ${{ env.UNIT_DAEMON_ASSET }}", workflow)
-        self.assertIn('tar -C "$package_dir" -czf "$asset_path" txing-unit-daemon', workflow)
-        self.assertIn("build-go-unit-daemon", workflow)
-        self.assertNotIn("devices/unit/daemon/target/release/daemon", workflow)
-        self.assertIn("container:", workflow)
-        self.assertIn("image: debian:trixie", workflow)
-        self.assertIn("Build native KVS master", workflow)
-        self.assertIn("Build txing-unit-hardware-worker", workflow)
-        self.assertNotIn("docker run --rm -i", workflow)
-        self.assertNotIn("just unit::daemon::kvs-submodules", workflow)
-        self.assertNotIn("just unit::daemon::kvs-build-native", workflow)
-        self.assertNotIn("just unit::board::", workflow)
-        self.assertIn("URIs: https://archive.raspberrypi.com/debian/", workflow)
-        self.assertIn("Trusted: yes", workflow)
-        self.assertIn("apt-cache policy libcamera-dev libcamera0.7", workflow)
-        self.assertIn("TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG", workflow)
-        self.assertNotIn("curl https://mise.run | sh", workflow)
-        self.assertNotIn("mise/shims", workflow)
-        self.assertNotIn("mise use --global --yes just@latest", workflow)
-        self.assertIn('grep -F "libcamera.so.0.7"', workflow)
-        self.assertIn('grep -F "libcamera-base.so.0.7"', workflow)
-        self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', workflow)
-        self.assertIn('test -x "$kvs_master_build_binary"', workflow)
-        self.assertIn('install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"', workflow)
-        self.assertNotIn("KVS_MASTER_OUTPUT_DIR", workflow)
-        self.assertNotIn('-v "$RUNNER_TEMP:/out"', workflow)
-        self.assertNotIn('"/out/$KVS_MASTER_BINARY"', workflow)
-        self.assertNotIn("raspberrypi.gpg.key", workflow)
-        self.assertNotIn("Signed-By:", workflow)
-        self.assertIn("txing-sparkplug-manager-linux-aarch64.tar.gz", workflow)
-        self.assertIn("txing-ble-connectivity-linux-aarch64.tar.gz", workflow)
-        self.assertNotIn("txing-aws-connectivity-linux-aarch64.tar.gz", workflow)
-        self.assertNotIn("txing-rig-deploy-linux-aarch64.tar.gz", workflow)
-        self.assertIn("txing-witness-lambda-linux-aarch64.zip", workflow)
-        self.assertNotIn("txing-enlist-lambda-linux-aarch64.zip", workflow)
-        self.assertIn("txing-cloud-rig-lambda-linux-aarch64.zip", workflow)
-        self.assertIn("txing-cloud-mcu-lambda-linux-aarch64.zip", workflow)
-        self.assertIn("for version in 1.26 1.25 1.24", workflow)
-        self.assertIn('candidate="golang-${version}-go"', workflow)
-        self.assertIn('echo "$go_root/bin" >>"$GITHUB_PATH"', workflow)
-        self.assertIn("Restore Go cache", workflow)
-        self.assertIn("~/go/pkg/mod", workflow)
-        self.assertIn("~/.cache/go-build", workflow)
-        self.assertIn("package_path: ./cmd/txing-witness-lambda", workflow)
-        self.assertNotIn("package_path: ./cmd/txing-enlist-lambda", workflow)
-        self.assertIn("package_path: ./cmd/txing-cloud-rig-lambda", workflow)
-        self.assertIn("package_path: ./cmd/txing-cloud-mcu-lambda", workflow)
-        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags lambda.norpc ./...", workflow)
-        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go test ./...", workflow)
-        self.assertIn("package_path: ./cmd/txing-sparkplug-manager", workflow)
-        self.assertIn("package_path: ./cmd/txing-ble-connectivity", workflow)
-        self.assertIn("go build -trimpath -tags lambda.norpc -ldflags=\"-s -w\"", workflow)
-        self.assertIn("-o \"$RUNNER_TEMP/${{ matrix.function_name }}\"", workflow)
-        self.assertIn('source="$RUNNER_TEMP/${{ matrix.function_name }}"', workflow)
-        self.assertIn('install -m 755 "$source" "$package_dir/bootstrap"', workflow)
-        self.assertIn("ELF 64-bit LSB executable, ARM aarch64", workflow)
-        self.assertIn("statically linked", workflow)
-        self.assertIn('zip -q "$asset_path" bootstrap', workflow)
-        self.assertIn('archive_listing="$(unzip -Z1 "$asset_path")"', workflow)
-        self.assertNotIn("Test and build ${{ matrix.function_name }} in Amazon Linux 2023", workflow)
-        self.assertNotIn("public.ecr.aws/amazonlinux/amazonlinux:2023", workflow)
-        self.assertNotIn("Lambda bootstrap requires glibc newer than AL2023 supports", workflow)
-        self.assertNotIn("target/release/${{ matrix.function_name }}", workflow)
-        self.assertNotIn("lock_file:", workflow)
-        self.assertNotIn("zig", workflow.lower())
-        self.assertIn('release_asset_paths+=("$asset_path")', workflow)
-        self.assertIn('version="$(tr -d \'[:space:]\' < VERSION)"', workflow)
-        self.assertIn("git fetch --tags --force origin", workflow)
-        self.assertIn("Pushed VERSION $version must be greater than latest release tag", workflow)
-        self.assertIn('release_target="$(git rev-parse HEAD)"', workflow)
-        self.assertNotIn("Release workflow is only allowed from main", workflow)
-        self.assertIn("python3 release/src/txing_release/cli.py check", workflow)
-        self.assertIn('RELEASE_RETENTION_COUNT: "10"', workflow)
-        self.assertIn("Prune old project releases", workflow)
-        self.assertIn("--json tagName,publishedAt,createdAt", workflow)
-        self.assertIn("project_release_pattern = re.compile", workflow)
-        self.assertIn("gh release delete", workflow)
-        self.assertIn("--cleanup-tag", workflow)
-        self.assertNotIn("txing-greengrass-lite-linux-aarch64.tar.gz", workflow)
-        self.assertNotIn("Build Greengrass Lite", workflow)
-        self.assertNotIn("Package Greengrass Lite release asset", workflow)
-        self.assertNotIn("Publish Greengrass Lite release", workflow)
-        self.assertNotIn("greengrass_lite_version", workflow)
-        self.assertNotIn("greengrass-lite-v", workflow)
-        self.assertNotIn("modules/aws-greengrass/aws-greengrass-lite/version", workflow)
-        self.assertNotIn("txing-greengrass-lite-payload/root", workflow)
-        self.assertNotIn('run_nucleus "$payload_dir', workflow)
-        self.assertNotIn("description: \"Version to release", workflow)
-        self.assertNotIn("inputs:", workflow)
-        self.assertNotIn("VERSION_INPUT", workflow)
-        self.assertNotIn("next-minor-default", workflow)
-        self.assertNotIn("workflow-input", workflow)
-        self.assertNotIn("release/src/txing_release/cli.py bump", workflow)
-        self.assertNotIn("Commit release bump", workflow)
-        self.assertNotIn("git push origin", workflow)
-        self.assertNotIn("greengrass-lite-version", workflow)
-        self.assertNotIn("TXING_GREENGRASS_LITE_BUILD_INPUT_HASH", workflow)
-        self.assertNotIn("curl git just", workflow)
-        self.assertNotIn("JUST_VERSION", workflow)
-        self.assertNotIn("pip install --user uv", workflow)
+        self.assertIn("Build native KVS master", unit_workflow)
+        self.assertIn("Build txing-unit-hardware-worker", unit_workflow)
+        self.assertIn("image: debian:trixie", unit_workflow)
+        self.assertIn("URIs: https://archive.raspberrypi.com/debian/", unit_workflow)
+        self.assertIn("Trusted: yes", unit_workflow)
+        self.assertIn("apt-cache policy libcamera-dev libcamera0.7", unit_workflow)
+        self.assertIn("TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG", unit_workflow)
+        self.assertIn('grep -F "libcamera.so.0.7"', unit_workflow)
+        self.assertIn('grep -F "libcamera-base.so.0.7"', unit_workflow)
+        self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', unit_workflow)
+        self.assertIn('install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"', unit_workflow)
+        self.assertNotIn("build-go-rig-binary:", unit_workflow)
+        self.assertNotIn("build-lambda:", unit_workflow)
+        self.assertNotIn("txing-sparkplug-manager-linux-aarch64.tar.gz", unit_workflow)
+        self.assertNotIn("txing-witness-lambda-linux-aarch64.zip", unit_workflow)
+        self.assertNotIn("docker run --rm -i", unit_workflow)
+        self.assertNotIn("just unit::daemon::kvs-submodules", unit_workflow)
+        self.assertNotIn("just unit::daemon::kvs-build-native", unit_workflow)
+        self.assertNotIn("just unit::board::", unit_workflow)
+        self.assertNotIn("raspberrypi.gpg.key", unit_workflow)
+        self.assertNotIn("Signed-By:", unit_workflow)
+        self.assertNotIn("curl https://mise.run | sh", unit_workflow)
+        self.assertNotIn("mise/shims", unit_workflow)
+
+        for workflow in workflows.values():
+            self.assertIn("for version in 1.26 1.25 1.24", workflow)
+            self.assertIn('candidate="golang-${version}-go"', workflow)
+            self.assertIn('echo "$go_root/bin" >>"$GITHUB_PATH"', workflow)
+            self.assertIn("Restore Go cache", workflow)
+            self.assertIn("~/go/pkg/mod", workflow)
+            self.assertIn("~/.cache/go-build", workflow)
+            self.assertIn('release_asset_paths+=("$asset_path")', workflow)
+            self.assertNotIn("txing-greengrass-lite-linux-aarch64.tar.gz", workflow)
+            self.assertNotIn("Build Greengrass Lite", workflow)
+            self.assertNotIn("Package Greengrass Lite release asset", workflow)
+            self.assertNotIn("Publish Greengrass Lite release", workflow)
+            self.assertNotIn("greengrass_lite_version", workflow)
+            self.assertNotIn("greengrass-lite-v", workflow)
+            self.assertNotIn("modules/aws-greengrass/aws-greengrass-lite/version", workflow)
+            self.assertNotIn("txing-greengrass-lite-payload/root", workflow)
+            self.assertNotIn('run_nucleus "$payload_dir', workflow)
+
         self.assertIn(
             'Path("devices/unit/daemon/internal/daemon/version.go")',
             release_cli,
         )
         self.assertIn("kTxingUnitKvsMasterVersion", release_cli)
         self.assertNotIn("kTxingBoardKvsMasterVersion", release_cli)
+        removed_version_env = "TXING_" + "VERSION"
+        self.assertNotIn("_project-" + "version-env", root_justfile)
+        self.assertNotIn(removed_version_env + "_BASE", root_justfile)
+        self.assertNotIn("export_line " + removed_version_env, root_justfile)
+        self.assertIn("_project-git-env", root_justfile)
+        self.assertIn("release/versions/rig", rig_justfile)
+        self.assertNotIn("/" + "VERSION", rig_justfile)
+        self.assertIn("release/versions/unit", unit_daemon_justfile)
+        self.assertNotIn("/" + "VERSION", unit_daemon_justfile)
+        self.assertIn("release/versions/rig", artifacts_docs)
+        self.assertIn("release/versions/lambda", artifacts_docs)
+        self.assertIn("release/versions/unit", artifacts_docs)
+        self.assertIn("release/versions/office", artifacts_docs)
+        self.assertIn("office version metadata only", artifacts_docs)
+        self.assertIn("Cloudflare Pages", artifacts_docs)
+        self.assertIn("component-scoped under `release/versions/`", development_docs)
+        self.assertIn("Office tracks its version for Cloudflare Pages", development_docs)
 
     def test_unit_daemon_manual_docker_build_replaces_release_channel(self) -> None:
         removed_workflow = "unit-daemon-feature-" + "prerelease.yml"
@@ -545,6 +584,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"', board_docs)
         self.assertIn('asset_pattern = "txing-unit-kvs-master-linux-aarch64.tar.gz"', board_docs)
         self.assertIn('asset_pattern = "txing-unit-hardware-worker-linux-aarch64.tar.gz"', board_docs)
+        self.assertIn('version_prefix = "unit-v"', board_docs)
+        self.assertIn("model is forward-only", board_docs)
         self.assertIn("MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise", board_docs)
         self.assertIn("cat >/etc/systemd/system/txing-unit.target", board_docs)
         self.assertIn("Wants=txing-unit-daemon.service txing-unit-kvs-master.service txing-unit-hardware-worker.service", board_docs)
@@ -639,8 +680,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("`txing-board.target`", artifacts_docs)
         self.assertIn("`txing-board-kvs-master.service`", artifacts_docs)
         self.assertIn("`systemctl daemon-reload`", artifacts_docs)
-        self.assertIn("keeps the newest 10 project", artifacts_docs)
-        self.assertIn("prunes older project releases down to", artifacts_docs)
+        self.assertIn("Release artifacts are split by component", artifacts_docs)
+        self.assertIn('version_prefix = "unit-v"', artifacts_docs)
         self.assertNotIn("MISE_OFFLINE=1", artifacts_docs)
         self.assertNotIn("txing-unit-daemon-service", artifacts_docs)
         self.assertNotIn("txing-unit-kvs-master-service", artifacts_docs)
@@ -670,6 +711,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn('txing-rig-deploy = "github:$owner/$repo"', installer)
         self.assertIn('[settings]', installer)
         self.assertIn('fetch_remote_versions_cache = "0s"', installer)
+        self.assertIn('version_prefix = "rig-v"', installer)
         self.assertIn('asset_pattern = "txing-sparkplug-manager-linux-aarch64.tar.gz"', installer)
         self.assertIn('asset_pattern = "txing-ble-connectivity-linux-aarch64.tar.gz"', installer)
         self.assertNotIn('asset_pattern = "txing-rig-deploy-linux-aarch64.tar.gz"', installer)
@@ -701,6 +743,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("PartOf=rig-daemon.target", rig_docs)
         self.assertIn("sudo systemctl restart rig-daemon.target", rig_docs)
         self.assertIn("mise upgrade", rig_docs)
+        self.assertIn('version_prefix = "rig-v"', rig_docs)
+        self.assertIn("model is forward-only", rig_docs)
         self.assertIn("bluetooth", rig_docs)
         self.assertNotIn("aws-greengrass-lite-deb-arm64.zip", rig_docs)
         self.assertNotIn("/etc/greengrass", rig_docs)
@@ -726,6 +770,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("deploy-local-lambda", aws_justfile)
         self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
         self.assertIn("TXING_LAMBDA_FUNCTIONS_JSON", aws_justfile)
+        self.assertIn("latest|lambda-v[0-9]*|v[0-9]*|[0-9]*)", aws_justfile)
+        self.assertIn("lambda-vX.Y.Z", aws_justfile)
         self.assertIn("python -m aws_admin.publish_release lambda --release", aws_justfile)
         self.assertIn("stack_parameter ReleasePublisherFunctionName", aws_justfile)
         self.assertIn("deploy-base stack_name=stack_name", aws_justfile)
@@ -748,7 +794,12 @@ class VersionEnvironmentTests(unittest.TestCase):
             (REPO_ROOT / "rig" / "scripts" / "greengrass-lite-version").exists()
         )
 
-        gitmodules = (REPO_ROOT / ".gitmodules").read_text(encoding="utf-8")
+        gitmodules_path = REPO_ROOT / ".gitmodules"
+        gitmodules = (
+            gitmodules_path.read_text(encoding="utf-8")
+            if gitmodules_path.exists()
+            else ""
+        )
         self.assertNotIn(
             '[submodule "aws-greengrass/aws-greengrass-lite"]', gitmodules
         )
@@ -763,8 +814,8 @@ class VersionEnvironmentTests(unittest.TestCase):
             "path = modules/awslabs/amazon-kinesis-video-streams-webrtc-sdk-c",
             gitmodules,
         )
-        self.assertIn('[submodule "nrfconnect/sdk-nrf"]', gitmodules)
-        self.assertIn("path = modules/nrfconnect/sdk-nrf", gitmodules)
+        self.assertNotIn('[submodule "nrfconnect/sdk-nrf"]', gitmodules)
+        self.assertNotIn("path = modules/nrfconnect/sdk-nrf", gitmodules)
 
     def test_greengrass_lite_helper_removed(self) -> None:
         self.assertFalse(

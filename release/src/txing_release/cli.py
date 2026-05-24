@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -16,12 +15,10 @@ ROOT = Path(__file__).resolve().parents[3]
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 PYTHON_PROJECTS = (
-    Path("release/pyproject.toml"),
     Path("shared/aws/python/pyproject.toml"),
 )
 
 PYTHON_LOCK_PACKAGES = (
-    (Path("release/uv.lock"), ("txing-release",)),
     (Path("shared/aws/python/uv.lock"), ("aws",)),
 )
 
@@ -64,41 +61,41 @@ TEXT_VERSIONS = (
         re.compile(r": '[0-9]+\.[0-9]+\.[0-9]+'"),
         ": '{version}'",
     ),
-    TextVersion(
-        Path("office/vite.config.ts"),
-        "office vite fallback version",
-        re.compile(r"'[0-9]+\.[0-9]+\.[0-9]+'"),
-        "'{version}'",
-        0,
+)
+
+
+@dataclass(frozen=True)
+class Component:
+    name: str
+    version_path: Path
+    python_projects: tuple[Path, ...] = ()
+    python_lock_packages: tuple[tuple[Path, tuple[str, ...]], ...] = ()
+    node_packages: tuple[Path, ...] = ()
+    text_versions: tuple[TextVersion, ...] = ()
+
+
+COMPONENTS = {
+    "rig": Component(
+        name="rig",
+        version_path=Path("release/versions/rig"),
     ),
-)
-
-SCAN_IGNORED_DIRS = {
-    ".cache",
-    ".git",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "__pycache__",
-    "build",
-    "node_modules",
-    "target",
-}
-
-SCAN_IGNORED_PREFIXES = (
-    Path("devices/common/mcu/ncs"),
-)
-
-SCAN_EXTENSIONS = {
-    ".json",
-    ".md",
-    ".py",
-    ".toml",
-    ".ts",
-    ".tsx",
-    ".yaml",
-    ".yml",
+    "lambda": Component(
+        name="lambda",
+        version_path=Path("release/versions/lambda"),
+        python_projects=PYTHON_PROJECTS,
+        python_lock_packages=PYTHON_LOCK_PACKAGES,
+    ),
+    "unit": Component(
+        name="unit",
+        version_path=Path("release/versions/unit"),
+        text_versions=TEXT_VERSIONS[:3],
+    ),
+    "office": Component(
+        name="office",
+        version_path=Path("release/versions/office"),
+        node_packages=NODE_PACKAGES,
+        text_versions=TEXT_VERSIONS[3:],
+    ),
 }
 
 
@@ -128,8 +125,8 @@ def write_text_if_changed(path: Path, content: str) -> bool:
     return True
 
 
-def read_root_version() -> str:
-    value = read_text(Path("VERSION")).strip()
+def read_component_version(component: Component) -> str:
+    value = read_text(component.version_path).strip()
     validate_semver(value)
     return value
 
@@ -172,109 +169,75 @@ def run(command: list[str], *, cwd: Path = ROOT) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
-def refresh_lockfiles() -> None:
-    for pyproject in PYTHON_PROJECTS:
+def refresh_lockfiles(component: Component) -> None:
+    for pyproject in component.python_projects:
         run(["uv", "lock", "--project", str(ROOT / pyproject.parent)])
 
 
-def managed_version_paths() -> set[Path]:
-    paths: set[Path] = {
-        Path("VERSION"),
-        *PYTHON_PROJECTS,
-        *NODE_PACKAGES,
-        *(spec.path for spec in TEXT_VERSIONS),
-    }
-    paths.update(pyproject.parent / "uv.lock" for pyproject in PYTHON_PROJECTS)
-    return paths
+def component_names() -> str:
+    return ", ".join(COMPONENTS)
 
 
-def path_is_under(path: Path, parent: Path) -> bool:
-    return path == parent or parent in path.parents
+def parse_component(name: str) -> Component:
+    component = COMPONENTS.get(name)
+    if component is None:
+        raise SystemExit(f"unknown component {name!r}; expected one of: {component_names()}")
+    return component
 
 
-def should_scan_path(path: Path, managed_paths: set[Path]) -> bool:
-    if path in managed_paths:
-        return False
-    if any(path_is_under(path, prefix) for prefix in SCAN_IGNORED_PREFIXES):
-        return False
-    if path.name in {"uv.lock", "bun.lock", "bun.lockb", "package-lock.json"}:
-        return False
-    if path.name == "justfile":
-        return True
-    return path.suffix in SCAN_EXTENSIONS
+def print_component_audit(component: Component, version: str) -> list[str]:
+    reports: list[str] = []
+    problems = collect_version_problems(component, reports)
+    print(f"{component.name} managed version sources:")
+    for report in reports:
+        print(f"  {report}")
+    if problems:
+        print(f"{component.name} version consistency warnings:", file=sys.stderr)
+        for problem in problems:
+            print(f"warning: {problem}", file=sys.stderr)
+    else:
+        print(f"all {component.name} managed version surfaces match {version}")
+    return problems
 
 
-def collect_unmanaged_version_occurrences(version: str) -> list[str]:
-    managed_paths = managed_version_paths()
-    occurrences: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(ROOT):
-        rel_dir = Path(dirpath).relative_to(ROOT)
-        dirnames[:] = [
-            dirname
-            for dirname in dirnames
-            if dirname not in SCAN_IGNORED_DIRS
-            and not any(path_is_under(rel_dir / dirname, prefix) for prefix in SCAN_IGNORED_PREFIXES)
-        ]
-        for filename in filenames:
-            rel_path = rel_dir / filename
-            if not should_scan_path(rel_path, managed_paths):
-                continue
-            try:
-                lines = (ROOT / rel_path).read_text(encoding="utf-8").splitlines()
-            except UnicodeDecodeError:
-                continue
-            for line_number, line in enumerate(lines, start=1):
-                if version in line:
-                    excerpt = line.strip()
-                    if len(excerpt) > 160:
-                        excerpt = excerpt[:157] + "..."
-                    occurrences.append(f"{rel(rel_path)}:{line_number}: {excerpt}")
-    return occurrences
-
-
-def bump(target: str) -> None:
+def bump(component_name: str, target: str) -> None:
+    component = parse_component(component_name)
     target_tuple = validate_semver(target)
-    current = read_root_version()
+    current = read_component_version(component)
     current_tuple = validate_semver(current)
     if target_tuple < current_tuple:
-        raise SystemExit(f"refusing downgrade from {current} to {target}")
+        raise SystemExit(f"refusing {component.name} downgrade from {current} to {target}")
+
+    if target_tuple == current_tuple:
+        print_component_audit(component, target)
+        return
 
     changed: list[str] = []
-    if write_text_if_changed(Path("VERSION"), target + "\n"):
-        changed.append("VERSION")
-    for path in PYTHON_PROJECTS:
+    if write_text_if_changed(component.version_path, target + "\n"):
+        changed.append(rel(component.version_path))
+    for path in component.python_projects:
         if set_toml_package_version(path, target):
             changed.append(rel(path))
-    for path in NODE_PACKAGES:
+    for path in component.node_packages:
         if set_json_package_version(path, target):
             changed.append(rel(path))
-    for spec in TEXT_VERSIONS:
+    for spec in component.text_versions:
         if set_text_version(spec, target):
             changed.append(rel(spec.path))
 
-    refresh_lockfiles()
-    problems = collect_version_problems()
+    refresh_lockfiles(component)
+    problems = collect_version_problems(component)
     if problems:
+        print(f"{component.name} version consistency warnings:", file=sys.stderr)
         for problem in problems:
-            print(problem, file=sys.stderr)
-        raise SystemExit(1)
-
-    if target_tuple > current_tuple:
-        occurrences = collect_unmanaged_version_occurrences(current)
-        if occurrences:
-            print(
-                f"unmanaged occurrences of previous release {current} found for review:",
-                file=sys.stderr,
-            )
-            for occurrence in occurrences:
-                print(f"  {occurrence}", file=sys.stderr)
+            print(f"warning: {problem}", file=sys.stderr)
 
     if changed:
-        print("updated version surfaces:")
+        print(f"updated {component.name} version surfaces:")
         for item in changed:
             print(f"  {item}")
     else:
-        print(f"all managed version surfaces already at {target}")
+        print(f"all {component.name} managed version surfaces already at {target}")
 
 
 def load_toml(path: Path) -> dict:
@@ -350,13 +313,13 @@ def text_version_value(spec: TextVersion) -> str | None:
     return version_match.group(0) if version_match else None
 
 
-def collect_version_problems(reports: list[str] | None = None) -> list[str]:
-    expected = read_root_version()
+def collect_version_problems(component: Component, reports: list[str] | None = None) -> list[str]:
+    expected = read_component_version(component)
     problems: list[str] = []
     if reports is not None:
-        reports.append(f"VERSION: {expected!r}")
+        reports.append(f"{rel(component.version_path)}: {expected!r}")
 
-    for path in PYTHON_PROJECTS:
+    for path in component.python_projects:
         check_value(
             problems,
             f"{rel(path)} project.version",
@@ -364,10 +327,10 @@ def collect_version_problems(reports: list[str] | None = None) -> list[str]:
             expected,
             reports,
         )
-    for path in NODE_PACKAGES:
+    for path in component.node_packages:
         payload = json.loads(read_text(path))
         check_value(problems, f"{rel(path)} version", payload.get("version"), expected, reports)
-    for spec in TEXT_VERSIONS:
+    for spec in component.text_versions:
         check_value(
             problems,
             f"{rel(spec.path)} {spec.label}",
@@ -376,36 +339,21 @@ def collect_version_problems(reports: list[str] | None = None) -> list[str]:
             reports,
         )
 
-    for lock_path, package_names in PYTHON_LOCK_PACKAGES:
+    for lock_path, package_names in component.python_lock_packages:
         check_uv_lock(problems, lock_path, package_names, expected, reports)
     return problems
-
-
-def check() -> None:
-    reports: list[str] = []
-    problems = collect_version_problems(reports)
-    print("managed version sources:")
-    for report in reports:
-        print(f"  {report}")
-    if problems:
-        for problem in problems:
-            print(problem, file=sys.stderr)
-        raise SystemExit(1)
-    print(f"all managed version surfaces match {read_root_version()}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manage txing release versions")
     subparsers = parser.add_subparsers(dest="command", required=True)
     bump_parser = subparsers.add_parser("bump", help="bump or repair managed version surfaces")
+    bump_parser.add_argument("component", choices=tuple(COMPONENTS))
     bump_parser.add_argument("version")
-    subparsers.add_parser("check", help="verify managed version surfaces")
     args = parser.parse_args()
 
     if args.command == "bump":
-        bump(args.version)
-    elif args.command == "check":
-        check()
+        bump(args.component, args.version)
     else:
         parser.error(f"unsupported command {args.command!r}")
 

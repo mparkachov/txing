@@ -8,24 +8,39 @@ live with the owning component:
 
 ## Release
 
-`VERSION` is the repository release version. Releases are normal GitHub
-Releases:
+Release artifacts are split by component. Each component has a committed
+semantic version under `release/versions/`, and artifact-producing components
+publish normal GitHub Releases with component-prefixed tags:
 
-- tag and release name: `v<VERSION>`
-- publisher: manual `Txing Release` GitHub Actions workflow from the selected branch
-- release immutability: the workflow fails if `VERSION` is not newer than the
-  latest existing `v*` tag, or if the tag/release already exists
-- release retention: after publishing, the workflow keeps the newest 10 project
-  releases matching `vX.Y.Z` and deletes older releases with their tags
+- rig: `release/versions/rig` publishes `rig-vX.Y.Z`
+- Lambda: `release/versions/lambda` publishes `lambda-vX.Y.Z`
+- unit: `release/versions/unit` publishes `unit-vX.Y.Z`
+- office: `release/versions/office` tracks office version metadata only
 
-Project releases publish these Linux `aarch64` assets:
+Each manual release workflow is dispatched from the selected branch, reads only
+its component version file, rejects an existing tag/release, and compares
+monotonicity only within that component tag stream. Office has no GitHub
+Release workflow or release asset; Cloudflare Pages builds and deploys office
+from Git.
+
+Rig releases publish these Linux `aarch64` assets:
+
+```text
+txing-sparkplug-manager-linux-aarch64.tar.gz
+txing-ble-connectivity-linux-aarch64.tar.gz
+```
+
+Unit releases publish these Linux `aarch64` assets:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
 txing-unit-kvs-master-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
-txing-sparkplug-manager-linux-aarch64.tar.gz
-txing-ble-connectivity-linux-aarch64.tar.gz
+```
+
+Lambda releases publish these Linux `aarch64` assets:
+
+```text
 txing-witness-lambda-linux-aarch64.zip
 txing-cloud-rig-lambda-linux-aarch64.zip
 txing-cloud-mcu-lambda-linux-aarch64.zip
@@ -39,23 +54,24 @@ and do not depend on host glibc.
 
 Release publishing flow:
 
-1. Update all managed version files locally.
+1. Bump the intended component version locally.
 2. Push the intended code to the branch that should be released.
-3. Run the `Txing Release` workflow manually from that branch.
+3. Run the matching `Release rig`, `Release lambda`, or `Release unit` workflow
+   manually from that branch.
 4. Deploy AWS infrastructure and all standalone Lambda stacks with
    `just aws::deploy`.
 5. Publish runtime Lambda code from the operator machine with
-   `just aws::publish latest`.
+   `just aws::publish latest`. `latest` resolves within the `lambda-v*`
+   release stream.
 6. If a board or rig needs new binaries, update it manually from a root shell
    with writable root and root-owned `mise upgrade`; boards reboot, rigs
    restart `rig-daemon.target`.
 
-The workflow reads the selected branch's root `VERSION`, checks that all managed version
-files already match, fails unless the version is newer than the latest existing
-release, publishes the GitHub Release, and publishes the board, rig, and Lambda
-artifacts. After a successful publish, it prunes older project releases down to
-the newest 10. It does not bump versions, commit, push back to a branch, upload
-Lambda code to AWS, or deploy to hosts.
+Host `latest` resolution is component-specific: rig mise configs use
+`version_prefix = "rig-v"` and board mise configs use
+`version_prefix = "unit-v"`. This is forward-only operator state; manually
+replace old host configs that do not include the prefix before relying on
+`latest`.
 
 ## Lambda Artifacts
 
@@ -66,9 +82,12 @@ machine:
 just aws::publish latest
 ```
 
-`aws::publish` invokes the AWS-hosted publisher Lambda. The publisher downloads
-public GitHub release assets over HTTPS, uploads Lambda artifacts, and updates
-existing Lambda functions.
+`aws::publish` invokes the AWS-hosted publisher Lambda. `latest` resolves to the
+newest `lambda-v*` component release, not the repository-wide latest release.
+Explicit `lambda-vX.Y.Z` and bare `X.Y.Z` references select the Lambda stream;
+exact legacy `vX.Y.Z` references remain available only for manual rollback to
+old combined releases. The publisher downloads public GitHub release assets
+over HTTPS, uploads Lambda artifacts, and updates existing Lambda functions.
 Runtime Lambda deploy recipes seed placeholder bootstrap zips so first-time
 stack creation does not depend on release artifacts already being uploaded.
 `aws::publish-lambda` runs the same runtime Lambda publish code locally and is

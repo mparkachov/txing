@@ -20,8 +20,8 @@ changes, or future-work implementation.
 - Do not turn manual operator install, release, AWS, board, or rig maintenance
   docs into automatic scripts unless the user explicitly asks for that exact
   automation.
-- Release artifacts are immutable for each exact `VERSION`; do not add deploy
-  bypasses around release versioning.
+- Release artifacts are immutable for each exact component version; do not add
+  deploy bypasses around release versioning.
 - The release workflow does not bump versions, commit, push, upload Lambda code
   to AWS, or deploy to hosts. Preserve that separation.
 - Production board and rig binary updates remain manual writable-root

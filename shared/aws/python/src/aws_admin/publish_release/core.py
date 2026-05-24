@@ -19,6 +19,8 @@ from botocore.exceptions import ClientError
 
 DEFAULT_GITHUB_REPOSITORY = "mparkachov/txing"
 _SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+_LAMBDA_TAG_PREFIX = "lambda-v"
+_LEGACY_TAG_PREFIX = "v"
 _USER_AGENT = "txing-release-publisher"
 
 
@@ -44,7 +46,6 @@ class PublishConfig:
     github_repository: str
     lambda_artifact_bucket: str | None
     aws_region: str
-    txing_version_base: str | None = None
     lambda_function_names: dict[str, str] | None = None
 
     @classmethod
@@ -70,7 +71,6 @@ class PublishConfig:
             github_repository=repository,
             lambda_artifact_bucket=os.environ.get("TXING_LAMBDA_ARTIFACT_BUCKET"),
             aws_region=region,
-            txing_version_base=os.environ.get("TXING_VERSION_BASE"),
             lambda_function_names=_lambda_function_names_from_env(),
         )
 
@@ -129,6 +129,17 @@ def _lambda_function_names_from_env() -> dict[str, str] | None:
     return function_names
 
 
+def _version_from_component_tag(tag: str, prefix: str) -> str | None:
+    if not tag.startswith(prefix):
+        return None
+    version = tag[len(prefix) :]
+    return version if _SEMVER_RE.fullmatch(version) else None
+
+
+def _semver_key(version: str) -> tuple[int, int, int]:
+    return tuple(int(part) for part in version.split("."))
+
+
 def normalize_release_tag(release_ref: str, latest_tag: str | None = None) -> str:
     if not release_ref:
         raise PublishError("release is required")
@@ -138,13 +149,20 @@ def normalize_release_tag(release_ref: str, latest_tag: str | None = None) -> st
         if latest_tag is None:
             return "latest"
         tag = latest_tag
-    elif release_ref.startswith("v"):
+    elif release_ref.startswith(_LAMBDA_TAG_PREFIX):
+        tag = release_ref
+    elif release_ref.startswith(_LEGACY_TAG_PREFIX):
         tag = release_ref
     else:
-        tag = f"v{release_ref}"
-    version = tag.removeprefix("v")
+        tag = f"{_LAMBDA_TAG_PREFIX}{release_ref}"
+    if tag.startswith(_LAMBDA_TAG_PREFIX):
+        version = tag.removeprefix(_LAMBDA_TAG_PREFIX)
+    else:
+        version = tag.removeprefix(_LEGACY_TAG_PREFIX)
     if not _SEMVER_RE.fullmatch(version):
-        raise PublishError(f"release tag must be SemVer vX.Y.Z, got: {tag}")
+        raise PublishError(
+            f"release tag must be latest, lambda-vX.Y.Z, vX.Y.Z, or X.Y.Z, got: {tag}"
+        )
     return tag
 
 
@@ -178,30 +196,49 @@ class GitHubReleaseClient:
             return self._release_cache[release_ref]
         tag_for_request = normalize_release_tag(release_ref)
         if tag_for_request == "latest":
-            release = self._get_json(
-                f"https://api.github.com/repos/{self.repository}/releases/latest"
-            )
-            tag_name = release.get("tag_name")
-            if not isinstance(tag_name, str) or not tag_name:
-                raise PublishError(
-                    "latest GitHub release response did not include tag_name"
-                )
-            tag = normalize_release_tag("latest", latest_tag=tag_name)
+            tag, release = self._latest_release_with_prefix(_LAMBDA_TAG_PREFIX)
         else:
             tag = tag_for_request
             quoted_tag = urllib.parse.quote(tag, safe="")
             release = self._get_json(
                 f"https://api.github.com/repos/{self.repository}/releases/tags/{quoted_tag}"
             )
+            if not isinstance(release, dict):
+                raise PublishError(f"GitHub release response for {tag} was not an object")
         assets = {
             asset["name"]: asset["browser_download_url"]
             for asset in release.get("assets", [])
             if asset.get("name") and asset.get("browser_download_url")
         }
-        info = ReleaseInfo(tag=tag, version=tag.removeprefix("v"), assets=assets)
+        version = _version_from_component_tag(tag, _LAMBDA_TAG_PREFIX)
+        if version is None:
+            version = tag.removeprefix(_LEGACY_TAG_PREFIX)
+        info = ReleaseInfo(tag=tag, version=version, assets=assets)
         self._release_cache[release_ref] = info
         self._release_cache[tag] = info
         return info
+
+    def _latest_release_with_prefix(self, prefix: str) -> tuple[str, dict[str, object]]:
+        releases = self._get_json(
+            f"https://api.github.com/repos/{self.repository}/releases?per_page=100"
+        )
+        if not isinstance(releases, list):
+            raise PublishError("GitHub releases response was not a list")
+        candidates: list[tuple[tuple[int, int, int], str, dict[str, object]]] = []
+        for release in releases:
+            if not isinstance(release, dict):
+                continue
+            tag_name = release.get("tag_name")
+            if not isinstance(tag_name, str):
+                continue
+            version = _version_from_component_tag(tag_name, prefix)
+            if version is None:
+                continue
+            candidates.append((_semver_key(version), tag_name, release))
+        if not candidates:
+            raise PublishError(f"no GitHub releases found for tag prefix {prefix}")
+        _, tag, release = max(candidates, key=lambda item: item[0])
+        return tag, release
 
     def download_asset(
         self, release: ReleaseInfo, asset_name: str, destination: Path
@@ -219,7 +256,7 @@ class GitHubReleaseClient:
         if destination.stat().st_size == 0:
             raise PublishError(f"release asset is empty: {asset_name}")
 
-    def _get_json(self, url: str) -> dict[str, object]:
+    def _get_json(self, url: str) -> object:
         request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:

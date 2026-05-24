@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 const vmShimPath = fileURLToPath(new URL('./src/vm-shim.ts', import.meta.url))
-const versionPath = fileURLToPath(new URL('../VERSION', import.meta.url))
+const packageJsonPath = fileURLToPath(new URL('./package.json', import.meta.url))
 const reactPath = fileURLToPath(new URL('./node_modules/react/index.js', import.meta.url))
 const reactJsxRuntimePath = fileURLToPath(
   new URL('./node_modules/react/jsx-runtime.js', import.meta.url),
@@ -20,7 +20,12 @@ const reactDomClientPath = fileURLToPath(
 
 const readTxingVersion = (): string => {
   try {
-    return readFileSync(versionPath, 'utf-8').trim() || '0.12.10'
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as {
+      version?: unknown
+    }
+    return typeof packageJson.version === 'string' && packageJson.version.trim()
+      ? packageJson.version.trim()
+      : '0.12.10'
   } catch {
     return '0.12.10'
   }

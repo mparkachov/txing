@@ -1,4 +1,4 @@
-name: Release
+name: Release unit
 
 on:
   workflow_dispatch:
@@ -7,21 +7,18 @@ permissions:
   contents: write
 
 concurrency:
-  group: txing-release-${{ github.ref }}
+  group: txing-release-unit-${{ github.ref }}
   cancel-in-progress: false
 
 env:
+  RELEASE_COMPONENT: unit
+  RELEASE_VERSION_FILE: release/versions/unit
+  RELEASE_TAG_PREFIX: unit-v
   UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
   KVS_MASTER_ASSET: txing-unit-kvs-master-linux-aarch64.tar.gz
   KVS_MASTER_BINARY: txing-unit-kvs-master
   HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz
   HARDWARE_WORKER_BINARY: txing-unit-hardware-worker
-  SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
-  BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
-  WITNESS_LAMBDA_ASSET: txing-witness-lambda-linux-aarch64.zip
-  CLOUD_RIG_LAMBDA_ASSET: txing-cloud-rig-lambda-linux-aarch64.zip
-  CLOUD_MCU_LAMBDA_ASSET: txing-cloud-mcu-lambda-linux-aarch64.zip
-  RELEASE_RETENTION_COUNT: "10"
 
 jobs:
   metadata:
@@ -45,9 +42,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="$(tr -d '[:space:]' < VERSION)"
+          version="$(tr -d '[:space:]' < "$RELEASE_VERSION_FILE")"
           if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "VERSION must contain a semantic version like x.y.z, got: $version" >&2
+            echo "$RELEASE_VERSION_FILE must contain a semantic version like x.y.z, got: $version" >&2
             exit 1
           fi
           version_major_num=$((10#${BASH_REMATCH[1]}))
@@ -55,7 +52,7 @@ jobs:
           version_patch_num=$((10#${BASH_REMATCH[3]}))
 
           if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
-            echo "Release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
+            echo "$RELEASE_COMPONENT release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
             exit 1
           fi
 
@@ -65,7 +62,7 @@ jobs:
           latest_minor_num=0
           latest_patch_num=0
           while IFS= read -r tag; do
-            candidate="${tag#v}"
+            candidate="${tag#$RELEASE_TAG_PREFIX}"
             if [[ ! "$candidate" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
               continue
             fi
@@ -81,27 +78,29 @@ jobs:
               latest_minor_num="$candidate_minor_num"
               latest_patch_num="$candidate_patch_num"
             fi
-          done < <(git tag --list 'v*')
+          done < <(git tag --list "$RELEASE_TAG_PREFIX*")
 
           if [ -n "$latest_release_version" ] &&
             (( version_major_num < latest_major_num ||
               (version_major_num == latest_major_num && version_minor_num < latest_minor_num) ||
               (version_major_num == latest_major_num && version_minor_num == latest_minor_num && version_patch_num <= latest_patch_num) )); then
-            echo "Pushed VERSION $version must be greater than latest release tag v$latest_release_version." >&2
+            echo "$RELEASE_VERSION_FILE version $version must be greater than latest $RELEASE_COMPONENT release tag ${RELEASE_TAG_PREFIX}${latest_release_version}." >&2
             exit 1
           fi
 
-          tag="v$version"
+          tag="${RELEASE_TAG_PREFIX}${version}"
           release_target="$(git rev-parse HEAD)"
 
           {
-            echo "### Txing release"
+            echo "### Txing $RELEASE_COMPONENT release"
             echo
-            echo "- Pushed VERSION: \`$version\`"
+            echo "- Component: \`$RELEASE_COMPONENT\`"
+            echo "- Version file: \`$RELEASE_VERSION_FILE\`"
+            echo "- Version: \`$version\`"
             if [ -n "$latest_release_version" ]; then
-              echo "- Latest release tag: \`v$latest_release_version\`"
+              echo "- Latest $RELEASE_COMPONENT release tag: \`${RELEASE_TAG_PREFIX}${latest_release_version}\`"
             else
-              echo "- Latest release tag: none"
+              echo "- Latest $RELEASE_COMPONENT release tag: none"
             fi
             echo "- Tag: \`$tag\`"
             echo "- Commit: \`$release_target\`"
@@ -129,13 +128,6 @@ jobs:
             echo "Release tag $TAG already exists; releases are immutable." >&2
             exit 1
           fi
-
-      - name: Check release version surfaces
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 release/src/txing_release/cli.py check
 
   build-go-unit-daemon:
     name: Build txing-unit-daemon
@@ -237,245 +229,6 @@ jobs:
         with:
           name: ${{ env.UNIT_DAEMON_ASSET }}
           path: ${{ runner.temp }}/${{ env.UNIT_DAEMON_ASSET }}
-          if-no-files-found: error
-
-  build-go-rig-binary:
-    name: Build ${{ matrix.binary_name }}
-    runs-on: ubuntu-24.04-arm
-    needs: metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - binary_name: txing-sparkplug-manager
-            package_path: ./cmd/txing-sparkplug-manager
-            asset_name: txing-sparkplug-manager-linux-aarch64.tar.gz
-          - binary_name: txing-ble-connectivity
-            package_path: ./cmd/txing-ble-connectivity
-            asset_name: txing-ble-connectivity-linux-aarch64.tar.gz
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Configure apt networking
-        shell: bash
-        run: |
-          set -euo pipefail
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-            [ -e "$source" ] || continue
-            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
-          done
-          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
-
-      - name: Install system build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-
-          go_package=""
-          go_root=""
-          for version in 1.26 1.25 1.24; do
-            candidate="golang-${version}-go"
-            if apt-cache show "$candidate" >/dev/null 2>&1; then
-              go_package="$candidate"
-              go_root="/usr/lib/go-${version}"
-              break
-            fi
-          done
-          if [ -z "$go_package" ]; then
-            echo "Expected a Go 1.24+ compiler package in Ubuntu Noble apt repositories." >&2
-            exit 1
-          fi
-
-          sudo apt-get install -y \
-            build-essential ca-certificates file git "$go_package" \
-            pkg-config libdbus-1-dev
-          echo "$go_root/bin" >>"$GITHUB_PATH"
-          "$go_root/bin/go" version
-
-      - name: Restore Go cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: go-rig-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rig/go.mod', 'rig/go.sum') }}
-          restore-keys: |
-            go-rig-${{ matrix.binary_name }}-${{ runner.os }}-${{ runner.arch }}-
-            go-rig-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Test and build ${{ matrix.binary_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd rig
-          go version
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go test ./...
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=1 \
-            go build -trimpath \
-            -ldflags="-s -w -X github.com/mparkachov/txing/rig/internal/version.Version=${{ needs.metadata.outputs.version }}" \
-            -o "$RUNNER_TEMP/${{ matrix.binary_name }}" \
-            "${{ matrix.package_path }}"
-
-      - name: Package ${{ matrix.asset_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          source="$RUNNER_TEMP/${{ matrix.binary_name }}"
-          package_dir="$RUNNER_TEMP/package-${{ matrix.binary_name }}"
-          asset_path="$RUNNER_TEMP/${{ matrix.asset_name }}"
-          test -x "$source"
-          rm -rf "$package_dir"
-          install -d "$package_dir"
-          install -m 755 "$source" "$package_dir/${{ matrix.binary_name }}"
-          if file "$package_dir/${{ matrix.binary_name }}" | grep -q 'ELF'; then
-            strip "$package_dir/${{ matrix.binary_name }}"
-          fi
-          file "$package_dir/${{ matrix.binary_name }}"
-          tar -C "$package_dir" -czf "$asset_path" "${{ matrix.binary_name }}"
-          archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "${{ matrix.binary_name }}" ]; then
-            echo "Expected ${{ matrix.asset_name }} to contain only root-level ${{ matrix.binary_name }}, got:" >&2
-            printf '%s\n' "$archive_listing" >&2
-            exit 1
-          fi
-
-      - name: Upload ${{ matrix.asset_name }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ runner.temp }}/${{ matrix.asset_name }}
-          if-no-files-found: error
-
-  build-lambda:
-    name: Build ${{ matrix.function_name }}
-    runs-on: ubuntu-24.04-arm
-    needs: metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - function_name: txing-witness-lambda
-            working_directory: witness
-            package_path: ./cmd/txing-witness-lambda
-            asset_name: txing-witness-lambda-linux-aarch64.zip
-          - function_name: txing-cloud-rig-lambda
-            working_directory: devices/cloud-mcu/lambda
-            package_path: ./cmd/txing-cloud-rig-lambda
-            asset_name: txing-cloud-rig-lambda-linux-aarch64.zip
-          - function_name: txing-cloud-mcu-lambda
-            working_directory: devices/cloud-mcu/lambda
-            package_path: ./cmd/txing-cloud-mcu-lambda
-            asset_name: txing-cloud-mcu-lambda-linux-aarch64.zip
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Configure apt networking
-        shell: bash
-        run: |
-          set -euo pipefail
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-            [ -e "$source" ] || continue
-            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
-          done
-          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
-
-      - name: Install system build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-
-          go_package=""
-          go_root=""
-          for version in 1.26 1.25 1.24; do
-            candidate="golang-${version}-go"
-            if apt-cache show "$candidate" >/dev/null 2>&1; then
-              go_package="$candidate"
-              go_root="/usr/lib/go-${version}"
-              break
-            fi
-          done
-          if [ -z "$go_package" ]; then
-            echo "Expected a Go 1.24+ compiler package in Ubuntu Noble apt repositories." >&2
-            exit 1
-          fi
-
-          sudo apt-get install -y \
-            ca-certificates file git "$go_package" unzip zip
-          echo "$go_root/bin" >>"$GITHUB_PATH"
-          "$go_root/bin/go" version
-
-      - name: Restore Go cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('witness/go.mod', 'witness/go.sum', 'devices/cloud-mcu/lambda/go.mod', 'devices/cloud-mcu/lambda/go.sum') }}
-          restore-keys: |
-            go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-
-            go-lambda-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Test and build ${{ matrix.function_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${{ matrix.working_directory }}"
-          go version
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags lambda.norpc ./...
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-            go build -trimpath -tags lambda.norpc -ldflags="-s -w" \
-            -o "$RUNNER_TEMP/${{ matrix.function_name }}" \
-            "${{ matrix.package_path }}"
-
-      - name: Package ${{ matrix.asset_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          source="$RUNNER_TEMP/${{ matrix.function_name }}"
-          package_dir="$RUNNER_TEMP/package-${{ matrix.function_name }}"
-          asset_path="$RUNNER_TEMP/${{ matrix.asset_name }}"
-          test -x "$source"
-          rm -rf "$package_dir"
-          install -d "$package_dir"
-          install -m 755 "$source" "$package_dir/bootstrap"
-          bootstrap_file="$(file "$package_dir/bootstrap")"
-          echo "$bootstrap_file"
-          if ! grep -q 'ELF 64-bit LSB executable, ARM aarch64' <<<"$bootstrap_file"; then
-            echo "Expected ${{ matrix.function_name }} bootstrap to be a Linux ARM64 executable, got:" >&2
-            echo "$bootstrap_file" >&2
-            exit 1
-          fi
-          ldd_output="$(ldd "$package_dir/bootstrap" 2>&1 || true)"
-          if ! grep -Eq 'not a dynamic executable|statically linked' <<<"$ldd_output"; then
-            echo "Expected ${{ matrix.function_name }} bootstrap to be statically linked, got:" >&2
-            printf '%s\n' "$ldd_output" >&2
-            exit 1
-          fi
-          (cd "$package_dir" && zip -q "$asset_path" bootstrap)
-          archive_listing="$(unzip -Z1 "$asset_path")"
-          if [ "$archive_listing" != "bootstrap" ]; then
-            echo "Expected ${{ matrix.asset_name }} to contain only root-level bootstrap, got:" >&2
-            printf '%s\n' "$archive_listing" >&2
-            exit 1
-          fi
-
-      - name: Upload ${{ matrix.asset_name }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ runner.temp }}/${{ matrix.asset_name }}
           if-no-files-found: error
 
   build-kvs-master:
@@ -723,8 +476,6 @@ jobs:
     needs:
       - metadata
       - build-go-unit-daemon
-      - build-go-rig-binary
-      - build-lambda
       - build-kvs-master
       - build-hardware-worker
 
@@ -750,11 +501,6 @@ jobs:
             "$UNIT_DAEMON_ASSET"
             "$KVS_MASTER_ASSET"
             "$HARDWARE_WORKER_ASSET"
-            "$SPARKPLUG_MANAGER_ASSET"
-            "$BLE_CONNECTIVITY_ASSET"
-            "$WITNESS_LAMBDA_ASSET"
-            "$CLOUD_RIG_LAMBDA_ASSET"
-            "$CLOUD_MCU_LAMBDA_ASSET"
           )
 
           release_asset_paths=()
@@ -770,8 +516,9 @@ jobs:
 
           notes_file="$(mktemp)"
           {
-            echo "Txing release."
+            echo "Txing $RELEASE_COMPONENT release."
             echo
+            echo "- Component: $RELEASE_COMPONENT"
             echo "- Version: $VERSION"
             echo "- Tag: $TAG"
             echo "- Commit: $RELEASE_TARGET"
@@ -787,59 +534,4 @@ jobs:
             --target "$RELEASE_TARGET" \
             --title "$TAG" \
             --notes-file "$notes_file" \
-            --latest=true
-
-      - name: Prune old project releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-          KEEP_RELEASES: ${{ env.RELEASE_RETENTION_COUNT }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          release_list="$RUNNER_TEMP/project-releases.json"
-          stale_tags="$RUNNER_TEMP/project-release-tags-to-delete.txt"
-
-          gh release list \
-            --repo "$GITHUB_REPOSITORY" \
-            --limit 1000 \
-            --json tagName,publishedAt,createdAt \
-            >"$release_list"
-
-          python3 - "$KEEP_RELEASES" "$release_list" >"$stale_tags" <<'PY'
-          import json
-          import re
-          import sys
-
-          keep_releases = int(sys.argv[1])
-          release_list_path = sys.argv[2]
-          project_release_pattern = re.compile(
-              r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
-          )
-
-          with open(release_list_path, encoding="utf-8") as release_file:
-              releases = json.load(release_file)
-
-          project_releases = []
-          for release in releases:
-              tag_name = release.get("tagName") or ""
-              if not project_release_pattern.fullmatch(tag_name):
-                  continue
-              published_at = release.get("publishedAt") or release.get("createdAt") or ""
-              project_releases.append((published_at, tag_name))
-
-          project_releases.sort(reverse=True)
-          for _, tag_name in project_releases[keep_releases:]:
-              print(tag_name)
-          PY
-
-          if [ ! -s "$stale_tags" ]; then
-            echo "No project releases older than the newest $KEEP_RELEASES to prune."
-            exit 0
-          fi
-
-          while IFS= read -r old_tag; do
-            [ -n "$old_tag" ] || continue
-            echo "Deleting old project release and tag $old_tag"
-            gh release delete "$old_tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
-          done <"$stale_tags"
+            --latest=false

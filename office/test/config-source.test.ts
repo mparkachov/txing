@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const repoRoot = resolve(import.meta.dir, '../..')
@@ -40,7 +40,8 @@ describe('office config wiring', () => {
     expect(configSource).not.toContain('VITE_DEVICE_THING_NAME')
     expect(configSource).not.toContain('VITE_TXING_VERSION')
     expect(viteConfigSource).toContain('__TXING_VERSION__')
-    expect(viteConfigSource).toContain("../VERSION")
+    expect(viteConfigSource).toContain("./package.json")
+    expect(viteConfigSource).not.toContain("../VERSION")
     expect(viteConfigSource).not.toContain("git rev-parse --short=12 HEAD")
     expect(authSource).toContain('redirect_uri: getRuntimeAppUrl()')
     expect(authSource).toContain("const productionOfficeOrigin = 'https://office.txing.dev'")
@@ -70,5 +71,25 @@ describe('office config wiring', () => {
     expect(viteConfigSource).toContain("new URL('./node_modules/react/index.js'")
     expect(viteConfigSource).toContain("find: 'react/jsx-runtime'")
     expect(viteConfigSource).toContain("dedupe: ['react', 'react-dom']")
+  })
+
+  test('office version is component-scoped and has no release workflow', () => {
+    const packageJson = JSON.parse(readFileSync(resolve(repoRoot, 'office/package.json'), 'utf-8')) as {
+      version?: unknown
+    }
+    const componentVersion = readFileSync(resolve(repoRoot, 'release/versions/office'), 'utf-8').trim()
+    const viteConfigSource = readFileSync(resolve(repoRoot, 'office/vite.config.ts'), 'utf-8')
+    const workflowDir = resolve(repoRoot, '.github/workflows')
+    const workflowSources = readdirSync(workflowDir)
+      .filter((fileName) => fileName.endsWith('.yml') || fileName.endsWith('.yaml'))
+      .map((fileName) => readFileSync(resolve(workflowDir, fileName), 'utf-8'))
+      .join('\n')
+
+    expect(packageJson.version).toBe(componentVersion)
+    expect(viteConfigSource).toContain('packageJson.version')
+    expect(viteConfigSource).not.toContain('VITE_TXING_VERSION')
+    expect(workflowSources).not.toContain('release/versions/office')
+    expect(workflowSources).not.toContain('office-v')
+    expect(workflowSources).not.toContain('txing-office')
   })
 })

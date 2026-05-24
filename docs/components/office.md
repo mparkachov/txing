@@ -68,8 +68,9 @@ cp office/.env.example office/.env.local
 - `VITE_SPARKPLUG_GROUP_ID`
 - Cognito and IoT values from `/txing/stack/...` SSM parameters
 
-The office bundle version is injected by Vite from the root `VERSION` file during
-the build. It is not a Cloudflare environment variable.
+The office bundle version is injected by Vite from `office/package.json` during
+the build. The package version is kept aligned with `release/versions/office`,
+and the version is not a Cloudflare environment variable.
 
 Local Cognito sign-in remains allowed for:
 

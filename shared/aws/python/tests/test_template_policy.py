@@ -751,12 +751,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
-        project_version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
-        self.assertRegex(project_version, r"^[0-9]+\.[0-9]+\.[0-9]+$")
-        self.assertIn("_project-version-env:", root_justfile)
-        self.assertIn("export_line TXING_VERSION_BASE", root_justfile)
-        self.assertIn("export_line TXING_VERSION", root_justfile)
+        removed_version_env = "TXING_" + "VERSION"
+        self.assertFalse((REPO_ROOT / "VERSION").exists())
+        self.assertNotIn("_project-" + "version-env:", root_justfile)
+        self.assertNotIn(removed_version_env + "_BASE", root_justfile)
+        self.assertNotIn("export_line " + removed_version_env, root_justfile)
+        self.assertIn("_project-git-env:", root_justfile)
         parameter_block = root_template.split("\nResources:", 1)[0]
         self.assertIn("StackCognitoDomainPrefix:", parameter_block)
         self.assertIn("StackAdminEmail:", parameter_block)

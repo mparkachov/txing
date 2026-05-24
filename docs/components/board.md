@@ -312,6 +312,12 @@ Service starts are offline by design. Restarting
 new binaries, log into the board, enter a root shell, switch root to writable
 mode, run root-owned `mise upgrade`, and reboot.
 
+Unit tools are released from the `unit` component stream. Root-owned `mise`
+configs must set `version_prefix = "unit-v"` so `latest` resolves from
+`unit-v*` GitHub Releases instead of the repository-wide latest release. This
+release model is forward-only; replace old board configs manually if they do
+not include the component prefix.
+
 ## Fresh Board Install
 
 Assumptions:
@@ -425,14 +431,17 @@ txing-unit-hardware-worker = "github:mparkachov/txing"
 
 [tools.txing-unit-daemon]
 version = "latest"
+version_prefix = "unit-v"
 asset_pattern = "txing-unit-daemon-linux-aarch64.tar.gz"
 
 [tools.txing-unit-kvs-master]
 version = "latest"
+version_prefix = "unit-v"
 asset_pattern = "txing-unit-kvs-master-linux-aarch64.tar.gz"
 
 [tools.txing-unit-hardware-worker]
 version = "latest"
+version_prefix = "unit-v"
 asset_pattern = "txing-unit-hardware-worker-linux-aarch64.tar.gz"
 EOF
 
@@ -698,7 +707,9 @@ Expected:
 
 ## Maintenance
 
-Board update during a writable-root maintenance window:
+Board update during a writable-root maintenance window. Publish a new immutable
+`unit-vX.Y.Z` release first, and replace old root-owned mise config manually if
+it does not include `version_prefix = "unit-v"`:
 
 ```bash
 sudo su -

@@ -6,6 +6,7 @@ import unittest
 import zipfile
 
 from aws_admin.publish_release.core import (
+    GitHubReleaseClient,
     LAMBDA_ASSETS,
     PublishConfig,
     PublishError,
@@ -16,16 +17,91 @@ from aws_admin.publish_release.core import (
 )
 
 
+class _FakeGitHubReleaseClient(GitHubReleaseClient):
+    def __init__(self, responses: dict[str, object]):
+        super().__init__("mparkachov/txing")
+        self.responses = responses
+        self.requested_urls: list[str] = []
+
+    def _get_json(self, url: str) -> object:
+        self.requested_urls.append(url)
+        return self.responses[url]
+
+
 class PublishTests(unittest.TestCase):
     def test_normalizes_release_refs(self) -> None:
         self.assertEqual(normalize_release_tag("latest"), "latest")
-        self.assertEqual(normalize_release_tag("latest", latest_tag="v1.2.3"), "v1.2.3")
+        self.assertEqual(
+            normalize_release_tag("latest", latest_tag="lambda-v1.2.3"),
+            "lambda-v1.2.3",
+        )
+        self.assertEqual(normalize_release_tag("lambda-v1.2.3"), "lambda-v1.2.3")
         self.assertEqual(normalize_release_tag("v1.2.3"), "v1.2.3")
-        self.assertEqual(normalize_release_tag("1.2.3"), "v1.2.3")
+        self.assertEqual(normalize_release_tag("1.2.3"), "lambda-v1.2.3")
         with self.assertRaises(PublishError):
             normalize_release_tag("1.2")
         with self.assertRaises(PublishError):
             normalize_release_tag("release=v1.2.3")
+
+    def test_latest_resolves_highest_lambda_prefixed_release(self) -> None:
+        releases_url = "https://api.github.com/repos/mparkachov/txing/releases?per_page=100"
+        github = _FakeGitHubReleaseClient(
+            {
+                releases_url: [
+                    {"tag_name": "rig-v9.0.0", "assets": []},
+                    {
+                        "tag_name": "lambda-v1.2.3",
+                        "assets": [{"name": "a", "browser_download_url": "https://example/a"}],
+                    },
+                    {
+                        "tag_name": "lambda-v1.3.0",
+                        "assets": [{"name": "b", "browser_download_url": "https://example/b"}],
+                    },
+                    {"tag_name": "unit-v8.0.0", "assets": []},
+                    {"tag_name": "v99.0.0", "assets": []},
+                ]
+            }
+        )
+
+        release = github.resolve_release("latest")
+
+        self.assertEqual(release.tag, "lambda-v1.3.0")
+        self.assertEqual(release.version, "1.3.0")
+        self.assertEqual(release.assets, {"b": "https://example/b"})
+        self.assertEqual(github.requested_urls, [releases_url])
+
+    def test_explicit_lambda_and_legacy_tags_resolve_by_tag(self) -> None:
+        lambda_url = (
+            "https://api.github.com/repos/mparkachov/txing/releases/tags/"
+            "lambda-v1.2.3"
+        )
+        legacy_url = (
+            "https://api.github.com/repos/mparkachov/txing/releases/tags/"
+            "v1.2.3"
+        )
+        github = _FakeGitHubReleaseClient(
+            {
+                lambda_url: {"tag_name": "lambda-v1.2.3", "assets": []},
+                legacy_url: {"tag_name": "v1.2.3", "assets": []},
+            }
+        )
+
+        lambda_release = github.resolve_release("1.2.3")
+        legacy_release = github.resolve_release("v1.2.3")
+
+        self.assertEqual(lambda_release.tag, "lambda-v1.2.3")
+        self.assertEqual(lambda_release.version, "1.2.3")
+        self.assertEqual(legacy_release.tag, "v1.2.3")
+        self.assertEqual(legacy_release.version, "1.2.3")
+
+    def test_latest_requires_lambda_prefixed_release(self) -> None:
+        releases_url = "https://api.github.com/repos/mparkachov/txing/releases?per_page=100"
+        github = _FakeGitHubReleaseClient(
+            {releases_url: [{"tag_name": "rig-v9.0.0", "assets": []}]}
+        )
+
+        with self.assertRaises(PublishError):
+            github.resolve_release("latest")
 
     def test_expected_release_asset_names_are_stable(self) -> None:
         self.assertEqual(
