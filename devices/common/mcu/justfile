@@ -5,24 +5,20 @@ mcu_dir := source_directory()
 project_root := canonicalize(mcu_dir + "/../../..")
 tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
-common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
 zephyr_python := env_var_or_default("TXING_MCU_ZEPHYR_PYTHON", "python3")
-zephyr_script := common_mcu_dir + "/scripts/stock_zephyr_mcu.py"
-device_type := "power"
+zephyr_script := mcu_dir + "/scripts/stock_zephyr_mcu.py"
 
 @install:
     "{{ zephyr_python }}" "{{ zephyr_script }}" install
 
-@check: build
+@paths:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" paths
 
-@build:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build
-
-@flash:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash
-
-@check-flash:
+@check-flash device_type:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" check-flash
+
+@flash device_type:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash
 
 @build-nve-hex thing_name="power-test":
     "{{ zephyr_python }}" "{{ zephyr_script }}" build-nve-hex "{{ thing_name }}"
@@ -30,14 +26,8 @@ device_type := "power"
 @check-nve thing_name="power-test":
     "{{ zephyr_python }}" "{{ zephyr_script }}" check-nve "{{ thing_name }}"
 
-@flash-nve thing_name="power-test":
+@nve thing_name="power-test":
     "{{ zephyr_python }}" "{{ zephyr_script }}" nve "{{ thing_name }}"
-
-@paths:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" paths
-
-@clean:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" clean
 
 @default:
     @just --list

@@ -106,6 +106,32 @@ func TestConsumeScanStoppedForConnectOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestScanFreshnessHoldCoversActiveAndRecentConnects(t *testing.T) {
+	state := &runtimeState{
+		cfg:            rigconfig.Config{PresenceTimeout: 20 * time.Second},
+		activeConnects: map[string]chan struct{}{},
+	}
+	release, err := state.acquireDeviceConnect(context.Background(), "unit-1")
+	if err != nil {
+		t.Fatalf("acquire failed: %v", err)
+	}
+	if !state.scanFreshnessHeld(time.Now()) {
+		t.Fatal("active connect should hold scanner freshness")
+	}
+
+	release()
+	if !state.scanFreshnessHeld(time.Now()) {
+		t.Fatal("recent connect release should hold scanner freshness")
+	}
+
+	state.mu.Lock()
+	state.scanFreshnessHoldUntil = time.Now().Add(-time.Second)
+	state.mu.Unlock()
+	if state.scanFreshnessHeld(time.Now()) {
+		t.Fatal("expired connect freshness hold should not remain active")
+	}
+}
+
 func TestScanRetryDecisionRecoversBluezAlreadyActiveDiscovery(t *testing.T) {
 	decision := scanRetryDecision(errors.New("Operation already in progress"), 7)
 	if decision.delayMS != rigble.BluezInProgressScanRetryDelayMS {
@@ -348,6 +374,46 @@ func TestConnectedSessionAgesMeasurementsByRedcon(t *testing.T) {
 	}
 	if published != 0 {
 		t.Fatal("fresh idle measurement should not publish a stale-clear sample")
+	}
+}
+
+func TestStaleAdvertisementDoesNotPublishOfflineWhileScanFreshnessHeld(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		published++
+	}
+	state.scanFreshnessHoldUntil = time.Now().Add(time.Second)
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", time.Now().Add(-30*time.Second)))
+
+	session.checkStale(context.Background())
+
+	if session.offlinePublished {
+		t.Fatal("offline should not publish while scanner freshness is held for connect recovery")
+	}
+	if published != 0 {
+		t.Fatalf("published samples = %d, want none", published)
+	}
+}
+
+func TestStaleAdvertisementPublishesOfflineAfterScanFreshnessHoldExpires(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		published++
+	}
+	state.scanFreshnessHoldUntil = time.Now().Add(-time.Second)
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", time.Now().Add(-30*time.Second)))
+
+	session.checkStale(context.Background())
+
+	if !session.offlinePublished {
+		t.Fatal("offline should publish after scanner freshness hold expires")
+	}
+	if published != 1 {
+		t.Fatalf("published samples = %d, want one offline sample", published)
 	}
 }
 

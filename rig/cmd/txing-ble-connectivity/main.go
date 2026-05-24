@@ -23,28 +23,29 @@ import (
 )
 
 type runtimeState struct {
-	cfg                   rigconfig.Config
-	logger                *awsx.CloudWatchLogger
-	ipc                   *ipc.Client
-	specs                 map[string]rigble.DeviceSpec
-	sessions              map[string]*deviceSession
-	addresses             map[string]bluetooth.Address
-	cachedAdvertisements  map[string]rigble.Advertisement
-	scannerLastPublished  map[string]uint64
-	lastStateRead         map[string]time.Time
-	activeConnects        map[string]chan struct{}
-	connectSlots          chan struct{}
-	scanStoppedForConnect bool
-	seq                   uint64
-	mu                    sync.Mutex
-	txingUUID             bluetooth.UUID
-	commandUUID           bluetooth.UUID
-	stateUUID             bluetooth.UUID
-	powerUUID             bluetooth.UUID
-	weatherUUID           bluetooth.UUID
-	connector             bleConnector
-	sampleSink            func(rigble.CapabilitySample, bool, bool)
-	commandResultSink     func(protocol.CapabilityCommand, string, *string, *uint8)
+	cfg                    rigconfig.Config
+	logger                 *awsx.CloudWatchLogger
+	ipc                    *ipc.Client
+	specs                  map[string]rigble.DeviceSpec
+	sessions               map[string]*deviceSession
+	addresses              map[string]bluetooth.Address
+	cachedAdvertisements   map[string]rigble.Advertisement
+	scannerLastPublished   map[string]uint64
+	lastStateRead          map[string]time.Time
+	activeConnects         map[string]chan struct{}
+	connectSlots           chan struct{}
+	scanStoppedForConnect  bool
+	scanFreshnessHoldUntil time.Time
+	seq                    uint64
+	mu                     sync.Mutex
+	txingUUID              bluetooth.UUID
+	commandUUID            bluetooth.UUID
+	stateUUID              bluetooth.UUID
+	powerUUID              bluetooth.UUID
+	weatherUUID            bluetooth.UUID
+	connector              bleConnector
+	sampleSink             func(rigble.CapabilitySample, bool, bool)
+	commandResultSink      func(protocol.CapabilityCommand, string, *string, *uint8)
 }
 
 func main() {
@@ -462,6 +463,7 @@ func (s *runtimeState) pauseScanForConnect() {
 	}
 	s.mu.Lock()
 	s.scanStoppedForConnect = true
+	s.scanFreshnessHoldUntil = time.Now().Add(s.cfg.PresenceTimeout)
 	s.mu.Unlock()
 }
 
@@ -471,6 +473,12 @@ func (s *runtimeState) consumeScanStoppedForConnect() bool {
 	stopped := s.scanStoppedForConnect
 	s.scanStoppedForConnect = false
 	return stopped
+}
+
+func (s *runtimeState) scanFreshnessHeld(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.scanStoppedForConnect || len(s.activeConnects) > 0 || now.Before(s.scanFreshnessHoldUntil)
 }
 
 func (s *runtimeState) waitForActiveConnects(ctx context.Context) {
@@ -514,6 +522,9 @@ func (s *runtimeState) acquireDeviceConnect(ctx context.Context, thingName strin
 				s.mu.Lock()
 				if s.activeConnects[thingName] == done {
 					delete(s.activeConnects, thingName)
+					if len(s.activeConnects) == 0 {
+						s.scanFreshnessHoldUntil = time.Now().Add(s.cfg.PresenceTimeout)
+					}
 					close(done)
 				}
 				s.mu.Unlock()

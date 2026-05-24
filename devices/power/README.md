@@ -50,12 +50,12 @@ brew install cmake ninja dtc open-ocd arm-none-eabi-gcc
 Create the repo-local Python environment and stock Zephyr west workspace:
 
 ```sh
-just power::mcu::install
+just mcu::install
 ```
 
-The power MCU workspace is local to `devices/power/mcu/.zephyr-workspace` and
-is pinned to stock Zephyr `v4.4.0`, the latest stable Zephyr release at the time
-this power trial was created. The recipes keep `HOME`, pip cache, Zephyr cache,
+The shared MCU workspace is local to `devices/common/mcu/zephyr` and is pinned
+to stock Zephyr `v4.4.0`, the latest stable Zephyr release at the time this
+power trial was created. The recipes keep `HOME`, pip cache, Zephyr cache,
 ccache, and temporary files inside the repository while installing and building.
 
 ## Build
@@ -70,10 +70,11 @@ the same `devices/common/mcu/xiao_nrf54l15/src/redcon.c` implementation used by
 flash commands do not take a profile argument.
 
 ```sh
+just mcu::paths
 just power::mcu::paths
 just power::mcu::check
 just power::mcu::build
-just power::mcu::check-flash
+just mcu::check-flash power
 ```
 
 The build output is:
@@ -97,14 +98,14 @@ device name:
 Generate and inspect the NVE programming command:
 
 ```sh
-just power::mcu::build-nve-hex power-test
-just power::mcu::check-nve power-test
+just mcu::build-nve-hex power-test
+just mcu::check-nve power-test
 ```
 
 Program the NVE record manually when hardware is connected:
 
 ```sh
-just power::mcu::flash-nve power-test
+just mcu::nve power-test
 ```
 
 ## Flash
@@ -112,7 +113,7 @@ just power::mcu::flash-nve power-test
 Manual flash only:
 
 ```sh
-just power::mcu::flash
+just mcu::flash power
 ```
 
 The flash path intentionally uses OpenOCD with the stock Zephyr Seeed board

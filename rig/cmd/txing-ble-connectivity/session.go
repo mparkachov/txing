@@ -480,7 +480,8 @@ func (d *deviceSession) handleNotification(ctx context.Context, notification ble
 }
 
 func (d *deviceSession) checkStale(ctx context.Context) {
-	now := uint64(time.Now().UnixMilli())
+	nowTime := time.Now()
+	now := uint64(nowTime.UnixMilli())
 	if d.connected != nil {
 		if !d.connected.Connected() {
 			d.disconnect()
@@ -490,6 +491,9 @@ func (d *deviceSession) checkStale(ctx context.Context) {
 		return
 	}
 	if d.lastAdvertisement != nil && d.advertisementIsFresh(*d.lastAdvertisement) {
+		return
+	}
+	if d.runtime.scanFreshnessHeld(nowTime) {
 		return
 	}
 	if !d.offlinePublished {
