@@ -5,7 +5,8 @@
 - The target board is `xiao_nrf54l15/nrf54l15/cpuapp`.
 
 ## Notes
-- Run firmware build/test commands from `mcu/` through the `just unit::mcu::*` recipes.
+- Run shared setup/preflight from the repo root with `just mcu::install` and
+  `just mcu::check`; keep device firmware builds under `just unit::mcu::build`.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
 - Do not flash firmware or NVE records automatically; prepare artifacts and commands only.
 - Read `../../../docs/components/mcu.md` before changing the shared XIAO

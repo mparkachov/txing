@@ -33,18 +33,8 @@ Build firmware:
 
 ```sh
 just mcu::install
-just mcu::paths
-just weather::mcu::paths
-just weather::mcu::check
+just mcu::check
 just weather::mcu::build
-just mcu::check-flash weather
-```
-
-Generate the NVE HEX for manual programming:
-
-```sh
-just mcu::build-nve-hex weather-q8zbgb
-just mcu::check-nve weather-q8zbgb
 ```
 
 Firmware and NVE flashing remain manual hardware steps:

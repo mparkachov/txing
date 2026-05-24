@@ -1,10 +1,10 @@
 ---
 id: TASK-15
 title: 'Milestone: Unit MCU stock Zephyr migration'
-status: In Progress
+status: Done
 assignee:
   - '@Codex'
-updated_date: '2026-05-24 18:04'
+updated_date: '2026-05-24 18:33'
 created_date: '2026-05-24 13:21'
 labels: []
 milestone: Unit MCU stock Zephyr migration
@@ -32,21 +32,21 @@ ordinal: 23000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 unit::mcu check/build/paths/clean use the shared stock Zephyr stack and no active unit build path depends on NCS.
+- [x] #1 unit::mcu build/clean use the shared stock Zephyr stack and no active unit build path depends on NCS.
 - [x] #2 Stock-incompatible NCS-only configuration is removed while preserving unit REDCON 1/2/3/4, D1 power, battery, BLE identity, and NVE behavior.
 - [x] #3 Rig-facing Sparkplug and named-shadow semantics remain compatible with the current unit contracts.
-- [x] #4 check-flash unit and check-nve unit-test print direct OpenOCD commands without programming hardware.
-- [ ] #5 User manual validation after flashing confirms REDCON transitions through the rig/web workflow as hardware allows.
+- [x] #4 Shared mcu::check validates tool/workspace prerequisites, while firmware and NVE hardware writes stay limited to mcu::flash and mcu::nve.
+- [x] #5 User manual validation after flashing confirms REDCON transitions through the rig/web workflow as hardware allows.
 - [x] #6 Obsolete unit MCU generated build/cache/workspace folders and any unit-specific NCS wrapper are removed once the shared stock Zephyr build is validated.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Rewire devices/unit/mcu/justfile install/check/build/paths/clean and compatibility flash/NVE wrappers to devices/common/mcu/scripts/stock_zephyr_mcu.py.
+1. Rewire devices/unit/mcu/justfile build/clean to devices/common/mcu/scripts/stock_zephyr_mcu.py and keep shared setup/flash/NVE actions on root mcu recipes.
 2. Remove stock-incompatible NCS-only unit Kconfig while preserving REDCON 1/2/3/4, D1 power, battery, BLE identity, NVE, and existing BLE TX-power behavior.
 3. Remove obsolete ignored unit generated build/cache/workspace output and any unit-specific NCS wrapper once the shared stock-Zephyr build is validated.
-4. Validate unit paths/build/check plus root mcu check-flash unit and check-nve unit-test without running firmware or NVE flashing.
+4. Validate root mcu check plus unit build without running firmware or NVE flashing.
 5. Record validation evidence and leave AC #5 open for user physical REDCON workflow validation unless confirmed.
 <!-- SECTION:PLAN:END -->
 
@@ -60,10 +60,14 @@ User flashed the first stock-Zephyr unit image and powered it on. The rig showed
 After flashing the +4 dBm unit firmware, user reported REDCON 1 -> 4 eventually powers down but visible switching/off convergence can take more than 10 seconds. Firmware review showed a valid REDCON 4 write drives D1 off immediately in enter_redcon_idle(), before notification or measurement work, so the long delay is more consistent with the rig command convergence path than with firmware intentionally delaying D1. Updated rig BLE command handling so, after a successful REDCON 4 write and immediate aggregate REDCON 4 sample publication, command success is published without waiting for the follow-up GATT state read. Wakeup commands REDCON 1/2/3 still use the stricter post-write state confirmation. Added TestIdleCommandDoesNotWaitForStateConfirmation and reran GOCACHE=/Users/Maxim/Developer/txing/tmp/go-build GOPATH=/Users/Maxim/Developer/txing/tmp/go-path TMPDIR=/Users/Maxim/Developer/txing/tmp/go-tmp just --justfile rig/justfile test successfully. AC #5 remains open until user redeploys rig and validates REDCON 4 convergence physically.
 
 Follow-up rig review corrected two assumptions that did not match the common XIAO nRF54L15 controller behavior. First, advertisement-only evidence now means only Sparkplug/BLE reachability for power, weather, and unit alike; weather advertisements no longer imply REDCON 4 or valid power/weather capabilities until a GATT state/measurement read or command-applied state confirms them. Second, active BLE connects stop scanner availability globally, so scan freshness is held for all sessions while any connect is active, but only if that device's last advertisement was fresh when the active connect began; the post-connect recent hold remains scoped to the device that connected. Updated rig contract docs and tests, including weather advertisement capability expectations and cross-session scan freshness hold coverage. Validation passed with GOCACHE=/Users/Maxim/Developer/txing/tmp/go-build GOPATH=/Users/Maxim/Developer/txing/tmp/go-path TMPDIR=/Users/Maxim/Developer/txing/tmp/go-tmp just --justfile rig/justfile test.
+
+Simplified the active MCU command surface per user direction. Root `mcu` now exposes only `install`, `check`, `flash <device-type>`, and `nve <thing-name>`; device MCU justfiles expose only device-owned `build` and `clean`. Removed public path, check-flash, check-nve, build-nve-hex, per-device install, per-device flash, and per-device NVE wrapper recipes. `mcu::check` is the non-mutating shared preflight for host tools, stock Zephyr workspace, Seeed OpenOCD config, shared board config, and NVE script. `mcu::nve` remains the command that generates the NVE HEX and flashes it. Active MCU docs and READMEs now document the simplified workflow.
+
+User flashed the unit with the simplified process and confirmed AC #5: the unit responds to REDCON transitions through the web UI.
 <!-- SECTION:NOTES:END -->
 
-## Remaining Manual Validation
+## Physical Validation
 
 <!-- SECTION:VALIDATION:BEGIN -->
-To close AC #5, manually flash unit firmware and NVE, then validate the REDCON workflow through rig/web as hardware allows, especially REDCON 4 -> 3 -> 2 -> 1 -> 4 and the corresponding power, board, MCP, video, battery, Sparkplug, and named-shadow behavior from the unit contracts.
+User confirmed the flashed unit responds to REDCON transitions through the web UI after the simplified MCU build/flash/NVE workflow.
 <!-- SECTION:VALIDATION:END -->

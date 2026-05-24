@@ -200,6 +200,29 @@ def install() -> None:
     install_python_requirements()
 
 
+def check() -> None:
+    require_commands(
+        "git",
+        "python3",
+        "cmake",
+        "ninja",
+        "dtc",
+        "arm-none-eabi-gcc",
+        "openocd",
+    )
+    verify_workspace()
+    if not OPENOCD_CFG.exists():
+        fail(f"missing stock Zephyr Seeed OpenOCD config: {OPENOCD_CFG}. Run: just mcu::install")
+    if not BOARD_CONF.exists():
+        fail(f"missing shared XIAO nRF54L15 board config: {BOARD_CONF}")
+    if not NVE_SCRIPT.exists():
+        fail(f"missing REDCON NVE script: {NVE_SCRIPT}")
+    log(
+        "ok: shared MCU toolchain, Zephyr workspace, Seeed OpenOCD config, "
+        "board config, and NVE script are available"
+    )
+
+
 def device_mcu_dir(device: str) -> Path:
     if device not in ACTIVE_DEVICES:
         fail(
@@ -345,18 +368,9 @@ def require_openocd() -> None:
         fail("missing OpenOCD. Install manually with: brew install open-ocd")
 
 
-def print_openocd(hex_file: Path) -> None:
-    print(shlex.join(str(arg) for arg in openocd_command(hex_file)))
-
-
 def run_openocd(hex_file: Path) -> None:
     require_openocd()
     run(openocd_command(hex_file), cwd=PROJECT_ROOT, env=local_env())
-
-
-def check_flash(device: str) -> None:
-    require_openocd()
-    print_openocd(require_firmware_hex(device))
 
 
 def flash(device: str) -> None:
@@ -383,51 +397,9 @@ def build_nve_hex(thing_name: str) -> None:
     )
 
 
-def check_nve(thing_name: str) -> None:
-    require_openocd()
-    build_nve_hex(thing_name)
-    print_openocd(NVE_HEX)
-
-
 def nve(thing_name: str) -> None:
     build_nve_hex(thing_name)
     run_openocd(NVE_HEX)
-
-
-def paths(device: str | None = None) -> None:
-    values: dict[str, Path | str] = {
-        "projectRoot": PROJECT_ROOT,
-        "commonMcuDir": COMMON_MCU_DIR,
-        "workspaceDir": WORKSPACE_DIR,
-        "zephyrBase": ZEPHYR_BASE,
-        "zephyrVersion": ZEPHYR_VERSION,
-        "venv": VENV_DIR,
-        "python": VENV_PYTHON,
-        "west": WEST_BIN,
-        "board": BOARD,
-        "buildVersion": BUILD_VERSION,
-        "openocdCfg": OPENOCD_CFG,
-        "nveScript": NVE_SCRIPT,
-        "nveHex": NVE_HEX,
-        "nveAddress": NVE_ADDRESS,
-    }
-    if device is not None:
-        values.update(
-            {
-                "device": device,
-                "mcuDir": device_mcu_dir(device),
-                "appDir": app_dir(device),
-                "prjConf": prj_conf(device),
-                "overlayFile": overlay_file(device),
-                "buildDir": build_dir(device),
-                "firmwareHex": firmware_hex(device),
-            }
-        )
-    for label, value in values.items():
-        if isinstance(value, Path):
-            print(f"{label}: {value} exists={value.exists()}")
-        else:
-            print(f"{label}: {value}")
 
 
 def require_device(command: str, device: str | None) -> str:
@@ -445,39 +417,31 @@ def main() -> None:
         "command",
         choices=(
             "install",
-            "paths",
             "check",
             "build",
             "clean",
-            "check-flash",
             "flash",
-            "build-nve-hex",
-            "check-nve",
             "nve",
         ),
     )
-    parser.add_argument("thing_name", nargs="?", default="power-test")
+    parser.add_argument("thing_name", nargs="?")
     args = parser.parse_args()
 
     if args.command == "install":
         install()
-    elif args.command == "paths":
-        paths(args.device)
     elif args.command == "check":
-        build(require_device(args.command, args.device))
+        if args.device:
+            fail("mcu check is shared and does not take --device")
+        check()
     elif args.command == "build":
         build(require_device(args.command, args.device))
     elif args.command == "clean":
         clean(require_device(args.command, args.device))
-    elif args.command == "check-flash":
-        check_flash(require_device(args.command, args.device))
     elif args.command == "flash":
         flash(require_device(args.command, args.device))
-    elif args.command == "build-nve-hex":
-        build_nve_hex(args.thing_name)
-    elif args.command == "check-nve":
-        check_nve(args.thing_name)
     elif args.command == "nve":
+        if args.thing_name is None:
+            fail("nve requires <thing-name>")
         nve(args.thing_name)
 
 

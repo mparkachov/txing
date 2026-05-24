@@ -11,22 +11,13 @@ zephyr_script := mcu_dir + "/scripts/stock_zephyr_mcu.py"
 @install:
     "{{ zephyr_python }}" "{{ zephyr_script }}" install
 
-@paths:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" paths
-
-@check-flash device_type:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" check-flash
+@check:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" check
 
 @flash device_type:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash
 
-@build-nve-hex thing_name="power-test":
-    "{{ zephyr_python }}" "{{ zephyr_script }}" build-nve-hex "{{ thing_name }}"
-
-@check-nve thing_name="power-test":
-    "{{ zephyr_python }}" "{{ zephyr_script }}" check-nve "{{ thing_name }}"
-
-@nve thing_name="power-test":
+@nve thing_name:
     "{{ zephyr_python }}" "{{ zephyr_script }}" nve "{{ thing_name }}"
 
 @default:

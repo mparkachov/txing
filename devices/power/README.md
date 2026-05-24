@@ -25,8 +25,7 @@ just aws::deploy-device <rig-id> power power
 Use the returned power Thing ID when preparing the MCU factory/NVE data:
 
 ```sh
-just power::mcu::check-nve <power-thing-id>
-just power::mcu::flash-nve <power-thing-id>
+just mcu::nve <power-thing-id>
 ```
 
 Restart rig daemons after registration if the rig inventory should refresh
@@ -36,8 +35,7 @@ immediately:
 just rig::restart <config-dir>
 ```
 
-Agents may render `check-nve` commands, but firmware/NVE flashing remains a
-manual hardware step.
+Firmware/NVE flashing remains a manual hardware step.
 
 ## MCU Setup
 
@@ -70,11 +68,8 @@ the same `devices/common/mcu/xiao_nrf54l15/src/redcon.c` implementation used by
 flash commands do not take a profile argument.
 
 ```sh
-just mcu::paths
-just power::mcu::paths
-just power::mcu::check
+just mcu::check
 just power::mcu::build
-just mcu::check-flash power
 ```
 
 The build output is:
@@ -94,13 +89,6 @@ device name:
 - device name length
 - 26-byte zero-padded printable non-space ASCII device name
 - CRC32 over the preceding bytes
-
-Generate and inspect the NVE programming command:
-
-```sh
-just mcu::build-nve-hex power-test
-just mcu::check-nve power-test
-```
 
 Program the NVE record manually when hardware is connected:
 

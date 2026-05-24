@@ -7,11 +7,8 @@ Common commands from the repository root:
 
 ```sh
 just mcu::install
-just unit::mcu::paths
+just mcu::check
 just unit::mcu::build
-just unit::mcu::check
-just mcu::check-flash unit
-just mcu::check-nve unit-test
 ```
 
 Firmware and NVE flashing are manual operator actions:

@@ -10,31 +10,8 @@ zephyr_python := env_var_or_default("TXING_MCU_ZEPHYR_PYTHON", "python3")
 zephyr_script := common_mcu_dir + "/scripts/stock_zephyr_mcu.py"
 device_type := "power"
 
-@install:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" install
-
-@check: build
-
 @build:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build
-
-@flash:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash
-
-@check-flash:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" check-flash
-
-@build-nve-hex thing_name="power-test":
-    "{{ zephyr_python }}" "{{ zephyr_script }}" build-nve-hex "{{ thing_name }}"
-
-@check-nve thing_name="power-test":
-    "{{ zephyr_python }}" "{{ zephyr_script }}" check-nve "{{ thing_name }}"
-
-@flash-nve thing_name="power-test":
-    "{{ zephyr_python }}" "{{ zephyr_script }}" nve "{{ thing_name }}"
-
-@paths:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" paths
 
 @clean:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" clean
