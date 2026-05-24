@@ -31,6 +31,7 @@ PIP_CACHE_DIR = COMMON_MCU_DIR / ".pip-cache"
 ZEPHYR_CACHE_DIR = COMMON_MCU_DIR / ".zephyr-cache"
 CCACHE_DIR = COMMON_MCU_DIR / ".ccache"
 NVE_SCRIPT = COMMON_MCU_DIR / "xiao_nrf54l15" / "scripts" / "redcon_nve.py"
+BOARD_CONF = COMMON_MCU_DIR / "xiao_nrf54l15" / "board.conf"
 COMMON_BUILD_DIR = COMMON_MCU_DIR / "build"
 NVE_HEX = COMMON_BUILD_DIR / "redcon-factory-nve.hex"
 OPENOCD_SUPPORT_DIR = ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54l15" / "support"
@@ -274,7 +275,7 @@ def build(device: str) -> None:
     verify_workspace()
     conf = prj_conf(device)
     overlay = overlay_file(device)
-    for path in (conf, overlay):
+    for path in (conf, overlay, BOARD_CONF):
         if not path.exists():
             fail(f"missing build input: {path}")
     run(
@@ -292,6 +293,7 @@ def build(device: str) -> None:
             build_dir(device),
             "--",
             f"-DCONF_FILE={conf}",
+            f"-DEXTRA_CONF_FILE={BOARD_CONF}",
             f"-DDTC_OVERLAY_FILE={overlay}",
             f"-DBUILD_VERSION={BUILD_VERSION}",
         ],

@@ -489,7 +489,20 @@ func (s *runtimeState) scanFreshnessHeldFor(thingName string, advertisement rigb
 	s.mu.Lock()
 	_, active := s.activeConnects[thingName]
 	hold, ok := s.connectFreshnessHolds[thingName]
+	var activeConnectStart time.Time
+	for activeThingName := range s.activeConnects {
+		activeHold := s.connectFreshnessHolds[activeThingName]
+		if activeHold.start.IsZero() {
+			continue
+		}
+		if activeConnectStart.IsZero() || activeHold.start.Before(activeConnectStart) {
+			activeConnectStart = activeHold.start
+		}
+	}
 	s.mu.Unlock()
+	if !activeConnectStart.IsZero() && s.advertisementIsFreshAt(advertisement, activeConnectStart) {
+		return true
+	}
 	if !ok {
 		return false
 	}

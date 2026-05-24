@@ -1,7 +1,7 @@
 # mcu subproject guide
 
 ## Scope
-- This directory contains the NCS/Zephyr firmware for the unit MCU.
+- This directory contains the stock Zephyr firmware for the unit MCU.
 - The target board is `xiao_nrf54l15/nrf54l15/cpuapp`.
 
 ## Notes
@@ -13,7 +13,7 @@
 - Use `../aws/ble-shadow.schema.json` and `../aws/power-shadow.schema.json` as the BLE/power shadow contract references.
 - Treat `rig` as owner of the `ble` and `power` named shadow contracts.
 - Do not copy `redcon.c`, fork the REDCON UUID/payload handling, or add a
-  per-device NCS install/build path for a XIAO nRF54L15 target.
+  per-device Zephyr install/build path for a XIAO nRF54L15 target.
 
 ## Shared workflow
 - Follow the repository-level Backlog.md workflow in `../../../AGENTS.md`.

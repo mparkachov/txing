@@ -166,7 +166,10 @@ board-owned retained capability state arrives. BLE state-read and
 command-applied capability states carry the internal `metrics.bleRedcon` value
 so SparkplugManager can distinguish explicit sleep-state evidence from
 advertisement-only BLE reachability; this internal metric is not published as a
-Sparkplug device metric.
+Sparkplug device metric. Advertisement-only samples from any XIAO nRF54L15 MCU
+device report only `sparkplug=true` and `ble=true`; `power`, `weather`, and
+other device-domain capabilities require a GATT state/measurement read or a
+successful command-applied state.
 
 ## Acceptance Criteria
 

@@ -273,6 +273,12 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 		d.lastWeatherMeasurement = nil
 	}
 	d.publishAggregateSample(ctx, uint64(time.Now().UnixMilli()))
+	if normalized >= rigble.RedconIdle {
+		d.resetConnectBackoff()
+		d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command succeeded thing=%s targetRedcon=%d normalizedRedcon=%d command=%s confirmation=command-write", command.ThingName, command.Target.Redcon, normalized, command.CommandID))
+		d.runtime.publishCommandResult(ctx, command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
+		return
+	}
 	if err := d.seedConnectedState(ctx); err != nil {
 		d.disconnect()
 		message := fmt.Sprintf("BLE state confirmation failed after command write: %v", err)

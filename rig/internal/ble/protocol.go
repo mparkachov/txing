@@ -185,20 +185,11 @@ func ParseWeatherMeasurement(payload []byte) (WeatherMeasurement, error) {
 }
 
 func AdvertisementSample(spec DeviceSpec, advertisement Advertisement, seq uint64) CapabilitySample {
-	var redcon *uint8
-	if spec.Kind.SupportsWeather() {
-		value := RedconIdle
-		redcon = &value
-	}
-	weatherDomainAvailable := spec.Kind.SupportsWeather()
 	return CapabilitySample{
 		ThingName:          spec.ThingName,
 		Kind:               spec.Kind,
-		Redcon:             redcon,
 		SparkplugAvailable: true,
 		BLEAvailable:       true,
-		PowerAvailable:     weatherDomainAvailable,
-		WeatherAvailable:   weatherDomainAvailable,
 		BLELocalName:       advertisement.IdentityName,
 		BLEAddress:         stringPtr(advertisement.Address),
 		ObservedAtMS:       advertisement.ObservedAtMS,

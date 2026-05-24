@@ -119,13 +119,17 @@ func TestScanFreshnessHoldCoversActiveAndRecentConnects(t *testing.T) {
 	if !state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
 		t.Fatal("active connect should hold scanner freshness")
 	}
+	weatherAd := testAdvertisement("weather-1", time.Now().Add(-5*time.Second))
+	if !state.scanFreshnessHeldFor("weather-1", weatherAd, time.Now()) {
+		t.Fatal("active connect should hold scanner freshness for other sessions while scan is unavailable")
+	}
 
 	release()
 	if !state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
 		t.Fatal("recent connect release should hold scanner freshness")
 	}
-	if state.scanFreshnessHeldFor("weather-1", ad, time.Now()) {
-		t.Fatal("connect freshness hold must not apply to unrelated devices")
+	if state.scanFreshnessHeldFor("weather-1", weatherAd, time.Now()) {
+		t.Fatal("released connect freshness hold must not apply to unrelated devices")
 	}
 
 	state.mu.Lock()
@@ -135,6 +139,23 @@ func TestScanFreshnessHoldCoversActiveAndRecentConnects(t *testing.T) {
 	state.mu.Unlock()
 	if state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
 		t.Fatal("expired connect freshness hold should not remain active")
+	}
+}
+
+func TestActiveConnectDoesNotHoldAlreadyStaleUnrelatedAdvertisement(t *testing.T) {
+	state := &runtimeState{
+		cfg:            rigconfig.Config{PresenceTimeout: 20 * time.Second},
+		activeConnects: map[string]chan struct{}{},
+	}
+	release, err := state.acquireDeviceConnect(context.Background(), "unit-1")
+	if err != nil {
+		t.Fatalf("acquire failed: %v", err)
+	}
+	defer release()
+	staleBeforeConnect := testAdvertisement("weather-1", time.Now().Add(-25*time.Second))
+
+	if state.scanFreshnessHeldFor("weather-1", staleBeforeConnect, time.Now()) {
+		t.Fatal("active connect must not keep an advertisement that was already stale")
 	}
 }
 
@@ -353,6 +374,31 @@ func TestSessionCommandReusesConnectedDevice(t *testing.T) {
 	}
 	if len(conn.writes) != 1 || conn.writes[0] != rigble.RedconActive {
 		t.Fatalf("writes = %#v, want REDCON 3 write", conn.writes)
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
+}
+
+func TestIdleCommandDoesNotWaitForStateConfirmation(t *testing.T) {
+	state := testSessionRuntime(t)
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	conn := &fakeBLEConnection{
+		connected:     true,
+		address:       "AA:BB:CC:DD:EE:FF",
+		powerStateErr: errors.New("state read would block"),
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = conn
+
+	session.handleCommand(context.Background(), testCommand(t, "unit-1", rigble.RedconIdle))
+
+	if len(conn.writes) != 1 || conn.writes[0] != rigble.RedconIdle {
+		t.Fatalf("writes = %#v, want REDCON 4 write", conn.writes)
+	}
+	if conn.disconnects != 0 {
+		t.Fatalf("disconnects = %d, want idle command to keep the connection available", conn.disconnects)
 	}
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
 }
@@ -625,6 +671,7 @@ type fakeBLEConnection struct {
 	connected          bool
 	address            string
 	powerState         rigble.PowerState
+	powerStateErr      error
 	weatherState       rigble.WeatherState
 	powerMeasurement   rigble.PowerMeasurement
 	weatherMeasurement rigble.WeatherMeasurement
@@ -652,6 +699,9 @@ func (f *fakeBLEConnection) WriteRedcon(redcon uint8) error {
 }
 
 func (f *fakeBLEConnection) ReadPowerState() (rigble.PowerState, error) {
+	if f.powerStateErr != nil {
+		return rigble.PowerState{}, f.powerStateErr
+	}
 	if f.powerState.Redcon == 0 {
 		return rigble.PowerState{Redcon: rigble.RedconIdle}, nil
 	}

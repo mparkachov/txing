@@ -88,7 +88,7 @@ func TestAdvertisementCapabilityStateIsPublishedForManagedDevices(t *testing.T) 
 		t.Fatal("power advertisements should publish BLE reachability state")
 	}
 	if !AdvertisementPublishesCapabilityState(DeviceSpec{ThingName: "weather-1", Kind: DeviceKindWeather}) {
-		t.Fatal("weather advertisements should publish idle capability state")
+		t.Fatal("weather advertisements should publish BLE reachability state")
 	}
 }
 
