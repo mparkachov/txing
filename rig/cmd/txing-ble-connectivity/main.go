@@ -35,6 +35,7 @@ type runtimeState struct {
 	activeConnects         map[string]chan struct{}
 	connectSlots           chan struct{}
 	scanStoppedForConnect  bool
+	scanFreshnessHoldStart time.Time
 	scanFreshnessHoldUntil time.Time
 	seq                    uint64
 	mu                     sync.Mutex
@@ -231,7 +232,7 @@ func (s *runtimeState) reconcileInventory(ctx context.Context, inventory protoco
 		}
 	}
 	deliveries := s.updateInventorySessions(ctx, next)
-	s.logger.Print(ctx, "info", fmt.Sprintf("BLE inventory reconciled devices=%d", len(next)))
+	s.debugPrint(ctx, fmt.Sprintf("BLE inventory reconciled devices=%d", len(next)))
 	for _, delivery := range deliveries {
 		delivery.session.enqueueAdvertisement(ctx, delivery.advertisement)
 	}
@@ -243,6 +244,7 @@ type sessionAdvertisementDelivery struct {
 }
 
 func (s *runtimeState) updateInventorySessions(ctx context.Context, next map[string]rigble.DeviceSpec) []sessionAdvertisementDelivery {
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sessions == nil {
@@ -264,7 +266,11 @@ func (s *runtimeState) updateInventorySessions(ctx context.Context, next map[str
 			go session.run(ctx)
 		}
 		if advertisement, ok := s.cachedAdvertisements[thingName]; ok {
-			deliveries = append(deliveries, sessionAdvertisementDelivery{session: session, advertisement: advertisement})
+			if s.advertisementIsFreshAt(advertisement, now) {
+				deliveries = append(deliveries, sessionAdvertisementDelivery{session: session, advertisement: advertisement})
+			} else {
+				delete(s.cachedAdvertisements, thingName)
+			}
 		}
 	}
 	s.specs = next
@@ -461,9 +467,11 @@ func (s *runtimeState) pauseScanForConnect() {
 	if err := bluetooth.DefaultAdapter.StopScan(); err != nil {
 		return
 	}
+	now := time.Now()
 	s.mu.Lock()
 	s.scanStoppedForConnect = true
-	s.scanFreshnessHoldUntil = time.Now().Add(s.cfg.PresenceTimeout)
+	s.scanFreshnessHoldStart = now
+	s.scanFreshnessHoldUntil = now.Add(s.cfg.PresenceTimeout)
 	s.mu.Unlock()
 }
 
@@ -475,10 +483,32 @@ func (s *runtimeState) consumeScanStoppedForConnect() bool {
 	return stopped
 }
 
-func (s *runtimeState) scanFreshnessHeld(now time.Time) bool {
+func (s *runtimeState) scanFreshnessHeldFor(advertisement rigble.Advertisement, now time.Time) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.scanStoppedForConnect || len(s.activeConnects) > 0 || now.Before(s.scanFreshnessHoldUntil)
+	stopped := s.scanStoppedForConnect
+	active := len(s.activeConnects) > 0
+	holdStart := s.scanFreshnessHoldStart
+	holdUntil := s.scanFreshnessHoldUntil
+	s.mu.Unlock()
+	if !stopped && !active && !now.Before(holdUntil) {
+		return false
+	}
+	if holdStart.IsZero() {
+		return false
+	}
+	return s.advertisementIsFreshAt(advertisement, holdStart)
+}
+
+func (s *runtimeState) advertisementIsFreshAt(advertisement rigble.Advertisement, now time.Time) bool {
+	timeoutMS := uint64(s.cfg.PresenceTimeout / time.Millisecond)
+	if timeoutMS == 0 {
+		return false
+	}
+	nowMS := uint64(now.UnixMilli())
+	if advertisement.ObservedAtMS > nowMS {
+		return advertisement.ObservedAtMS-nowMS <= timeoutMS
+	}
+	return nowMS-advertisement.ObservedAtMS <= timeoutMS
 }
 
 func (s *runtimeState) waitForActiveConnects(ctx context.Context) {
@@ -523,7 +553,10 @@ func (s *runtimeState) acquireDeviceConnect(ctx context.Context, thingName strin
 				if s.activeConnects[thingName] == done {
 					delete(s.activeConnects, thingName)
 					if len(s.activeConnects) == 0 {
-						s.scanFreshnessHoldUntil = time.Now().Add(s.cfg.PresenceTimeout)
+						now := time.Now()
+						if !s.scanFreshnessHoldStart.IsZero() {
+							s.scanFreshnessHoldUntil = now.Add(s.cfg.PresenceTimeout)
+						}
 					}
 					close(done)
 				}
