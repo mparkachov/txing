@@ -35,4 +35,5 @@ ordinal: 24000
 - [ ] #3 MCU component docs, device MCU READMEs, and agent guidance describe stock Zephyr as the active MCU stack.
 - [ ] #4 power, weather, and unit MCU builds pass on the shared stock Zephyr stack after cleanup.
 - [ ] #5 Source and documentation searches show no active NCS command path remains for active MCU builds.
+- [ ] #6 Device-specific MCU directories no longer contain obsolete generated NCS, per-device Zephyr workspace, build, venv, pip, Zephyr, ccache, or Python cache folders.
 <!-- AC:END -->

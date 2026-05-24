@@ -1,9 +1,3 @@
 .pytest_cache/
 __pycache__/
 build/
-.home/
-.pip-cache/
-.zephyr-cache/
-.ccache/
-.venv/
-.zephyr-workspace/

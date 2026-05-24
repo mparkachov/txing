@@ -31,4 +31,5 @@ ordinal: 22000
 - [ ] #2 Stock-incompatible NCS-only configuration is removed while preserving weather REDCON 4, BME280, battery, D1 power, and NVE behavior.
 - [ ] #3 check-flash weather and check-nve weather-test print direct OpenOCD commands without programming hardware.
 - [ ] #4 User manual validation after flashing confirms BLE identity, REDCON service, weather measurement, and battery measurement behavior.
+- [ ] #5 Obsolete weather MCU generated build/cache/workspace folders and any weather-specific NCS wrapper are removed once the shared stock Zephyr build is validated.
 <!-- AC:END -->

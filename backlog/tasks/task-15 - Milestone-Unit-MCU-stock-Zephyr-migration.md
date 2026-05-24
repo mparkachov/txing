@@ -35,4 +35,5 @@ ordinal: 23000
 - [ ] #3 Rig-facing Sparkplug and named-shadow semantics remain compatible with the current unit contracts.
 - [ ] #4 check-flash unit and check-nve unit-test print direct OpenOCD commands without programming hardware.
 - [ ] #5 User manual validation after flashing confirms REDCON transitions through the rig/web workflow as hardware allows.
+- [ ] #6 Obsolete unit MCU generated build/cache/workspace folders and any unit-specific NCS wrapper are removed once the shared stock Zephyr build is validated.
 <!-- AC:END -->
