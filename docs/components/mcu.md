@@ -16,22 +16,24 @@ All active MCU targets use the same shared stack:
   `devices/common/mcu/xiao_nrf54l15`
 - each target compiles `${TXING_XIAO_NRF54L15_DIR}/src/redcon.c`
 - each target includes `${TXING_XIAO_NRF54L15_DIR}/include`
-- each target's `justfile` runs `devices/common/mcu/scripts/ncs_mcu.py` for
-  `install`, `check`, and `build`
-- each target's NVE HEX recipe uses
+- shared setup and hardware actions run through root `mcu` recipes backed by
+  `devices/common/mcu/scripts/stock_zephyr_mcu.py`
+- each target's `justfile` keeps device-owned `build` and `clean` recipes only
+- the shared `mcu::nve` recipe uses
   `devices/common/mcu/xiao_nrf54l15/scripts/redcon_nve.py`
 
 Device-specific behavior belongs in the local `src/main.c` hooks passed through
 `struct txing_redcon_ops`, local `zephyr/prj.conf`, and local devicetree
 overlays. The shared REDCON implementation remains single-source: active XIAO
 nRF54L15 targets share `redcon.c`, the REDCON UUID/payload handling, and the
-common NCS install/build path.
+common stock Zephyr install/build path.
 
 ## Current Behavior
 
 - target board: `xiao_nrf54l15/nrf54l15/cpuapp`
-- firmware stack: NCS/Zephyr through `devices/common/mcu/ncs`
-- shared NCS build driver: `devices/common/mcu/scripts/ncs_mcu.py`
+- firmware stack: stock Zephyr v4.4.0 through `devices/common/mcu/zephyr`
+- shared stock Zephyr build driver:
+  `devices/common/mcu/scripts/stock_zephyr_mcu.py`
 - shared REDCON app entrypoint: `txing_redcon_run(&ops)`
 - D1 / `gpio1 5` is the active-high enable for app hardware
 - reset default: `REDCON 4`, D1 off, LED off, load regulators disabled, ADC suspended
@@ -50,38 +52,24 @@ The integration contract is [devices/unit/docs/device-rig-shadow-spec.md](../../
 Run from the repo root:
 
 ```bash
-just unit::mcu::install
-just power::mcu::install
-just weather::mcu::install
-just unit::mcu::paths
-just unit::mcu::check
+just mcu::install
+just mcu::check
 just unit::mcu::build
-just unit::mcu::build-nve-hex unit-test
-just power::mcu::check
-just weather::mcu::check
+just power::mcu::build
+just weather::mcu::build
 ```
 
 Or from `devices/unit/mcu/`:
 
 ```bash
-just paths
-just check
 just build
-just build-nve-hex unit-test
 ```
 
 ## Flashing
 
-Firmware and NVE flashing remain manual user actions. To print the exact commands without programming hardware:
+Firmware and NVE flashing remain manual user actions:
 
 ```bash
-just unit::mcu::check-flash
-just unit::mcu::check-nve unit-test
-```
-
-Manual flash recipes are available as:
-
-```bash
-just unit::mcu::flash
-just unit::mcu::flash-nve <thing-name>
+just mcu::flash unit
+just mcu::nve <thing-name>
 ```

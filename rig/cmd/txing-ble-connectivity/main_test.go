@@ -106,6 +106,59 @@ func TestConsumeScanStoppedForConnectOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestScanFreshnessHoldCoversActiveAndRecentConnects(t *testing.T) {
+	state := &runtimeState{
+		cfg:            rigconfig.Config{PresenceTimeout: 20 * time.Second},
+		activeConnects: map[string]chan struct{}{},
+	}
+	release, err := state.acquireDeviceConnect(context.Background(), "unit-1")
+	if err != nil {
+		t.Fatalf("acquire failed: %v", err)
+	}
+	ad := testAdvertisement("unit-1", time.Now().Add(-5*time.Second))
+	if !state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
+		t.Fatal("active connect should hold scanner freshness")
+	}
+	weatherAd := testAdvertisement("weather-1", time.Now().Add(-5*time.Second))
+	if !state.scanFreshnessHeldFor("weather-1", weatherAd, time.Now()) {
+		t.Fatal("active connect should hold scanner freshness for other sessions while scan is unavailable")
+	}
+
+	release()
+	if !state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
+		t.Fatal("recent connect release should hold scanner freshness")
+	}
+	if state.scanFreshnessHeldFor("weather-1", weatherAd, time.Now()) {
+		t.Fatal("released connect freshness hold must not apply to unrelated devices")
+	}
+
+	state.mu.Lock()
+	hold := state.connectFreshnessHolds["unit-1"]
+	hold.until = time.Now().Add(-time.Second)
+	state.connectFreshnessHolds["unit-1"] = hold
+	state.mu.Unlock()
+	if state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
+		t.Fatal("expired connect freshness hold should not remain active")
+	}
+}
+
+func TestActiveConnectDoesNotHoldAlreadyStaleUnrelatedAdvertisement(t *testing.T) {
+	state := &runtimeState{
+		cfg:            rigconfig.Config{PresenceTimeout: 20 * time.Second},
+		activeConnects: map[string]chan struct{}{},
+	}
+	release, err := state.acquireDeviceConnect(context.Background(), "unit-1")
+	if err != nil {
+		t.Fatalf("acquire failed: %v", err)
+	}
+	defer release()
+	staleBeforeConnect := testAdvertisement("weather-1", time.Now().Add(-25*time.Second))
+
+	if state.scanFreshnessHeldFor("weather-1", staleBeforeConnect, time.Now()) {
+		t.Fatal("active connect must not keep an advertisement that was already stale")
+	}
+}
+
 func TestScanRetryDecisionRecoversBluezAlreadyActiveDiscovery(t *testing.T) {
 	decision := scanRetryDecision(errors.New("Operation already in progress"), 7)
 	if decision.delayMS != rigble.BluezInProgressScanRetryDelayMS {
@@ -208,14 +261,19 @@ func TestInventorySessionsStartStopAndReplayCachedAdvertisement(t *testing.T) {
 
 	ad := testAdvertisement("unit-1", time.Now())
 	state.cachedAdvertisements["unit-1"] = ad
+	state.cachedAdvertisements["weather-1"] = testAdvertisement("weather-1", time.Now().Add(-30*time.Second))
 	deliveries := state.updateInventorySessions(ctx, map[string]rigble.DeviceSpec{
-		"unit-1": {ThingName: "unit-1", Kind: rigble.DeviceKindPower},
+		"unit-1":    {ThingName: "unit-1", Kind: rigble.DeviceKindPower},
+		"weather-1": {ThingName: "weather-1", Kind: rigble.DeviceKindWeather},
 	})
-	if len(state.sessions) != 1 || state.sessions["unit-1"] == nil {
+	if len(state.sessions) != 2 || state.sessions["unit-1"] == nil || state.sessions["weather-1"] == nil {
 		t.Fatalf("sessions = %#v, want unit-1 session", state.sessions)
 	}
 	if len(deliveries) != 1 || deliveries[0].advertisement.Address != ad.Address {
 		t.Fatalf("deliveries = %#v, want cached unit advertisement", deliveries)
+	}
+	if _, ok := state.cachedAdvertisements["weather-1"]; ok {
+		t.Fatal("stale cached weather advertisement should be discarded during inventory reconciliation")
 	}
 
 	state.updateInventorySessions(ctx, map[string]rigble.DeviceSpec{
@@ -248,6 +306,55 @@ func TestConnectedSessionIgnoresAdvertisementState(t *testing.T) {
 	}
 }
 
+func TestSessionIgnoresStaleAdvertisement(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{}
+	state.connector = connector
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		published++
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.offlinePublished = true
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("unit-1", time.Now().Add(-30*time.Second)))
+
+	if session.lastAdvertisement != nil {
+		t.Fatal("stale advertisement should not refresh last advertisement")
+	}
+	if !session.offlinePublished {
+		t.Fatal("stale advertisement should not clear offline publication state")
+	}
+	if published != 0 {
+		t.Fatalf("published samples = %d, want none", published)
+	}
+	if connector.calls != 0 {
+		t.Fatalf("connector calls = %d, want no connect from stale advertisement", connector.calls)
+	}
+}
+
+func TestBackgroundConnectFailureLogLevelFollowsPresenceImpact(t *testing.T) {
+	state := testSessionRuntime(t)
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+
+	if got := session.backgroundConnectFailureLogLevel(fmt.Errorf("last BLE advertisement for unit-1 is stale")); got != "debug" {
+		t.Fatalf("stale advertisement log level = %s, want debug", got)
+	}
+	if got := session.backgroundConnectFailureLogLevel(fmt.Errorf("no BLE advertisement has been observed for unit-1")); got != "debug" {
+		t.Fatalf("missing advertisement log level = %s, want debug", got)
+	}
+
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", time.Now()))
+	if got := session.backgroundConnectFailureLogLevel(fmt.Errorf("timeout on DiscoverServices")); got != "debug" {
+		t.Fatalf("fresh-advertisement connect timeout log level = %s, want debug", got)
+	}
+
+	session.lastAdvertisement = nil
+	if got := session.backgroundConnectFailureLogLevel(fmt.Errorf("permission denied")); got != "warning" {
+		t.Fatalf("non-presence failure log level = %s, want warning", got)
+	}
+}
+
 func TestSessionCommandReusesConnectedDevice(t *testing.T) {
 	state := testSessionRuntime(t)
 	connector := &fakeBLEConnector{}
@@ -267,6 +374,31 @@ func TestSessionCommandReusesConnectedDevice(t *testing.T) {
 	}
 	if len(conn.writes) != 1 || conn.writes[0] != rigble.RedconActive {
 		t.Fatalf("writes = %#v, want REDCON 3 write", conn.writes)
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
+}
+
+func TestIdleCommandDoesNotWaitForStateConfirmation(t *testing.T) {
+	state := testSessionRuntime(t)
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	conn := &fakeBLEConnection{
+		connected:     true,
+		address:       "AA:BB:CC:DD:EE:FF",
+		powerStateErr: errors.New("state read would block"),
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = conn
+
+	session.handleCommand(context.Background(), testCommand(t, "unit-1", rigble.RedconIdle))
+
+	if len(conn.writes) != 1 || conn.writes[0] != rigble.RedconIdle {
+		t.Fatalf("writes = %#v, want REDCON 4 write", conn.writes)
+	}
+	if conn.disconnects != 0 {
+		t.Fatalf("disconnects = %d, want idle command to keep the connection available", conn.disconnects)
 	}
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
 }
@@ -351,6 +483,71 @@ func TestConnectedSessionAgesMeasurementsByRedcon(t *testing.T) {
 	}
 }
 
+func TestStaleAdvertisementDoesNotPublishOfflineWhileScanFreshnessHeld(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		published++
+	}
+	holdStart := time.Now().Add(-10 * time.Second)
+	state.connectFreshnessHolds["unit-1"] = connectFreshnessHold{start: holdStart, until: time.Now().Add(time.Second)}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", holdStart.Add(-15*time.Second)))
+
+	session.checkStale(context.Background())
+
+	if session.offlinePublished {
+		t.Fatal("offline should not publish while scanner freshness is held for connect recovery")
+	}
+	if published != 0 {
+		t.Fatalf("published samples = %d, want none", published)
+	}
+}
+
+func TestStaleAdvertisementPublishesOfflineWhenStaleBeforeScanHold(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		published++
+	}
+	holdStart := time.Now().Add(-10 * time.Second)
+	state.connectFreshnessHolds["unit-1"] = connectFreshnessHold{start: holdStart, until: time.Now().Add(time.Second)}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", holdStart.Add(-25*time.Second)))
+
+	session.checkStale(context.Background())
+
+	if !session.offlinePublished {
+		t.Fatal("offline should publish when advertisement was already stale before scanner freshness hold")
+	}
+	if published != 1 {
+		t.Fatalf("published samples = %d, want one offline sample", published)
+	}
+}
+
+func TestStaleAdvertisementPublishesOfflineAfterScanFreshnessHoldExpires(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		published++
+	}
+	state.connectFreshnessHolds["unit-1"] = connectFreshnessHold{
+		start: time.Now().Add(-30 * time.Second),
+		until: time.Now().Add(-time.Second),
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", time.Now().Add(-30*time.Second)))
+
+	session.checkStale(context.Background())
+
+	if !session.offlinePublished {
+		t.Fatal("offline should publish after scanner freshness hold expires")
+	}
+	if published != 1 {
+		t.Fatalf("published samples = %d, want one offline sample", published)
+	}
+}
+
 func TestBackgroundAdvertisementConnectDefersWithoutCapacity(t *testing.T) {
 	state := testSessionRuntime(t)
 	connector := &fakeBLEConnector{
@@ -405,6 +602,7 @@ func testSessionRuntime(t *testing.T) *runtimeState {
 	state.scannerLastPublished = map[string]uint64{}
 	state.lastStateRead = map[string]time.Time{}
 	state.activeConnects = map[string]chan struct{}{}
+	state.connectFreshnessHolds = map[string]connectFreshnessHold{}
 	state.connector = &fakeBLEConnector{}
 	state.sampleSink = func(rigble.CapabilitySample, bool, bool) {}
 	return state
@@ -473,6 +671,7 @@ type fakeBLEConnection struct {
 	connected          bool
 	address            string
 	powerState         rigble.PowerState
+	powerStateErr      error
 	weatherState       rigble.WeatherState
 	powerMeasurement   rigble.PowerMeasurement
 	weatherMeasurement rigble.WeatherMeasurement
@@ -500,6 +699,9 @@ func (f *fakeBLEConnection) WriteRedcon(redcon uint8) error {
 }
 
 func (f *fakeBLEConnection) ReadPowerState() (rigble.PowerState, error) {
+	if f.powerStateErr != nil {
+		return rigble.PowerState{}, f.powerStateErr
+	}
 	if f.powerState.Redcon == 0 {
 		return rigble.PowerState{Redcon: rigble.RedconIdle}, nil
 	}

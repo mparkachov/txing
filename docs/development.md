@@ -150,9 +150,8 @@ reseeds device named shadows from the default payloads declared in
 MCU:
 
 ```bash
-just unit::mcu::check
+just mcu::check
 just unit::mcu::build
-just unit::mcu::build-nve-hex unit-test
 ```
 
 Rig:

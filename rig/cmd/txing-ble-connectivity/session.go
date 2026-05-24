@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,12 +175,16 @@ func (d *deviceSession) handleAdvertisement(ctx context.Context, advertisement r
 	case err != nil:
 		retryDelay := d.recordConnectFailure(err)
 		d.nextConnectAfter = time.Now().Add(retryDelay)
-		d.runtime.logger.Print(ctx, "warning", fmt.Sprintf("BLE connect from advertisement failed thing=%s failureCount=%d retryDelayMs=%d retryAfterMs=%d error=%q", d.spec.ThingName, d.connectFailures, retryDelay.Milliseconds(), d.nextConnectAfter.UnixMilli(), err))
+		d.logBackgroundConnectFailure(ctx, err, retryDelay)
 	}
 }
 
 func (d *deviceSession) observeMatchingAdvertisement(ctx context.Context, advertisement rigble.Advertisement) bool {
 	if !advertisement.MatchesThing(d.spec.ThingName) {
+		return false
+	}
+	if !d.advertisementIsFresh(advertisement) {
+		d.runtime.debugPrint(ctx, fmt.Sprintf("BLE advertisement ignored because stale thing=%s address=%s seq=%d observedAtMs=%d", d.spec.ThingName, advertisement.Address, advertisement.Seq, advertisement.ObservedAtMS))
 		return false
 	}
 	d.lastAdvertisement = cloneAdvertisement(advertisement)
@@ -191,6 +196,28 @@ func (d *deviceSession) observeMatchingAdvertisement(ctx context.Context, advert
 func (d *deviceSession) publishAdvertisementSample(ctx context.Context, advertisement rigble.Advertisement) {
 	d.runtime.publishSample(ctx, rigble.AdvertisementSample(d.spec, advertisement, d.runtime.nextSeq()), true, true)
 	d.runtime.debugPrint(ctx, fmt.Sprintf("BLE advertisement published thing=%s address=%s", d.spec.ThingName, advertisement.Address))
+}
+
+func (d *deviceSession) logBackgroundConnectFailure(ctx context.Context, err error, retryDelay time.Duration) {
+	message := fmt.Sprintf("BLE connect from advertisement failed thing=%s failureCount=%d retryDelayMs=%d retryAfterMs=%d error=%q", d.spec.ThingName, d.connectFailures, retryDelay.Milliseconds(), d.nextConnectAfter.UnixMilli(), err)
+	if d.backgroundConnectFailureLogLevel(err) == "debug" {
+		d.runtime.debugPrint(ctx, message)
+		return
+	}
+	d.runtime.logger.Print(ctx, "warning", message)
+}
+
+func (d *deviceSession) backgroundConnectFailureLogLevel(err error) string {
+	if err == nil {
+		return "debug"
+	}
+	message := err.Error()
+	if strings.Contains(message, "no BLE advertisement has been observed") ||
+		strings.Contains(message, "last BLE advertisement") ||
+		d.hasFreshAdvertisement() {
+		return "debug"
+	}
+	return "warning"
 }
 
 func (d *deviceSession) handleCommand(ctx context.Context, command protocol.CapabilityCommand) {
@@ -246,6 +273,12 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 		d.lastWeatherMeasurement = nil
 	}
 	d.publishAggregateSample(ctx, uint64(time.Now().UnixMilli()))
+	if normalized >= rigble.RedconIdle {
+		d.resetConnectBackoff()
+		d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command succeeded thing=%s targetRedcon=%d normalizedRedcon=%d command=%s confirmation=command-write", command.ThingName, command.Target.Redcon, normalized, command.CommandID))
+		d.runtime.publishCommandResult(ctx, command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
+		return
+	}
 	if err := d.seedConnectedState(ctx); err != nil {
 		d.disconnect()
 		message := fmt.Sprintf("BLE state confirmation failed after command write: %v", err)
@@ -480,7 +513,8 @@ func (d *deviceSession) handleNotification(ctx context.Context, notification ble
 }
 
 func (d *deviceSession) checkStale(ctx context.Context) {
-	now := uint64(time.Now().UnixMilli())
+	nowTime := time.Now()
+	now := uint64(nowTime.UnixMilli())
 	if d.connected != nil {
 		if !d.connected.Connected() {
 			d.disconnect()
@@ -490,6 +524,9 @@ func (d *deviceSession) checkStale(ctx context.Context) {
 		return
 	}
 	if d.lastAdvertisement != nil && d.advertisementIsFresh(*d.lastAdvertisement) {
+		return
+	}
+	if d.lastAdvertisement != nil && d.runtime.scanFreshnessHeldFor(d.spec.ThingName, *d.lastAdvertisement, nowTime) {
 		return
 	}
 	if !d.offlinePublished {
@@ -569,7 +606,7 @@ func (d *deviceSession) measurementStaleMS() uint64 {
 }
 
 func (d *deviceSession) advertisementIsFresh(advertisement rigble.Advertisement) bool {
-	return uint64(time.Now().UnixMilli())-advertisement.ObservedAtMS <= uint64(d.runtime.cfg.PresenceTimeout/time.Millisecond)
+	return d.runtime.advertisementIsFreshAt(advertisement, time.Now())
 }
 
 func (d *deviceSession) hasFreshAdvertisement() bool {

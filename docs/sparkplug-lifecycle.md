@@ -267,7 +267,10 @@ newer observation timestamp can raise board-owned capabilities again; older
 board retained state cannot override newer BLE REDCON 4 evidence.
 BLE state-read and command-applied capability states carry internal
 `metrics.bleRedcon` evidence for this gate; advertisement-only BLE reachability
-does not.
+does not. Advertisement-only samples from any XIAO nRF54L15 MCU device report
+only `sparkplug=true` and `ble=true`; `power`, `weather`, and other
+device-domain capabilities require a GATT state/measurement read or a successful
+command-applied state.
 Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit devices can
 converge through the full REDCON ladder.
 

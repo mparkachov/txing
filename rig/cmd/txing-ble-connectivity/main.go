@@ -33,6 +33,7 @@ type runtimeState struct {
 	scannerLastPublished  map[string]uint64
 	lastStateRead         map[string]time.Time
 	activeConnects        map[string]chan struct{}
+	connectFreshnessHolds map[string]connectFreshnessHold
 	connectSlots          chan struct{}
 	scanStoppedForConnect bool
 	seq                   uint64
@@ -45,6 +46,11 @@ type runtimeState struct {
 	connector             bleConnector
 	sampleSink            func(rigble.CapabilitySample, bool, bool)
 	commandResultSink     func(protocol.CapabilityCommand, string, *string, *uint8)
+}
+
+type connectFreshnessHold struct {
+	start time.Time
+	until time.Time
 }
 
 func main() {
@@ -176,22 +182,23 @@ func newRuntimeState(cfg rigconfig.Config, logger *awsx.CloudWatchLogger, client
 		connectSlots = make(chan struct{}, cfg.MaxBLEConnections)
 	}
 	state := &runtimeState{
-		cfg:                  cfg,
-		logger:               logger,
-		ipc:                  client,
-		specs:                map[string]rigble.DeviceSpec{},
-		sessions:             map[string]*deviceSession{},
-		addresses:            map[string]bluetooth.Address{},
-		cachedAdvertisements: map[string]rigble.Advertisement{},
-		scannerLastPublished: map[string]uint64{},
-		lastStateRead:        map[string]time.Time{},
-		activeConnects:       map[string]chan struct{}{},
-		connectSlots:         connectSlots,
-		txingUUID:            txingUUID,
-		commandUUID:          commandUUID,
-		stateUUID:            stateUUID,
-		powerUUID:            powerUUID,
-		weatherUUID:          weatherUUID,
+		cfg:                   cfg,
+		logger:                logger,
+		ipc:                   client,
+		specs:                 map[string]rigble.DeviceSpec{},
+		sessions:              map[string]*deviceSession{},
+		addresses:             map[string]bluetooth.Address{},
+		cachedAdvertisements:  map[string]rigble.Advertisement{},
+		scannerLastPublished:  map[string]uint64{},
+		lastStateRead:         map[string]time.Time{},
+		activeConnects:        map[string]chan struct{}{},
+		connectFreshnessHolds: map[string]connectFreshnessHold{},
+		connectSlots:          connectSlots,
+		txingUUID:             txingUUID,
+		commandUUID:           commandUUID,
+		stateUUID:             stateUUID,
+		powerUUID:             powerUUID,
+		weatherUUID:           weatherUUID,
 	}
 	state.connector = state
 	return state, nil
@@ -230,7 +237,7 @@ func (s *runtimeState) reconcileInventory(ctx context.Context, inventory protoco
 		}
 	}
 	deliveries := s.updateInventorySessions(ctx, next)
-	s.logger.Print(ctx, "info", fmt.Sprintf("BLE inventory reconciled devices=%d", len(next)))
+	s.debugPrint(ctx, fmt.Sprintf("BLE inventory reconciled devices=%d", len(next)))
 	for _, delivery := range deliveries {
 		delivery.session.enqueueAdvertisement(ctx, delivery.advertisement)
 	}
@@ -242,6 +249,7 @@ type sessionAdvertisementDelivery struct {
 }
 
 func (s *runtimeState) updateInventorySessions(ctx context.Context, next map[string]rigble.DeviceSpec) []sessionAdvertisementDelivery {
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sessions == nil {
@@ -263,7 +271,11 @@ func (s *runtimeState) updateInventorySessions(ctx context.Context, next map[str
 			go session.run(ctx)
 		}
 		if advertisement, ok := s.cachedAdvertisements[thingName]; ok {
-			deliveries = append(deliveries, sessionAdvertisementDelivery{session: session, advertisement: advertisement})
+			if s.advertisementIsFreshAt(advertisement, now) {
+				deliveries = append(deliveries, sessionAdvertisementDelivery{session: session, advertisement: advertisement})
+			} else {
+				delete(s.cachedAdvertisements, thingName)
+			}
 		}
 	}
 	s.specs = next
@@ -473,6 +485,48 @@ func (s *runtimeState) consumeScanStoppedForConnect() bool {
 	return stopped
 }
 
+func (s *runtimeState) scanFreshnessHeldFor(thingName string, advertisement rigble.Advertisement, now time.Time) bool {
+	s.mu.Lock()
+	_, active := s.activeConnects[thingName]
+	hold, ok := s.connectFreshnessHolds[thingName]
+	var activeConnectStart time.Time
+	for activeThingName := range s.activeConnects {
+		activeHold := s.connectFreshnessHolds[activeThingName]
+		if activeHold.start.IsZero() {
+			continue
+		}
+		if activeConnectStart.IsZero() || activeHold.start.Before(activeConnectStart) {
+			activeConnectStart = activeHold.start
+		}
+	}
+	s.mu.Unlock()
+	if !activeConnectStart.IsZero() && s.advertisementIsFreshAt(advertisement, activeConnectStart) {
+		return true
+	}
+	if !ok {
+		return false
+	}
+	if !active && !now.Before(hold.until) {
+		return false
+	}
+	if hold.start.IsZero() {
+		return false
+	}
+	return s.advertisementIsFreshAt(advertisement, hold.start)
+}
+
+func (s *runtimeState) advertisementIsFreshAt(advertisement rigble.Advertisement, now time.Time) bool {
+	timeoutMS := uint64(s.cfg.PresenceTimeout / time.Millisecond)
+	if timeoutMS == 0 {
+		return false
+	}
+	nowMS := uint64(now.UnixMilli())
+	if advertisement.ObservedAtMS > nowMS {
+		return advertisement.ObservedAtMS-nowMS <= timeoutMS
+	}
+	return nowMS-advertisement.ObservedAtMS <= timeoutMS
+}
+
 func (s *runtimeState) waitForActiveConnects(ctx context.Context) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -507,13 +561,28 @@ func (s *runtimeState) acquireDeviceConnect(ctx context.Context, thingName strin
 		}
 		done, active := s.activeConnects[thingName]
 		if !active {
+			now := time.Now()
 			done = make(chan struct{})
 			s.activeConnects[thingName] = done
+			if s.connectFreshnessHolds == nil {
+				s.connectFreshnessHolds = map[string]connectFreshnessHold{}
+			}
+			s.connectFreshnessHolds[thingName] = connectFreshnessHold{
+				start: now,
+				until: now.Add(s.cfg.PresenceTimeout),
+			}
 			s.mu.Unlock()
 			return func() {
 				s.mu.Lock()
 				if s.activeConnects[thingName] == done {
 					delete(s.activeConnects, thingName)
+					now := time.Now()
+					hold := s.connectFreshnessHolds[thingName]
+					if hold.start.IsZero() {
+						hold.start = now
+					}
+					hold.until = now.Add(s.cfg.PresenceTimeout)
+					s.connectFreshnessHolds[thingName] = hold
 					close(done)
 				}
 				s.mu.Unlock()

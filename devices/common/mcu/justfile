@@ -1,0 +1,24 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet
+
+mcu_dir := source_directory()
+project_root := canonicalize(mcu_dir + "/../../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+zephyr_python := env_var_or_default("TXING_MCU_ZEPHYR_PYTHON", "python3")
+zephyr_script := mcu_dir + "/scripts/stock_zephyr_mcu.py"
+
+@install:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" install
+
+@check:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" check
+
+@flash device_type:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash
+
+@nve thing_name:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" nve "{{ thing_name }}"
+
+@default:
+    @just --list

@@ -31,6 +31,6 @@ These functions stay as static `linux/arm64` `bootstrap` executables for
 `provided.al2023`. They are published as release artifacts and updated by
 per-function `publish` recipes, `aws::publish`, or `aws::publish-lambda`.
 
-Firmware uses the NCS/Zephyr C stack. Standalone rig daemons and runtime
+Firmware uses the stock Zephyr C stack. Standalone rig daemons and runtime
 Lambdas are Go. This boundary is intentionally language based so Lambda build
 and release behavior stays predictable.

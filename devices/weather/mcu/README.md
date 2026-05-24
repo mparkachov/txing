@@ -11,7 +11,8 @@ switched by XIAO D1, and firmware only powers the sensor during a measurement.
 
 The firmware uses the shared REDCON BLE service implementation:
 
-- build/install/check go through `devices/common/mcu/scripts/ncs_mcu.py`
+- build/install/check go through the shared stock Zephyr v4.4.0 stack in
+  `devices/common/mcu`
 - the Zephyr target links `devices/common/mcu/xiao_nrf54l15/src/redcon.c`
 - command/state UUIDs use payload version `2`
 - state is always `<2, 4>`
@@ -31,20 +32,14 @@ Factory/NVE data is shared REDCON factory data at `0x000f0000`:
 Build firmware:
 
 ```sh
-just weather::mcu::install
-just weather::mcu::check
-```
-
-Generate the NVE HEX for manual programming:
-
-```sh
-just weather::mcu::build-nve-hex weather-q8zbgb
-just weather::mcu::check-nve weather-q8zbgb
+just mcu::install
+just mcu::check
+just weather::mcu::build
 ```
 
 Firmware and NVE flashing remain manual hardware steps:
 
 ```sh
-just weather::mcu::flash
-just weather::mcu::flash-nve weather-q8zbgb
+just mcu::flash weather
+just mcu::nve weather-q8zbgb
 ```

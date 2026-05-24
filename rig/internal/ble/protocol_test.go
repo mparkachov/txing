@@ -4,8 +4,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"testing"
-
-	"github.com/mparkachov/txing/rig/internal/protocol"
 )
 
 func TestPowerPayloadRoundTripsCurrentProtocol(t *testing.T) {
@@ -141,7 +139,7 @@ func TestAdvertisementSamplePublishesOnlyBleShadowWithoutMeasurements(t *testing
 	}
 }
 
-func TestWeatherAdvertisementSampleKeepsRedconFourCapabilitiesAvailable(t *testing.T) {
+func TestWeatherAdvertisementSamplePublishesOnlyBleCapability(t *testing.T) {
 	spec := DeviceSpec{ThingName: "weather-1", Kind: DeviceKindWeather}
 	name := "weather-1"
 	rssi := int16(-50)
@@ -156,17 +154,21 @@ func TestWeatherAdvertisementSampleKeepsRedconFourCapabilitiesAvailable(t *testi
 	sample := AdvertisementSample(spec, advertisement, 1)
 	state := CapabilityStateFromSample(AdapterID, sample)
 
-	if sample.Redcon == nil || *sample.Redcon != RedconIdle {
+	if sample.Redcon != nil {
 		t.Fatalf("sample redcon = %#v", sample.Redcon)
 	}
-	for _, capability := range []string{SparkplugCapability, BLECapability, PowerCapability, WeatherCapability} {
+	for _, capability := range []string{SparkplugCapability, BLECapability} {
 		if !state.Capabilities[capability] {
 			t.Fatalf("capability %s false in %#v", capability, state.Capabilities)
 		}
 	}
-	metric := state.Metrics[protocol.BleRedconMetric]
-	if value, ok := protocol.IntMetricValue(metric.Value); !ok || value != int64(RedconIdle) {
-		t.Fatalf("BLE redcon metric = %#v", metric)
+	for _, capability := range []string{PowerCapability, WeatherCapability} {
+		if state.Capabilities[capability] {
+			t.Fatalf("capability %s true in %#v", capability, state.Capabilities)
+		}
+	}
+	if len(state.Metrics) != 0 {
+		t.Fatalf("expected no metrics, got %#v", state.Metrics)
 	}
 }
 
