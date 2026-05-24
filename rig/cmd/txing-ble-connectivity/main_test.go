@@ -115,21 +115,25 @@ func TestScanFreshnessHoldCoversActiveAndRecentConnects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire failed: %v", err)
 	}
-	state.scanFreshnessHoldStart = time.Now()
 	ad := testAdvertisement("unit-1", time.Now().Add(-5*time.Second))
-	if !state.scanFreshnessHeldFor(ad, time.Now()) {
+	if !state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
 		t.Fatal("active connect should hold scanner freshness")
 	}
 
 	release()
-	if !state.scanFreshnessHeldFor(ad, time.Now()) {
+	if !state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
 		t.Fatal("recent connect release should hold scanner freshness")
+	}
+	if state.scanFreshnessHeldFor("weather-1", ad, time.Now()) {
+		t.Fatal("connect freshness hold must not apply to unrelated devices")
 	}
 
 	state.mu.Lock()
-	state.scanFreshnessHoldUntil = time.Now().Add(-time.Second)
+	hold := state.connectFreshnessHolds["unit-1"]
+	hold.until = time.Now().Add(-time.Second)
+	state.connectFreshnessHolds["unit-1"] = hold
 	state.mu.Unlock()
-	if state.scanFreshnessHeldFor(ad, time.Now()) {
+	if state.scanFreshnessHeldFor("unit-1", ad, time.Now()) {
 		t.Fatal("expired connect freshness hold should not remain active")
 	}
 }
@@ -440,8 +444,7 @@ func TestStaleAdvertisementDoesNotPublishOfflineWhileScanFreshnessHeld(t *testin
 		published++
 	}
 	holdStart := time.Now().Add(-10 * time.Second)
-	state.scanFreshnessHoldStart = holdStart
-	state.scanFreshnessHoldUntil = time.Now().Add(time.Second)
+	state.connectFreshnessHolds["unit-1"] = connectFreshnessHold{start: holdStart, until: time.Now().Add(time.Second)}
 	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
 	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", holdStart.Add(-15*time.Second)))
 
@@ -462,8 +465,7 @@ func TestStaleAdvertisementPublishesOfflineWhenStaleBeforeScanHold(t *testing.T)
 		published++
 	}
 	holdStart := time.Now().Add(-10 * time.Second)
-	state.scanFreshnessHoldStart = holdStart
-	state.scanFreshnessHoldUntil = time.Now().Add(time.Second)
+	state.connectFreshnessHolds["unit-1"] = connectFreshnessHold{start: holdStart, until: time.Now().Add(time.Second)}
 	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
 	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", holdStart.Add(-25*time.Second)))
 
@@ -483,8 +485,10 @@ func TestStaleAdvertisementPublishesOfflineAfterScanFreshnessHoldExpires(t *test
 	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
 		published++
 	}
-	state.scanFreshnessHoldStart = time.Now().Add(-30 * time.Second)
-	state.scanFreshnessHoldUntil = time.Now().Add(-time.Second)
+	state.connectFreshnessHolds["unit-1"] = connectFreshnessHold{
+		start: time.Now().Add(-30 * time.Second),
+		until: time.Now().Add(-time.Second),
+	}
 	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
 	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", time.Now().Add(-30*time.Second)))
 
@@ -552,6 +556,7 @@ func testSessionRuntime(t *testing.T) *runtimeState {
 	state.scannerLastPublished = map[string]uint64{}
 	state.lastStateRead = map[string]time.Time{}
 	state.activeConnects = map[string]chan struct{}{}
+	state.connectFreshnessHolds = map[string]connectFreshnessHold{}
 	state.connector = &fakeBLEConnector{}
 	state.sampleSink = func(rigble.CapabilitySample, bool, bool) {}
 	return state

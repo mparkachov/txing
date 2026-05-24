@@ -23,30 +23,34 @@ import (
 )
 
 type runtimeState struct {
-	cfg                    rigconfig.Config
-	logger                 *awsx.CloudWatchLogger
-	ipc                    *ipc.Client
-	specs                  map[string]rigble.DeviceSpec
-	sessions               map[string]*deviceSession
-	addresses              map[string]bluetooth.Address
-	cachedAdvertisements   map[string]rigble.Advertisement
-	scannerLastPublished   map[string]uint64
-	lastStateRead          map[string]time.Time
-	activeConnects         map[string]chan struct{}
-	connectSlots           chan struct{}
-	scanStoppedForConnect  bool
-	scanFreshnessHoldStart time.Time
-	scanFreshnessHoldUntil time.Time
-	seq                    uint64
-	mu                     sync.Mutex
-	txingUUID              bluetooth.UUID
-	commandUUID            bluetooth.UUID
-	stateUUID              bluetooth.UUID
-	powerUUID              bluetooth.UUID
-	weatherUUID            bluetooth.UUID
-	connector              bleConnector
-	sampleSink             func(rigble.CapabilitySample, bool, bool)
-	commandResultSink      func(protocol.CapabilityCommand, string, *string, *uint8)
+	cfg                   rigconfig.Config
+	logger                *awsx.CloudWatchLogger
+	ipc                   *ipc.Client
+	specs                 map[string]rigble.DeviceSpec
+	sessions              map[string]*deviceSession
+	addresses             map[string]bluetooth.Address
+	cachedAdvertisements  map[string]rigble.Advertisement
+	scannerLastPublished  map[string]uint64
+	lastStateRead         map[string]time.Time
+	activeConnects        map[string]chan struct{}
+	connectFreshnessHolds map[string]connectFreshnessHold
+	connectSlots          chan struct{}
+	scanStoppedForConnect bool
+	seq                   uint64
+	mu                    sync.Mutex
+	txingUUID             bluetooth.UUID
+	commandUUID           bluetooth.UUID
+	stateUUID             bluetooth.UUID
+	powerUUID             bluetooth.UUID
+	weatherUUID           bluetooth.UUID
+	connector             bleConnector
+	sampleSink            func(rigble.CapabilitySample, bool, bool)
+	commandResultSink     func(protocol.CapabilityCommand, string, *string, *uint8)
+}
+
+type connectFreshnessHold struct {
+	start time.Time
+	until time.Time
 }
 
 func main() {
@@ -178,22 +182,23 @@ func newRuntimeState(cfg rigconfig.Config, logger *awsx.CloudWatchLogger, client
 		connectSlots = make(chan struct{}, cfg.MaxBLEConnections)
 	}
 	state := &runtimeState{
-		cfg:                  cfg,
-		logger:               logger,
-		ipc:                  client,
-		specs:                map[string]rigble.DeviceSpec{},
-		sessions:             map[string]*deviceSession{},
-		addresses:            map[string]bluetooth.Address{},
-		cachedAdvertisements: map[string]rigble.Advertisement{},
-		scannerLastPublished: map[string]uint64{},
-		lastStateRead:        map[string]time.Time{},
-		activeConnects:       map[string]chan struct{}{},
-		connectSlots:         connectSlots,
-		txingUUID:            txingUUID,
-		commandUUID:          commandUUID,
-		stateUUID:            stateUUID,
-		powerUUID:            powerUUID,
-		weatherUUID:          weatherUUID,
+		cfg:                   cfg,
+		logger:                logger,
+		ipc:                   client,
+		specs:                 map[string]rigble.DeviceSpec{},
+		sessions:              map[string]*deviceSession{},
+		addresses:             map[string]bluetooth.Address{},
+		cachedAdvertisements:  map[string]rigble.Advertisement{},
+		scannerLastPublished:  map[string]uint64{},
+		lastStateRead:         map[string]time.Time{},
+		activeConnects:        map[string]chan struct{}{},
+		connectFreshnessHolds: map[string]connectFreshnessHold{},
+		connectSlots:          connectSlots,
+		txingUUID:             txingUUID,
+		commandUUID:           commandUUID,
+		stateUUID:             stateUUID,
+		powerUUID:             powerUUID,
+		weatherUUID:           weatherUUID,
 	}
 	state.connector = state
 	return state, nil
@@ -467,11 +472,8 @@ func (s *runtimeState) pauseScanForConnect() {
 	if err := bluetooth.DefaultAdapter.StopScan(); err != nil {
 		return
 	}
-	now := time.Now()
 	s.mu.Lock()
 	s.scanStoppedForConnect = true
-	s.scanFreshnessHoldStart = now
-	s.scanFreshnessHoldUntil = now.Add(s.cfg.PresenceTimeout)
 	s.mu.Unlock()
 }
 
@@ -483,20 +485,21 @@ func (s *runtimeState) consumeScanStoppedForConnect() bool {
 	return stopped
 }
 
-func (s *runtimeState) scanFreshnessHeldFor(advertisement rigble.Advertisement, now time.Time) bool {
+func (s *runtimeState) scanFreshnessHeldFor(thingName string, advertisement rigble.Advertisement, now time.Time) bool {
 	s.mu.Lock()
-	stopped := s.scanStoppedForConnect
-	active := len(s.activeConnects) > 0
-	holdStart := s.scanFreshnessHoldStart
-	holdUntil := s.scanFreshnessHoldUntil
+	_, active := s.activeConnects[thingName]
+	hold, ok := s.connectFreshnessHolds[thingName]
 	s.mu.Unlock()
-	if !stopped && !active && !now.Before(holdUntil) {
+	if !ok {
 		return false
 	}
-	if holdStart.IsZero() {
+	if !active && !now.Before(hold.until) {
 		return false
 	}
-	return s.advertisementIsFreshAt(advertisement, holdStart)
+	if hold.start.IsZero() {
+		return false
+	}
+	return s.advertisementIsFreshAt(advertisement, hold.start)
 }
 
 func (s *runtimeState) advertisementIsFreshAt(advertisement rigble.Advertisement, now time.Time) bool {
@@ -545,19 +548,28 @@ func (s *runtimeState) acquireDeviceConnect(ctx context.Context, thingName strin
 		}
 		done, active := s.activeConnects[thingName]
 		if !active {
+			now := time.Now()
 			done = make(chan struct{})
 			s.activeConnects[thingName] = done
+			if s.connectFreshnessHolds == nil {
+				s.connectFreshnessHolds = map[string]connectFreshnessHold{}
+			}
+			s.connectFreshnessHolds[thingName] = connectFreshnessHold{
+				start: now,
+				until: now.Add(s.cfg.PresenceTimeout),
+			}
 			s.mu.Unlock()
 			return func() {
 				s.mu.Lock()
 				if s.activeConnects[thingName] == done {
 					delete(s.activeConnects, thingName)
-					if len(s.activeConnects) == 0 {
-						now := time.Now()
-						if !s.scanFreshnessHoldStart.IsZero() {
-							s.scanFreshnessHoldUntil = now.Add(s.cfg.PresenceTimeout)
-						}
+					now := time.Now()
+					hold := s.connectFreshnessHolds[thingName]
+					if hold.start.IsZero() {
+						hold.start = now
 					}
+					hold.until = now.Add(s.cfg.PresenceTimeout)
+					s.connectFreshnessHolds[thingName] = hold
 					close(done)
 				}
 				s.mu.Unlock()

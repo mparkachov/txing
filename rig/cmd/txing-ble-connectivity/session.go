@@ -520,7 +520,7 @@ func (d *deviceSession) checkStale(ctx context.Context) {
 	if d.lastAdvertisement != nil && d.advertisementIsFresh(*d.lastAdvertisement) {
 		return
 	}
-	if d.lastAdvertisement != nil && d.runtime.scanFreshnessHeldFor(*d.lastAdvertisement, nowTime) {
+	if d.lastAdvertisement != nil && d.runtime.scanFreshnessHeldFor(d.spec.ThingName, *d.lastAdvertisement, nowTime) {
 		return
 	}
 	if !d.offlinePublished {
