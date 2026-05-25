@@ -515,6 +515,19 @@ func (s *runtimeState) scanFreshnessHeldFor(thingName string, advertisement rigb
 	return s.advertisementIsFreshAt(advertisement, hold.start)
 }
 
+func (s *runtimeState) cachedAdvertisementAfter(thingName string, observedAfterMS uint64, now time.Time) (*rigble.Advertisement, bool) {
+	s.mu.Lock()
+	advertisement, ok := s.cachedAdvertisements[thingName]
+	s.mu.Unlock()
+	if !ok || advertisement.ObservedAtMS <= observedAfterMS {
+		return nil, false
+	}
+	if !s.advertisementIsFreshAt(advertisement, now) {
+		return nil, false
+	}
+	return cloneAdvertisement(advertisement), true
+}
+
 func (s *runtimeState) advertisementIsFreshAt(advertisement rigble.Advertisement, now time.Time) bool {
 	timeoutMS := uint64(s.cfg.PresenceTimeout / time.Millisecond)
 	if timeoutMS == 0 {

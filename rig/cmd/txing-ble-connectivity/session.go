@@ -526,6 +526,9 @@ func (d *deviceSession) checkStale(ctx context.Context) {
 	if d.lastAdvertisement != nil && d.advertisementIsFresh(*d.lastAdvertisement) {
 		return
 	}
+	if d.refreshFromFreshCachedAdvertisement(ctx, nowTime) {
+		return
+	}
 	if d.lastAdvertisement != nil && d.runtime.scanFreshnessHeldFor(d.spec.ThingName, *d.lastAdvertisement, nowTime) {
 		return
 	}
@@ -541,6 +544,21 @@ func (d *deviceSession) publishOffline(ctx context.Context) {
 	d.runtime.publishSample(ctx, rigble.OfflineSample(d.spec, d.runtime.nextSeq(), uint64(time.Now().UnixMilli())), false, true)
 	d.resetConnectBackoff()
 	d.offlinePublished = true
+}
+
+func (d *deviceSession) refreshFromFreshCachedAdvertisement(ctx context.Context, now time.Time) bool {
+	observedAfterMS := uint64(0)
+	if d.lastAdvertisement != nil {
+		observedAfterMS = d.lastAdvertisement.ObservedAtMS
+	}
+	advertisement, ok := d.runtime.cachedAdvertisementAfter(d.spec.ThingName, observedAfterMS, now)
+	if !ok {
+		return false
+	}
+	d.lastAdvertisement = advertisement
+	d.offlinePublished = false
+	d.runtime.debugPrint(ctx, fmt.Sprintf("BLE stale check held by fresh cached advertisement thing=%s address=%s seq=%d", d.spec.ThingName, advertisement.Address, advertisement.Seq))
+	return true
 }
 
 func (d *deviceSession) publishAggregateSample(ctx context.Context, now uint64) {

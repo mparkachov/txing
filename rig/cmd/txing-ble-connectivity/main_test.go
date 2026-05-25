@@ -504,6 +504,31 @@ func TestStaleAdvertisementDoesNotPublishOfflineWhileScanFreshnessHeld(t *testin
 	}
 }
 
+func TestFreshCachedAdvertisementSuppressesOfflineBeforeSessionDelivery(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		published++
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "weather-1", Kind: rigble.DeviceKindWeather})
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("weather-1", time.Now().Add(-30*time.Second)))
+	fresh := testAdvertisement("weather-1", time.Now())
+	fresh.Seq = 12
+	state.cachedAdvertisements["weather-1"] = fresh
+
+	session.checkStale(context.Background())
+
+	if session.offlinePublished {
+		t.Fatal("offline should not publish while a newer cached scanner advertisement is fresh")
+	}
+	if published != 0 {
+		t.Fatalf("published samples = %d, want none", published)
+	}
+	if session.lastAdvertisement == nil || session.lastAdvertisement.Seq != fresh.Seq {
+		t.Fatalf("last advertisement was not refreshed from cache: %#v", session.lastAdvertisement)
+	}
+}
+
 func TestStaleAdvertisementPublishesOfflineWhenStaleBeforeScanHold(t *testing.T) {
 	state := testSessionRuntime(t)
 	published := 0
