@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import CapabilityStack from '../src/CapabilityStack'
 
 describe('capability stack', () => {
-  test('renders active and inactive capability status chips', () => {
+  test('renders visible active and inactive capability status chips', () => {
     const markup = renderToStaticMarkup(
       <CapabilityStack
         thingName="bot"
@@ -30,8 +30,10 @@ describe('capability stack', () => {
 
     expect(markup).toContain('aria-label="Capability status for bot"')
     expect(markup).toMatch(
-      /title="video: inactive"[\s\S]*title="mcp: inactive"[\s\S]*title="board: inactive"[\s\S]*title="power: inactive"[\s\S]*title="ble: active"[\s\S]*title="sparkplug: active"/,
+      /title="video: inactive"[\s\S]*title="mcp: inactive"[\s\S]*title="board: inactive"[\s\S]*title="power: inactive"[\s\S]*title="ble: active"/,
     )
+    expect(markup).not.toContain('title="sparkplug: active"')
+    expect(markup).not.toContain('>sparkplug</span>')
     expect(markup).toContain('catalog-status-capability-active')
     expect(markup).toContain('catalog-status-capability-inactive')
   })
@@ -49,7 +51,21 @@ describe('capability stack', () => {
     )
 
     expect(markup).toContain('catalog-status-capabilities navigation-capabilities')
-    expect(markup).toContain('title="sparkplug: inactive"')
+    expect(markup).not.toContain('title="sparkplug: inactive"')
     expect(markup).toContain('title="ble: inactive"')
+  })
+
+  test('renders nothing when only invisible capabilities are present', () => {
+    const markup = renderToStaticMarkup(
+      <CapabilityStack
+        thingName="raspi"
+        label="raspi"
+        capabilities={['sparkplug']}
+        sparkplugShadow={null}
+        sparkplugShadowStatus="loading"
+      />,
+    )
+
+    expect(markup).toBe('')
   })
 })

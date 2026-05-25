@@ -13,6 +13,13 @@ type CapabilityStackProps = {
   className?: string
 }
 
+const capabilityDisplayAttributes: Partial<Record<ShadowName, { visible: boolean }>> = {
+  sparkplug: { visible: false },
+}
+
+const isCapabilityVisible = (capability: ShadowName): boolean =>
+  capabilityDisplayAttributes[capability]?.visible ?? true
+
 function CapabilityStack({
   thingName,
   label,
@@ -21,13 +28,13 @@ function CapabilityStack({
   sparkplugShadowStatus,
   className,
 }: CapabilityStackProps): ReactElement | null {
-  if (capabilities.length === 0) {
+  const displayCapabilities = [...capabilities].filter(isCapabilityVisible).reverse()
+
+  if (displayCapabilities.length === 0) {
     return null
   }
 
   const classes = ['catalog-status-capabilities', className].filter(Boolean).join(' ')
-
-  const displayCapabilities = [...capabilities].reverse()
 
   return (
     <span className={classes} aria-label={`Capability status for ${label}`}>
