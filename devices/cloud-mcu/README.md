@@ -25,20 +25,22 @@ Fargate task for the device. Tasks are also started with a deterministic ECS
 that value and stops duplicates so only one active task is associated with a
 device.
 
-## Deployment
+## AWS Deploy And Runtime Publish
 
-Create or update the shared AWS stack and release Lambda artifacts:
+Create or update the CloudFormation-managed AWS infrastructure, then publish
+the already-built runtime Lambda artifacts:
 
 ```sh
 just aws::deploy
-just aws::publish latest
+just release::publish lambda
 ```
 
 The cloud MCU deploy step called by `just aws::deploy` owns all cloud
 MCU-specific AWS infrastructure: the `cloud-mcu` type catalog entry, SQS tick
 queues, IPv6-only ECS task network, placeholder task definition, and the two
-runtime Lambda stacks. The base AWS stack only creates the shared `cloud` rig
-type and common txing infrastructure.
+runtime Lambda stacks. `just release::publish lambda` updates the existing
+runtime Lambda functions from the `lambda-v*` release stream. The base AWS stack
+only creates the shared `cloud` rig type and common txing infrastructure.
 The cloud MCU stack publishes queue and runtime values under `/txing/stack/...`;
 the cloud rig stack reads those parameters instead of reading CloudFormation
 outputs from the cloud MCU stack.

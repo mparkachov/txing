@@ -8,7 +8,7 @@ credentials.
 
 - minimal `txing.dev` landing page
 - sign-in link to the office SPA
-- Cloudflare Pages Git deployment
+- Cloudflare Pages Git publishing
 - no package manager, Vite project, build step, version field, or environment variables
 
 The sign-in link points to `https://office.txing.dev/?signin=1`. The office SPA

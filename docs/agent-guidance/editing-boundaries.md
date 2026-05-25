@@ -22,8 +22,8 @@ changes, or future-work implementation.
   automation.
 - Release artifacts are immutable for each exact component version; do not add
   deploy bypasses around release versioning.
-- The release workflow does not bump versions, commit, push, upload Lambda code
-  to AWS, or deploy to hosts. Preserve that separation.
+- The release workflow does not bump versions, commit, push, publish Lambda
+  code to AWS, or publish host binaries. Preserve that separation.
 - Production board and rig binary updates remain manual writable-root
   maintenance actions through root-owned `mise`.
 
@@ -34,8 +34,8 @@ changes, or future-work implementation.
 - IAM roles, IAM managed policies, IoT role aliases, and IoT policies use
   CloudFormation-generated physical names. Do not depend on old fixed names;
   use `/txing/stack/...` parameters or AWS API lookups.
-- Cloudflare Pages deployment for `office/` and `www/` is Git deployment. Do
-  not add `npx wrangler deploy` or a custom deploy command.
+- Cloudflare Pages publishing for `office/` and `www/` is Git-driven. Do not
+  add `npx wrangler deploy` or a custom deploy command.
 - Do not add `VITE_TXING_VERSION`, `VITE_DEVICE_THING_NAME`, or
   `VITE_SPARKPLUG_EDGE_NODE_ID` to office Cloudflare configuration.
 - Do not add a `/* /index.html 200` `_redirects` rule for the office SPA; Pages

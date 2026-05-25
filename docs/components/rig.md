@@ -244,7 +244,15 @@ MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
 sync
 ```
 
-After the binaries are upgraded, this is enough to activate them:
+From the operator machine, the release helper runs the upgrade and restart over
+SSH:
+
+```bash
+just release::publish rig
+```
+
+On the rig host, after the binaries are upgraded, this is enough to activate
+them:
 
 ```bash
 sudo systemctl restart rig-daemon.target

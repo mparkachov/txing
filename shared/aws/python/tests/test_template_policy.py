@@ -848,6 +848,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
     def test_aws_recipes_are_stateless_and_staged(self) -> None:
         checked_paths = [
             REPO_ROOT / "justfile",
+            REPO_ROOT / "release" / "justfile",
             AWS_DIR / "justfile",
             AWS_DIR / "scripts" / "aws_lib.sh",
             REPO_ROOT / "devices" / "cloud-mcu" / "justfile",

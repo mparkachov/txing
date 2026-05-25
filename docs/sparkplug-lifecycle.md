@@ -303,4 +303,4 @@ The current implementation keeps the derived-behavior model rather than making R
 - `just aws::deploy` deploys the custom-resource Lambda, the `<TXING_AWS_STACK>-aws-base` base stack, and standalone Lambda stacks in dependency order.
 - `just aws::deploy-base` deploys only shared environment resources; it does not own runtime Lambda functions.
 - `just witness::deploy` deploys the Sparkplug witness Lambda infrastructure, IoT rule, and role with a seeded placeholder bootstrap artifact when needed.
-- `just witness::publish` deploys release-built witness Lambda code.
+- `just release::publish lambda` publishes release-built runtime Lambda code to existing functions.

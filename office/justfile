@@ -36,7 +36,7 @@ deploy stack_name=stack_name office_dist_dir=office_dist_dir:
       exit 1
     fi
 
-    echo "Production office deployment is managed by Cloudflare Pages."
+    echo "Production office publishing is managed by Cloudflare Pages."
     echo "Project: txing-office"
     echo "Root directory: office"
     echo "Build command: bun install --frozen-lockfile && bun --bun run build"

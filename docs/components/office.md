@@ -83,8 +83,9 @@ Local Cognito sign-in remains allowed for:
 just office::build
 ```
 
-Production deployment is a Cloudflare Pages Git deployment, not an AWS S3 or
-CloudFront upload. Use these Cloudflare Pages settings:
+Production office publishing is handled by Cloudflare Pages from Git, not by a
+txing deploy action, AWS S3, or CloudFront upload. Use these Cloudflare Pages
+settings:
 
 - Project: `txing-office`
 - Root directory: `office`
@@ -107,8 +108,9 @@ CloudFront upload. Use these Cloudflare Pages settings:
 
 Cloudflare Pages provides SPA fallback automatically when there is no top-level
 `404.html`. The app does not use a `/* /index.html 200` `_redirects` rule
-because Pages now treats that as an infinite loop. `just office::deploy` is now
-informational and prints the Cloudflare Pages settings.
+because Pages now treats that as an infinite loop. `just office::deploy` is a
+legacy informational recipe that prints the Cloudflare Pages settings; it does
+not deploy AWS infrastructure or publish artifacts.
 
 ## Public Sign-In Entry
 

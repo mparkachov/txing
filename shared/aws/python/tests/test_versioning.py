@@ -422,11 +422,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("package_path: ./cmd/txing-witness-lambda", lambda_workflow)
         self.assertIn("package_path: ./cmd/txing-cloud-rig-lambda", lambda_workflow)
         self.assertIn("package_path: ./cmd/txing-cloud-mcu-lambda", lambda_workflow)
+        self.assertIn("version_package: txing.dev/witness/internal/version", lambda_workflow)
+        self.assertIn("version_package: txing.dev/cloud-mcu-lambda/internal/version", lambda_workflow)
         self.assertIn("txing-witness-lambda-linux-aarch64.zip", lambda_workflow)
         self.assertIn("txing-cloud-rig-lambda-linux-aarch64.zip", lambda_workflow)
         self.assertIn("txing-cloud-mcu-lambda-linux-aarch64.zip", lambda_workflow)
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags lambda.norpc ./...", lambda_workflow)
-        self.assertIn('go build -trimpath -tags lambda.norpc -ldflags="-s -w"', lambda_workflow)
+        self.assertIn(
+            '-ldflags="-s -w -X ${{ matrix.version_package }}.Version=${{ needs.metadata.outputs.version }}"',
+            lambda_workflow,
+        )
         self.assertIn("ELF 64-bit LSB executable, ARM aarch64", lambda_workflow)
         self.assertIn("statically linked", lambda_workflow)
         self.assertIn('zip -q "$asset_path" bootstrap', lambda_workflow)
@@ -759,23 +764,63 @@ class VersionEnvironmentTests(unittest.TestCase):
         aws_justfile = (REPO_ROOT / "shared" / "aws" / "justfile").read_text(
             encoding="utf-8"
         )
+        release_justfile = (REPO_ROOT / "release" / "justfile").read_text(
+            encoding="utf-8"
+        )
+        witness_justfile = (REPO_ROOT / "witness" / "justfile").read_text(
+            encoding="utf-8"
+        )
+        cloud_mcu_justfile = (REPO_ROOT / "devices" / "cloud-mcu" / "justfile").read_text(
+            encoding="utf-8"
+        )
+        cloud_mcu_lambda_justfile = (
+            REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "justfile"
+        ).read_text(encoding="utf-8")
+        artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
+            encoding="utf-8"
+        )
+        aws_docs = (REPO_ROOT / "docs" / "aws.md").read_text(encoding="utf-8")
+        cloud_mcu_docs = (REPO_ROOT / "devices" / "cloud-mcu" / "README.md").read_text(
+            encoding="utf-8"
+        )
         aws_lib = (REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh").read_text(
             encoding="utf-8"
         )
         scripts_dir = REPO_ROOT / "shared" / "aws" / "scripts"
 
-        self.assertIn("publish release='latest'", aws_justfile)
-        self.assertIn("publish-lambda release='latest'", aws_justfile)
+        self.assertIn("bump component='' target=''", release_justfile)
+        self.assertIn("build component='' ref=''", release_justfile)
+        self.assertIn("publish component='' release='latest'", release_justfile)
+        self.assertIn("release components: {{components}}", release_justfile)
+        self.assertIn("release publish components: lambda rig", release_justfile)
+        self.assertIn("usage: just release::publish <component> [release]", release_justfile)
+        self.assertIn("release-lambda.yml", release_justfile)
+        self.assertIn('gh workflow run "$workflow" --ref "$release_ref"', release_justfile)
+        self.assertIn("ssh rig", release_justfile)
+        self.assertIn('sudo su - -c "mise upgrade"', release_justfile)
+        self.assertIn("sudo systemctl restart rig-daemon.target", release_justfile)
+        self.assertIn("stack_parameter ReleasePublisherFunctionName", release_justfile)
+        self.assertIn("aws lambda invoke", release_justfile)
+        self.assertIn("Deploy And Publish", aws_docs)
+        self.assertIn("CloudFormation **deploy**", artifacts_docs)
+        self.assertIn("**publish** promotes already-built artifacts", artifacts_docs)
+        self.assertIn("just release::publish lambda", cloud_mcu_docs)
+        self.assertNotIn("just release::publish\n", artifacts_docs)
+        self.assertNotIn("just release::publish\n", aws_docs)
+        self.assertNotIn("just release::publish\n", cloud_mcu_docs)
+        self.assertNotIn("publish release='latest'", aws_justfile)
+        self.assertNotIn("publish-lambda release='latest'", aws_justfile)
+        self.assertNotIn("publish release='latest'", witness_justfile)
+        self.assertNotIn("publish release='latest'", cloud_mcu_justfile)
+        self.assertNotIn("publish release='latest'", cloud_mcu_lambda_justfile)
+        self.assertNotIn("publish-cloud-rig", cloud_mcu_lambda_justfile)
+        self.assertNotIn("publish-cloud-mcu", cloud_mcu_lambda_justfile)
         self.assertNotIn("publish-rig release='latest'", aws_justfile)
         self.assertNotIn("deploy-lambdas release='latest'", aws_justfile)
         self.assertNotIn("deploy-lambdas stack_name=stack_name", aws_justfile)
         self.assertNotIn("deploy-local-lambda", aws_justfile)
-        self.assertIn("TXING_LAMBDA_ARTIFACT_BUCKET", aws_justfile)
-        self.assertIn("TXING_LAMBDA_FUNCTIONS_JSON", aws_justfile)
-        self.assertIn("latest|lambda-v[0-9]*|v[0-9]*|[0-9]*)", aws_justfile)
-        self.assertIn("lambda-vX.Y.Z", aws_justfile)
-        self.assertIn("python -m aws_admin.publish_release lambda --release", aws_justfile)
-        self.assertIn("stack_parameter ReleasePublisherFunctionName", aws_justfile)
+        self.assertIn("latest|lambda-v[0-9]*|v[0-9]*|[0-9]*)", release_justfile)
+        self.assertIn("lambda-vX.Y.Z", release_justfile)
         self.assertIn("deploy stack_name=stack_name", aws_justfile)
         self.assertIn("deploy-base stack_name=stack_name", aws_justfile)
         self.assertIn("_deploy-clean-stack stack_name=stack_name", aws_justfile)

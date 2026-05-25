@@ -56,7 +56,7 @@ describe('office config wiring', () => {
     const tsconfig = readFileSync(resolve(repoRoot, 'office/tsconfig.app.json'), 'utf-8')
     const viteConfigSource = readFileSync(resolve(repoRoot, 'office/vite.config.ts'), 'utf-8')
 
-    expect(justfile).toContain('Production office deployment is managed by Cloudflare Pages.')
+    expect(justfile).toContain('Production office publishing is managed by Cloudflare Pages.')
     expect(justfile).toContain('Project: txing-office')
     expect(justfile).toContain('Root directory: office')
     expect(justfile).toContain('Build command: bun install --frozen-lockfile && bun --bun run build')

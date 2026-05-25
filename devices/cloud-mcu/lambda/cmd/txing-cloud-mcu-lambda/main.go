@@ -8,9 +8,13 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 
 	"txing.dev/cloud-mcu-lambda/internal/cloudmcu"
+	"txing.dev/cloud-mcu-lambda/internal/lambdalog"
+	"txing.dev/cloud-mcu-lambda/internal/version"
 )
 
 func main() {
+	lambdalog.PrintColdStart("txing-cloud-mcu-lambda", version.Version)
+
 	ctx := context.Background()
 	awsClient, err := cloudmcu.NewAWSClient(ctx)
 	if err != nil {

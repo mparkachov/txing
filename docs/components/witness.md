@@ -19,16 +19,18 @@ Create or update the witness Lambda stack:
 just witness::deploy
 ```
 
-Publish release-built witness code after the GitHub release exists:
+Publish release-built runtime Lambda code after the GitHub release exists:
 
 ```bash
-just witness::publish latest
+just release::publish lambda
 ```
 
 `witness::deploy` creates the shared Lambda artifact bucket when needed and
 seeds a placeholder `lambda/txing-witness-lambda/current/bootstrap.zip` object
 before creating the function. The placeholder is only a bootstrap artifact for
 CloudFormation; release code is still published from GitHub release assets.
+`release::publish lambda` publishes already-built artifacts to all three
+existing Go runtime Lambda functions together.
 
 The deeper projection semantics are documented in:
 

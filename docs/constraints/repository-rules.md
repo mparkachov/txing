@@ -73,8 +73,8 @@ logic, shell scripts, or firmware programming workflows.
 - Do not add deploy bypasses or automated component version enforcement
   checks.
 - Preserve the current release separation: the release workflow publishes
-  artifacts, but does not bump versions, commit, push back to a branch, upload
-  Lambda code to AWS, or deploy to hosts.
+  immutable GitHub artifacts, but does not bump versions, commit, push back to a
+  branch, publish Lambda code to AWS, or publish host binaries.
 - Do not turn manual board, rig, AWS, or release operator steps into automatic
   scripts unless the user explicitly asks for that exact automation.
 - Flashing/programming firmware onto hardware must only be performed manually by

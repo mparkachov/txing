@@ -26,8 +26,8 @@ aws sts get-caller-identity
 ```
 
 Set `TXING_AWS_STACK` explicitly before running stack-backed commands such as
-`just aws::deploy`, `just aws::publish`, `just aws::publish-lambda`,
-`just aws::check`, `just office::write-env`, and `just aws::cert`.
+`just aws::deploy`, `just release::publish lambda`, `just aws::check`,
+`just office::write-env`, and `just aws::cert`.
 Export it in the operator shell or pass a positional stack name to recipes that
 accept one. Those commands fail if `TXING_AWS_STACK` is unset and no positional
 stack name is provided.
@@ -40,6 +40,17 @@ are initialized with `aws::deploy-init`; the type catalog root is always
 `/txing`. Recipes resolve operational stack values from SSM Parameter Store and
 AWS IoT registry values live.
 
+## Deploy And Publish
+
+In this project, **deploy** means creating or updating AWS infrastructure with
+CloudFormation. The AWS deploy recipes create stacks, roles, rules, functions,
+queues, parameters, and placeholder runtime artifacts.
+
+**Publish** means promoting already-built release artifacts to an existing
+runtime target. `just release::publish lambda` updates existing runtime Lambda
+functions from a `lambda-v*` GitHub Release; `just release::publish rig` updates
+physical rig host binaries from a `rig-v*` GitHub Release.
+
 ## Bring-Up Order
 
 Run the setup in this order:
@@ -50,7 +61,7 @@ cp shared/aws/deploy-init.example.json shared/aws/deploy-init.json
 $EDITOR shared/aws/deploy-init.json
 just aws::deploy-init
 just aws::deploy
-just aws::publish latest
+just release::publish lambda
 just aws::deploy-town town
 just aws::deploy-rig <town-id> raspi server
 just aws::deploy-device <rig-id> unit bot
@@ -94,10 +105,11 @@ or cloud MCU runtime infrastructure.
 Standalone Lambda stacks are named from the same environment prefix, for example
 `town-witness`, `town-cloud-mcu`, and `town-aws-publish-release`. `just
 aws::deploy` packages the admin Python Lambda source as current
-content-addressed stack code. `just cloud-mcu::deploy` deploys the cloud MCU
-type catalog entry, SQS tick queues, IPv6-only ECS task network, ECS task
-definition, and the cloud MCU/cloud rig runtime Lambdas. Runtime Lambda deploy
-recipes create the shared artifact bucket and seed a placeholder
+content-addressed CloudFormation stack code. `just cloud-mcu::deploy` deploys
+the cloud MCU type catalog entry, SQS tick queues, IPv6-only ECS task network,
+ECS task definition, and the cloud MCU/cloud rig runtime Lambda infrastructure.
+Runtime Lambda CloudFormation deploy recipes create the shared artifact bucket
+and seed a placeholder
 `current/bootstrap.zip` object when the release artifact has not been published
 yet.
 
@@ -108,19 +120,15 @@ parameter for custom-resource service tokens. The cloud MCU stack publishes
 `/txing/stack/CloudMcuTickQueueUrl` and `CloudMcuTickQueueArn`; the cloud rig
 stack reads those parameters for SQS access.
 
-`just aws::publish latest` invokes the AWS-hosted publisher Lambda, which
+`just release::publish lambda` invokes the AWS-hosted publisher Lambda, which
 resolves `latest` from `lambda-v*` GitHub Releases, downloads public Lambda
 release assets, uploads runtime Lambda artifacts, and updates existing runtime
-Lambda functions. Run it after the `Release lambda` workflow and after the
+Lambda functions. Run it after `just release::build lambda` and after the
 standalone Lambda stacks exist. Explicit `lambda-vX.Y.Z` and bare `X.Y.Z`
 references select the Lambda component stream; exact legacy `vX.Y.Z` references
 remain available only for manual rollback to old combined releases.
 The publisher receives its target Lambda names from `/txing/stack/...`
 parameters created by the runtime Lambda stacks.
-
-`just aws::publish-lambda latest` runs the same runtime Lambda publish code
-locally and remains available for manual repair or one-off publishing, but stack
-creation no longer depends on it.
 
 Resource names are deterministic from `TXING_AWS_STACK` where AWS exposes a physical name.
 Web hosting is externalized to Cloudflare Pages. The type catalog is
@@ -352,7 +360,7 @@ just aws::delete-packaging-buckets
 ```
 
 This removes the shared `txing-cfn-<account>-<region>-<TXING_AWS_STACK>` bucket
-and the current Lambda release deployment reuses the shared `txing-cfn-*`
+and the current Lambda release publishing path reuses the shared `txing-cfn-*`
 packaging bucket by default.
 
 Generated IoT things and KVS signaling channels are still instance resources.

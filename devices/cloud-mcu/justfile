@@ -15,9 +15,6 @@ export TMPDIR := tmp_dir
 deploy stack_name='':
     just --justfile "{{cloud_mcu_dir}}/lambda/justfile" deploy "{{stack_name}}"
 
-publish release='latest' stack_name='':
-    just --justfile "{{cloud_mcu_dir}}/lambda/justfile" publish "{{release}}" "{{stack_name}}"
-
 mod lambda 'lambda/justfile'
 
 @default:

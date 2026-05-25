@@ -4,7 +4,18 @@ This document describes release artifacts and channels. Host installation steps
 live with the owning component:
 
 - board install and maintenance: [Board](./components/board.md)
-- rig install and deployment: [Rig](./components/rig.md)
+- rig install and maintenance: [Rig](./components/rig.md)
+
+## Terminology
+
+In this repository, a release **build** creates immutable artifacts, a
+CloudFormation **deploy** creates or updates AWS infrastructure, and a release
+**publish** promotes already-built artifacts to an existing runtime target.
+For example, `just aws::deploy`, `just witness::deploy`, and
+`just cloud-mcu::deploy` are AWS CloudFormation deploys, while
+`just release::publish lambda` updates existing Lambda functions from a
+`lambda-v*` release and `just release::publish rig` updates a physical rig host
+from a `rig-v*` release.
 
 ## Release
 
@@ -21,7 +32,7 @@ publish normal GitHub Releases with component-prefixed tags:
 Each manual release workflow is dispatched from the selected branch, reads only
 its component version file, rejects an existing tag/release, and compares
 monotonicity only within that component tag stream. Office has no GitHub
-Release workflow or release asset; Cloudflare Pages builds and deploys office
+Release workflow or release asset; Cloudflare Pages builds and publishes office
 from Git.
 
 Rig releases publish these Linux `aarch64` assets:
@@ -53,20 +64,20 @@ name. Each runtime Lambda `.zip` contains one root-level Go executable named
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
 
-Release publishing flow:
+Release rollout flow:
 
 1. Bump the intended component version locally.
 2. Push the intended code to the branch that should be released.
-3. Run the matching `Release rig`, `Release lambda`, or `Release unit` workflow
-   manually from that branch.
+3. Dispatch the matching GitHub release workflow with `just release::build
+   <component>`.
 4. Deploy AWS infrastructure and all standalone Lambda stacks with
    `just aws::deploy`.
 5. Publish runtime Lambda code from the operator machine with
-   `just aws::publish latest`. `latest` resolves within the `lambda-v*`
+   `just release::publish lambda`. `latest` resolves within the `lambda-v*`
    release stream.
-6. If a board or rig needs new binaries, update it manually from a root shell
-   with writable root and root-owned `mise upgrade`; boards reboot, rigs
-   restart `rig-daemon.target`.
+6. If a rig needs new binaries, publish it with `just release::publish rig`.
+   Boards still update manually from a root shell with writable root and
+   root-owned `mise upgrade`, then reboot.
 
 Host `latest` resolution is component-specific: rig mise configs use
 `version_prefix = "rig-v"` and board mise configs use
@@ -76,28 +87,28 @@ replace old host configs that do not include the prefix before relying on
 
 ## Lambda Artifacts
 
-Production Lambda code is deployed from GitHub release assets by the operator
-machine:
+Production Lambda code is published to existing AWS Lambda functions from
+GitHub release assets by the operator machine:
 
 ```bash
-just aws::publish latest
+just release::publish lambda
 ```
 
-`aws::publish` invokes the AWS-hosted publisher Lambda. `latest` resolves to the
-newest `lambda-v*` component release, not the repository-wide latest release.
-Explicit `lambda-vX.Y.Z` and bare `X.Y.Z` references select the Lambda stream;
-exact legacy `vX.Y.Z` references remain available only for manual rollback to
-old combined releases. The publisher downloads public GitHub release assets
-over HTTPS, uploads Lambda artifacts, and updates existing Lambda functions.
-Runtime Lambda deploy recipes seed placeholder bootstrap zips so first-time
-stack creation does not depend on release artifacts already being uploaded.
-`aws::publish-lambda` runs the same runtime Lambda publish code locally and is
-kept for manual repair or one-off publishing before the publisher Lambda exists.
-Admin Lambda deploy recipes package the current Python source into each
-standalone admin Lambda stack. That admin Python package is not semver-release
-managed; CloudFormation receives the content-addressed `cfn/aws-admin/<sha>.zip`
-key during stack deployment. Operator publishing defaults to `latest`, which
-resolves within the `lambda-v*` runtime Lambda release stream.
+`release::publish lambda` invokes the AWS-hosted publisher Lambda. `latest`
+resolves to the newest `lambda-v*` component release, not the repository-wide
+latest release. Explicit `lambda-vX.Y.Z` and bare `X.Y.Z` references select the
+Lambda stream; exact legacy `vX.Y.Z` references remain available only for
+manual rollback to old combined releases. The publisher downloads public GitHub
+release assets over HTTPS, uploads Lambda artifacts, and updates existing
+Lambda functions.
+Runtime Lambda CloudFormation deploy recipes seed placeholder bootstrap zips so
+first-time stack creation does not depend on release artifacts already being
+uploaded. Admin Lambda CloudFormation deploy recipes package the current Python
+source into each standalone admin Lambda stack. That admin Python package is not
+semver-release managed; CloudFormation receives the content-addressed
+`cfn/aws-admin/<sha>.zip` key during stack deployment. The optional Lambda
+release argument defaults to `latest`, which resolves within the `lambda-v*`
+runtime Lambda release stream.
 
 ## Board Assets
 

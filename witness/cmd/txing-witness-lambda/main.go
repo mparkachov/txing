@@ -7,10 +7,14 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 
+	"txing.dev/witness/internal/lambdalog"
+	"txing.dev/witness/internal/version"
 	"txing.dev/witness/internal/witness"
 )
 
 func main() {
+	lambdalog.PrintColdStart("txing-witness-lambda", version.Version)
+
 	ctx := context.Background()
 	awsClient, err := witness.NewAWSClient(ctx)
 	if err != nil {

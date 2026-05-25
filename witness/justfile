@@ -25,22 +25,5 @@ deploy stack_name=stack_name:
     deploy_template "$(lambda_stack_name witness)" "{{witness_dir}}/template.yaml" \
       "EnvironmentStackName=$TXING_AWS_STACK"
 
-publish release='latest' stack_name=stack_name:
-    #!/bin/sh
-    set -eu
-    cd "{{witness_dir}}"
-    . "{{aws_lib}}"
-    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
-    txing_aws_init
-    artifact_bucket="$(ensure_artifact_bucket)"
-    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
-    export TXING_LAMBDA_ARTIFACT_BUCKET="$artifact_bucket"
-    export TXING_LAMBDA_FUNCTIONS_JSON
-    TXING_LAMBDA_FUNCTIONS_JSON="$(lambda_release_targets_json)"
-    exec uv run --project "{{project_root}}/shared/aws/python" \
-      python -m aws_admin.publish_release lambda \
-      --function txing-witness-lambda \
-      --release "{{release}}"
-
 @default:
     @just --list

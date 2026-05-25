@@ -138,14 +138,17 @@ jobs:
           - function_name: txing-witness-lambda
             working_directory: witness
             package_path: ./cmd/txing-witness-lambda
+            version_package: txing.dev/witness/internal/version
             asset_name: txing-witness-lambda-linux-aarch64.zip
           - function_name: txing-cloud-rig-lambda
             working_directory: devices/cloud-mcu/lambda
             package_path: ./cmd/txing-cloud-rig-lambda
+            version_package: txing.dev/cloud-mcu-lambda/internal/version
             asset_name: txing-cloud-rig-lambda-linux-aarch64.zip
           - function_name: txing-cloud-mcu-lambda
             working_directory: devices/cloud-mcu/lambda
             package_path: ./cmd/txing-cloud-mcu-lambda
+            version_package: txing.dev/cloud-mcu-lambda/internal/version
             asset_name: txing-cloud-mcu-lambda-linux-aarch64.zip
 
     steps:
@@ -210,7 +213,8 @@ jobs:
           go version
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags lambda.norpc ./...
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-            go build -trimpath -tags lambda.norpc -ldflags="-s -w" \
+            go build -trimpath -tags lambda.norpc \
+            -ldflags="-s -w -X ${{ matrix.version_package }}.Version=${{ needs.metadata.outputs.version }}" \
             -o "$RUNNER_TEMP/${{ matrix.function_name }}" \
             "${{ matrix.package_path }}"
 

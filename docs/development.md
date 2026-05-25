@@ -21,7 +21,7 @@ Repo-wide tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) only for legacy release inspection or helper scripts
+- GitHub CLI (`gh`) for dispatching release workflows
 
 Host-specific setup starts in [installation.md](./installation.md). Detailed
 board runtime setup, including read-only rootfs, lives in
@@ -31,20 +31,20 @@ board runtime setup, including read-only rootfs, lives in
 
 Release versions are component-scoped under `release/versions/`. Git SHA and
 dirty state are exported separately for diagnostics. Create artifact releases
-with the manual `Release rig`, `Release lambda`, or `Release unit` GitHub
-Actions workflow from the selected branch after bumping and pushing the managed
-component version files yourself. Each workflow reads that branch's component
-version file, fails unless it is newer than the latest existing tag with the
-same component prefix, and publishes only that component's artifacts. It does
-not commit or push version changes back to the selected branch.
+with `just release::build <component>` after bumping and pushing the managed
+component version files yourself. The recipe dispatches the matching GitHub
+Actions workflow from the selected branch. Each workflow reads that branch's
+component version file, fails unless it is newer than the latest existing tag
+with the same component prefix, and publishes only that component's artifacts.
+It does not commit or push version changes back to the selected branch.
 
-After a release workflow finishes, the operator Mac applies AWS infrastructure
-changes and then asks the AWS-hosted publisher Lambda to publish Lambda
+After a release workflow finishes, the operator Mac deploys CloudFormation
+infrastructure changes and then publishes already-built Lambda runtime
 artifacts with:
 
 ```bash
 just aws::deploy
-just aws::publish latest
+just release::publish lambda
 ```
 
 Development direction for installable host tools and board-side native
@@ -64,9 +64,11 @@ artifacts:
   are forward-only manual state; replace old configs that do not set
   `version_prefix = "rig-v"` or `version_prefix = "unit-v"` before relying on
   `latest`.
-- The Lambda component version covers Go runtime Lambda artifacts only. Python
-  admin Lambdas are deployed with the current CloudFormation stack code through
-  a content-addressed `cfn/aws-admin/<sha>.zip` package.
+- The Lambda component version covers Go runtime Lambda artifacts only. Release
+  builds inject that semver into the Go Lambda binaries, which emit a structured
+  cold-start log with `version=<release-version>`. Python admin Lambdas are
+  deployed with the current CloudFormation stack code through a
+  content-addressed `cfn/aws-admin/<sha>.zip` package.
 - Office tracks its version for Cloudflare Pages metadata only. Bump
   `release/versions/office` and the managed office package/runtime surfaces,
   but do not create a GitHub Release or release asset for office.
@@ -174,10 +176,10 @@ just rig::stop
 ```
 
 That source-checkout rig loop is for development. Production `raspi` rig hosts
-install GitHub release assets through root-owned `mise` and systemd. Production
-`cloud` rigs are updated through `just aws::deploy` and
-`just aws::publish latest`. Runtime Lambda updates flow through GitHub
-release artifacts plus per-function `publish` recipes or `just aws::publish latest`.
+publish GitHub release assets through root-owned `mise` and systemd via
+`just release::publish rig`. Production `cloud` rig infrastructure is deployed
+through `just aws::deploy`; its runtime Lambda code is published from GitHub
+release artifacts with `just release::publish lambda`.
 
 Board:
 

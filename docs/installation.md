@@ -32,7 +32,7 @@ Repo-wide developer tooling:
 - `just`
 - `jq`
 - AWS CLI v2
-- GitHub CLI (`gh`) only for legacy release inspection or helper scripts
+- GitHub CLI (`gh`) for dispatching release workflows
 
 Install operator CLIs with the package manager you use for the development
 machine. `mise` is acceptable for missing or stale CLI versions:
@@ -72,12 +72,13 @@ The short production flow is:
 
 ## Cloud Rig Runtime
 
-The `cloud` rig type is AWS-hosted. Deploy its Lambda/EventBridge/SQS runtime
-through the AWS stack and Lambda release assets:
+The `cloud` rig type is AWS-hosted. Deploy its Lambda/EventBridge/SQS
+infrastructure through CloudFormation, then publish runtime Lambda release
+artifacts:
 
 ```bash
 just aws::deploy
-just aws::publish latest
+just release::publish lambda
 ```
 
 Cloud MCU registration and runtime behavior are documented in
@@ -125,7 +126,8 @@ just office::write-env
 just office::dev
 ```
 
-Production deployment is Cloudflare Pages from the `office` directory.
+Production office publishing is handled by Cloudflare Pages from the `office`
+directory.
 
 ## Public Site
 

@@ -5,11 +5,131 @@ release_dir := source_directory()
 project_root := canonicalize(release_dir + "/..")
 tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
+root_justfile := project_root + "/justfile"
+aws_dir := project_root + "/shared/aws"
+aws_lib := aws_dir + "/scripts/aws_lib.sh"
+components := "rig lambda unit office"
 
-bump component target:
+bump component='' target='':
+    #!/bin/sh
+    set -eu
+    if [ -z "{{component}}" ]; then
+      printf 'release components: {{components}}\n'
+      printf 'usage: just release::bump <component> <version>\n'
+      exit 0
+    fi
+    if [ -z "{{target}}" ]; then
+      echo "release bump requires a target version" >&2
+      printf 'usage: just release::bump <component> <version>\n' >&2
+      exit 1
+    fi
+    case "{{component}}" in
+      rig|lambda|unit|office) ;;
+      *)
+        echo "unknown release component '{{component}}'; expected rig, lambda, unit, or office" >&2
+        exit 1
+        ;;
+    esac
     uv run --project "{{ release_dir }}" txing-release bump "{{ component }}" "{{ target }}"
 
-build:
+build component='' ref='':
+    #!/bin/sh
+    set -eu
+    case "{{component}}" in
+      "")
+        printf 'release components: {{components}}\n'
+        printf 'usage: just release::build <component> [ref]\n'
+        exit 0
+        ;;
+      rig) workflow="release-rig.yml" ;;
+      lambda) workflow="release-lambda.yml" ;;
+      unit) workflow="release-unit.yml" ;;
+      office)
+        echo "release build is not implemented for component: office" >&2
+        exit 1
+        ;;
+      *)
+        echo "unknown release component '{{component}}'; expected rig, lambda, unit, or office" >&2
+        exit 1
+        ;;
+    esac
+    release_ref="{{ref}}"
+    if [ -z "$release_ref" ]; then
+      release_ref="$(git -C "{{project_root}}" symbolic-ref --quiet --short HEAD || true)"
+    fi
+    if [ -z "$release_ref" ]; then
+      echo "release build requires a branch ref; run from a branch or pass one explicitly" >&2
+      exit 1
+    fi
+    gh workflow run "$workflow" --ref "$release_ref"
+    printf 'dispatched %s on ref %s\n' "$workflow" "$release_ref"
+
+publish component='' release='latest':
+    #!/bin/sh
+    set -eu
+    case "{{component}}" in
+      "")
+        printf 'release publish components: lambda rig\n'
+        printf 'usage: just release::publish <component> [release]\n'
+        exit 0
+        ;;
+      lambda) publish_component="lambda" ;;
+      rig) publish_component="rig" ;;
+      unit|office)
+        echo "release publish is not implemented for component: {{component}}" >&2
+        exit 1
+        ;;
+      *)
+        echo "unknown release component '{{component}}'; expected lambda, rig, unit, or office" >&2
+        exit 1
+        ;;
+    esac
+    if [ "$publish_component" = "rig" ]; then
+      if [ "{{release}}" != "latest" ]; then
+        echo "release publish rig does not accept a release argument" >&2
+        exit 1
+      fi
+      ssh rig 'sudo su - -c "mise upgrade" && sudo systemctl restart rig-daemon.target'
+      exit 0
+    fi
+    case "{{release}}" in
+      latest|lambda-v[0-9]*|v[0-9]*|[0-9]*) ;;
+      *=*)
+        echo "release must be latest, lambda-vX.Y.Z, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+      *)
+        echo "release must be latest, lambda-vX.Y.Z, vX.Y.Z, or X.Y.Z." >&2
+        exit 1
+        ;;
+    esac
+    cd "{{aws_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
+    txing_aws_init
+    export AWS_DEFAULT_REGION="$TXING_AWS_REGION"
+    function_name="$(stack_parameter ReleasePublisherFunctionName)"
+    payload_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-payload.XXXXXX")"
+    response_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-response.XXXXXX")"
+    metadata_file="$(mktemp "${TMPDIR:-/tmp}/txing-publish-metadata.XXXXXX")"
+    trap 'rm -f "$payload_file" "$response_file" "$metadata_file"' EXIT
+    jq -n --arg release "{{release}}" '{release: $release}' >"$payload_file"
+    aws lambda invoke \
+      --function-name "$function_name" \
+      --cli-binary-format raw-in-base64-out \
+      --payload "fileb://$payload_file" \
+      "$response_file" >"$metadata_file"
+    if jq -e '.FunctionError? // empty' "$metadata_file" >/dev/null; then
+      cat "$response_file" >&2
+      exit 1
+    fi
+    if ! jq -e '.ok == true' "$response_file" >/dev/null; then
+      cat "$response_file" >&2
+      exit 1
+    fi
+    jq '.' "$response_file"
+
+package:
     uv build --project "{{ release_dir }}"
 
 @default:
