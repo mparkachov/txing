@@ -173,7 +173,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 1rem 1.5rem;
-  overflow: hidden;
+  overflow: visible;
   padding: clamp(0.85rem, 1.8vw, 1.2rem);
   background: var(--txing-panel-surface);
 }
@@ -323,7 +323,7 @@ body {
 
 .navigation-panel-actions {
   position: relative;
-  z-index: 1;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
   flex: 1 1 auto;
