@@ -1,5 +1,6 @@
+@import "../../www/txing-theme.css";
+
 :root {
-  color-scheme: dark;
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   line-height: 1.4;
   font-weight: 400;
@@ -7,23 +8,21 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  color: rgba(244, 251, 252, 0.96);
+  color: var(--txing-text);
   background:
     radial-gradient(circle at top right, rgba(108, 238, 246, 0.08), transparent 28%),
     radial-gradient(circle at top left, rgba(108, 238, 246, 0.12), transparent 24%),
-    linear-gradient(180deg, #061119 0%, #040b10 100%);
-  --page-panel-width: 70rem;
-  --canvas: #040b10;
-  --text: rgba(244, 251, 252, 0.96);
-  --muted: rgba(204, 223, 226, 0.8);
-  --accent: #6ceef6;
+    linear-gradient(180deg, #061119 0%, var(--txing-canvas) 100%);
+  --page-panel-width: var(--txing-panel-width);
+  --canvas: var(--txing-canvas);
+  --text: var(--txing-text);
+  --muted: var(--txing-muted);
+  --accent: var(--txing-accent);
   --accent-soft: rgba(108, 238, 246, 0.14);
-  --panel-border: rgba(104, 231, 246, 0.26);
-  --panel-border-strong: rgba(104, 231, 246, 0.52);
-  --panel-surface:
-    linear-gradient(180deg, rgba(14, 28, 36, 0.96), rgba(6, 13, 18, 0.9)),
-    linear-gradient(135deg, rgba(108, 238, 246, 0.06), transparent 26%);
-  --panel-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  --panel-border: var(--txing-panel-border);
+  --panel-border-strong: var(--txing-panel-border-strong);
+  --panel-surface: var(--txing-panel-surface);
+  --panel-shadow: var(--txing-panel-shadow);
   --status-panel-shadow: 0 18px 32px rgba(15, 43, 78, 0.12);
   --status-node-awake: #1b9c62;
   --status-node-awake-bg: rgba(27, 156, 98, 0.12);
@@ -121,7 +120,7 @@ body {
   background:
     radial-gradient(circle at top right, rgba(108, 238, 246, 0.08), transparent 28%),
     radial-gradient(circle at top left, rgba(108, 238, 246, 0.12), transparent 24%),
-    linear-gradient(180deg, #061119 0%, #040b10 100%);
+    linear-gradient(180deg, #061119 0%, var(--canvas) 100%);
   color: var(--text);
   font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
 }
@@ -146,7 +145,7 @@ body {
   max-width: var(--page-panel-width);
   margin: 0 auto;
   border: 1px solid var(--panel-border);
-  border-radius: 16px;
+  border-radius: var(--txing-radius);
   background: var(--panel-surface);
   padding: 1.2rem;
   box-shadow: var(--panel-shadow);
@@ -171,16 +170,19 @@ body {
   position: relative;
   z-index: 30;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem 1.5rem;
-  padding: 1rem 1.2rem;
+  overflow: hidden;
+  padding: clamp(0.85rem, 1.8vw, 1.2rem);
+  background: var(--txing-panel-surface);
 }
 
 .navigation-panel::before {
   content: "";
   position: absolute;
   inset: -1px;
+  z-index: 2;
   border-radius: inherit;
   opacity: 0;
   pointer-events: none;
@@ -193,6 +195,15 @@ body {
       rgba(108, 238, 246, 0)
     );
   transform: translateX(-18%);
+}
+
+.navigation-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--txing-panel-glow);
+  pointer-events: none;
 }
 
 .navigation-panel-busy {
@@ -209,71 +220,71 @@ body {
 }
 
 .navigation-panel-busy .navigation-logo-link {
-  border-color: rgba(108, 238, 246, 0.62);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 0 0 1px rgba(108, 238, 246, 0.16),
-    0 0 2rem rgba(108, 238, 246, 0.26);
+  box-shadow: none;
   animation: navigation-logo-pulse 1.35s ease-in-out infinite;
 }
 
 .navigation-panel-main {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
+  position: relative;
+  z-index: 1;
   flex: 1 1 auto;
-  gap: 0.8rem;
   min-width: 0;
 }
 
 .navigation-panel-header {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
+  gap: var(--txing-header-gap);
   min-width: 0;
+  width: 100%;
 }
 
 .navigation-logo-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 3.6rem;
-  height: 3.6rem;
-  border-radius: 16px;
-  border: 1px solid var(--panel-border);
-  background: linear-gradient(180deg, rgba(11, 23, 31, 0.98), rgba(6, 13, 18, 0.94));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 0 2.4rem rgba(108, 238, 246, 0.12);
+  flex: 0 0 var(--txing-logo-slot);
+  width: var(--txing-logo-slot);
+  border-radius: 0.2rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .navigation-logo {
   display: block;
-  width: 1.55rem;
+  width: 100%;
   height: auto;
-  filter: drop-shadow(0 0 1.2rem rgba(108, 238, 246, 0.16));
+  filter: drop-shadow(0 0 2.5rem rgba(91, 235, 255, 0.14));
 }
 
 .navigation-panel-route {
   flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 
 .navigation-panel-brand {
   flex: 0 0 auto;
   color: var(--text);
-  font-size: 1.3rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-family: var(--txing-heading-font);
+  font-size: var(--txing-title-size);
+  font-weight: var(--txing-title-weight);
+  line-height: 1;
+  letter-spacing: var(--txing-title-letter-spacing);
 }
 
 .navigation-path {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-start;
   gap: 0.35rem 0.5rem;
-  color: var(--muted);
-  font-size: 1rem;
+  color: var(--text);
+  font-family: var(--txing-heading-font);
+  font-size: var(--txing-tagline-size);
+  font-weight: var(--txing-tagline-weight);
+  line-height: 1.4;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -296,7 +307,7 @@ body {
 .navigation-current-link {
   color: var(--text);
   text-decoration: none;
-  font-weight: 700;
+  font-weight: var(--txing-tagline-weight);
 }
 
 .navigation-link:hover,
@@ -307,10 +318,12 @@ body {
 }
 
 .navigation-current-link {
-  color: var(--accent);
+  color: var(--text);
 }
 
 .navigation-panel-actions {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   flex: 1 1 auto;
@@ -1235,9 +1248,9 @@ h1 {
 }
 
 .status-auth-logo {
-  width: 2.8rem;
+  width: var(--txing-logo-slot);
   height: auto;
-  filter: drop-shadow(0 0 1.2rem rgba(108, 238, 246, 0.16));
+  filter: drop-shadow(0 0 2.5rem rgba(91, 235, 255, 0.14));
 }
 
 .status-devices {
@@ -2160,7 +2173,7 @@ button:disabled {
   }
 
   .navigation-panel-header {
-    flex-wrap: wrap;
+    gap: 0.75rem;
   }
 
   .navigation-panel-actions {
@@ -2170,11 +2183,11 @@ button:disabled {
   }
 
   .navigation-panel-brand {
-    font-size: 1.1rem;
+    font-size: var(--txing-title-size);
   }
 
   .navigation-path {
-    font-size: 0.92rem;
+    font-size: var(--txing-tagline-size);
   }
 
   .sparkplug-row {

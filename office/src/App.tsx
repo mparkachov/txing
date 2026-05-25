@@ -76,6 +76,7 @@ import {
   resolveThingSparkplugRedconCommandTarget,
 } from './sparkplug-command'
 import SparkplugPanel from './SparkplugPanel'
+import txingLogoUrl from '../../www/txing-logo.png'
 import {
   describeRedcon,
   extractIsSparkplugDeviceUnavailable,
@@ -148,7 +149,6 @@ const routeSparkplugPollIntervalMs = 2_000
 const catalogSparkplugPollIntervalMs = 5_000
 const routeSparkplugRedconCommandTimeoutMs = 120_000
 const sparkplugRedconCommandSeqModulo = 2_147_000_000
-const txingLogoUrl = 'https://txing.dev/txing-logo.png'
 const appHomePath = '/'
 const signInRequestParam = 'signin'
 let shadowApiModulePromise: Promise<typeof import('./shadow-api')> | null = null

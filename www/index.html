@@ -21,27 +21,166 @@
             >
           </figure>
 
-          <h1 id="hero-title">TXING</h1>
+          <div class="hero-heading">
+            <h1 id="hero-title">TXING</h1>
+            <p class="lede">Sleep cold &rarr; Wake on call &rarr; Action</p>
+          </div>
 
           <p class="hero-link">
             <a href="https://github.com/mparkachov/txing">GitHub</a>
             <a href="https://office.txing.dev/?signin=1">Sign in</a>
           </p>
         </div>
-
-        <div class="hero-copy">
-          <p class="lede">Sleep cold &rarr; Wake on call &rarr; Action</p>
-          <p class="support-copy">
-            A field-device pattern for systems that stay reachable on minimal
-            power, then wake into a richer operating mode only when needed.
-          </p>
-          <p>
-            Built for hard power budgets and sparse links. Keep the quiet path
-            cheap, and bring up stronger processing only when the moment
-            justifies it.
-          </p>
-        </div>
       </section>
+
+      <div class="topic-grid">
+        <section class="panel topic-panel reveal" aria-labelledby="concept-title">
+          <figure class="topic-visual" aria-hidden="true">
+            <svg viewBox="0 0 240 180" role="img">
+              <path class="sleep-line" d="M55 118h38M73 98h38M91 78h38" />
+              <circle class="cold-core" cx="78" cy="120" r="18" />
+              <path class="signal-line" d="M111 118c18-28 42-44 74-48" />
+              <path class="bracket" d="M176 51l18 17-21 13" />
+              <circle class="map-node" cx="185" cy="70" r="6" />
+              <path class="cloud-line" d="M56 141h126" />
+            </svg>
+          </figure>
+          <div class="topic-copy">
+            <p class="topic-kicker">Concept</p>
+            <h2 id="concept-title">Cold until the work is worth it</h2>
+            <p>
+              txing keeps the quiet path cheap: minimal power, sparse links, and
+              a reachable device state. When the call arrives, the system wakes
+              stronger compute, networking, and motion only for the active job.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel topic-panel reveal" aria-labelledby="standards-title">
+          <figure class="topic-visual" aria-hidden="true">
+            <svg viewBox="0 0 240 180" role="img">
+              <rect class="schema-box" x="30" y="38" width="74" height="42" rx="8" />
+              <rect class="schema-box" x="136" y="38" width="74" height="42" rx="8" />
+              <rect class="schema-box schema-box-strong" x="83" y="103" width="74" height="42" rx="8" />
+              <path class="signal-line" d="M104 59h32M81 80l32 30M159 80l-31 30" />
+              <path class="cloud-line" d="M75 132h-9a22 22 0 0 1-3-44 31 31 0 0 1 58-9 26 26 0 0 1 7 51h-13" />
+              <circle class="map-node" cx="67" cy="59" r="4" />
+              <circle class="map-node" cx="173" cy="59" r="4" />
+              <circle class="map-node" cx="120" cy="124" r="4" />
+            </svg>
+          </figure>
+          <div class="topic-copy">
+            <p class="topic-kicker">Industry standards</p>
+            <h2 id="standards-title">Sparkplug state, AWS discipline</h2>
+            <p>
+              Device telemetry follows Sparkplug lifecycle ideas so birth,
+              death, metrics, and command intent stay explicit. AWS IoT,
+              shadows, least-privilege policies, and repeatable deployment keep
+              the cloud side predictable.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel topic-panel reveal" aria-labelledby="readiness-title">
+          <figure class="topic-visual" aria-hidden="true">
+            <svg viewBox="0 0 240 180" role="img">
+              <path class="grid-line" d="M26 92h188M120 22v136" />
+              <circle class="redcon redcon-1" cx="120" cy="90" r="56" />
+              <circle class="redcon redcon-2" cx="120" cy="90" r="42" />
+              <circle class="redcon redcon-3" cx="120" cy="90" r="28" />
+              <circle class="redcon redcon-4" cx="120" cy="90" r="14" />
+              <path class="signal-line" d="M54 44c28 18 55 22 83 10 20-8 37-6 50 8" />
+              <path class="signal-line" d="M58 135c25-18 52-20 81-7 19 9 37 7 53-7" />
+              <circle class="map-node" cx="69" cy="52" r="5" />
+              <circle class="map-node" cx="177" cy="122" r="5" />
+            </svg>
+          </figure>
+          <div class="topic-copy">
+            <p class="topic-kicker">Military readiness</p>
+            <h2 id="readiness-title">REDCON as a global operating language</h2>
+            <p>
+              REDCON gives every node the same readiness vocabulary, whether it
+              is parked, listening, staged, or fully active. Operators can read
+              global mission posture without inspecting every subsystem.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel topic-panel reveal" aria-labelledby="stack-title">
+          <figure class="topic-visual" aria-hidden="true">
+            <svg viewBox="0 0 240 180" role="img">
+              <rect class="terminal" x="28" y="30" width="184" height="120" rx="10" />
+              <path class="grid-line" d="M28 60h184" />
+              <circle class="redcon redcon-1" cx="47" cy="45" r="4" />
+              <circle class="redcon redcon-3" cx="62" cy="45" r="4" />
+              <circle class="redcon redcon-4" cx="77" cy="45" r="4" />
+              <path class="code-line code-line-go" d="M51 83h52" />
+              <path class="code-line code-line-cpp" d="M51 107h74" />
+              <path class="code-line code-line-devops" d="M51 131h112" />
+              <path class="bracket" d="M162 78l18 18-18 18M143 114l-18-18 18-18" />
+            </svg>
+          </figure>
+          <div class="topic-copy">
+            <p class="topic-kicker">Software stack</p>
+            <h2 id="stack-title">Go, C++, and deployment mechanics</h2>
+            <p>
+              Go handles reliable services and tooling, C++ covers native
+              performance where it matters, and DevOps automation keeps builds,
+              packaging, and rollout repeatable as the system grows.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel topic-panel reveal" aria-labelledby="ai-title">
+          <figure class="topic-visual" aria-hidden="true">
+            <svg viewBox="0 0 240 180" role="img">
+              <circle class="ai-core" cx="120" cy="90" r="24" />
+              <path class="signal-line" d="M120 38v28M120 114v28M68 90h28M144 90h28" />
+              <path class="signal-line" d="M83 53l20 20M157 127l-20-20M157 53l-20 20M83 127l20-20" />
+              <circle class="map-node" cx="120" cy="35" r="6" />
+              <circle class="map-node" cx="120" cy="145" r="6" />
+              <circle class="map-node" cx="65" cy="90" r="6" />
+              <circle class="map-node" cx="175" cy="90" r="6" />
+              <path class="cloud-line" d="M73 149h-6a19 19 0 0 1-3-38 27 27 0 0 1 51-8 23 23 0 0 1 6 45h-12" />
+            </svg>
+          </figure>
+          <div class="topic-copy">
+            <p class="topic-kicker">Distributed AI</p>
+            <h2 id="ai-title">Future AI only when demand is real</h2>
+            <p>
+              The roadmap is on-demand intelligence: keep devices cold by
+              default, wake local or cloud AI only for high-value decisions, and
+              route inference where power, latency, and context make sense.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel topic-panel reveal" aria-labelledby="coverage-title">
+          <figure class="topic-visual" aria-hidden="true">
+            <svg viewBox="0 0 240 180" role="img">
+              <rect class="chip" x="35" y="46" width="44" height="44" rx="8" />
+              <rect class="terminal" x="98" y="36" width="104" height="48" rx="9" />
+              <path class="signal-line" d="M79 68h19M150 84v28M96 132h108" />
+              <path class="cloud-line" d="M77 143h-8a18 18 0 0 1-2-36 25 25 0 0 1 47-7 21 21 0 0 1 6 42h-11" />
+              <path class="code-line code-line-go" d="M116 56h52" />
+              <path class="code-line code-line-devops" d="M116 70h70" />
+              <circle class="map-node" cx="57" cy="68" r="5" />
+              <circle class="map-node" cx="150" cy="132" r="5" />
+              <circle class="map-node" cx="203" cy="132" r="5" />
+            </svg>
+          </figure>
+          <div class="topic-copy">
+            <p class="topic-kicker">Full-stack coverage</p>
+            <h2 id="coverage-title">From MCU hardware to serverless cloud</h2>
+            <p>
+              The same architecture spans device firmware, board-side runtime,
+              rig services, web tools, and serverless AWS components. That
+              keeps product behavior connected from the physical edge to cloud
+              operations.
+            </p>
+          </div>
+        </section>
+      </div>
     </main>
   </body>
 </html>

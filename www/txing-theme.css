@@ -1,0 +1,31 @@
+:root {
+  color-scheme: dark;
+  --txing-canvas: #040b10;
+  --txing-text: rgba(244, 251, 252, 0.96);
+  --txing-muted: rgba(204, 223, 226, 0.8);
+  --txing-accent: #6ceef6;
+  --txing-panel-border: rgba(104, 231, 246, 0.26);
+  --txing-panel-border-strong: rgba(104, 231, 246, 0.52);
+  --txing-panel-surface: linear-gradient(180deg, rgba(14, 28, 36, 0.96), rgba(6, 13, 18, 0.88));
+  --txing-panel-glow:
+    radial-gradient(circle at top right, rgba(108, 238, 246, 0.14), transparent 34%),
+    linear-gradient(135deg, rgba(108, 238, 246, 0.06), transparent 28%);
+  --txing-panel-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  --txing-radius: 1rem;
+  --txing-panel-width: 70rem;
+  --txing-heading-font: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  --txing-mark-height: clamp(2.7rem, 4.8vw, 3.8rem);
+  --txing-logo-slot: calc(var(--txing-mark-height) * 1.05);
+  --txing-title-size: calc(var(--txing-mark-height) * 0.72);
+  --txing-title-weight: 700;
+  --txing-title-letter-spacing: 0.12em;
+  --txing-tagline-size: clamp(0.95rem, 1.55vw, 1.25rem);
+  --txing-tagline-weight: 400;
+  --txing-header-gap: clamp(0.85rem, 2vw, 1.35rem);
+}
+
+@media (max-width: 859px) {
+  :root {
+    --txing-mark-height: clamp(2.4rem, 9vw, 3.2rem);
+  }
+}

@@ -266,6 +266,7 @@ mod weather 'devices/weather/justfile'
 mod power 'devices/power/justfile'
 mod mcu 'devices/common/mcu/justfile'
 mod office 'office/justfile'
+mod www 'tools/just/www.just'
 mod common 'devices/common/justfile'
 mod release 'release/justfile'
 
