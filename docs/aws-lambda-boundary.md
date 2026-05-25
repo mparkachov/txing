@@ -12,11 +12,13 @@ environment stack name, for example `town-aws-publish-release`:
 
 These functions call boto3-heavy AWS control-plane APIs for CloudFormation, S3,
 IoT registry, SSM, and operator publishing workflows. They are
-packaged by their standalone `just aws::<function>::deploy` recipes as
-CloudFormation-managed stack code, not as GitHub release runtime artifacts.
-Each Lambda is owned by a standalone template under `shared/aws/lambdas/`.
+packaged by `just aws::deploy` as CloudFormation-managed stack code, not as
+GitHub release runtime artifacts. Each Lambda is owned by a standalone template
+under `shared/aws/lambdas/`.
 The template is intentionally clean-stack only: it does not contain rollback,
 migration, or legacy service-token bridge modes.
+Admin Lambda code is packaged as current content-addressed stack code, not as a
+semver-managed release artifact.
 
 Runtime Lambdas are Go. GitHub release assets and S3 object keys keep these
 stable artifact ids, while deployed function names are prefixed with the

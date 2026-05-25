@@ -1,6 +1,8 @@
 [project]
 name = "aws"
-version = "0.13.0"
+# Packaging metadata only. AWS admin Lambdas deploy current content-addressed
+# source; runtime Lambda releases are versioned under release/versions/lambda.
+version = "0.0.0"
 description = "Shared AWS runtime helpers for txing subprojects"
 requires-python = ">=3.12"
 dependencies = [

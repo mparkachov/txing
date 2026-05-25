@@ -16,8 +16,8 @@
 - Do not run AWS commands that create, update, or delete resources unless the
   user explicitly asks for that operation. Read-only inspection is allowed when
   needed.
-- Admin Lambdas in this tree remain Python and are packaged by standalone
-  `just aws::<function>::deploy` recipes as CloudFormation-managed stack code.
+- Admin Lambdas in this tree remain Python and are packaged by `just
+  aws::deploy` as CloudFormation-managed stack code.
 - Do not add rollback, migration, legacy service-token bridge, or cleanup logic
   that mutates manually rolled-in resources.
 - Do not depend on fixed physical names for IAM roles, IAM managed policies, IoT

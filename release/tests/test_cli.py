@@ -31,11 +31,11 @@ class ReleaseCliTests(unittest.TestCase):
             self._write(f"release/versions/{component}", f"{version}\n")
         self._write(
             "shared/aws/python/pyproject.toml",
-            f'[project]\nname = "aws"\nversion = "{version}"\n',
+            '[project]\nname = "aws"\nversion = "0.0.0"\n',
         )
         self._write(
             "shared/aws/python/uv.lock",
-            f'version = 1\n\n[[package]]\nname = "aws"\nversion = "{version}"\n',
+            'version = 1\n\n[[package]]\nname = "aws"\nversion = "0.0.0"\n',
         )
         self._write(
             "devices/unit/daemon/internal/daemon/version.go",
@@ -97,6 +97,26 @@ class ReleaseCliTests(unittest.TestCase):
             self.assertEqual(
                 json.loads((cli.ROOT / "office/package.json").read_text())["version"],
                 "1.2.3",
+            )
+
+    def test_lambda_bump_updates_only_runtime_lambda_release_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cli.ROOT = Path(temp_dir)
+            self._write_minimal_repo()
+
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                cli.bump("lambda", "1.2.4")
+
+            self.assertEqual((cli.ROOT / "release/versions/lambda").read_text(), "1.2.4\n")
+            self.assertEqual(
+                (cli.ROOT / "shared/aws/python/pyproject.toml").read_text(),
+                '[project]\nname = "aws"\nversion = "0.0.0"\n',
+            )
+            self.assertEqual(
+                (cli.ROOT / "shared/aws/python/uv.lock").read_text(),
+                'version = 1\n\n[[package]]\nname = "aws"\nversion = "0.0.0"\n',
             )
 
     def test_office_bump_updates_component_package_and_runtime_fallback_only(self) -> None:

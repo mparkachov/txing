@@ -4,9 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,17 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
-PYTHON_PROJECTS = (
-    Path("shared/aws/python/pyproject.toml"),
-)
-
-PYTHON_LOCK_PACKAGES = (
-    (Path("shared/aws/python/uv.lock"), ("aws",)),
-)
-
 NODE_PACKAGES = (
     Path("office/package.json"),
-    )
+)
 
 
 @dataclass(frozen=True)
@@ -68,8 +58,6 @@ TEXT_VERSIONS = (
 class Component:
     name: str
     version_path: Path
-    python_projects: tuple[Path, ...] = ()
-    python_lock_packages: tuple[tuple[Path, tuple[str, ...]], ...] = ()
     node_packages: tuple[Path, ...] = ()
     text_versions: tuple[TextVersion, ...] = ()
 
@@ -82,8 +70,6 @@ COMPONENTS = {
     "lambda": Component(
         name="lambda",
         version_path=Path("release/versions/lambda"),
-        python_projects=PYTHON_PROJECTS,
-        python_lock_packages=PYTHON_LOCK_PACKAGES,
     ),
     "unit": Component(
         name="unit",
@@ -139,14 +125,6 @@ def replace_pattern(path: Path, pattern: re.Pattern[str], replacement: str, *, c
     return write_text_if_changed(path, updated)
 
 
-def set_toml_package_version(path: Path, version: str) -> bool:
-    return replace_pattern(
-        path,
-        re.compile(r'(?m)^version\s*=\s*"[^"]+"$'),
-        f'version = "{version}"',
-    )
-
-
 def set_json_package_version(path: Path, version: str) -> bool:
     full_path = ROOT / path
     payload = json.loads(full_path.read_text(encoding="utf-8"))
@@ -163,15 +141,6 @@ def set_text_version(spec: TextVersion, version: str) -> bool:
         spec.replacement.format(version=version),
         count=spec.count,
     )
-
-
-def run(command: list[str], *, cwd: Path = ROOT) -> None:
-    subprocess.run(command, cwd=cwd, check=True)
-
-
-def refresh_lockfiles(component: Component) -> None:
-    for pyproject in component.python_projects:
-        run(["uv", "lock", "--project", str(ROOT / pyproject.parent)])
 
 
 def component_names() -> str:
@@ -215,9 +184,6 @@ def bump(component_name: str, target: str) -> None:
     changed: list[str] = []
     if write_text_if_changed(component.version_path, target + "\n"):
         changed.append(rel(component.version_path))
-    for path in component.python_projects:
-        if set_toml_package_version(path, target):
-            changed.append(rel(path))
     for path in component.node_packages:
         if set_json_package_version(path, target):
             changed.append(rel(path))
@@ -225,7 +191,6 @@ def bump(component_name: str, target: str) -> None:
         if set_text_version(spec, target):
             changed.append(rel(spec.path))
 
-    refresh_lockfiles(component)
     problems = collect_version_problems(component)
     if problems:
         print(f"{component.name} version consistency warnings:", file=sys.stderr)
@@ -240,26 +205,6 @@ def bump(component_name: str, target: str) -> None:
         print(f"all {component.name} managed version surfaces already at {target}")
 
 
-def load_toml(path: Path) -> dict:
-    return tomllib.loads(read_text(path))
-
-
-def toml_project_name(path: Path) -> str:
-    project = load_toml(path).get("project")
-    if not isinstance(project, dict) or not isinstance(project.get("name"), str):
-        raise SystemExit(f"{rel(path)} is missing [project].name")
-    return project["name"]
-
-
-def value_at(data: dict, path: tuple[str, ...]) -> str | None:
-    value: object = data
-    for key in path:
-        if not isinstance(value, dict):
-            return None
-        value = value.get(key)
-    return value if isinstance(value, str) else None
-
-
 def check_value(
     problems: list[str],
     label: str,
@@ -271,37 +216,6 @@ def check_value(
         reports.append(f"{label}: {actual!r}")
     if actual != expected:
         problems.append(f"{label}: expected {expected}, got {actual!r}")
-
-
-def check_uv_lock(
-    problems: list[str],
-    lock_path: Path,
-    package_names: tuple[str, ...],
-    expected: str,
-    reports: list[str] | None = None,
-) -> None:
-    full_path = ROOT / lock_path
-    if not full_path.exists():
-        problems.append(f"{rel(lock_path)}: missing uv lockfile")
-        return
-    payload = tomllib.loads(full_path.read_text(encoding="utf-8"))
-    packages = payload.get("package")
-    if not isinstance(packages, list):
-        problems.append(f"{rel(lock_path)}: missing package entries")
-        return
-    versions = {
-        package.get("name"): package.get("version")
-        for package in packages
-        if isinstance(package, dict)
-    }
-    for name in package_names:
-        check_value(
-            problems,
-            f"{rel(lock_path)} package {name}",
-            versions.get(name),
-            expected,
-            reports,
-        )
 
 
 def text_version_value(spec: TextVersion) -> str | None:
@@ -319,14 +233,6 @@ def collect_version_problems(component: Component, reports: list[str] | None = N
     if reports is not None:
         reports.append(f"{rel(component.version_path)}: {expected!r}")
 
-    for path in component.python_projects:
-        check_value(
-            problems,
-            f"{rel(path)} project.version",
-            value_at(load_toml(path), ("project", "version")),
-            expected,
-            reports,
-        )
     for path in component.node_packages:
         payload = json.loads(read_text(path))
         check_value(problems, f"{rel(path)} version", payload.get("version"), expected, reports)
@@ -339,8 +245,6 @@ def collect_version_problems(component: Component, reports: list[str] | None = N
             reports,
         )
 
-    for lock_path, package_names in component.python_lock_packages:
-        check_uv_lock(problems, lock_path, package_names, expected, reports)
     return problems
 
 

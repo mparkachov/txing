@@ -76,12 +76,47 @@ delete-init:
 deploy stack_name=stack_name:
     #!/bin/sh
     set -eu
-    just --justfile "{{aws_dir}}/justfile" clean-stack::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" _deploy-clean-stack "{{stack_name}}"
     just --justfile "{{aws_dir}}/justfile" deploy-base "{{stack_name}}"
     just --justfile "{{root_justfile}}" witness::deploy "{{stack_name}}"
     just --justfile "{{root_justfile}}" cloud-mcu::deploy "{{stack_name}}"
-    just --justfile "{{aws_dir}}/justfile" enlist-lambda::deploy "{{stack_name}}"
-    just --justfile "{{aws_dir}}/justfile" publish-release-lambda::deploy "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" _deploy-enlist-lambda "{{stack_name}}"
+    just --justfile "{{aws_dir}}/justfile" _deploy-publish-release-lambda "{{stack_name}}"
+
+[private]
+_deploy-clean-stack stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{aws_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    deploy_template "$(lambda_stack_name aws-clean-stack)" "{{aws_dir}}/lambdas/aws-clean-stack/template.yaml" \
+      "EnvironmentStackName=$TXING_AWS_STACK"
+
+[private]
+_deploy-enlist-lambda stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{aws_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    deploy_template "$(lambda_stack_name aws-enlist-txing)" "{{aws_dir}}/lambdas/aws-enlist-txing/template.yaml" \
+      "EnvironmentStackName=$TXING_AWS_STACK"
+
+[private]
+_deploy-publish-release-lambda stack_name=stack_name:
+    #!/bin/sh
+    set -eu
+    cd "{{aws_dir}}"
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws "{{stack_name}}")"
+    txing_aws_init
+    artifact_bucket="$(ensure_artifact_bucket)"
+    deploy_template "$(lambda_stack_name aws-publish-release)" "{{aws_dir}}/lambdas/aws-publish-release/template.yaml" \
+      "EnvironmentStackName=$TXING_AWS_STACK" \
+      "LambdaArtifactsBucketName=$artifact_bucket"
 
 deploy-base stack_name=stack_name template_file=template_file:
     #!/bin/sh
@@ -287,10 +322,6 @@ configure-indexing:
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
     configure_indexing_and_wait
-
-mod clean-stack 'lambdas/aws-clean-stack/justfile'
-mod enlist-lambda 'lambdas/aws-enlist-txing/justfile'
-mod publish-release-lambda 'lambdas/aws-publish-release/justfile'
 
 check-template template_file=template_file stack_name=stack_name:
     #!/bin/sh

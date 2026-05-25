@@ -75,12 +75,15 @@ is provided in the environment or as a positional stack prefix.
 `just aws::deploy` deploys all CloudFormation-managed AWS stacks in dependency
 order:
 
-1. `just aws::clean-stack::deploy`
+1. the clean-stack admin Lambda stack
 2. `just aws::deploy-base`
 3. `just witness::deploy`
 4. `just cloud-mcu::deploy`
-5. `just aws::enlist-lambda::deploy`
-6. `just aws::publish-release-lambda::deploy`
+5. the enlist admin Lambda stack
+6. the publish-release admin Lambda stack
+
+The admin Lambda stack steps are internal to `just aws::deploy`; there are no
+public per-function admin Lambda deploy recipes.
 
 `just aws::deploy-base` only deploys the base stack named
 `<TXING_AWS_STACK>-aws-base`. The base stack owns Cognito for web authentication,
@@ -90,11 +93,13 @@ or cloud MCU runtime infrastructure.
 
 Standalone Lambda stacks are named from the same environment prefix, for example
 `town-witness`, `town-cloud-mcu`, and `town-aws-publish-release`. `just
-cloud-mcu::deploy` deploys the cloud MCU type catalog entry, SQS tick queues,
-IPv6-only ECS task network, ECS task definition, and the cloud MCU/cloud rig
-runtime Lambdas. Runtime Lambda deploy recipes create the shared artifact bucket
-and seed a placeholder `current/bootstrap.zip` object when the release artifact
-has not been published yet.
+aws::deploy` packages the admin Python Lambda source as current
+content-addressed stack code. `just cloud-mcu::deploy` deploys the cloud MCU
+type catalog entry, SQS tick queues, IPv6-only ECS task network, ECS task
+definition, and the cloud MCU/cloud rig runtime Lambdas. Runtime Lambda deploy
+recipes create the shared artifact bucket and seed a placeholder
+`current/bootstrap.zip` object when the release artifact has not been published
+yet.
 
 The only coupling between standalone stacks is the required `/txing/stack/...`
 parameter values. The clean-stack Lambda stack publishes

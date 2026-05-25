@@ -13,7 +13,8 @@ semantic version under `release/versions/`, and artifact-producing components
 publish normal GitHub Releases with component-prefixed tags:
 
 - rig: `release/versions/rig` publishes `rig-vX.Y.Z`
-- Lambda: `release/versions/lambda` publishes `lambda-vX.Y.Z`
+- Lambda: `release/versions/lambda` publishes Go runtime Lambda artifacts as
+  `lambda-vX.Y.Z`
 - unit: `release/versions/unit` publishes `unit-vX.Y.Z`
 - office: `release/versions/office` tracks office version metadata only
 
@@ -93,7 +94,10 @@ stack creation does not depend on release artifacts already being uploaded.
 `aws::publish-lambda` runs the same runtime Lambda publish code locally and is
 kept for manual repair or one-off publishing before the publisher Lambda exists.
 Admin Lambda deploy recipes package the current Python source into each
-standalone admin Lambda stack.
+standalone admin Lambda stack. That admin Python package is not semver-release
+managed; CloudFormation receives the content-addressed `cfn/aws-admin/<sha>.zip`
+key during stack deployment. Operator publishing defaults to `latest`, which
+resolves within the `lambda-v*` runtime Lambda release stream.
 
 ## Board Assets
 

@@ -64,6 +64,9 @@ artifacts:
   are forward-only manual state; replace old configs that do not set
   `version_prefix = "rig-v"` or `version_prefix = "unit-v"` before relying on
   `latest`.
+- The Lambda component version covers Go runtime Lambda artifacts only. Python
+  admin Lambdas are deployed with the current CloudFormation stack code through
+  a content-addressed `cfn/aws-admin/<sha>.zip` package.
 - Office tracks its version for Cloudflare Pages metadata only. Bump
   `release/versions/office` and the managed office package/runtime surfaces,
   but do not create a GitHub Release or release asset for office.

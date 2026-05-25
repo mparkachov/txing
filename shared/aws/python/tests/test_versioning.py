@@ -503,6 +503,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn("kTxingUnitKvsMasterVersion", release_cli)
         self.assertNotIn("kTxingBoardKvsMasterVersion", release_cli)
+        self.assertNotIn("shared/aws/python/pyproject.toml", release_cli)
+        self.assertNotIn("shared/aws/python/uv.lock", release_cli)
         removed_version_env = "TXING_" + "VERSION"
         self.assertNotIn("_project-" + "version-env", root_justfile)
         self.assertNotIn(removed_version_env + "_BASE", root_justfile)
@@ -774,10 +776,22 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("lambda-vX.Y.Z", aws_justfile)
         self.assertIn("python -m aws_admin.publish_release lambda --release", aws_justfile)
         self.assertIn("stack_parameter ReleasePublisherFunctionName", aws_justfile)
+        self.assertIn("deploy stack_name=stack_name", aws_justfile)
         self.assertIn("deploy-base stack_name=stack_name", aws_justfile)
-        self.assertIn("clean-stack::deploy", aws_justfile)
+        self.assertIn("_deploy-clean-stack stack_name=stack_name", aws_justfile)
+        self.assertIn("_deploy-enlist-lambda stack_name=stack_name", aws_justfile)
+        self.assertIn("_deploy-publish-release-lambda stack_name=stack_name", aws_justfile)
+        self.assertIn("lambda_stack_name aws-clean-stack", aws_justfile)
+        self.assertIn("lambda_stack_name aws-enlist-txing", aws_justfile)
+        self.assertIn("lambda_stack_name aws-publish-release", aws_justfile)
         self.assertIn("witness::deploy", aws_justfile)
         self.assertIn("cloud-mcu::deploy", aws_justfile)
+        self.assertNotIn("clean-stack::deploy", aws_justfile)
+        self.assertNotIn("enlist-lambda::deploy", aws_justfile)
+        self.assertNotIn("publish-release-lambda::deploy", aws_justfile)
+        self.assertNotIn("mod clean-stack", aws_justfile)
+        self.assertNotIn("mod enlist-lambda", aws_justfile)
+        self.assertNotIn("mod publish-release-lambda", aws_justfile)
         self.assertNotIn("scripts/txing-lambda-deploy", aws_justfile)
         self.assertNotIn("witness::build", aws_justfile)
         self.assertNotIn('enlist/justfile" build', aws_justfile)
@@ -785,6 +799,21 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("AwsAdminCodeS3Bucket=$artifact_bucket", aws_lib)
         self.assertIn("AwsAdminCodeS3Key=$admin_key", aws_lib)
         self.assertIn("cfn/aws-admin/$admin_hash.zip", aws_lib)
+        self.assertFalse(
+            (
+                REPO_ROOT / "shared" / "aws" / "lambdas" / "aws-clean-stack" / "justfile"
+            ).exists()
+        )
+        self.assertFalse(
+            (
+                REPO_ROOT / "shared" / "aws" / "lambdas" / "aws-enlist-txing" / "justfile"
+            ).exists()
+        )
+        self.assertFalse(
+            (
+                REPO_ROOT / "shared" / "aws" / "lambdas" / "aws-publish-release" / "justfile"
+            ).exists()
+        )
         self.assertFalse((scripts_dir / "txing-lambda-deploy-release").exists())
         self.assertFalse((scripts_dir / "txing-lambda-deploy-local").exists())
 
