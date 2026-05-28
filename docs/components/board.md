@@ -638,6 +638,18 @@ writable on tmpfs:
 The native KVS worker keeps the signaling cache in memory and does not depend
 on the SDK default `.SignalingCache_v1` file.
 
+Make `/etc/resolv.conf` point at NetworkManager's runtime resolver output
+before switching root to read-only. With a regular file on read-only root,
+NetworkManager cannot refresh resolver configuration after boot and DNS may
+fail even when the network is otherwise online:
+
+```bash
+rm -f /etc/resolv.conf
+ln -s /run/NetworkManager/resolv.conf /etc/resolv.conf
+readlink /etc/resolv.conf
+getent hosts example.com
+```
+
 Replace `PARTUUID` placeholders with values from
 `lsblk -o NAME,PARTUUID,MOUNTPOINT`, then use this `fstab` layout:
 
@@ -693,11 +705,15 @@ journalctl -u txing-unit-hardware-worker.service -b --no-pager
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master --version
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker --version
+readlink /etc/resolv.conf
+getent hosts example.com
 ```
 
 Expected:
 
 - root filesystem is read-only
+- `/etc/resolv.conf` points at `/run/NetworkManager/resolv.conf` and DNS
+  resolves through NetworkManager
 - `txing-unit.target` is active
 - `txing-unit-daemon.service` starts without a source checkout
 - `txing-unit-kvs-master.service` starts without a source checkout
