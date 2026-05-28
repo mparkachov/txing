@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -48,6 +49,11 @@ type managedDevice struct {
 	state *manager.DeviceRuntimeState
 	mqtt  *mqttx.Client
 	seq   uint64
+}
+
+type nodeMQTTClient interface {
+	Subscribe(filter string, handler func(mqttx.Message)) error
+	Publish(topic string, payload []byte, retained bool) error
 }
 
 func main() {
@@ -177,7 +183,10 @@ func (s *runtimeState) connectNodeMQTT(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	client, err := mqttx.New(mqttx.Options{
+	initialOnline := make(chan error, 1)
+	var initialOnlineDone atomic.Bool
+	var client *mqttx.Client
+	client, err = mqttx.New(mqttx.Options{
 		Config:      s.cfg,
 		ClientID:    manager.NodeClientID(s.cfg.RigID),
 		WillTopic:   sparkplug.BuildNodeTopic(s.cfg.TownID, "NDEATH", s.cfg.RigID),
@@ -188,6 +197,20 @@ func (s *runtimeState) connectNodeMQTT(ctx context.Context) error {
 		OnConnectionLost: func(err error) {
 			s.logger.Print(context.Background(), "warning", fmt.Sprintf("node MQTT disconnected error=%q", err))
 		},
+		OnConnection: func() {
+			err := s.publishNodeOnline(client)
+			if !initialOnlineDone.Load() {
+				select {
+				case initialOnline <- err:
+				default:
+				}
+			}
+			if err != nil {
+				s.logger.Print(context.Background(), "warning", fmt.Sprintf("node MQTT online publish failed error=%q", err))
+				return
+			}
+			s.logger.Print(context.Background(), "info", "sparkplug node MQTT connected")
+		},
 	})
 	if err != nil {
 		return err
@@ -195,6 +218,21 @@ func (s *runtimeState) connectNodeMQTT(ctx context.Context) error {
 	if err := client.Connect(); err != nil {
 		return err
 	}
+	select {
+	case err := <-initialOnline:
+		initialOnlineDone.Store(true)
+		if err != nil {
+			return err
+		}
+	case <-time.After(30 * time.Second):
+		initialOnlineDone.Store(true)
+		return fmt.Errorf("node MQTT online publish timed out")
+	}
+	s.nodeMQTT = client
+	return nil
+}
+
+func (s *runtimeState) publishNodeOnline(client nodeMQTTClient) error {
 	if err := client.Subscribe(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DCMD", s.cfg.RigID, "+"), nil); err != nil {
 		return err
 	}
@@ -209,8 +247,6 @@ func (s *runtimeState) connectNodeMQTT(ctx context.Context) error {
 	if err := client.Publish(sparkplug.BuildNodeTopic(s.cfg.TownID, "NBIRTH", s.cfg.RigID), payload, false); err != nil {
 		return err
 	}
-	s.nodeMQTT = client
-	s.logger.Print(ctx, "info", "sparkplug node MQTT connected")
 	return nil
 }
 
