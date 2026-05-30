@@ -18,14 +18,6 @@ except ImportError as exc:  # pragma: no cover - exercised in startup validation
 else:
     BOTO3_IMPORT_ERROR = None
 
-try:
-    from awscrt import auth
-except ImportError as exc:  # pragma: no cover - exercised in startup validation
-    auth = None
-    AWS_CRT_IMPORT_ERROR: Exception | None = exc
-else:
-    AWS_CRT_IMPORT_ERROR = None
-
 AWS_IOT_DATA_ENDPOINT_TYPE = "iot:Data-ATS"
 AWS_CONTAINER_CREDENTIALS_FULL_URI_ENV = "AWS_CONTAINER_CREDENTIALS_FULL_URI"
 AWS_CONTAINER_CREDENTIALS_RELATIVE_URI_ENV = "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
@@ -368,52 +360,14 @@ def freeze_session_credentials(session: Any) -> AwsCredentialSnapshot:
     )
 
 
-class AwsCredentialsBridge:
-    def __init__(self, session: Any) -> None:
-        self._session = session
-        self._provider: Any | None = None
-
-    def snapshot(self) -> AwsCredentialSnapshot:
-        snapshot = fetch_container_credentials_snapshot()
-        if snapshot is not None:
-            return snapshot
-        return freeze_session_credentials(self._session)
-
-    def _get_awscrt_credentials(self) -> Any:
-        if auth is None:
-            raise RuntimeError(
-                "awscrt is required for SigV4-authenticated MQTT over WebSockets"
-            ) from AWS_CRT_IMPORT_ERROR
-        snapshot = self.snapshot()
-        return auth.AwsCredentials(
-            snapshot.access_key_id,
-            snapshot.secret_access_key,
-            session_token=snapshot.session_token,
-            expiration=snapshot.expiration,
-        )
-
-    def credentials_provider(self) -> Any:
-        if auth is None:
-            raise RuntimeError(
-                "awscrt is required for SigV4-authenticated MQTT over WebSockets"
-            ) from AWS_CRT_IMPORT_ERROR
-        if self._provider is None:
-            self._provider = auth.AwsCredentialsProvider.new_delegate(
-                self._get_awscrt_credentials
-            )
-        return self._provider
-
-
 @dataclass(slots=True)
 class AwsRuntime:
     session: Any
     region_name: str
     iot_data_endpoint_override: str | None = None
-    _credentials_bridge: AwsCredentialsBridge = field(init=False)
     _iot_data_endpoint: str | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        self._credentials_bridge = AwsCredentialsBridge(self.session)
         if self.iot_data_endpoint_override is not None:
             self._iot_data_endpoint = _normalize_iot_endpoint_address(
                 self.iot_data_endpoint_override
@@ -470,11 +424,11 @@ class AwsRuntime:
         self._iot_data_endpoint = endpoint
         return endpoint
 
-    def credentials_provider(self) -> Any:
-        return self._credentials_bridge.credentials_provider()
-
     def credential_snapshot(self) -> AwsCredentialSnapshot:
-        return self._credentials_bridge.snapshot()
+        snapshot = fetch_container_credentials_snapshot()
+        if snapshot is not None:
+            return snapshot
+        return freeze_session_credentials(self.session)
 
 
 def build_aws_runtime(

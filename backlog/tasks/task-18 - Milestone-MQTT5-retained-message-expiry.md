@@ -28,5 +28,5 @@ ordinal: 31000
 - [ ] #1 Repository-owned MQTT client sessions that connect directly to AWS IoT use MQTT 5 explicitly without changing public topics or payload schemas.
 - [ ] #2 Dynamic retained unit board state topics expire at the configured capability TTL while descriptor topics remain retained without expiry.
 - [ ] #3 Rig startup and reconnect behavior can consume retained board capability state for inventoried devices through exact subscriptions.
-- [ ] #4 Validation covers unit daemon, rig, shared AWS Python, and office MQTT paths.
+- [ ] #4 Validation covers unit daemon, rig, office MQTT paths, and confirms shared AWS Python has no MQTT client surface.
 <!-- AC:END -->
