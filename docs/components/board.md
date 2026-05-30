@@ -663,12 +663,12 @@ tmpfs                     /var/log             tmpfs nosuid,nodev,mode=0755,size
 tmpfs                     /var/lib/NetworkManager tmpfs nosuid,nodev,mode=0755,size=16M 0 0
 ```
 
-Useful root shell aliases:
+Useful  shell aliases:
 
 ```bash
-cat >> "$HOME/.bashrc" <<'EOF'
-alias root-ro='bash -c "rm -rf /var/tmp/* /tmp/* ; sync ; mount -o remount,ro /boot/firmware ; mount -o remount,ro / ; mount /tmp ; mount /var/tmp"'
-alias root-rw='bash -c "mount -o remount,rw /; mount -o remount,rw /boot/firmware; umount /var/tmp /tmp; systemctl daemon-reload"'
+cat >> "$HOME/.bash_aliases" <<'EOF'
+alias root-rw='sudo bash -c "mount -o remount,rw /; mount -o remount,rw /boot/firmware; umount /var/tmp; umount /tmp; sudo systemctl daemon-reload"'
+alias root-ro='sudo bash -c "rm -rf /var/tmp/* /tmp/* ; sync; mount -o remount,ro /boot/firmware ; mount -o remount,ro / ; mount /tmp ; mount /var/tmp"'
 EOF
 ```
 

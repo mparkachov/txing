@@ -60,9 +60,10 @@ const (
 )
 
 type PublishedMessage struct {
-	Topic   string
-	Payload []byte
-	Retain  bool
+	Topic                string
+	Payload              []byte
+	Retain               bool
+	MessageExpirySeconds *uint32
 }
 
 type Publisher interface {
@@ -117,7 +118,7 @@ func ConnectMQTT(ctx context.Context, runtimeConfig RuntimeConfig) (*MQTTPublish
 		_ = conn.Close()
 		return nil, nil, fmt.Errorf("read MQTT CONNACK: %w", err)
 	}
-	if packetType != 2 || len(payload) < 2 || payload[1] != 0 {
+	if packetType != 2 || !mqttConnAckAccepted(payload) {
 		_ = conn.Close()
 		return nil, nil, fmt.Errorf("MQTT connection failed: connack=%x", payload)
 	}
@@ -133,7 +134,7 @@ func (p *MQTTPublisher) Subscribe(ctx context.Context, topicFilter string) error
 
 func (p *MQTTPublisher) Publish(ctx context.Context, message PublishedMessage) error {
 	packetID := p.nextPacketID()
-	return p.writePacket(ctx, mqttPacketPublish(packetID, message.Topic, message.Payload, message.Retain))
+	return p.writePacket(ctx, mqttPacketPublish(packetID, message.Topic, message.Payload, message.Retain, message.MessageExpirySeconds))
 }
 
 func (p *MQTTPublisher) Stop() error {
@@ -254,7 +255,7 @@ func (m *CapabilityManager) PublishState(ctx context.Context, publisher Publishe
 	if err != nil {
 		return err
 	}
-	return publisher.Publish(ctx, PublishedMessage{Topic: topic, Payload: encoded, Retain: true})
+	return publisher.Publish(ctx, PublishedMessage{Topic: topic, Payload: encoded, Retain: true, MessageExpirySeconds: retainedExpirySeconds(ttl)})
 }
 
 func (m *CapabilityManager) Seq() uint64 {
@@ -966,7 +967,7 @@ func (s *RuntimeState) publishMCPDiscovery(ctx context.Context, publisher Publis
 	if err := publishJSON(ctx, publisher, descriptorTopic, descriptor, true); err != nil {
 		return err
 	}
-	if err := publishJSON(ctx, publisher, statusTopic, statusPayload, true); err != nil {
+	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
 		return err
 	}
 	return s.publishMCPShadow(ctx, publisher, descriptor, statusPayload)
@@ -975,7 +976,7 @@ func (s *RuntimeState) publishMCPDiscovery(ctx context.Context, publisher Publis
 func (s *RuntimeState) publishMCPStatus(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
 	statusPayload := s.mcp.Status(observedAtMS)
 	statusTopic, _ := BuildMCPStatusTopic(s.config.ThingID)
-	if err := publishJSON(ctx, publisher, statusTopic, statusPayload, true); err != nil {
+	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
 		return err
 	}
 	return s.publishMCPShadow(ctx, publisher, s.mcpDescriptor(), statusPayload)
@@ -991,7 +992,7 @@ func (s *RuntimeState) publishMCPUnavailable(ctx context.Context, publisher Publ
 		"activeControl":   nil,
 	}
 	statusTopic, _ := BuildMCPStatusTopic(s.config.ThingID)
-	if err := publishJSON(ctx, publisher, statusTopic, statusPayload, true); err != nil {
+	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
 		return err
 	}
 	return s.publishMCPShadow(ctx, publisher, s.mcpDescriptor(), statusPayload)
@@ -1013,7 +1014,7 @@ func (s *RuntimeState) publishVideoStatusAndShadow(ctx context.Context, publishe
 	descriptor := s.videoDescriptor()
 	statusPayload := s.videoStatus()
 	statusTopic, _ := BuildVideoStatusTopic(s.config.ThingID)
-	if err := publishJSON(ctx, publisher, statusTopic, statusPayload, true); err != nil {
+	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
 		return err
 	}
 	return s.publishVideoShadow(ctx, publisher, descriptor, statusPayload)
@@ -1900,19 +1901,45 @@ func DiscoverDefaultRouteAddresses() DefaultRouteAddresses {
 }
 
 func publishJSON(ctx context.Context, publisher Publisher, topic string, payload interface{}, retain bool) error {
+	return publishJSONWithOptions(ctx, publisher, topic, payload, retain, nil)
+}
+
+func publishRetainedDynamicJSON(ctx context.Context, publisher Publisher, topic string, payload interface{}, ttl time.Duration) error {
+	return publishJSONWithOptions(ctx, publisher, topic, payload, true, retainedExpirySeconds(ttl))
+}
+
+func publishJSONWithOptions(ctx context.Context, publisher Publisher, topic string, payload interface{}, retain bool, messageExpirySeconds *uint32) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	return publisher.Publish(ctx, PublishedMessage{Topic: topic, Payload: encoded, Retain: retain})
+	return publisher.Publish(ctx, PublishedMessage{Topic: topic, Payload: encoded, Retain: retain, MessageExpirySeconds: messageExpirySeconds})
+}
+
+func retainedExpirySeconds(ttl time.Duration) *uint32 {
+	seconds := uint64(ttl / time.Second)
+	if ttl%time.Second != 0 {
+		seconds++
+	}
+	if seconds == 0 {
+		seconds = 1
+	}
+	if seconds > uint64(^uint32(0)) {
+		seconds = uint64(^uint32(0))
+	}
+	value := uint32(seconds)
+	return &value
 }
 
 func mqttPacketConnect(clientID string) []byte {
 	var variable bytes.Buffer
 	writeMQTTString(&variable, "MQTT")
-	variable.WriteByte(4)
+	variable.WriteByte(5)
 	variable.WriteByte(2)
 	_ = binary.Write(&variable, binary.BigEndian, uint16(mqttKeepAliveSeconds))
+	writeMQTTVariableByteInteger(&variable, 5)
+	variable.WriteByte(0x11)
+	_ = binary.Write(&variable, binary.BigEndian, uint32(0))
 	writeMQTTString(&variable, clientID)
 	return appendMQTTFixedHeader(0x10, variable.Bytes())
 }
@@ -1920,15 +1947,23 @@ func mqttPacketConnect(clientID string) []byte {
 func mqttPacketSubscribe(packetID uint16, topicFilter string) []byte {
 	var variable bytes.Buffer
 	_ = binary.Write(&variable, binary.BigEndian, packetID)
+	writeMQTTVariableByteInteger(&variable, 0)
 	writeMQTTString(&variable, topicFilter)
 	variable.WriteByte(mqttPublishQoS)
 	return appendMQTTFixedHeader(0x82, variable.Bytes())
 }
 
-func mqttPacketPublish(packetID uint16, topic string, payload []byte, retain bool) []byte {
+func mqttPacketPublish(packetID uint16, topic string, payload []byte, retain bool, messageExpirySeconds *uint32) []byte {
 	var variable bytes.Buffer
 	writeMQTTString(&variable, topic)
 	_ = binary.Write(&variable, binary.BigEndian, packetID)
+	var properties bytes.Buffer
+	if messageExpirySeconds != nil {
+		properties.WriteByte(0x02)
+		_ = binary.Write(&properties, binary.BigEndian, *messageExpirySeconds)
+	}
+	writeMQTTVariableByteInteger(&variable, properties.Len())
+	variable.Write(properties.Bytes())
 	variable.Write(payload)
 	header := byte(0x30 | 0x02)
 	if retain {
@@ -1938,7 +1973,7 @@ func mqttPacketPublish(packetID uint16, topic string, payload []byte, retain boo
 }
 
 func mqttPacketPubAck(packetID uint16) []byte {
-	return []byte{0x40, 0x02, byte(packetID >> 8), byte(packetID)}
+	return []byte{0x40, 0x04, byte(packetID >> 8), byte(packetID), 0x00, 0x00}
 }
 
 func appendMQTTFixedHeader(first byte, payload []byte) []byte {
@@ -1956,6 +1991,17 @@ func appendMQTTFixedHeader(first byte, payload []byte) []byte {
 		}
 	}
 	return append(packet, payload...)
+}
+
+func mqttConnAckAccepted(payload []byte) bool {
+	if len(payload) < 3 || payload[1] != 0 {
+		return false
+	}
+	propertyLength, propertyLengthBytes, ok := readMQTTVariableByteInteger(payload[2:])
+	if !ok {
+		return false
+	}
+	return 2+propertyLengthBytes+propertyLength == len(payload)
 }
 
 func readMQTTPacket(reader io.Reader) (byte, byte, []byte, error) {
@@ -2000,12 +2046,52 @@ func parseMQTTPublish(flags byte, payload []byte) (string, uint16, []byte, byte,
 		packetID = binary.BigEndian.Uint16(payload[offset : offset+2])
 		offset += 2
 	}
+	propertyLength, propertyLengthBytes, ok := readMQTTVariableByteInteger(payload[offset:])
+	if !ok {
+		return "", 0, nil, 0, false
+	}
+	offset += propertyLengthBytes
+	if len(payload) < offset+propertyLength {
+		return "", 0, nil, 0, false
+	}
+	offset += propertyLength
 	return topic, packetID, payload[offset:], qos, true
 }
 
 func writeMQTTString(buffer *bytes.Buffer, value string) {
 	_ = binary.Write(buffer, binary.BigEndian, uint16(len(value)))
 	buffer.WriteString(value)
+}
+
+func writeMQTTVariableByteInteger(buffer *bytes.Buffer, value int) {
+	for {
+		encoded := byte(value % 128)
+		value /= 128
+		if value > 0 {
+			encoded |= 128
+		}
+		buffer.WriteByte(encoded)
+		if value == 0 {
+			return
+		}
+	}
+}
+
+func readMQTTVariableByteInteger(payload []byte) (int, int, bool) {
+	multiplier := 1
+	value := 0
+	for i := 0; i < 4; i++ {
+		if i >= len(payload) {
+			return 0, 0, false
+		}
+		encoded := payload[i]
+		value += int(encoded&127) * multiplier
+		if encoded&128 == 0 {
+			return value, i + 1, true
+		}
+		multiplier *= 128
+	}
+	return 0, 0, false
 }
 
 func jsonRPCSuccess(id interface{}, result interface{}) map[string]interface{} {

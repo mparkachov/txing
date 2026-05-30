@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -173,6 +175,18 @@ func TestRuntimePublishesBoardShadowMCPVideoAndCapabilityPayloads(t *testing.T) 
 			t.Fatalf("topic[%d] mismatch: %q", i, messages[i].Topic)
 		}
 	}
+	expectedExpiry := uint32(150)
+	assertPublishRetention(t, messages[0], false, nil)
+	assertPublishRetention(t, messages[1], true, nil)
+	assertPublishRetention(t, messages[2], true, &expectedExpiry)
+	assertPublishRetention(t, messages[4], true, nil)
+	assertPublishRetention(t, messages[5], true, &expectedExpiry)
+	assertPublishRetention(t, messages[7], true, &expectedExpiry)
+	assertPublishRetention(t, messages[8], true, &expectedExpiry)
+	assertPublishRetention(t, messages[10], true, &expectedExpiry)
+	assertPublishRetention(t, messages[12], true, &expectedExpiry)
+	assertPublishRetention(t, messages[14], true, &expectedExpiry)
+	assertPublishRetention(t, messages[16], true, &expectedExpiry)
 	var descriptor map[string]interface{}
 	mustJSON(t, messages[1].Payload, &descriptor)
 	if descriptor["protocolVersion"] != MCPProtocolVersion || descriptor["transport"] != string(MCPTransportMQTT) {
@@ -187,6 +201,160 @@ func TestRuntimePublishesBoardShadowMCPVideoAndCapabilityPayloads(t *testing.T) 
 	mustJSON(t, messages[16].Payload, &third)
 	if third.Seq != 3 || third.Capabilities[BoardCapability] || third.Capabilities[MCPCapability] || third.Capabilities[VideoCapability] {
 		t.Fatalf("unexpected offline capability payload: %#v", third)
+	}
+}
+
+func assertPublishRetention(t *testing.T, message PublishedMessage, retain bool, expiry *uint32) {
+	t.Helper()
+	if message.Retain != retain {
+		t.Fatalf("publish %s retain = %t, want %t", message.Topic, message.Retain, retain)
+	}
+	if expiry == nil {
+		if message.MessageExpirySeconds != nil {
+			t.Fatalf("publish %s expiry = %d, want nil", message.Topic, *message.MessageExpirySeconds)
+		}
+		return
+	}
+	if message.MessageExpirySeconds == nil || *message.MessageExpirySeconds != *expiry {
+		if message.MessageExpirySeconds == nil {
+			t.Fatalf("publish %s expiry = nil, want %d", message.Topic, *expiry)
+		}
+		t.Fatalf("publish %s expiry = %d, want %d", message.Topic, *message.MessageExpirySeconds, *expiry)
+	}
+}
+
+func TestRetainedDynamicExpiryUsesConfiguredCapabilityTTL(t *testing.T) {
+	ctx := context.Background()
+	publisher := &fakePublisher{}
+	config := testRuntimeConfig()
+	config.CapabilityTTL = 42 * time.Second
+	state, err := NewRuntimeStateWithHardware(config, &fakeHardwareClient{})
+	if err != nil {
+		t.Fatalf("runtime state: %v", err)
+	}
+	if err := state.PublishOnline(ctx, publisher, DefaultRouteAddresses{}, 10); err != nil {
+		t.Fatalf("publish online: %v", err)
+	}
+
+	messages := publisher.Messages()
+	expectedExpiry := uint32(42)
+	mcpDescriptor := findPublishedMessage(t, messages, "txings/unit-local/mcp/descriptor")
+	mcpStatus := findPublishedMessage(t, messages, "txings/unit-local/mcp/status")
+	videoDescriptor := findPublishedMessage(t, messages, "txings/unit-local/video/descriptor")
+	videoStatus := findPublishedMessage(t, messages, "txings/unit-local/video/status")
+	capabilityState := findPublishedMessage(t, messages, "txings/unit-local/capability/v2/state")
+
+	assertPublishRetention(t, mcpDescriptor, true, nil)
+	assertPublishRetention(t, mcpStatus, true, &expectedExpiry)
+	assertPublishRetention(t, videoDescriptor, true, nil)
+	assertPublishRetention(t, videoStatus, true, &expectedExpiry)
+	assertPublishRetention(t, capabilityState, true, &expectedExpiry)
+}
+
+func findPublishedMessage(t *testing.T, messages []PublishedMessage, topic string) PublishedMessage {
+	t.Helper()
+	for _, message := range messages {
+		if message.Topic == topic {
+			return message
+		}
+	}
+	t.Fatalf("missing published message %s", topic)
+	return PublishedMessage{}
+}
+
+func TestMQTTConnectPacketUsesMQTT5CleanStartAndSessionExpiry(t *testing.T) {
+	packetType, flags, payload, err := readMQTTPacket(bytes.NewReader(mqttPacketConnect("unit-local")))
+	if err != nil {
+		t.Fatalf("read connect packet: %v", err)
+	}
+	if packetType != 1 || flags != 0 {
+		t.Fatalf("packet type=%d flags=%d, want CONNECT", packetType, flags)
+	}
+	if len(payload) < 17 {
+		t.Fatalf("connect payload too short: %x", payload)
+	}
+	if string(payload[2:6]) != "MQTT" || payload[6] != 5 {
+		t.Fatalf("connect protocol = %x", payload[:7])
+	}
+	if payload[7] != 0x02 {
+		t.Fatalf("connect flags = %x, want clean start", payload[7])
+	}
+	if keepAlive := binary.BigEndian.Uint16(payload[8:10]); keepAlive != mqttKeepAliveSeconds {
+		t.Fatalf("keepalive = %d, want %d", keepAlive, mqttKeepAliveSeconds)
+	}
+	propertyLength, propertyLengthBytes, ok := readMQTTVariableByteInteger(payload[10:])
+	if !ok || propertyLength != 5 {
+		t.Fatalf("connect properties length = %d bytes=%d ok=%t", propertyLength, propertyLengthBytes, ok)
+	}
+	propertyOffset := 10 + propertyLengthBytes
+	if payload[propertyOffset] != 0x11 || binary.BigEndian.Uint32(payload[propertyOffset+1:propertyOffset+5]) != 0 {
+		t.Fatalf("connect session expiry property = %x", payload[propertyOffset:propertyOffset+5])
+	}
+	clientIDOffset := propertyOffset + propertyLength
+	if clientIDOffset+2 > len(payload) {
+		t.Fatalf("connect payload missing client id: %x", payload)
+	}
+	clientIDLength := int(binary.BigEndian.Uint16(payload[clientIDOffset : clientIDOffset+2]))
+	clientIDStart := clientIDOffset + 2
+	if clientIDStart+clientIDLength > len(payload) || string(payload[clientIDStart:clientIDStart+clientIDLength]) != "unit-local" {
+		t.Fatalf("connect client id payload = %x", payload[clientIDOffset:])
+	}
+}
+
+func TestMQTTPublishPacketEncodesMQTT5MessageExpiry(t *testing.T) {
+	expiry := uint32(150)
+	packetType, flags, payload, err := readMQTTPacket(bytes.NewReader(mqttPacketPublish(9, "txings/unit-local/video/status", []byte("status"), true, &expiry)))
+	if err != nil {
+		t.Fatalf("read publish packet: %v", err)
+	}
+	if packetType != 3 || flags != 0x03 {
+		t.Fatalf("packet type=%d flags=%d, want retained QoS1 PUBLISH", packetType, flags)
+	}
+	topicLen := int(binary.BigEndian.Uint16(payload[:2]))
+	topicEnd := 2 + topicLen
+	if string(payload[2:topicEnd]) != "txings/unit-local/video/status" {
+		t.Fatalf("topic = %q", payload[2:topicEnd])
+	}
+	packetIDOffset := topicEnd
+	if binary.BigEndian.Uint16(payload[packetIDOffset:packetIDOffset+2]) != 9 {
+		t.Fatalf("packet id payload = %x", payload[packetIDOffset:packetIDOffset+2])
+	}
+	propertyOffset := packetIDOffset + 2
+	propertyLength, propertyLengthBytes, ok := readMQTTVariableByteInteger(payload[propertyOffset:])
+	if !ok || propertyLength != 5 {
+		t.Fatalf("publish properties length = %d bytes=%d ok=%t", propertyLength, propertyLengthBytes, ok)
+	}
+	propertyStart := propertyOffset + propertyLengthBytes
+	if payload[propertyStart] != 0x02 || binary.BigEndian.Uint32(payload[propertyStart+1:propertyStart+5]) != expiry {
+		t.Fatalf("publish message expiry property = %x", payload[propertyStart:propertyStart+5])
+	}
+	bodyStart := propertyStart + propertyLength
+	if string(payload[bodyStart:]) != "status" {
+		t.Fatalf("publish payload = %q", payload[bodyStart:])
+	}
+
+	topic, packetID, body, qos, ok := parseMQTTPublish(flags, payload)
+	if !ok || topic != "txings/unit-local/video/status" || packetID != 9 || qos != 1 || string(body) != "status" {
+		t.Fatalf("parsed publish topic=%q packetID=%d qos=%d ok=%t body=%q", topic, packetID, qos, ok, body)
+	}
+}
+
+func TestMQTTSubscribeAndPubAckUseMQTT5Properties(t *testing.T) {
+	packetType, flags, payload, err := readMQTTPacket(bytes.NewReader(mqttPacketSubscribe(4, "txings/unit-local/mcp/session/+/c2s")))
+	if err != nil {
+		t.Fatalf("read subscribe packet: %v", err)
+	}
+	if packetType != 8 || flags != 0x02 {
+		t.Fatalf("packet type=%d flags=%d, want SUBSCRIBE", packetType, flags)
+	}
+	if binary.BigEndian.Uint16(payload[:2]) != 4 || payload[2] != 0 {
+		t.Fatalf("subscribe variable header = %x", payload[:3])
+	}
+	if got := mqttPacketPubAck(4); !bytes.Equal(got, []byte{0x40, 0x04, 0x00, 0x04, 0x00, 0x00}) {
+		t.Fatalf("puback = %x", got)
+	}
+	if !mqttConnAckAccepted([]byte{0x00, 0x00, 0x00}) {
+		t.Fatalf("MQTT5 CONNACK with empty properties should be accepted")
 	}
 }
 
