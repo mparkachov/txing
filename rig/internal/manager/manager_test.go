@@ -412,21 +412,65 @@ func TestPublicationLifecycleBirthDataAndDeath(t *testing.T) {
 		"power-1",
 		map[string]bool{"sparkplug": false, "ble": false, "power": false},
 		nil,
-		3000,
+		2000+StateTTLMS+1,
 		3,
 	)); err != nil {
 		t.Fatal(err)
 	}
-	third, err := state.DecidePublication(3000)
+	third, err := state.DecidePublication(2000 + StateTTLMS + 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertPublicationKind(t, third, PublicationDeath)
-	fourth, err := state.DecidePublication(3001)
+	fourth, err := state.DecidePublication(2000 + StateTTLMS + 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertPublicationKind(t, fourth, PublicationNone)
+}
+
+func TestFreshSparkplugAvailabilitySuppressesTransientOfflineDeath(t *testing.T) {
+	state := NewDeviceRuntimeState(powerInventory())
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.rig.BleConnectivity",
+		"power-1",
+		map[string]bool{"sparkplug": true, "ble": true, "power": true},
+		nil,
+		1000,
+		1,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := state.DecidePublication(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublicationKind(t, first, PublicationBirth)
+
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.rig.BleConnectivity",
+		"power-1",
+		map[string]bool{"sparkplug": false, "ble": false, "power": false},
+		nil,
+		30_000,
+		2,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	second, err := state.DecidePublication(30_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublicationKind(t, second, PublicationNone)
+	if got := redconValue(t, state.Snapshot(30_000).Redcon); got != 3 {
+		t.Fatalf("redcon during transient offline = %d, want 3", got)
+	}
+
+	third, err := state.DecidePublication(1000 + StateTTLMS + 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublicationKind(t, third, PublicationDeath)
 }
 
 func TestDCMDPayloadTranslatesToV2RedconCommand(t *testing.T) {

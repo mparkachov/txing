@@ -12,10 +12,11 @@ import (
 const (
 	StateTTLMS = uint64(150_000)
 
-	PowerCapability = "power"
-	BoardCapability = "board"
-	MCPCapability   = "mcp"
-	VideoCapability = "video"
+	SparkplugCapability = "sparkplug"
+	PowerCapability     = "power"
+	BoardCapability     = "board"
+	MCPCapability       = "mcp"
+	VideoCapability     = "video"
 
 	NodeRedconBorn = uint8(1)
 	NodeRedconDead = uint8(4)
@@ -103,6 +104,11 @@ func (s *DeviceRuntimeState) ObserveState(state protocol.CapabilityState) error 
 	}
 	if state.ThingName != s.inventory.ThingName {
 		return fmt.Errorf("state thingName %s does not match inventory thingName %s", state.ThingName, s.inventory.ThingName)
+	}
+	if stateReportsSparkplugUnavailable(state) {
+		if existing, ok := s.adapterStates[state.AdapterID]; ok && stateReportsSparkplugAvailable(existing) && stateFreshAt(existing, state.ObservedAtMS) {
+			return nil
+		}
 	}
 	if stateReportsBleRedcon4(state) {
 		observedAtMS := state.ObservedAtMS
@@ -259,6 +265,21 @@ func stateReportsBleRedcon4(state protocol.CapabilityState) bool {
 	}
 	value, ok := protocol.IntMetricValue(metric.Value)
 	return ok && value == 4
+}
+
+func stateReportsSparkplugAvailable(state protocol.CapabilityState) bool {
+	return capabilityIsAvailable(state.Capabilities, SparkplugCapability)
+}
+
+func stateReportsSparkplugUnavailable(state protocol.CapabilityState) bool {
+	return capabilityIsDeclared(state.Capabilities, SparkplugCapability) && !capabilityIsAvailable(state.Capabilities, SparkplugCapability)
+}
+
+func stateFreshAt(state protocol.CapabilityState, nowMS uint64) bool {
+	if state.ObservedAtMS > nowMS {
+		return state.ObservedAtMS-nowMS <= StateTTLMS
+	}
+	return nowMS-state.ObservedAtMS <= StateTTLMS
 }
 
 func stateDeclaresBoardOwnedCapability(state protocol.CapabilityState) bool {
