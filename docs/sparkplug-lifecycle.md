@@ -153,6 +153,10 @@ Capability availability rules:
 - `sparkplug` is special: live `DBIRTH` and `DDATA` may report
   `capability.sparkplug=true`, while `DDEATH` remains the unavailable signal and
   still carries no device metrics
+- a later `sparkplug=false` sample from the same local connectivity adapter does
+  not override a still-fresh `sparkplug=true` sample from that adapter; the
+  manager waits for the existing freshness TTL before publishing `DDEATH` so a
+  short BLE scan or reconnect gap does not become a birth/death flap
 
 Capability-owned shadow rule:
 
