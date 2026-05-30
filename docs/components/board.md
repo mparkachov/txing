@@ -41,6 +41,26 @@ projection clears board-owned capabilities and does not reuse stale retained
 board state on the next wake; fresh board daemon state must arrive before
 `board`, `mcp`, or `video` become available again.
 
+## Retained AWS IoT Topics
+
+Board MQTT clients use MQTT 5 for AWS IoT retained service state. Dynamic
+freshness signals are retained with a MQTT 5 Message Expiry Interval equal to
+`TXING_CAPABILITY_TTL_SECONDS`, which defaults to `150` seconds:
+
+- `txings/<device_id>/capability/v2/state`
+- `txings/<device_id>/mcp/status`
+- `txings/<device_id>/video/status`
+
+Descriptor topics are retained discovery/config records and must not expire:
+
+- `txings/<device_id>/mcp/descriptor`
+- `txings/<device_id>/video/descriptor`
+
+Existing retained AWS IoT messages that were published before expiry was added
+are replaced only when the daemon republishes the same topic. Orphaned old
+retained topics, or topics for devices that no longer publish, require manual
+AWS IoT retained-message cleanup if they matter operationally.
+
 ## Runtime Interfaces
 
 ### Board Shadow
@@ -75,8 +95,9 @@ Current video is headless AWS Kinesis Video Streams WebRTC:
 - signaling channel: `<device_id>-board-video`
 - browser route: `/<town>/<rig>/<device>/video`
 - retained topics:
-  - `txings/<device_id>/video/descriptor`
-  - `txings/<device_id>/video/status`
+  - `txings/<device_id>/video/descriptor`: retained, no expiry
+  - `txings/<device_id>/video/status`: retained dynamic state, expires after
+    `TXING_CAPABILITY_TTL_SECONDS`
 - named shadow mirror: `video`
 - worker binary: `txing-unit-kvs-master`
 

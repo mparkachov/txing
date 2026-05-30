@@ -69,6 +69,12 @@ operator client
 
 The current implementation publishes retained board video service topics:
 
+- `txings/<device_id>/video/descriptor` is a retained discovery/config record
+  and has no MQTT message expiry.
+- `txings/<device_id>/video/status` is retained dynamic state and is published
+  with a MQTT 5 Message Expiry Interval equal to
+  `TXING_CAPABILITY_TTL_SECONDS`, defaulting to `150` seconds.
+
 ```json
 // txings/<device_id>/video/descriptor
 {
@@ -100,7 +106,11 @@ The current implementation publishes retained board video service topics:
 }
 ```
 
-The retained video topics are used directly by `rig` for REDCON readiness and by board MCP `robot.get_state` for client-visible video runtime state.
+The retained video topics are used directly by `rig` for REDCON readiness and
+by board MCP `robot.get_state` for client-visible video runtime state.
+Existing retained AWS IoT messages published before expiry was added are
+replaced only by a same-topic daemon republish; orphaned retained topics require
+manual AWS IoT retained-message cleanup if they matter operationally.
 
 Notes:
 
