@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -33,27 +35,35 @@ const (
 )
 
 type runtimeState struct {
-	cfg          rigconfig.Config
-	logger       *awsx.CloudWatchLogger
-	broker       *ipc.Broker
-	ipcClient    *ipc.Client
-	registry     *registry.Client
-	nodeMQTT     *mqttx.Client
-	devices      map[string]*managedDevice
-	inventorySeq uint64
-	nodeSeq      uint64
-	commandSeq   uint64
+	cfg                     rigconfig.Config
+	logger                  *awsx.CloudWatchLogger
+	broker                  *ipc.Broker
+	ipcClient               *ipc.Client
+	registry                *registry.Client
+	nodeMQTT                *mqttx.Client
+	devices                 map[string]*managedDevice
+	deviceMu                sync.RWMutex
+	boardStateMu            sync.Mutex
+	boardStateSubscriptions map[string]struct{}
+	inventorySeq            uint64
+	nodeSeq                 uint64
+	commandSeq              uint64
 }
 
 type managedDevice struct {
 	state *manager.DeviceRuntimeState
-	mqtt  *mqttx.Client
+	mqtt  managedMQTTClient
 	seq   uint64
 }
 
 type nodeMQTTClient interface {
 	Subscribe(filter string, handler func(mqttx.Message)) error
 	Publish(topic string, payload []byte, retained bool) error
+}
+
+type managedMQTTClient interface {
+	Publish(topic string, payload []byte, retained bool) error
+	Disconnect(quiesce uint)
 }
 
 func main() {
@@ -123,12 +133,13 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 	}
 
 	state := &runtimeState{
-		cfg:       cfg,
-		logger:    logger,
-		broker:    broker,
-		ipcClient: ipcClient,
-		registry:  registry.New(awsConfig),
-		devices:   map[string]*managedDevice{},
+		cfg:                     cfg,
+		logger:                  logger,
+		broker:                  broker,
+		ipcClient:               ipcClient,
+		registry:                registry.New(awsConfig),
+		devices:                 map[string]*managedDevice{},
+		boardStateSubscriptions: map[string]struct{}{},
 	}
 	if err := state.connectNodeMQTT(ctx); err != nil {
 		return err
@@ -239,6 +250,12 @@ func (s *runtimeState) publishNodeOnline(client nodeMQTTClient) error {
 	if err := client.Subscribe(boardRetainedCapabilityStateFilter, nil); err != nil {
 		return err
 	}
+	s.resetBoardStateSubscriptions()
+	for _, thingName := range s.knownDeviceNames() {
+		if err := s.ensureBoardStateSubscription(client, thingName); err != nil {
+			return err
+		}
+	}
 	seq := s.nextNodeSeq()
 	payload, err := sparkplug.BuildNodeBirthPayload(manager.NodeRedconBorn, nodeBDSeq, seq, uint64(time.Now().UnixMilli()))
 	if err != nil {
@@ -256,18 +273,30 @@ func (s *runtimeState) refreshInventory(ctx context.Context) error {
 		return err
 	}
 	for _, device := range loaded.Devices {
+		var created bool
+		s.deviceMu.Lock()
 		managed := s.devices[device.ThingName]
 		if managed == nil {
 			managed = &managedDevice{state: manager.NewDeviceRuntimeState(device)}
 			s.devices[device.ThingName] = managed
-			if err := s.ensureDeviceMQTT(device.ThingName, managed); err != nil {
-				s.logger.Print(ctx, "warning", fmt.Sprintf("device MQTT connect failed thing=%s error=%q", device.ThingName, err))
-			}
+			created = true
 		} else {
 			managed.state.ReplaceInventory(device)
 		}
+		s.deviceMu.Unlock()
+
+		if created {
+			if err := s.ensureDeviceMQTT(device.ThingName, managed); err != nil {
+				s.logger.Print(ctx, "warning", fmt.Sprintf("device MQTT connect failed thing=%s error=%q", device.ThingName, err))
+			}
+		}
+		if s.nodeMQTT != nil {
+			if err := s.ensureBoardStateSubscription(s.nodeMQTT, device.ThingName); err != nil {
+				s.logger.Print(ctx, "warning", fmt.Sprintf("board retained state subscribe failed thing=%s error=%q", device.ThingName, err))
+			}
+		}
 	}
-	for thingName, managed := range s.devices {
+	for thingName, managed := range s.deviceSnapshot() {
 		found := false
 		for _, device := range loaded.Devices {
 			if device.ThingName == thingName {
@@ -279,7 +308,10 @@ func (s *runtimeState) refreshInventory(ctx context.Context) error {
 			if managed.mqtt != nil {
 				managed.mqtt.Disconnect(250)
 			}
+			s.deviceMu.Lock()
 			delete(s.devices, thingName)
+			s.deviceMu.Unlock()
+			s.clearBoardStateSubscription(thingName)
 		}
 	}
 	inventory := protocol.NewInventory(managerID, loaded.Devices, s.inventorySeq, uint64(time.Now().UnixMilli()))
@@ -445,13 +477,7 @@ func (s *runtimeState) publishDeviceState(ctx context.Context) {
 		case manager.PublicationData:
 			s.publishDeviceReport(ctx, managed, thingName, "DDATA", publication.Redcon, publication.Metrics)
 		case manager.PublicationDeath:
-			seq := managed.nextSeq()
-			payload, err := sparkplug.BuildDeviceDeathPayload(seq, uint64(time.Now().UnixMilli()))
-			if err == nil {
-				if err := managed.mqtt.Publish(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DDEATH", s.cfg.RigID, thingName), payload, false); err != nil {
-					s.logger.Print(ctx, "warning", fmt.Sprintf("publish DDEATH failed thing=%s error=%q", thingName, err))
-				}
-			}
+			s.publishDeviceDeath(ctx, managed, thingName)
 		}
 	}
 }
@@ -468,16 +494,26 @@ func (s *runtimeState) publishDeviceReport(ctx context.Context, managed *managed
 	}
 }
 
+func (s *runtimeState) publishDeviceDeath(ctx context.Context, managed *managedDevice, thingName string) {
+	seq := managed.nextSeq()
+	payload, err := sparkplug.BuildDeviceDeathPayload(seq, uint64(time.Now().UnixMilli()))
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Print(ctx, "warning", fmt.Sprintf("build DDEATH failed thing=%s error=%q", thingName, err))
+		}
+		return
+	}
+	if err := managed.mqtt.Publish(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DDEATH", s.cfg.RigID, thingName), payload, false); err != nil && s.logger != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("publish DDEATH failed thing=%s error=%q", thingName, err))
+	}
+}
+
 func (s *runtimeState) gracefulShutdown(ctx context.Context) {
 	for thingName, managed := range s.devices {
 		if managed.mqtt == nil {
 			continue
 		}
-		seq := managed.nextSeq()
-		payload, err := sparkplug.BuildDeviceDeathPayload(seq, uint64(time.Now().UnixMilli()))
-		if err == nil {
-			_ = managed.mqtt.Publish(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DDEATH", s.cfg.RigID, thingName), payload, false)
-		}
+		s.publishDeviceDeath(ctx, managed, thingName)
 		managed.mqtt.Disconnect(250)
 	}
 	if s.nodeMQTT != nil {
@@ -494,6 +530,66 @@ func (s *runtimeState) nextNodeSeq() uint64 {
 	seq := s.nodeSeq
 	s.nodeSeq = (s.nodeSeq + 1) % 256
 	return seq
+}
+
+func (s *runtimeState) knownDeviceNames() []string {
+	s.deviceMu.RLock()
+	defer s.deviceMu.RUnlock()
+	names := make([]string, 0, len(s.devices))
+	for thingName := range s.devices {
+		names = append(names, thingName)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (s *runtimeState) deviceSnapshot() map[string]*managedDevice {
+	s.deviceMu.RLock()
+	defer s.deviceMu.RUnlock()
+	snapshot := make(map[string]*managedDevice, len(s.devices))
+	for thingName, managed := range s.devices {
+		snapshot[thingName] = managed
+	}
+	return snapshot
+}
+
+func (s *runtimeState) ensureBoardStateSubscription(client nodeMQTTClient, thingName string) error {
+	if client == nil || thingName == "" {
+		return nil
+	}
+	s.boardStateMu.Lock()
+	if s.boardStateSubscriptions == nil {
+		s.boardStateSubscriptions = map[string]struct{}{}
+	}
+	if _, ok := s.boardStateSubscriptions[thingName]; ok {
+		s.boardStateMu.Unlock()
+		return nil
+	}
+	s.boardStateSubscriptions[thingName] = struct{}{}
+	s.boardStateMu.Unlock()
+
+	topic := boardRetainedCapabilityStateTopic(thingName)
+	if err := client.Subscribe(topic, nil); err != nil {
+		s.clearBoardStateSubscription(thingName)
+		return fmt.Errorf("subscribe %s: %w", topic, err)
+	}
+	return nil
+}
+
+func (s *runtimeState) resetBoardStateSubscriptions() {
+	s.boardStateMu.Lock()
+	defer s.boardStateMu.Unlock()
+	s.boardStateSubscriptions = map[string]struct{}{}
+}
+
+func (s *runtimeState) clearBoardStateSubscription(thingName string) {
+	s.boardStateMu.Lock()
+	defer s.boardStateMu.Unlock()
+	delete(s.boardStateSubscriptions, thingName)
+}
+
+func boardRetainedCapabilityStateTopic(thingName string) string {
+	return fmt.Sprintf("txings/%s/capability/v2/state", thingName)
 }
 
 func (d *managedDevice) nextSeq() uint64 {

@@ -1,14 +1,20 @@
 package mqttx
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/eclipse/paho.golang/autopaho"
+	"github.com/eclipse/paho.golang/paho"
 	"github.com/mparkachov/txing/rig/internal/rigconfig"
 )
 
@@ -18,7 +24,12 @@ type Message struct {
 }
 
 type Client struct {
-	client mqtt.Client
+	config        autopaho.ClientConfig
+	manager       *autopaho.ConnectionManager
+	cancel        context.CancelFunc
+	mu            sync.RWMutex
+	onMessage     func(Message)
+	subscriptions map[string]func(Message)
 }
 
 type Options struct {
@@ -36,68 +47,240 @@ func New(options Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	endpoint := options.Config.IoTEndpoint
-	if !strings.Contains(endpoint, ":") {
-		endpoint += ":8883"
+	brokerURL, err := BrokerURL(options.Config.IoTEndpoint)
+	if err != nil {
+		return nil, err
 	}
-	clientOptions := mqtt.NewClientOptions().
-		AddBroker("ssl://" + endpoint).
-		SetClientID(options.ClientID).
-		SetTLSConfig(tlsConfig).
-		SetCleanSession(true).
-		SetKeepAlive(60 * time.Second).
-		SetAutoReconnect(true).
-		SetConnectRetry(true).
-		SetConnectRetryInterval(2 * time.Second)
+
+	client := &Client{
+		onMessage:     options.OnMessage,
+		subscriptions: map[string]func(Message){},
+	}
+	client.config = newClientConfig(options, brokerURL, tlsConfig, client)
+	return client, nil
+}
+
+func newClientConfig(options Options, brokerURL *url.URL, tlsConfig *tls.Config, client *Client) autopaho.ClientConfig {
+	config := autopaho.ClientConfig{
+		ServerUrls:                    []*url.URL{brokerURL},
+		TlsCfg:                        tlsConfig,
+		KeepAlive:                     60,
+		CleanStartOnInitialConnection: true,
+		SessionExpiryInterval:         0,
+		ReconnectBackoff:              autopaho.NewConstantBackoff(2 * time.Second),
+		ConnectTimeout:                30 * time.Second,
+		OnConnectionUp: func(_ *autopaho.ConnectionManager, _ *paho.Connack) {
+			if options.OnConnection != nil {
+				go options.OnConnection()
+			}
+		},
+		OnConnectionDown: func() bool {
+			if options.OnConnectionLost != nil {
+				go options.OnConnectionLost(errors.New("MQTT connection down"))
+			}
+			return true
+		},
+		ClientConfig: paho.ClientConfig{
+			ClientID: options.ClientID,
+			OnPublishReceived: []func(paho.PublishReceived) (bool, error){
+				client.handlePublish,
+			},
+		},
+	}
 	if options.WillTopic != "" {
-		clientOptions.SetBinaryWill(options.WillTopic, options.WillPayload, 1, false)
+		config.WillMessage = &paho.WillMessage{
+			Topic:   options.WillTopic,
+			Payload: append([]byte(nil), options.WillPayload...),
+			QoS:     1,
+			Retain:  false,
+		}
 	}
-	if options.OnMessage != nil {
-		clientOptions.SetDefaultPublishHandler(func(_ mqtt.Client, message mqtt.Message) {
-			options.OnMessage(Message{Topic: message.Topic(), Payload: append([]byte(nil), message.Payload()...)})
-		})
-	}
-	if options.OnConnection != nil {
-		clientOptions.SetOnConnectHandler(func(_ mqtt.Client) { options.OnConnection() })
-	}
-	if options.OnConnectionLost != nil {
-		clientOptions.SetConnectionLostHandler(func(_ mqtt.Client, err error) { options.OnConnectionLost(err) })
-	}
-	return &Client{client: mqtt.NewClient(clientOptions)}, nil
+	return config
 }
 
 func (c *Client) Connect() error {
-	token := c.client.Connect()
-	if !token.WaitTimeout(30 * time.Second) {
-		return fmt.Errorf("MQTT connect timed out")
+	c.mu.Lock()
+	manager := c.manager
+	if manager == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		var err error
+		manager, err = autopaho.NewConnection(ctx, c.config)
+		if err != nil {
+			cancel()
+			c.mu.Unlock()
+			return err
+		}
+		c.manager = manager
+		c.cancel = cancel
 	}
-	return token.Error()
+	c.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := manager.AwaitConnection(ctx); err != nil {
+		c.Disconnect(0)
+		return fmt.Errorf("MQTT connect timed out: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) Disconnect(quiesce uint) {
-	c.client.Disconnect(quiesce)
+	c.mu.Lock()
+	manager := c.manager
+	cancel := c.cancel
+	c.manager = nil
+	c.cancel = nil
+	c.mu.Unlock()
+
+	if manager != nil {
+		timeout := time.Duration(quiesce) * time.Millisecond
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		ctx, stop := context.WithTimeout(context.Background(), timeout)
+		_ = manager.Disconnect(ctx)
+		stop()
+	}
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (c *Client) Subscribe(filter string, handler func(Message)) error {
-	var callback mqtt.MessageHandler
 	if handler != nil {
-		callback = func(_ mqtt.Client, message mqtt.Message) {
-			handler(Message{Topic: message.Topic(), Payload: append([]byte(nil), message.Payload()...)})
+		c.mu.Lock()
+		c.subscriptions[filter] = handler
+		c.mu.Unlock()
+	}
+
+	manager, err := c.connection()
+	if err != nil {
+		if handler != nil {
+			c.mu.Lock()
+			delete(c.subscriptions, filter)
+			c.mu.Unlock()
 		}
+		return err
 	}
-	token := c.client.Subscribe(filter, 1, callback)
-	if !token.WaitTimeout(30 * time.Second) {
-		return fmt.Errorf("MQTT subscribe %s timed out", filter)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = manager.Subscribe(ctx, &paho.Subscribe{
+		Subscriptions: []paho.SubscribeOptions{
+			{Topic: filter, QoS: 1},
+		},
+	})
+	if err != nil && handler != nil {
+		c.mu.Lock()
+		delete(c.subscriptions, filter)
+		c.mu.Unlock()
 	}
-	return token.Error()
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("MQTT subscribe %s timed out: %w", filter, err)
+	}
+	return err
 }
 
 func (c *Client) Publish(topic string, payload []byte, retained bool) error {
-	token := c.client.Publish(topic, 1, retained, payload)
-	if !token.WaitTimeout(30 * time.Second) {
-		return fmt.Errorf("MQTT publish %s timed out", topic)
+	manager, err := c.connection()
+	if err != nil {
+		return err
 	}
-	return token.Error()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = manager.Publish(ctx, &paho.Publish{
+		Topic:   topic,
+		Payload: append([]byte(nil), payload...),
+		QoS:     1,
+		Retain:  retained,
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("MQTT publish %s timed out: %w", topic, err)
+	}
+	return err
+}
+
+func (c *Client) connection() (*autopaho.ConnectionManager, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.manager == nil {
+		return nil, errors.New("MQTT client is not connected")
+	}
+	return c.manager, nil
+}
+
+func (c *Client) handlePublish(received paho.PublishReceived) (bool, error) {
+	if received.Packet == nil {
+		return false, nil
+	}
+	message := Message{
+		Topic:   received.Packet.Topic,
+		Payload: append([]byte(nil), received.Packet.Payload...),
+	}
+	if handler := c.handlerFor(message.Topic); handler != nil {
+		handler(message)
+		return true, nil
+	}
+	if c.onMessage != nil {
+		c.onMessage(message)
+		return true, nil
+	}
+	return false, nil
+}
+
+func (c *Client) handlerFor(topic string) func(Message) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	filters := make([]string, 0, len(c.subscriptions))
+	for filter := range c.subscriptions {
+		filters = append(filters, filter)
+	}
+	sort.Slice(filters, func(i, j int) bool {
+		return topicFilterSpecificity(filters[i]) > topicFilterSpecificity(filters[j])
+	})
+	for _, filter := range filters {
+		if topicMatches(filter, topic) {
+			return c.subscriptions[filter]
+		}
+	}
+	return nil
+}
+
+func BrokerURL(endpoint string) (*url.URL, error) {
+	if !strings.Contains(endpoint, ":") {
+		endpoint += ":8883"
+	}
+	brokerURL, err := url.Parse("tls://" + endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("parse MQTT endpoint %s: %w", endpoint, err)
+	}
+	return brokerURL, nil
+}
+
+func topicFilterSpecificity(filter string) int {
+	score := 0
+	for _, part := range strings.Split(filter, "/") {
+		if part != "+" && part != "#" {
+			score += len(part) + 1
+		}
+	}
+	return score
+}
+
+func topicMatches(filter, topic string) bool {
+	filterParts := strings.Split(filter, "/")
+	topicParts := strings.Split(topic, "/")
+	for i, filterPart := range filterParts {
+		if filterPart == "#" {
+			return i == len(filterParts)-1
+		}
+		if i >= len(topicParts) {
+			return false
+		}
+		if filterPart != "+" && filterPart != topicParts[i] {
+			return false
+		}
+	}
+	return len(topicParts) == len(filterParts)
 }
 
 func TLSConfig(cfg rigconfig.Config) (*tls.Config, error) {
