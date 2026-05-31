@@ -13,6 +13,7 @@ const (
 	StateTTLMS = uint64(150_000)
 
 	SparkplugCapability = "sparkplug"
+	BLECapability       = "ble"
 	PowerCapability     = "power"
 	BoardCapability     = "board"
 	MCPCapability       = "mcp"
@@ -107,6 +108,13 @@ func (s *DeviceRuntimeState) ObserveState(state protocol.CapabilityState) error 
 	}
 	if stateReportsSparkplugUnavailable(state) {
 		if existing, ok := s.adapterStates[state.AdapterID]; ok && stateReportsSparkplugAvailable(existing) && stateFreshAt(existing, state.ObservedAtMS) {
+			return nil
+		}
+	}
+	if stateReportsOnlyScannerReachability(state) {
+		if existing, ok := s.adapterStates[state.AdapterID]; ok &&
+			stateFreshAt(existing, state.ObservedAtMS) &&
+			stateCarriesDeviceStateEvidence(existing) {
 			return nil
 		}
 	}
@@ -265,6 +273,41 @@ func stateReportsBleRedcon4(state protocol.CapabilityState) bool {
 	}
 	value, ok := protocol.IntMetricValue(metric.Value)
 	return ok && value == 4
+}
+
+func stateReportsOnlyScannerReachability(state protocol.CapabilityState) bool {
+	if len(state.Metrics) != 0 {
+		return false
+	}
+	if !capabilityIsAvailable(state.Capabilities, SparkplugCapability) ||
+		!capabilityIsAvailable(state.Capabilities, BLECapability) {
+		return false
+	}
+	for capability, available := range state.Capabilities {
+		switch capability {
+		case SparkplugCapability, BLECapability:
+			if !available {
+				return false
+			}
+		default:
+			if available {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func stateCarriesDeviceStateEvidence(state protocol.CapabilityState) bool {
+	if len(state.Metrics) != 0 {
+		return true
+	}
+	for capability, available := range state.Capabilities {
+		if capability != SparkplugCapability && capability != BLECapability && available {
+			return true
+		}
+	}
+	return false
 }
 
 func stateReportsSparkplugAvailable(state protocol.CapabilityState) bool {

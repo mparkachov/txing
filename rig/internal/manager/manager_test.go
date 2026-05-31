@@ -123,6 +123,91 @@ func TestWeatherSnapshotStaysRedcon4WithStaleRedcon3Rule(t *testing.T) {
 	})
 }
 
+func TestScannerOnlyStateDoesNotDowngradeFreshWeatherState(t *testing.T) {
+	state := NewDeviceRuntimeState(weatherInventoryWithStaleRedcon3Rule())
+	adapterID := "dev.txing.rig.BleConnectivity"
+	if err := state.ObserveState(capabilityState(
+		adapterID,
+		"weather-1",
+		map[string]bool{"sparkplug": true, "ble": true, "power": true, "weather": true},
+		map[string]protocol.MetricValue{protocol.BleRedconMetric: protocol.MetricInt32(4)},
+		1000,
+		1,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := state.DecidePublication(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublication(t, first, PublicationBirth, 4, []sparkplug.Metric{
+		sparkplug.NewBooleanMetric("capability.ble", true),
+		sparkplug.NewBooleanMetric("capability.power", true),
+		sparkplug.NewBooleanMetric("capability.sparkplug", true),
+		sparkplug.NewBooleanMetric("capability.weather", true),
+	})
+
+	if err := state.ObserveState(capabilityState(
+		adapterID,
+		"weather-1",
+		map[string]bool{"sparkplug": true, "ble": true, "power": false, "weather": false},
+		nil,
+		1100,
+		2,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := state.Snapshot(1100)
+	if got := redconValue(t, snapshot.Redcon); got != 4 {
+		t.Fatalf("redcon = %d, want 4", got)
+	}
+	for _, capability := range []string{"sparkplug", "ble", "power", "weather"} {
+		if !snapshot.Capabilities[capability] {
+			t.Fatalf("capability %s false after scanner-only sample: %#v", capability, snapshot.Capabilities)
+		}
+	}
+	second, err := state.DecidePublication(1100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Kind != PublicationNone {
+		t.Fatalf("publication = %#v, want none", second)
+	}
+}
+
+func TestScannerOnlyStateStillRefreshesScannerOnlyAvailability(t *testing.T) {
+	state := NewDeviceRuntimeState(weatherInventoryWithStaleRedcon3Rule())
+	adapterID := "dev.txing.rig.BleConnectivity"
+	if err := state.ObserveState(capabilityState(
+		adapterID,
+		"weather-1",
+		map[string]bool{"sparkplug": true, "ble": true, "power": false, "weather": false},
+		nil,
+		1000,
+		1,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ObserveState(capabilityState(
+		adapterID,
+		"weather-1",
+		map[string]bool{"sparkplug": true, "ble": true, "power": false, "weather": false},
+		nil,
+		1000+StateTTLMS+1,
+		2,
+	)); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := state.Snapshot(1000 + StateTTLMS + 1)
+	if !snapshot.SparkplugAvailable || !snapshot.Capabilities["ble"] {
+		t.Fatalf("scanner-only availability was not refreshed: %#v", snapshot.Capabilities)
+	}
+	if snapshot.Capabilities["power"] || snapshot.Capabilities["weather"] {
+		t.Fatalf("scanner-only state raised device-domain capabilities: %#v", snapshot.Capabilities)
+	}
+}
+
 func TestBoardOwnedCapabilitiesImplyPowerWhenBlePowerIsUnconfirmed(t *testing.T) {
 	state := NewDeviceRuntimeState(unitInventory())
 	if err := state.ObserveState(capabilityState(

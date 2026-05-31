@@ -274,7 +274,9 @@ BLE state-read and command-applied capability states carry internal
 does not. Advertisement-only samples from any XIAO nRF54L15 MCU device report
 only `sparkplug=true` and `ble=true`; `power`, `weather`, and other
 device-domain capabilities require a GATT state/measurement read or a successful
-command-applied state.
+command-applied state. Advertisement-only samples must not downgrade a still
+fresh GATT state/measurement read from the same BLE adapter; they become the
+authoritative local adapter state only after richer device-state evidence expires.
 Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit devices can
 converge through the full REDCON ladder.
 
