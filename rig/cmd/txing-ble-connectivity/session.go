@@ -25,6 +25,7 @@ const (
 	commandStateNotificationHold = 2 * time.Second
 	// Mirrors rig/internal/manager.StateTTLMS without coupling the BLE daemon to the Sparkplug manager.
 	gattUnavailableRecoveryHold = 150 * time.Second
+	visibleDeviceReconnectDelay = 30 * time.Second
 )
 
 type connectOutcome uint8
@@ -199,7 +200,7 @@ func (d *deviceSession) handleAdvertisement(ctx context.Context, advertisement r
 		d.nextConnectAfter = time.Now().Add(maxDuration(d.runtime.cfg.ReconnectDelay, time.Duration(rigble.BLERetryMinDelayMS)*time.Millisecond))
 	case err != nil:
 		d.publishGattUnavailableUnlessRecovering(ctx)
-		retryDelay := d.recordConnectFailure(err)
+		retryDelay := d.recordBackgroundConnectFailure(err)
 		d.nextConnectAfter = time.Now().Add(retryDelay)
 		d.logBackgroundConnectFailure(ctx, err, retryDelay)
 	}
@@ -818,6 +819,20 @@ func (d *deviceSession) gattUnavailableCanDefer(now time.Time) bool {
 }
 
 func (d *deviceSession) recordConnectFailure(err error) time.Duration {
+	return d.recordConnectFailureBounded(err, time.Duration(rigble.BLERetryMaxDelayMS)*time.Millisecond)
+}
+
+func (d *deviceSession) recordBackgroundConnectFailure(err error) time.Duration {
+	maxDelay := time.Duration(rigble.BLERetryMaxDelayMS) * time.Millisecond
+	if d.hasFreshAdvertisement() && backgroundTimeoutCanUseVisibleRetry(err) {
+		if visibleDeviceReconnectDelay < maxDelay {
+			maxDelay = visibleDeviceReconnectDelay
+		}
+	}
+	return d.recordConnectFailureBounded(err, maxDelay)
+}
+
+func (d *deviceSession) recordConnectFailureBounded(err error, maxDelay time.Duration) time.Duration {
 	base := d.runtime.cfg.ReconnectDelay
 	message := err.Error()
 	if rigble.BLEErrorIndicatesHostResourceExhaustion(message) {
@@ -829,11 +844,23 @@ func (d *deviceSession) recordConnectFailure(err error) time.Duration {
 	}
 	delayMS := rigble.BoundedRetryDelayMS(uint64(base/time.Millisecond), d.connectFailures+1, rigble.BLERetryMaxDelayMS) +
 		rigble.StableJitterMS(d.spec.ThingName, 1000)
-	if delayMS > rigble.BLERetryMaxDelayMS {
-		delayMS = rigble.BLERetryMaxDelayMS
+	maxDelayMS := uint64(maxDelay / time.Millisecond)
+	if delayMS > maxDelayMS {
+		delayMS = maxDelayMS
 	}
 	d.connectFailures++
 	return time.Duration(delayMS) * time.Millisecond
+}
+
+func backgroundTimeoutCanUseVisibleRetry(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	if rigble.BLEErrorIndicatesHostResourceExhaustion(message) || rigble.BLEErrorIndicatesInProgress(message) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(message), "timeout")
 }
 
 func (d *deviceSession) resetConnectBackoff() {

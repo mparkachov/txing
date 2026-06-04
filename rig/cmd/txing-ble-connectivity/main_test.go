@@ -928,6 +928,46 @@ func TestBackgroundConnectFailurePublishesOfflineWithoutPriorGattEvidence(t *tes
 	}
 }
 
+func TestBackgroundConnectFailureCapsVisibleTimeoutBackoff(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{err: errors.New("timeout on DiscoverServices")}},
+	}
+	state.connector = connector
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "weather-1", Kind: rigble.DeviceKindWeather})
+	session.connectFailures = 6
+	start := time.Now()
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("weather-1", start))
+
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want one background attempt", connector.calls)
+	}
+	if delay := session.nextConnectAfter.Sub(start); delay > visibleDeviceReconnectDelay+time.Second {
+		t.Fatalf("retry delay = %s, want capped near %s", delay, visibleDeviceReconnectDelay)
+	}
+}
+
+func TestBackgroundConnectFailureKeepsResourceBackoffDespiteVisibleAdvertisement(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{err: errors.New("Resource temporarily unavailable")}},
+	}
+	state.connector = connector
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "weather-1", Kind: rigble.DeviceKindWeather})
+	session.connectFailures = 6
+	start := time.Now()
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("weather-1", start))
+
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want one background attempt", connector.calls)
+	}
+	if delay := session.nextConnectAfter.Sub(start); delay <= visibleDeviceReconnectDelay {
+		t.Fatalf("retry delay = %s, want resource exhaustion to keep slower backoff", delay)
+	}
+}
+
 func TestDisconnectedWeatherSessionDoesNotPublishOfflineWithFreshCachedAdvertisement(t *testing.T) {
 	state := testSessionRuntime(t)
 	published := 0

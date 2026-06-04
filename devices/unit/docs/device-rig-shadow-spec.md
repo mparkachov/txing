@@ -176,6 +176,9 @@ state TTL expires and defer `DDEATH`, but they do not publish `DBIRTH` /
 `DDATA`, change REDCON, or make a device commandable. `DDEATH` is published
 when no fresh recovery evidence remains, when the prior GATT-confirmed state is
 past TTL, or when a command path proves the required GATT state is unavailable.
+When a visible device is already offline, fresh advertisements keep the
+background GATT retry cadence bounded for timeout-class failures so the rig does
+not wait for the full maximum BLE backoff before another connection attempt.
 `power`, `weather`, and other device-domain capabilities also require GATT
 state/measurement evidence. The rig sends MCU REDCON commands as GATT
 write-without-response and treats them as successful only after a GATT state
