@@ -493,6 +493,52 @@ func TestCommandRetriesTransientStateConfirmationReadFailure(t *testing.T) {
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
 }
 
+func TestCommandGuardIgnoresStaleStateNotificationAfterConfirmation(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		final uint8
+		stale uint8
+	}{
+		{name: "idle-confirmation-ignores-active", final: rigble.RedconIdle, stale: rigble.RedconActive},
+		{name: "active-confirmation-ignores-idle", final: rigble.RedconActive, stale: rigble.RedconIdle},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			state := testSessionRuntime(t)
+			published := []rigble.CapabilitySample{}
+			state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+				if includeCapabilityState {
+					published = append(published, sample)
+				}
+			}
+			session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+			session.connected = &fakeBLEConnection{connected: true, address: "AA:BB:CC:DD:EE:FF"}
+			session.setLastRedcon(tt.final)
+			session.guardConfirmedRedcon(tt.final)
+
+			session.handleNotification(context.Background(), bleNotification{
+				uuid:    state.stateUUID,
+				payload: []byte{rigble.ProtocolVersion, tt.stale},
+			})
+
+			if session.lastRedcon == nil || *session.lastRedcon != tt.final {
+				t.Fatalf("last REDCON = %#v, want confirmed REDCON %d", session.lastRedcon, tt.final)
+			}
+			if len(published) != 0 {
+				t.Fatalf("published samples = %#v, want stale notification ignored", published)
+			}
+
+			session.handleNotification(context.Background(), bleNotification{
+				uuid:    state.stateUUID,
+				payload: []byte{rigble.ProtocolVersion, tt.final},
+			})
+
+			if len(published) != 1 || published[0].Redcon == nil || *published[0].Redcon != tt.final {
+				t.Fatalf("published samples = %#v, want confirmed REDCON notification accepted", published)
+			}
+		})
+	}
+}
+
 func TestCommandFailsBeforeWriteWhenConnectedStateVerificationFails(t *testing.T) {
 	state := testSessionRuntime(t)
 	statuses := []string{}
@@ -794,6 +840,146 @@ func TestBackgroundAdvertisementConnectDefersWithoutCapacity(t *testing.T) {
 	}
 	if session.nextConnectAfter.IsZero() {
 		t.Fatal("deferred background connect should set reconnect backoff")
+	}
+}
+
+func TestBackgroundConnectFailureDoesNotPublishOfflineWithFreshAdvertisement(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{err: errors.New("timeout on DiscoverServices")}},
+	}
+	state.connector = connector
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		if includeCapabilityState {
+			published++
+		}
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.setLastRedcon(rigble.RedconActive)
+	state.recordStateRead("unit-1", time.Now())
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("unit-1", time.Now()))
+
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want one background attempt", connector.calls)
+	}
+	if session.offlinePublished {
+		t.Fatal("fresh advertisement recovery should defer offline publication")
+	}
+	if published != 0 {
+		t.Fatalf("capability samples = %d, want no BLE capability publication from advertisement-only failure", published)
+	}
+}
+
+func TestBackgroundConnectFailurePublishesOfflineAfterRecoveryHoldExpires(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{err: errors.New("timeout on DiscoverServices")}},
+	}
+	state.connector = connector
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		if includeCapabilityState {
+			published++
+		}
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.setLastRedcon(rigble.RedconActive)
+	state.recordStateRead("unit-1", time.Now().Add(-gattUnavailableRecoveryHold-time.Second))
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("unit-1", time.Now()))
+
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want one background attempt", connector.calls)
+	}
+	if !session.offlinePublished {
+		t.Fatal("expired GATT recovery hold should publish offline even with fresh advertisements")
+	}
+	if published != 1 {
+		t.Fatalf("capability samples = %d, want one offline capability publication", published)
+	}
+}
+
+func TestBackgroundConnectFailurePublishesOfflineWithoutPriorGattEvidence(t *testing.T) {
+	state := testSessionRuntime(t)
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{err: errors.New("timeout on DiscoverServices")}},
+	}
+	state.connector = connector
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		if includeCapabilityState {
+			published++
+		}
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("unit-1", time.Now()))
+
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want one background attempt", connector.calls)
+	}
+	if !session.offlinePublished {
+		t.Fatal("advertisement-only recovery must not defer offline without prior GATT state")
+	}
+	if published != 1 {
+		t.Fatalf("capability samples = %d, want one offline capability publication", published)
+	}
+}
+
+func TestDisconnectedWeatherSessionDoesNotPublishOfflineWithFreshCachedAdvertisement(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		if includeCapabilityState {
+			published++
+		}
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "weather-1", Kind: rigble.DeviceKindWeather})
+	session.connected = &fakeBLEConnection{connected: false, address: "AA:BB:CC:DD:EE:FF"}
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("weather-1", time.Now().Add(-30*time.Second)))
+	session.setLastRedcon(rigble.RedconIdle)
+	state.recordStateRead("weather-1", time.Now())
+	fresh := testAdvertisement("weather-1", time.Now())
+	fresh.Seq = 42
+	state.cachedAdvertisements["weather-1"] = fresh
+
+	session.checkStale(context.Background())
+
+	if session.connected != nil {
+		t.Fatal("disconnected GATT session should be cleared")
+	}
+	if session.offlinePublished {
+		t.Fatal("fresh cached weather advertisement should defer offline publication during reconnect recovery")
+	}
+	if published != 0 {
+		t.Fatalf("capability samples = %d, want no offline capability publication", published)
+	}
+	if session.lastAdvertisement == nil || session.lastAdvertisement.Seq != fresh.Seq {
+		t.Fatalf("last advertisement = %#v, want fresh cached weather advertisement", session.lastAdvertisement)
+	}
+}
+
+func TestDisconnectedSessionPublishesOfflineWithoutRecoveryEvidence(t *testing.T) {
+	state := testSessionRuntime(t)
+	published := 0
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		if includeCapabilityState {
+			published++
+		}
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = &fakeBLEConnection{connected: false, address: "AA:BB:CC:DD:EE:FF"}
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", time.Now().Add(-30*time.Second)))
+
+	session.checkStale(context.Background())
+
+	if !session.offlinePublished {
+		t.Fatal("offline should publish when disconnected GATT has no fresh recovery evidence")
+	}
+	if published != 1 {
+		t.Fatalf("capability samples = %d, want one offline capability publication", published)
 	}
 }
 

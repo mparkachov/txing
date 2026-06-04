@@ -170,13 +170,21 @@ Sparkplug device metric. Advertisement-only samples from any XIAO nRF54L15 MCU
 device update BLE identity shadow fields and can trigger connection attempts,
 but they do not publish capability availability. `capability.ble=true` requires
 an established GATT session with a successful state read or command-applied
-state. `power`, `weather`, and other device-domain capabilities also require
-GATT state/measurement evidence. The rig sends MCU REDCON commands as GATT
+state. During reconnect recovery, fresh advertisements or scanner freshness can
+hold the last confirmed BLE availability state until the existing capability
+state TTL expires and defer `DDEATH`, but they do not publish `DBIRTH` /
+`DDATA`, change REDCON, or make a device commandable. `DDEATH` is published
+when no fresh recovery evidence remains, when the prior GATT-confirmed state is
+past TTL, or when a command path proves the required GATT state is unavailable.
+`power`, `weather`, and other device-domain capabilities also require GATT
+state/measurement evidence. The rig sends MCU REDCON commands as GATT
 write-without-response and treats them as successful only after a GATT state
-read confirms the target REDCON. The shared firmware validates accepted command
-payloads, records the target state, and runs wake/sleep hardware side effects,
-measurement sampling, and notifications on queued firmware work after the
-command is accepted.
+read confirms the target REDCON. After that confirmation, delayed conflicting
+state notifications from the prior REDCON are ignored briefly so they cannot
+overwrite the command-applied state. The shared firmware validates accepted
+command payloads, records the target state, and runs wake/sleep hardware side
+effects, measurement sampling, and notifications on queued firmware work after
+the command is accepted.
 
 ## Acceptance Criteria
 

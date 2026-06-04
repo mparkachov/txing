@@ -22,6 +22,9 @@ const (
 	commandWriteMaxAttempts      = 2
 	commandConfirmMaxAttempts    = 8
 	commandConfirmRetryDelay     = 250 * time.Millisecond
+	commandStateNotificationHold = 2 * time.Second
+	// Mirrors rig/internal/manager.StateTTLMS without coupling the BLE daemon to the Sparkplug manager.
+	gattUnavailableRecoveryHold = 150 * time.Second
 )
 
 type connectOutcome uint8
@@ -84,6 +87,8 @@ type deviceSession struct {
 	nextConnectAfter       time.Time
 	connectFailures        uint32
 	offlinePublished       bool
+	guardedRedcon          *uint8
+	guardedRedconUntil     time.Time
 }
 
 func newDeviceSession(runtime *runtimeState, spec rigble.DeviceSpec) *deviceSession {
@@ -139,7 +144,7 @@ func (d *deviceSession) run(parent context.Context) {
 				if err := d.refreshConnectedState(ctx, false, false); err != nil {
 					d.runtime.infoPrint(ctx, fmt.Sprintf("BLE connected state heartbeat failed thing=%s error=%q", d.spec.ThingName, err))
 					d.disconnect()
-					d.publishGattUnavailable(ctx)
+					d.publishGattUnavailableUnlessRecovering(ctx)
 				}
 			}
 		}
@@ -193,7 +198,7 @@ func (d *deviceSession) handleAdvertisement(ctx context.Context, advertisement r
 	case err == nil && outcome == connectOutcomeDeferredNoCapacity:
 		d.nextConnectAfter = time.Now().Add(maxDuration(d.runtime.cfg.ReconnectDelay, time.Duration(rigble.BLERetryMinDelayMS)*time.Millisecond))
 	case err != nil:
-		d.publishGattUnavailable(ctx)
+		d.publishGattUnavailableUnlessRecovering(ctx)
 		retryDelay := d.recordConnectFailure(err)
 		d.nextConnectAfter = time.Now().Add(retryDelay)
 		d.logBackgroundConnectFailure(ctx, err, retryDelay)
@@ -320,6 +325,7 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 		return
 	}
 	d.resetConnectBackoff()
+	d.guardConfirmedRedcon(normalized)
 	d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command succeeded thing=%s targetRedcon=%d normalizedRedcon=%d command=%s", command.ThingName, command.Target.Redcon, normalized, command.CommandID))
 	d.runtime.publishCommandResult(ctx, command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
 }
@@ -567,7 +573,7 @@ func (d *deviceSession) drainNotifications(ctx context.Context) {
 	}
 	if !d.connected.Connected() {
 		d.disconnect()
-		d.publishGattUnavailable(ctx)
+		d.publishGattUnavailableUnlessRecovering(ctx)
 		return
 	}
 	for _, notification := range d.connected.DrainNotifications() {
@@ -576,7 +582,8 @@ func (d *deviceSession) drainNotifications(ctx context.Context) {
 }
 
 func (d *deviceSession) handleNotification(ctx context.Context, notification bleNotification) {
-	now := uint64(time.Now().UnixMilli())
+	nowTime := time.Now()
+	now := uint64(nowTime.UnixMilli())
 	switch notification.uuid.String() {
 	case d.runtime.stateUUID.String():
 		if d.spec.Kind == rigble.DeviceKindWeather {
@@ -585,11 +592,19 @@ func (d *deviceSession) handleNotification(ctx context.Context, notification ble
 				d.runtime.debugPrint(ctx, fmt.Sprintf("BLE weather state notification ignored thing=%s error=%q", d.spec.ThingName, err))
 				return
 			}
+			if d.guardsAgainstStateNotification(state.Redcon, nowTime) {
+				d.runtime.debugPrint(ctx, fmt.Sprintf("BLE weather state notification ignored during command guard thing=%s notificationRedcon=%d guardedRedcon=%d", d.spec.ThingName, state.Redcon, *d.guardedRedcon))
+				return
+			}
 			d.setLastRedcon(state.Redcon)
 		} else {
 			state, err := rigble.ParsePowerState(notification.payload)
 			if err != nil {
 				d.runtime.debugPrint(ctx, fmt.Sprintf("BLE power state notification ignored thing=%s error=%q", d.spec.ThingName, err))
+				return
+			}
+			if d.guardsAgainstStateNotification(state.Redcon, nowTime) {
+				d.runtime.debugPrint(ctx, fmt.Sprintf("BLE power state notification ignored during command guard thing=%s notificationRedcon=%d guardedRedcon=%d", d.spec.ThingName, state.Redcon, *d.guardedRedcon))
 				return
 			}
 			d.setLastRedcon(state.Redcon)
@@ -624,7 +639,7 @@ func (d *deviceSession) checkStale(ctx context.Context) {
 	if d.connected != nil {
 		if !d.connected.Connected() {
 			d.disconnect()
-			d.publishGattUnavailable(ctx)
+			d.publishGattUnavailableUnlessRecovering(ctx)
 		} else if d.clearStaleMeasurements(now) {
 			d.publishAggregateSample(ctx, now)
 		}
@@ -659,6 +674,25 @@ func (d *deviceSession) publishGattUnavailable(ctx context.Context) {
 	d.lastWeatherMeasurement = nil
 	d.runtime.publishSample(ctx, rigble.OfflineSample(d.spec, d.runtime.nextSeq(), uint64(time.Now().UnixMilli())), false, true)
 	d.offlinePublished = true
+}
+
+func (d *deviceSession) publishGattUnavailableUnlessRecovering(ctx context.Context) {
+	now := time.Now()
+	if d.gattUnavailableCanDefer(now) {
+		if d.hasFreshAdvertisementAt(now) {
+			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE GATT unavailable publication deferred by fresh advertisement thing=%s", d.spec.ThingName))
+			return
+		}
+		if d.refreshFromFreshCachedAdvertisement(ctx, now) {
+			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE GATT unavailable publication deferred by cached advertisement thing=%s", d.spec.ThingName))
+			return
+		}
+		if d.lastAdvertisement != nil && d.runtime.scanFreshnessHeldFor(d.spec.ThingName, *d.lastAdvertisement, now) {
+			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE GATT unavailable publication deferred by scan freshness hold thing=%s", d.spec.ThingName))
+			return
+		}
+	}
+	d.publishGattUnavailable(ctx)
 }
 
 func (d *deviceSession) refreshFromFreshCachedAdvertisement(ctx context.Context, now time.Time) bool {
@@ -743,12 +777,44 @@ func (d *deviceSession) advertisementIsFresh(advertisement rigble.Advertisement)
 }
 
 func (d *deviceSession) hasFreshAdvertisement() bool {
-	return d.lastAdvertisement != nil && d.advertisementIsFresh(*d.lastAdvertisement)
+	return d.hasFreshAdvertisementAt(time.Now())
+}
+
+func (d *deviceSession) hasFreshAdvertisementAt(now time.Time) bool {
+	return d.lastAdvertisement != nil && d.runtime.advertisementIsFreshAt(*d.lastAdvertisement, now)
 }
 
 func (d *deviceSession) setLastRedcon(redcon uint8) {
 	value := redcon
 	d.lastRedcon = &value
+}
+
+func (d *deviceSession) guardConfirmedRedcon(redcon uint8) {
+	value := redcon
+	d.guardedRedcon = &value
+	d.guardedRedconUntil = time.Now().Add(commandStateNotificationHold)
+}
+
+func (d *deviceSession) guardsAgainstStateNotification(redcon uint8, now time.Time) bool {
+	if d.guardedRedcon == nil {
+		return false
+	}
+	if !now.Before(d.guardedRedconUntil) {
+		d.guardedRedcon = nil
+		d.guardedRedconUntil = time.Time{}
+		return false
+	}
+	return redcon != *d.guardedRedcon
+}
+
+func (d *deviceSession) gattUnavailableCanDefer(now time.Time) bool {
+	if d.lastRedcon == nil {
+		return false
+	}
+	d.runtime.mu.Lock()
+	observedAt, ok := d.runtime.lastStateRead[d.spec.ThingName]
+	d.runtime.mu.Unlock()
+	return ok && observedAt.Add(gattUnavailableRecoveryHold).After(now)
 }
 
 func (d *deviceSession) recordConnectFailure(err error) time.Duration {
