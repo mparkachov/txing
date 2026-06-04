@@ -333,6 +333,32 @@ func TestSessionIgnoresStaleAdvertisement(t *testing.T) {
 	}
 }
 
+func TestAdvertisementPublishesBleShadowOnly(t *testing.T) {
+	state := testSessionRuntime(t)
+	samples := []rigble.CapabilitySample{}
+	includeShadows := []bool{}
+	includeCapabilityStates := []bool{}
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		samples = append(samples, sample)
+		includeShadows = append(includeShadows, includeShadow)
+		includeCapabilityStates = append(includeCapabilityStates, includeCapabilityState)
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.nextConnectAfter = time.Now().Add(time.Second)
+
+	session.handleAdvertisement(context.Background(), testAdvertisement("unit-1", time.Now()))
+
+	if len(samples) != 1 {
+		t.Fatalf("samples = %#v, want one advertisement sample", samples)
+	}
+	if !includeShadows[0] || includeCapabilityStates[0] {
+		t.Fatalf("include shadow/capability = %t/%t, want true/false", includeShadows[0], includeCapabilityStates[0])
+	}
+	if samples[0].BLEAddress == nil || *samples[0].BLEAddress != "AA:BB:CC:DD:EE:FF" {
+		t.Fatalf("advertisement sample address = %#v", samples[0].BLEAddress)
+	}
+}
+
 func TestBackgroundConnectFailureLogLevelFollowsPresenceImpact(t *testing.T) {
 	state := testSessionRuntime(t)
 	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
@@ -378,16 +404,16 @@ func TestSessionCommandReusesConnectedDevice(t *testing.T) {
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
 }
 
-func TestIdleCommandDoesNotWaitForStateConfirmation(t *testing.T) {
+func TestIdleCommandVerifiesConnectedStateBeforeWriteWithoutPostConfirmation(t *testing.T) {
 	state := testSessionRuntime(t)
 	statuses := []string{}
 	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
 		statuses = append(statuses, status)
 	}
 	conn := &fakeBLEConnection{
-		connected:     true,
-		address:       "AA:BB:CC:DD:EE:FF",
-		powerStateErr: errors.New("state read would block"),
+		connected:  true,
+		address:    "AA:BB:CC:DD:EE:FF",
+		powerState: rigble.PowerState{Redcon: rigble.RedconIdle},
 	}
 	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
 	session.connected = conn
@@ -401,6 +427,40 @@ func TestIdleCommandDoesNotWaitForStateConfirmation(t *testing.T) {
 		t.Fatalf("disconnects = %d, want idle command to keep the connection available", conn.disconnects)
 	}
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
+}
+
+func TestCommandFailsBeforeWriteWhenConnectedStateVerificationFails(t *testing.T) {
+	state := testSessionRuntime(t)
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	published := []rigble.CapabilitySample{}
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		if includeCapabilityState {
+			published = append(published, sample)
+		}
+	}
+	conn := &fakeBLEConnection{
+		connected:     true,
+		address:       "AA:BB:CC:DD:EE:FF",
+		powerStateErr: errors.New("Operation failed with ATT error: 0x0e"),
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = conn
+
+	session.handleCommand(context.Background(), testCommandWithDeadline(t, "unit-1", rigble.RedconIdle, 20*time.Millisecond))
+
+	if len(conn.writes) != 0 {
+		t.Fatalf("writes = %#v, want none before state verification", conn.writes)
+	}
+	if conn.disconnects != 1 {
+		t.Fatalf("disconnects = %d, want 1", conn.disconnects)
+	}
+	if len(published) != 1 || published[0].SparkplugAvailable || published[0].BLEAvailable {
+		t.Fatalf("published capability samples = %#v, want one unavailable sample", published)
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandFailed})
 }
 
 func TestCommandRetriesWriteFailureAfterReconnect(t *testing.T) {
@@ -727,8 +787,13 @@ func testAdvertisement(thingName string, observedAt time.Time) rigble.Advertisem
 
 func testCommand(t *testing.T, thingName string, redcon uint8) protocol.CapabilityCommand {
 	t.Helper()
+	return testCommandWithDeadline(t, thingName, redcon, 2*time.Second)
+}
+
+func testCommandWithDeadline(t *testing.T, thingName string, redcon uint8, deadlineAfter time.Duration) protocol.CapabilityCommand {
+	t.Helper()
 	now := uint64(time.Now().UnixMilli())
-	deadline := uint64(time.Now().Add(2 * time.Second).UnixMilli())
+	deadline := uint64(time.Now().Add(deadlineAfter).UnixMilli())
 	command, err := protocol.NewCapabilityCommand("cmd-1", thingName, redcon, "test", now, 1, &deadline)
 	if err != nil {
 		t.Fatal(err)

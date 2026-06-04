@@ -234,19 +234,19 @@ The born-state REDCON ladder is:
 
 - `REDCON 4`
   - device is in the sleep state
-  - BLE is reachable; the rig keeps the BLE connection open when possible and the MCU advertises again after disconnect
+  - BLE GATT is confirmed commandable; the rig keeps the BLE connection open when possible and the MCU advertises again after disconnect
   - unit stack power/D1 is disabled
 - `REDCON 3`
-  - BLE is reachable
+  - BLE GATT is confirmed commandable
   - unit stack power/D1 is enabled
   - MCP is not yet available
 - `REDCON 2`
-  - BLE is reachable
+  - BLE GATT is confirmed commandable
   - unit stack power/D1 is enabled
   - MCP is available
   - retained video status is not yet ready
 - `REDCON 1`
-  - BLE is reachable
+  - BLE GATT is confirmed commandable
   - unit stack power/D1 is enabled
   - MCP is available
   - retained video status is ready and fresh
@@ -271,12 +271,12 @@ newer observation timestamp can raise board-owned capabilities again; older
 board retained state cannot override newer BLE REDCON 4 evidence.
 BLE state-read and command-applied capability states carry internal
 `metrics.bleRedcon` evidence for this gate; advertisement-only BLE reachability
-does not. Advertisement-only samples from any XIAO nRF54L15 MCU device report
-only `sparkplug=true` and `ble=true`; `power`, `weather`, and other
-device-domain capabilities require a GATT state/measurement read or a successful
-command-applied state. Advertisement-only samples must not downgrade a still
-fresh GATT state/measurement read from the same BLE adapter; they become the
-authoritative local adapter state only after richer device-state evidence expires.
+does not. Advertisement-only samples from any XIAO nRF54L15 MCU device update
+BLE identity shadow fields and can trigger connection attempts, but they do not
+publish `sparkplug=true`, `ble=true`, or other capability availability.
+`capability.ble=true` requires an established GATT session with a successful
+state read or command-applied state. `power`, `weather`, and other device-domain
+capabilities also require GATT state/measurement evidence.
 Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit devices can
 converge through the full REDCON ladder.
 

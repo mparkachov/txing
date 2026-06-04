@@ -83,12 +83,12 @@ func TestWeatherCommandRejectsRedconThreeBeforeBleWrite(t *testing.T) {
 	}
 }
 
-func TestAdvertisementCapabilityStateIsPublishedForManagedDevices(t *testing.T) {
-	if !AdvertisementPublishesCapabilityState(DeviceSpec{ThingName: "unit-1", Kind: DeviceKindPower}) {
-		t.Fatal("power advertisements should publish BLE reachability state")
+func TestAdvertisementDoesNotPublishCapabilityState(t *testing.T) {
+	if AdvertisementPublishesCapabilityState(DeviceSpec{ThingName: "unit-1", Kind: DeviceKindPower}) {
+		t.Fatal("power advertisements must not publish GATT capability state")
 	}
-	if !AdvertisementPublishesCapabilityState(DeviceSpec{ThingName: "weather-1", Kind: DeviceKindWeather}) {
-		t.Fatal("weather advertisements should publish BLE reachability state")
+	if AdvertisementPublishesCapabilityState(DeviceSpec{ThingName: "weather-1", Kind: DeviceKindWeather}) {
+		t.Fatal("weather advertisements must not publish GATT capability state")
 	}
 }
 

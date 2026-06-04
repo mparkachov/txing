@@ -107,7 +107,7 @@ func WeatherCommandRejectReason(command protocol.CapabilityCommand, spec DeviceS
 }
 
 func AdvertisementPublishesCapabilityState(_ DeviceSpec) bool {
-	return true
+	return false
 }
 
 func BoundedRetryDelayMS(baseDelayMS uint64, failureCount uint32, maxDelayMS uint64) uint64 {
@@ -159,6 +159,7 @@ func BLECommandConnectErrorIsRetryable(message string) bool {
 	return BLEErrorIndicatesInProgress(message) ||
 		BLEErrorIndicatesNoDiscovery(message) ||
 		BLEErrorIndicatesHostResourceExhaustion(message) ||
+		strings.Contains(lower, "att error") ||
 		strings.Contains(lower, "not found") ||
 		strings.Contains(lower, "no ble advertisement has been observed") ||
 		strings.Contains(lower, "last ble advertisement") ||

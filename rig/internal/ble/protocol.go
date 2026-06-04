@@ -186,14 +186,12 @@ func ParseWeatherMeasurement(payload []byte) (WeatherMeasurement, error) {
 
 func AdvertisementSample(spec DeviceSpec, advertisement Advertisement, seq uint64) CapabilitySample {
 	return CapabilitySample{
-		ThingName:          spec.ThingName,
-		Kind:               spec.Kind,
-		SparkplugAvailable: true,
-		BLEAvailable:       true,
-		BLELocalName:       advertisement.IdentityName,
-		BLEAddress:         stringPtr(advertisement.Address),
-		ObservedAtMS:       advertisement.ObservedAtMS,
-		Seq:                seq,
+		ThingName:    spec.ThingName,
+		Kind:         spec.Kind,
+		BLELocalName: advertisement.IdentityName,
+		BLEAddress:   stringPtr(advertisement.Address),
+		ObservedAtMS: advertisement.ObservedAtMS,
+		Seq:          seq,
 	}
 }
 

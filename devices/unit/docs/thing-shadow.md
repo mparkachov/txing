@@ -30,7 +30,7 @@ Schema/default files live under `devices/unit/aws/`:
 - `mcp-shadow.schema.json`, `default-mcp-shadow.json`
 - `video-shadow.schema.json`, `default-video-shadow.json`
 
-There is no active public `mcu` named shadow contract for the upgraded unit. BLE reachability comes from `capability.ble`, wakeup/sleep state comes from Sparkplug `redcon`, and battery telemetry comes from `namedShadows.power.state.reported.batteryMv`.
+There is no active public `mcu` named shadow contract for the upgraded unit. Confirmed commandable BLE GATT availability comes from `capability.ble`, wakeup/sleep state comes from Sparkplug `redcon`, and battery telemetry comes from `namedShadows.power.state.reported.batteryMv`.
 
 ## Sparkplug Projection
 
@@ -102,12 +102,12 @@ Metric names preserve Sparkplug structure by splitting both `.` and `/` into nes
 - Lifecycle semantics are defined canonically in the root [README](../../../README.md).
 - `sparkplug.state.reported.topic.messageType` is the last observed Sparkplug message type for that thing.
 - `sparkplug.state.reported.payload.metrics.redcon` is valid only for born device states (`DBIRTH` / `DDATA`).
-- `redcon=4` means sleep state / `Cold Camp`: BLE is reachable and the rest of the unit stack is off.
-- `redcon=3` means wakeup state / `Torch-Up`: BLE is reachable and D1 is enabled so the rest of the unit stack can boot.
+- `redcon=4` means sleep state / `Cold Camp`: BLE GATT is confirmed commandable and the rest of the unit stack is off.
+- `redcon=3` means wakeup state / `Torch-Up`: BLE GATT is confirmed commandable and D1 is enabled so the rest of the unit stack can boot.
 - `redcon=2` means local board and MCP capability are available.
 - `redcon=1` means local board, MCP, and video capability are available.
 - `sparkplug.state.reported.topic.messageType = DDEATH` means the rig currently considers the device unavailable and `payload.metrics.redcon` is not defined.
-- `sparkplug.state.reported.payload.metrics.capability.ble` is BLE reachability.
+- `sparkplug.state.reported.payload.metrics.capability.ble` is confirmed commandable BLE GATT availability, not advertisement-only presence.
 - `sparkplug.state.reported.payload.metrics.capability.power` is MCU-controlled wakeup power/D1 availability, not MCU power.
 - `power.state.reported.batteryMv` is the latest battery measurement in millivolts.
 - `board.state.reported.power` is best-effort board power state; stale `true` must not be treated as authoritative after a hard power cut.

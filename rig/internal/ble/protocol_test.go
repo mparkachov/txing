@@ -76,7 +76,7 @@ func TestOldVersionOnePayloadsAreRejected(t *testing.T) {
 	}
 }
 
-func TestSamplesMapToV2Capabilities(t *testing.T) {
+func TestAdvertisementSampleDoesNotCarryCapabilityEvidence(t *testing.T) {
 	spec := DeviceSpec{ThingName: "power-1", Kind: DeviceKindPower}
 	name := "power-1"
 	rssi := int16(-50)
@@ -91,8 +91,8 @@ func TestSamplesMapToV2Capabilities(t *testing.T) {
 	sample := AdvertisementSample(spec, advertisement, 1)
 	state := CapabilityStateFromSample(AdapterID, sample)
 
-	if !state.Capabilities[SparkplugCapability] || !state.Capabilities[BLECapability] {
-		t.Fatalf("expected sparkplug and BLE available: %#v", state.Capabilities)
+	if state.Capabilities[SparkplugCapability] || state.Capabilities[BLECapability] {
+		t.Fatalf("advertisement must not report sparkplug or BLE capability available: %#v", state.Capabilities)
 	}
 	if state.Capabilities[PowerCapability] {
 		t.Fatalf("expected power unavailable from advertisement: %#v", state.Capabilities)
@@ -139,7 +139,7 @@ func TestAdvertisementSamplePublishesOnlyBleShadowWithoutMeasurements(t *testing
 	}
 }
 
-func TestWeatherAdvertisementSamplePublishesOnlyBleCapability(t *testing.T) {
+func TestWeatherAdvertisementSampleDoesNotCarryCapabilityEvidence(t *testing.T) {
 	spec := DeviceSpec{ThingName: "weather-1", Kind: DeviceKindWeather}
 	name := "weather-1"
 	rssi := int16(-50)
@@ -157,14 +157,9 @@ func TestWeatherAdvertisementSamplePublishesOnlyBleCapability(t *testing.T) {
 	if sample.Redcon != nil {
 		t.Fatalf("sample redcon = %#v", sample.Redcon)
 	}
-	for _, capability := range []string{SparkplugCapability, BLECapability} {
-		if !state.Capabilities[capability] {
-			t.Fatalf("capability %s false in %#v", capability, state.Capabilities)
-		}
-	}
-	for _, capability := range []string{PowerCapability, WeatherCapability} {
+	for _, capability := range []string{SparkplugCapability, BLECapability, PowerCapability, WeatherCapability} {
 		if state.Capabilities[capability] {
-			t.Fatalf("capability %s true in %#v", capability, state.Capabilities)
+			t.Fatalf("advertisement capability %s true in %#v", capability, state.Capabilities)
 		}
 	}
 	if len(state.Metrics) != 0 {

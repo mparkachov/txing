@@ -29,8 +29,8 @@ publishes board-owned runtime state, and exposes board MCP for motion control.
 
 For the current `unit` device type:
 
-- `REDCON 4`: BLE is reachable and the unit is in the sleep state.
-- `REDCON 3`: BLE is reachable and MCU-controlled wakeup power/D1 is enabled.
+- `REDCON 4`: BLE GATT is confirmed commandable and the unit is in the sleep state.
+- `REDCON 3`: BLE GATT is confirmed commandable and MCU-controlled wakeup power/D1 is enabled.
 - `REDCON 2`: board and MCP are available; video is unavailable or not ready.
 - `REDCON 1`: board, MCP, and video are available.
 

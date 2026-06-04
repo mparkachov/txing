@@ -514,7 +514,7 @@ func TestPublicationLifecycleBirthDataAndDeath(t *testing.T) {
 	assertPublicationKind(t, fourth, PublicationNone)
 }
 
-func TestFreshSparkplugAvailabilitySuppressesTransientOfflineDeath(t *testing.T) {
+func TestExplicitBleUnavailablePublishesDeathEvenWithFreshPriorState(t *testing.T) {
 	state := NewDeviceRuntimeState(powerInventory())
 	if err := state.ObserveState(capabilityState(
 		"dev.txing.rig.BleConnectivity",
@@ -546,16 +546,16 @@ func TestFreshSparkplugAvailabilitySuppressesTransientOfflineDeath(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPublicationKind(t, second, PublicationNone)
-	if got := redconValue(t, state.Snapshot(30_000).Redcon); got != 3 {
-		t.Fatalf("redcon during transient offline = %d, want 3", got)
+	assertPublicationKind(t, second, PublicationDeath)
+	if got := state.Snapshot(30_000).Redcon; got != nil {
+		t.Fatalf("redcon after explicit unavailable = %#v, want nil", got)
 	}
 
 	third, err := state.DecidePublication(1000 + StateTTLMS + 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPublicationKind(t, third, PublicationDeath)
+	assertPublicationKind(t, third, PublicationNone)
 }
 
 func TestDCMDPayloadTranslatesToV2RedconCommand(t *testing.T) {

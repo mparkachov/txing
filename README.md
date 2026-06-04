@@ -52,18 +52,18 @@ This repository's lifecycle contract is:
 
 | Sparkplug device projection | Public state | Meaning |
 | --- | --- | --- |
-| `topic.messageType = DDEATH` | Unavailable | The rig currently considers the watch link unavailable. Device metrics are unavailable in this state, so `redcon` is not defined. |
-| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 4` | Sleep state / `Cold Camp` | The device is still alive and born, but it is parked in the sleep state and only exposes the watch-layer rendezvous path. |
-| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 3` | Booting / `Torch-Up` | BLE is reachable, the MCU is in the wakeup state, and MCP is not yet available. |
-| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 2` | On watch / `Ember Watch` | BLE is reachable, the MCU is in the wakeup state, MCP is available, and retained video status is not yet ready. |
-| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 1` | Ready / `Hot Rig` | BLE is reachable, the MCU is in the wakeup state, MCP is available, and retained video status is ready. |
+| `topic.messageType = DDEATH` | Unavailable | The rig currently has no confirmed commandable watch-link session. Device metrics are unavailable in this state, so `redcon` is not defined. |
+| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 4` | Sleep state / `Cold Camp` | The device is still alive and born, parked in the sleep state, and reachable through a confirmed BLE GATT session. |
+| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 3` | Booting / `Torch-Up` | BLE GATT is confirmed commandable, the MCU is in the wakeup state, and MCP is not yet available. |
+| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 2` | On watch / `Ember Watch` | BLE GATT is confirmed commandable, the MCU is in the wakeup state, MCP is available, and retained video status is not yet ready. |
+| `topic.messageType in {DBIRTH, DDATA}` and `payload.metrics.redcon = 1` | Ready / `Hot Rig` | BLE GATT is confirmed commandable, the MCU is in the wakeup state, MCP is available, and retained video status is ready. |
 
 The born/dead rule is exact:
 
 - device is born iff the rig currently considers `capability.ble=true`
 - device is dead iff the rig currently considers `capability.ble=false`
-- the existing BLE hysteresis stays in place, so `capability.ble=false` only happens after the current no-advertisement / no-connection timeout
-- a sleeping device stays born as long as its periodic rendezvous advertisements keep BLE presence online
+- `capability.ble=true` means the rig has established GATT, can read REDCON state, and expects REDCON command writes to work
+- advertisement-only evidence updates BLE identity and can trigger connection attempts, but it does not make the device born
 
 This mapping is intentionally derived from reported state, not desired state. It answers "how far up is the rig right now?" rather than "what was requested?".
 

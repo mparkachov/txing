@@ -121,7 +121,11 @@ func (d *deviceSession) run(parent context.Context) {
 			d.drainNotifications(ctx)
 		case <-connectedHeartbeat.C:
 			if d.connected != nil && d.connected.Connected() {
-				d.publishAggregateStateHeartbeat(ctx, uint64(time.Now().UnixMilli()))
+				if err := d.refreshConnectedState(ctx, false, false); err != nil {
+					d.runtime.infoPrint(ctx, fmt.Sprintf("BLE connected state heartbeat failed thing=%s error=%q", d.spec.ThingName, err))
+					d.disconnect()
+					d.publishGattUnavailable(ctx)
+				}
 			}
 		}
 	}
@@ -161,12 +165,12 @@ func (d *deviceSession) handleAdvertisement(ctx context.Context, advertisement r
 		d.runtime.debugPrint(ctx, fmt.Sprintf("BLE advertisement ignored because already connected thing=%s", d.spec.ThingName))
 		return
 	}
+	d.publishAdvertisementSample(ctx, advertisement)
 	now := time.Now()
 	if now.Before(d.nextConnectAfter) {
 		d.runtime.debugPrint(ctx, fmt.Sprintf("BLE advertisement ignored during reconnect backoff thing=%s retryAfterMs=%d", d.spec.ThingName, d.nextConnectAfter.UnixMilli()))
 		return
 	}
-	d.publishAdvertisementSample(ctx, advertisement)
 	outcome, err := d.connect(ctx, false)
 	switch {
 	case err == nil && outcome == connectOutcomeConnected:
@@ -174,6 +178,7 @@ func (d *deviceSession) handleAdvertisement(ctx context.Context, advertisement r
 	case err == nil && outcome == connectOutcomeDeferredNoCapacity:
 		d.nextConnectAfter = time.Now().Add(maxDuration(d.runtime.cfg.ReconnectDelay, time.Duration(rigble.BLERetryMinDelayMS)*time.Millisecond))
 	case err != nil:
+		d.publishGattUnavailable(ctx)
 		retryDelay := d.recordConnectFailure(err)
 		d.nextConnectAfter = time.Now().Add(retryDelay)
 		d.logBackgroundConnectFailure(ctx, err, retryDelay)
@@ -195,7 +200,7 @@ func (d *deviceSession) observeMatchingAdvertisement(ctx context.Context, advert
 }
 
 func (d *deviceSession) publishAdvertisementSample(ctx context.Context, advertisement rigble.Advertisement) {
-	d.runtime.publishSample(ctx, rigble.AdvertisementSample(d.spec, advertisement, d.runtime.nextSeq()), true, true)
+	d.runtime.publishSample(ctx, rigble.AdvertisementSample(d.spec, advertisement, d.runtime.nextSeq()), true, rigble.AdvertisementPublishesCapabilityState(d.spec))
 	d.runtime.debugPrint(ctx, fmt.Sprintf("BLE advertisement published thing=%s address=%s", d.spec.ThingName, advertisement.Address))
 }
 
@@ -251,6 +256,7 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 			retryDelay := d.recordConnectFailure(err)
 			d.nextConnectAfter = time.Now().Add(retryDelay)
 			message := fmt.Sprintf("BLE connection failed before command write: %v", err)
+			d.publishGattUnavailable(ctx)
 			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, err))
 			d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, message))
 			d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
@@ -278,6 +284,7 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 			retryDelay := d.recordConnectFailure(err)
 			d.nextConnectAfter = time.Now().Add(retryDelay)
 			message := fmt.Sprintf("BLE command write failed: %v", err)
+			d.publishGattUnavailable(ctx)
 			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command write failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s attempt=%d error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, attempt, err))
 			d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command write failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s attempt=%d error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, attempt, err))
 			d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
@@ -301,6 +308,7 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 	if err := d.seedConnectedState(ctx); err != nil {
 		d.disconnect()
 		message := fmt.Sprintf("BLE state confirmation failed after command write: %v", err)
+		d.publishGattUnavailable(ctx)
 		d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command confirmation failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, message))
 		d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
 		return
@@ -401,6 +409,12 @@ func (d *deviceSession) waitForCommandAdvertisement(ctx context.Context, wait ti
 
 func (d *deviceSession) connect(ctx context.Context, waitForCapacity bool) (connectOutcome, error) {
 	if d.connected != nil && d.connected.Connected() {
+		if waitForCapacity {
+			if err := d.refreshConnectedState(ctx, false, false); err != nil {
+				d.disconnect()
+				return connectOutcomeConnected, err
+			}
+		}
 		return connectOutcomeConnected, nil
 	}
 	d.disconnect()
@@ -429,6 +443,10 @@ func (d *deviceSession) connect(ctx context.Context, waitForCapacity bool) (conn
 }
 
 func (d *deviceSession) seedConnectedState(ctx context.Context) error {
+	return d.refreshConnectedState(ctx, true, true)
+}
+
+func (d *deviceSession) refreshConnectedState(ctx context.Context, includeMeasurements bool, includeShadow bool) error {
 	if d.connected == nil {
 		return nil
 	}
@@ -445,17 +463,19 @@ func (d *deviceSession) seedConnectedState(ctx context.Context) error {
 			return fmt.Errorf("read weather state: %w", err)
 		}
 		d.setLastRedcon(state.Redcon)
-		if measurement, err := d.connected.ReadPowerMeasurement(); err == nil {
-			d.lastPowerMeasurement = &timedMeasurement[rigble.PowerMeasurement]{value: measurement, observedAtMS: now}
-		} else {
-			d.lastPowerMeasurement = nil
-			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE weather power measurement read failed thing=%s error=%q", d.spec.ThingName, err))
-		}
-		if measurement, err := d.connected.ReadWeatherMeasurement(); err == nil {
-			d.lastWeatherMeasurement = &timedMeasurement[rigble.WeatherMeasurement]{value: measurement, observedAtMS: now}
-		} else {
-			d.lastWeatherMeasurement = nil
-			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE weather measurement read failed thing=%s error=%q", d.spec.ThingName, err))
+		if includeMeasurements {
+			if measurement, err := d.connected.ReadPowerMeasurement(); err == nil {
+				d.lastPowerMeasurement = &timedMeasurement[rigble.PowerMeasurement]{value: measurement, observedAtMS: now}
+			} else {
+				d.lastPowerMeasurement = nil
+				d.runtime.debugPrint(ctx, fmt.Sprintf("BLE weather power measurement read failed thing=%s error=%q", d.spec.ThingName, err))
+			}
+			if measurement, err := d.connected.ReadWeatherMeasurement(); err == nil {
+				d.lastWeatherMeasurement = &timedMeasurement[rigble.WeatherMeasurement]{value: measurement, observedAtMS: now}
+			} else {
+				d.lastWeatherMeasurement = nil
+				d.runtime.debugPrint(ctx, fmt.Sprintf("BLE weather measurement read failed thing=%s error=%q", d.spec.ThingName, err))
+			}
 		}
 	default:
 		state, err := d.connected.ReadPowerState()
@@ -463,15 +483,21 @@ func (d *deviceSession) seedConnectedState(ctx context.Context) error {
 			return fmt.Errorf("read power state: %w", err)
 		}
 		d.setLastRedcon(state.Redcon)
-		if measurement, err := d.connected.ReadPowerMeasurement(); err == nil {
-			d.lastPowerMeasurement = &timedMeasurement[rigble.PowerMeasurement]{value: measurement, observedAtMS: now}
-		} else {
-			d.lastPowerMeasurement = nil
-			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE power measurement read failed thing=%s error=%q", d.spec.ThingName, err))
+		if includeMeasurements {
+			if measurement, err := d.connected.ReadPowerMeasurement(); err == nil {
+				d.lastPowerMeasurement = &timedMeasurement[rigble.PowerMeasurement]{value: measurement, observedAtMS: now}
+			} else {
+				d.lastPowerMeasurement = nil
+				d.runtime.debugPrint(ctx, fmt.Sprintf("BLE power measurement read failed thing=%s error=%q", d.spec.ThingName, err))
+			}
 		}
 	}
 	d.runtime.recordStateRead(d.spec.ThingName, time.UnixMilli(int64(now)))
-	d.publishAggregateSample(ctx, now)
+	if includeShadow {
+		d.publishAggregateSample(ctx, now)
+	} else {
+		d.publishAggregateStateHeartbeat(ctx, now)
+	}
 	return nil
 }
 
@@ -481,7 +507,7 @@ func (d *deviceSession) drainNotifications(ctx context.Context) {
 	}
 	if !d.connected.Connected() {
 		d.disconnect()
-		d.checkStale(ctx)
+		d.publishGattUnavailable(ctx)
 		return
 	}
 	for _, notification := range d.connected.DrainNotifications() {
@@ -538,6 +564,7 @@ func (d *deviceSession) checkStale(ctx context.Context) {
 	if d.connected != nil {
 		if !d.connected.Connected() {
 			d.disconnect()
+			d.publishGattUnavailable(ctx)
 		} else if d.clearStaleMeasurements(now) {
 			d.publishAggregateSample(ctx, now)
 		}
@@ -563,6 +590,14 @@ func (d *deviceSession) publishOffline(ctx context.Context) {
 	d.lastWeatherMeasurement = nil
 	d.runtime.publishSample(ctx, rigble.OfflineSample(d.spec, d.runtime.nextSeq(), uint64(time.Now().UnixMilli())), false, true)
 	d.resetConnectBackoff()
+	d.offlinePublished = true
+}
+
+func (d *deviceSession) publishGattUnavailable(ctx context.Context) {
+	d.lastRedcon = nil
+	d.lastPowerMeasurement = nil
+	d.lastWeatherMeasurement = nil
+	d.runtime.publishSample(ctx, rigble.OfflineSample(d.spec, d.runtime.nextSeq(), uint64(time.Now().UnixMilli())), false, true)
 	d.offlinePublished = true
 }
 

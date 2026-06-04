@@ -142,8 +142,8 @@ Current topics:
 
 The root [README](../../../README.md) is the canonical lifecycle contract. In brief:
 
-- `DDEATH` means the device is unavailable because BLE is not reachable.
-- `DBIRTH` / `DDATA` with `redcon=4` means the device is alive and parked in the sleep state.
+- `DDEATH` means the device is unavailable because BLE GATT is not confirmed commandable.
+- `DBIRTH` / `DDATA` with `redcon=4` means the device is alive, parked in the sleep state, and reachable through confirmed BLE GATT.
 - `DBIRTH` / `DDATA` with `redcon=3` means the unit stack power enable is active.
 
 Current commandable REDCON levels for the upgraded unit are `[4, 3, 2, 1]`.
@@ -167,9 +167,11 @@ command-applied capability states carry the internal `metrics.bleRedcon` value
 so SparkplugManager can distinguish explicit sleep-state evidence from
 advertisement-only BLE reachability; this internal metric is not published as a
 Sparkplug device metric. Advertisement-only samples from any XIAO nRF54L15 MCU
-device report only `sparkplug=true` and `ble=true`; `power`, `weather`, and
-other device-domain capabilities require a GATT state/measurement read or a
-successful command-applied state.
+device update BLE identity shadow fields and can trigger connection attempts,
+but they do not publish capability availability. `capability.ble=true` requires
+an established GATT session with a successful state read or command-applied
+state. `power`, `weather`, and other device-domain capabilities also require
+GATT state/measurement evidence.
 
 ## Acceptance Criteria
 
@@ -188,5 +190,5 @@ successful command-applied state.
   - published Sparkplug `redcon=4`
   - Sparkplug `capability.power=false`
   - the in-memory pending REDCON target cleared on convergence
-- `DBIRTH` is emitted when BLE capability becomes reachable.
-- `DDEATH` is emitted when BLE capability becomes unreachable.
+- `DBIRTH` is emitted when BLE capability becomes GATT-confirmed and commandable.
+- `DDEATH` is emitted when BLE GATT capability becomes unavailable.
