@@ -463,6 +463,36 @@ func TestCommandFailsWhenStateConfirmationDoesNotReachTarget(t *testing.T) {
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandFailed})
 }
 
+func TestCommandRetriesTransientStateConfirmationReadFailure(t *testing.T) {
+	state := testSessionRuntime(t)
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	conn := &fakeBLEConnection{
+		connected: true,
+		address:   "AA:BB:CC:DD:EE:FF",
+		powerStateReads: []fakePowerStateRead{
+			{state: rigble.PowerState{Redcon: rigble.RedconIdle}},
+			{err: errors.New("Operation failed with ATT error: 0x0e")},
+			{err: errors.New("Operation failed with ATT error: 0x0e")},
+			{state: rigble.PowerState{Redcon: rigble.RedconActive}},
+		},
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = conn
+
+	session.handleCommand(context.Background(), testCommand(t, "unit-1", rigble.RedconActive))
+
+	if len(conn.writes) != 1 || conn.writes[0] != rigble.RedconActive {
+		t.Fatalf("writes = %#v, want REDCON 3 write", conn.writes)
+	}
+	if conn.disconnects != 0 {
+		t.Fatalf("disconnects = %d, want transient read failures retried on same connection", conn.disconnects)
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
+}
+
 func TestCommandFailsBeforeWriteWhenConnectedStateVerificationFails(t *testing.T) {
 	state := testSessionRuntime(t)
 	statuses := []string{}
@@ -874,6 +904,7 @@ type fakeBLEConnection struct {
 	connected          bool
 	address            string
 	powerState         rigble.PowerState
+	powerStateReads    []fakePowerStateRead
 	powerStateErr      error
 	weatherState       rigble.WeatherState
 	powerMeasurement   rigble.PowerMeasurement
@@ -882,6 +913,11 @@ type fakeBLEConnection struct {
 	writes             []uint8
 	notifications      []bleNotification
 	disconnects        int
+}
+
+type fakePowerStateRead struct {
+	state rigble.PowerState
+	err   error
 }
 
 func (f *fakeBLEConnection) Address() string {
@@ -908,6 +944,17 @@ func (f *fakeBLEConnection) WriteRedcon(redcon uint8) error {
 }
 
 func (f *fakeBLEConnection) ReadPowerState() (rigble.PowerState, error) {
+	if len(f.powerStateReads) > 0 {
+		read := f.powerStateReads[0]
+		f.powerStateReads = f.powerStateReads[1:]
+		if read.err != nil {
+			return rigble.PowerState{}, read.err
+		}
+		if read.state.Redcon == 0 {
+			return rigble.PowerState{Redcon: rigble.RedconIdle}, nil
+		}
+		return read.state, nil
+	}
 	if f.powerStateErr != nil {
 		return rigble.PowerState{}, f.powerStateErr
 	}

@@ -20,8 +20,8 @@ const (
 	advertisementBroadcastPeriod = 1 * time.Second
 	commandConnectRetryDelay     = 1 * time.Second
 	commandWriteMaxAttempts      = 2
-	commandConfirmMaxAttempts    = 4
-	commandConfirmRetryDelay     = 150 * time.Millisecond
+	commandConfirmMaxAttempts    = 8
+	commandConfirmRetryDelay     = 250 * time.Millisecond
 )
 
 type connectOutcome uint8
@@ -326,10 +326,20 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 
 func (d *deviceSession) confirmCommandState(ctx context.Context, targetRedcon uint8) error {
 	var lastRedcon *uint8
+	var lastErr error
 	for attempt := 1; attempt <= commandConfirmMaxAttempts; attempt++ {
 		if err := d.refreshConnectedState(ctx, true, true); err != nil {
-			return err
+			lastErr = err
+			if !d.commandConfirmationReadCanRetry(ctx, attempt, err) {
+				return err
+			}
+			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command state confirmation retry thing=%s targetRedcon=%d attempt=%d retryDelayMs=%d error=%q", d.spec.ThingName, targetRedcon, attempt, commandConfirmRetryDelay.Milliseconds(), err))
+			if err := d.waitForCommandRetryDelay(ctx, commandConfirmRetryDelay); err != nil {
+				return err
+			}
+			continue
 		}
+		lastErr = nil
 		if d.lastRedcon != nil {
 			value := *d.lastRedcon
 			lastRedcon = &value
@@ -349,7 +359,23 @@ func (d *deviceSession) confirmCommandState(ctx context.Context, targetRedcon ui
 			return err
 		}
 	}
+	if lastErr != nil {
+		return lastErr
+	}
 	return &redconConfirmationMismatchError{want: targetRedcon, got: lastRedcon}
+}
+
+func (d *deviceSession) commandConfirmationReadCanRetry(ctx context.Context, attempt int, err error) bool {
+	if err == nil || attempt >= commandConfirmMaxAttempts || ctx.Err() != nil {
+		return false
+	}
+	if !rigble.BLECommandConnectErrorIsRetryable(err.Error()) {
+		return false
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= commandConfirmRetryDelay {
+		return false
+	}
+	return true
 }
 
 func (d *deviceSession) connectForCommand(ctx context.Context, command protocol.CapabilityCommand) error {
