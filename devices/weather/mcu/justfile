@@ -13,6 +13,9 @@ device_type := "weather"
 @build:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build
 
+@flash:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash
+
 @clean:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" clean
 

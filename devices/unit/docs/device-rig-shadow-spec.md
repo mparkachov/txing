@@ -168,9 +168,12 @@ so SparkplugManager can distinguish explicit sleep-state evidence from
 advertisement-only BLE reachability; this internal metric is not published as a
 Sparkplug device metric. Advertisement-only samples from any XIAO nRF54L15 MCU
 device update BLE identity shadow fields and can trigger connection attempts,
-but they do not publish capability availability. `capability.ble=true` requires
-an established GATT session with a successful state read or command-applied
-state. During reconnect recovery, fresh advertisements or scanner freshness can
+but they do not publish capability availability. For known inventory targets, an
+exact advertised identity name can also trigger a connection attempt when the
+host scanner omits service UUIDs from the scan result; GATT service discovery
+still has to prove the device contract. `capability.ble=true` requires an
+established GATT session with a successful state read or command-applied state.
+During reconnect recovery, fresh advertisements or scanner freshness can
 hold the last confirmed BLE availability state until the existing capability
 state TTL expires and defer `DDEATH`, but they do not publish `DBIRTH` /
 `DDATA`, change REDCON, or make a device commandable. `DDEATH` is published

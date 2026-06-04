@@ -14,7 +14,7 @@ just unit::mcu::build
 Firmware and NVE flashing are manual operator actions:
 
 ```sh
-just mcu::flash unit
+just unit::mcu::flash
 just mcu::nve unit-test
 ```
 

@@ -101,7 +101,7 @@ just mcu::nve power-test
 Manual flash only:
 
 ```sh
-just mcu::flash power
+just power::mcu::flash
 ```
 
 The flash path intentionally uses OpenOCD with the stock Zephyr Seeed board

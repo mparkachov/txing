@@ -14,9 +14,6 @@ zephyr_script := mcu_dir + "/scripts/stock_zephyr_mcu.py"
 @check:
     "{{ zephyr_python }}" "{{ zephyr_script }}" check
 
-@flash device_type:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash
-
 @nve thing_name:
     "{{ zephyr_python }}" "{{ zephyr_script }}" nve "{{ thing_name }}"
 

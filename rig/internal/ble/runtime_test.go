@@ -184,6 +184,29 @@ func TestScannerAdvertisementFilterOnlyPublishesTargetNamesOnInterval(t *testing
 	}
 }
 
+func TestScannerAdvertisementFilterAllowsKnownTargetWithoutServiceUUID(t *testing.T) {
+	name := "weather-1"
+	rssi := int16(-42)
+	advertisement := Advertisement{
+		Address:      "AA:BB:CC:DD:EE:FF",
+		IdentityName: &name,
+		RSSI:         &rssi,
+		ObservedAtMS: 1,
+		Seq:          1,
+	}
+	targets := map[string]struct{}{"weather-1": struct{}{}}
+	last := map[string]uint64{}
+	if !ShouldPublishScannerAdvertisement(targets, advertisement, 1000, last, 1000) {
+		t.Fatal("expected known target publish without advertised service UUID")
+	}
+
+	other := "other"
+	advertisement.IdentityName = &other
+	if ShouldPublishScannerAdvertisement(targets, advertisement, 2000, last, 1000) {
+		t.Fatal("unexpected unmanaged target publish without advertised service UUID")
+	}
+}
+
 func TestScannerPrefersAdvertisedNameAsIdentity(t *testing.T) {
 	name := "weather-1"
 	advertisement := Advertisement{Address: "AA:BB:CC:DD:EE:FF", IdentityName: &name}

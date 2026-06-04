@@ -171,9 +171,6 @@ func BLECommandConnectErrorIsRetryable(message string) bool {
 }
 
 func ShouldPublishScannerAdvertisement(targetNames map[string]struct{}, advertisement Advertisement, nowMS uint64, lastPublished map[string]uint64, minIntervalMS uint64) bool {
-	if !advertisement.HasTxingService() {
-		return false
-	}
 	name := ScannerReportedIdentityName(advertisement)
 	if name == "" {
 		return false

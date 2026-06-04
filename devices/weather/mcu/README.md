@@ -42,6 +42,6 @@ just weather::mcu::build
 Firmware and NVE flashing remain manual hardware steps:
 
 ```sh
-just mcu::flash weather
+just weather::mcu::flash
 just mcu::nve weather-q8zbgb
 ```

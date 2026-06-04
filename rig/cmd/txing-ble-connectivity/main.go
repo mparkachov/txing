@@ -358,23 +358,27 @@ func (s *runtimeState) scan(ctx context.Context) error {
 				),
 			)
 		}
-		if !hasTxingService {
+		if name == "" {
+			s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored address=%s reason=missing-local-name serviceUUIDs=%v", result.Address.String(), scanServiceUUIDs(result)))
+			return
+		}
+		if !hasTxingService && !knownTarget {
 			if s.shouldDebugScanCandidate(name, hasTxingService, knownTarget) {
 				s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored name=%q address=%s reason=no-txing-service", name, result.Address.String()))
 			}
 			return
 		}
-		if name == "" {
-			s.debugPrint(context.Background(), fmt.Sprintf("BLE scan ignored address=%s reason=missing-local-name serviceUUIDs=%v", result.Address.String(), scanServiceUUIDs(result)))
-			return
+		if !hasTxingService {
+			s.debugPrint(context.Background(), fmt.Sprintf("BLE scan accepted known target without advertised Txing service thing=%s address=%s", name, result.Address.String()))
 		}
 		rssi := result.RSSI
 		identity := name
+		services := scanServiceUUIDs(result)
 		now := time.Now()
 		advertisement := rigble.Advertisement{
 			Address:      result.Address.String(),
 			IdentityName: &identity,
-			Services:     []string{rigble.TxingBLEServiceUUID},
+			Services:     services,
 			RSSI:         &rssi,
 			ObservedAtMS: uint64(now.UnixMilli()),
 			Seq:          s.nextSeq(),

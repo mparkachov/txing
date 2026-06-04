@@ -16,9 +16,10 @@ All active MCU targets use the same shared stack:
   `devices/common/mcu/xiao_nrf54l15`
 - each target compiles `${TXING_XIAO_NRF54L15_DIR}/src/redcon.c`
 - each target includes `${TXING_XIAO_NRF54L15_DIR}/include`
-- shared setup and hardware actions run through root `mcu` recipes backed by
+- shared setup and NVE actions run through root `mcu` recipes backed by
   `devices/common/mcu/scripts/stock_zephyr_mcu.py`
-- each target's `justfile` keeps device-owned `build` and `clean` recipes only
+- each target's `justfile` keeps device-owned `build`, `flash`, and `clean`
+  recipes
 - the shared `mcu::nve` recipe uses
   `devices/common/mcu/xiao_nrf54l15/scripts/redcon_nve.py`
 
@@ -73,6 +74,6 @@ just build
 Firmware and NVE flashing remain manual user actions:
 
 ```bash
-just mcu::flash unit
+just unit::mcu::flash
 just mcu::nve <thing-name>
 ```
