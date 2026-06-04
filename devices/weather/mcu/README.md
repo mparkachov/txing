@@ -18,6 +18,8 @@ The firmware uses the shared REDCON BLE service implementation:
 - state is always `<2, 4>`
 - REDCON `4` command is accepted as an idempotent connected-idle command
 - REDCON `3` and all other command levels are rejected by the GATT write
+- REDCON command writes support write-without-response; accepted commands record
+  state before queued idle measurement and notification work runs
 - power measurement `f6b4b003-7b32-4d2d-9f4b-4ff0a2b8f100` carries `<version, battery_mv>`
 - weather measurement `f6b4b004-7b32-4d2d-9f4b-4ff0a2b8f100` carries `<version, temperature_centi_c, pressure_pa, humidity_centi_percent>`
 - connected REDCON `4` reports battery and BME280 measurements every 60 seconds

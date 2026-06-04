@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,6 +20,8 @@ const (
 	advertisementBroadcastPeriod = 1 * time.Second
 	commandConnectRetryDelay     = 1 * time.Second
 	commandWriteMaxAttempts      = 2
+	commandConfirmMaxAttempts    = 4
+	commandConfirmRetryDelay     = 150 * time.Millisecond
 )
 
 type connectOutcome uint8
@@ -47,6 +50,18 @@ type bleConnection interface {
 type bleNotification struct {
 	uuid    bluetooth.UUID
 	payload []byte
+}
+
+type redconConfirmationMismatchError struct {
+	want uint8
+	got  *uint8
+}
+
+func (e *redconConfirmationMismatchError) Error() string {
+	if e.got == nil {
+		return fmt.Sprintf("confirmed BLE state has no REDCON, want %d", e.want)
+	}
+	return fmt.Sprintf("confirmed BLE state REDCON %d, want %d", *e.got, e.want)
 }
 
 type timedMeasurement[T any] struct {
@@ -293,22 +308,13 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 		d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command written thing=%s targetRedcon=%d normalizedRedcon=%d command=%s attempt=%d", command.ThingName, command.Target.Redcon, normalized, command.CommandID, attempt))
 		break
 	}
-	d.setLastRedcon(normalized)
-	if normalized >= rigble.RedconIdle {
-		d.lastPowerMeasurement = nil
-		d.lastWeatherMeasurement = nil
-	}
-	d.publishAggregateSample(ctx, uint64(time.Now().UnixMilli()))
-	if normalized >= rigble.RedconIdle {
-		d.resetConnectBackoff()
-		d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command succeeded thing=%s targetRedcon=%d normalizedRedcon=%d command=%s confirmation=command-write", command.ThingName, command.Target.Redcon, normalized, command.CommandID))
-		d.runtime.publishCommandResult(ctx, command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
-		return
-	}
-	if err := d.seedConnectedState(ctx); err != nil {
-		d.disconnect()
+	if err := d.confirmCommandState(commandCtx, normalized); err != nil {
 		message := fmt.Sprintf("BLE state confirmation failed after command write: %v", err)
-		d.publishGattUnavailable(ctx)
+		var mismatch *redconConfirmationMismatchError
+		if !errors.As(err, &mismatch) {
+			d.disconnect()
+			d.publishGattUnavailable(ctx)
+		}
 		d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command confirmation failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, message))
 		d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
 		return
@@ -316,6 +322,34 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 	d.resetConnectBackoff()
 	d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command succeeded thing=%s targetRedcon=%d normalizedRedcon=%d command=%s", command.ThingName, command.Target.Redcon, normalized, command.CommandID))
 	d.runtime.publishCommandResult(ctx, command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
+}
+
+func (d *deviceSession) confirmCommandState(ctx context.Context, targetRedcon uint8) error {
+	var lastRedcon *uint8
+	for attempt := 1; attempt <= commandConfirmMaxAttempts; attempt++ {
+		if err := d.refreshConnectedState(ctx, true, true); err != nil {
+			return err
+		}
+		if d.lastRedcon != nil {
+			value := *d.lastRedcon
+			lastRedcon = &value
+			if value == targetRedcon {
+				return nil
+			}
+		} else {
+			lastRedcon = nil
+		}
+		if attempt == commandConfirmMaxAttempts {
+			break
+		}
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= commandConfirmRetryDelay {
+			break
+		}
+		if err := d.waitForCommandRetryDelay(ctx, commandConfirmRetryDelay); err != nil {
+			return err
+		}
+	}
+	return &redconConfirmationMismatchError{want: targetRedcon, got: lastRedcon}
 }
 
 func (d *deviceSession) connectForCommand(ctx context.Context, command protocol.CapabilityCommand) error {
@@ -892,7 +926,7 @@ func (c *realBLEConnection) WriteRedcon(redcon uint8) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.commandChar.Write(payload)
+	_, err = c.commandChar.WriteWithoutResponse(payload)
 	return err
 }
 

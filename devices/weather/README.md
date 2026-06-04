@@ -16,11 +16,14 @@ that local name as the presence identity.
 Weather is REDCON 4 only. It has no REDCON 3 mode. While connected in REDCON 4,
 the MCU reports battery voltage and BME280 measurements every 60 seconds. A
 REDCON 3 command is rejected by the rig before BLE write and by firmware if sent
-directly. Advertisement-only sightings update BLE identity and trigger the rig
-to connect, but Sparkplug `capability.ble`, `capability.power`, and
-`capability.weather` become active only after a successful REDCON 4 GATT state
-read. Individual BME280 measurement reads may fail without changing the REDCON 4
-availability contract.
+directly. A REDCON 4 GATT command is sent as write-without-response and is
+treated as successful by the rig only after a GATT state read confirms REDCON 4;
+measurement sampling and notifications run after the firmware accepts the
+idempotent idle target. Advertisement-only sightings update BLE identity and
+trigger the rig to connect, but Sparkplug `capability.ble`, `capability.power`,
+and `capability.weather` become active only after a successful REDCON 4 GATT
+state read. Individual BME280 measurement reads may fail without changing the
+REDCON 4 availability contract.
 
 The weather implementation does not use Matter, Thread, `chip-tool`, online
 provisioning, MCP, video, or a weather-specific Python rig stack.

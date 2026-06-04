@@ -116,6 +116,7 @@ static const struct bt_le_adv_param adv_params =
 			     CONFIG_REDCON_BLE_ADV_INTERVAL, NULL);
 
 static uint8_t current_redcon = TXING_REDCON_IDLE;
+K_MUTEX_DEFINE(current_redcon_lock);
 static uint8_t redcon_state_payload[TXING_REDCON_STATE_PAYLOAD_SIZE] = {
 	TXING_REDCON_PROTOCOL_VERSION,
 	TXING_REDCON_IDLE,
@@ -370,6 +371,32 @@ static void encode_redcon_state(uint8_t redcon)
 	redcon_state_payload[1] = redcon;
 }
 
+static uint8_t get_current_redcon(void)
+{
+	uint8_t redcon;
+
+	k_mutex_lock(&current_redcon_lock, K_FOREVER);
+	redcon = current_redcon;
+	k_mutex_unlock(&current_redcon_lock);
+
+	return redcon;
+}
+
+static void set_current_redcon(uint8_t redcon)
+{
+	k_mutex_lock(&current_redcon_lock, K_FOREVER);
+	current_redcon = redcon;
+	encode_redcon_state(redcon);
+	k_mutex_unlock(&current_redcon_lock);
+}
+
+static void copy_redcon_state_payload(uint8_t payload[TXING_REDCON_STATE_PAYLOAD_SIZE])
+{
+	k_mutex_lock(&current_redcon_lock, K_FOREVER);
+	memcpy(payload, redcon_state_payload, TXING_REDCON_STATE_PAYLOAD_SIZE);
+	k_mutex_unlock(&current_redcon_lock);
+}
+
 static void encode_power_measurement(uint16_t battery_mv)
 {
 	power_measurement_payload[0] = TXING_REDCON_PROTOCOL_VERSION;
@@ -475,10 +502,10 @@ static void request_connection_params(struct bt_conn *conn)
 static ssize_t read_state(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			  void *buf, uint16_t len, uint16_t offset)
 {
-	const struct gatt_payload *payload = attr->user_data;
+	uint8_t payload[TXING_REDCON_STATE_PAYLOAD_SIZE];
 
-	encode_redcon_state(current_redcon);
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload->data, payload->len);
+	copy_redcon_state_payload(payload);
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, payload, sizeof(payload));
 }
 
 static ssize_t read_power_measurement(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -538,7 +565,7 @@ static void measurement_notify_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-	if (!redcon_is_wakeup(current_redcon)) {
+	if (!redcon_is_wakeup(get_current_redcon())) {
 		return;
 	}
 
@@ -581,7 +608,7 @@ static void idle_measurement_notify_work_handler(struct k_work *work)
 
 	ARG_UNUSED(work);
 
-	if (current_redcon != TXING_REDCON_IDLE) {
+	if (get_current_redcon() != TXING_REDCON_IDLE) {
 		return;
 	}
 
@@ -607,7 +634,7 @@ static void schedule_idle_measurement_notification(void)
 {
 	struct bt_conn *conn;
 
-	if (current_redcon != TXING_REDCON_IDLE) {
+	if (get_current_redcon() != TXING_REDCON_IDLE) {
 		return;
 	}
 
@@ -643,11 +670,35 @@ static void enter_redcon_idle(void)
 	schedule_idle_measurement_notification();
 }
 
+static void redcon_command_work_handler(struct k_work *work)
+{
+	struct bt_conn *conn;
+	uint8_t redcon;
+
+	ARG_UNUSED(work);
+
+	redcon = get_current_redcon();
+	conn = ref_connected_conn();
+
+	if (redcon_is_wakeup(redcon)) {
+		enter_redcon_wakeup(conn);
+	} else {
+		enter_redcon_idle();
+	}
+
+	if (conn != NULL) {
+		bt_conn_unref(conn);
+	}
+}
+
+K_WORK_DEFINE(redcon_command_work, redcon_command_work_handler);
+
 static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			     const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
 	struct redcon_command command;
 
+	ARG_UNUSED(conn);
 	ARG_UNUSED(attr);
 	ARG_UNUSED(flags);
 
@@ -658,20 +709,16 @@ static ssize_t write_command(struct bt_conn *conn, const struct bt_gatt_attr *at
 		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
 	}
 
-	current_redcon = command.redcon;
-	encode_redcon_state(current_redcon);
-	if (redcon_is_wakeup(current_redcon)) {
-		enter_redcon_wakeup(conn);
-	} else {
-		enter_redcon_idle();
-	}
+	set_current_redcon(command.redcon);
+	(void)k_work_submit(&redcon_command_work);
 
 	return len;
 }
 
 BT_GATT_SERVICE_DEFINE(redcon_svc,
 	BT_GATT_PRIMARY_SERVICE(&redcon_service_uuid),
-	BT_GATT_CHARACTERISTIC(&redcon_command_uuid.uuid, BT_GATT_CHRC_WRITE,
+	BT_GATT_CHARACTERISTIC(&redcon_command_uuid.uuid,
+			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
 			       BT_GATT_PERM_WRITE, NULL, write_command, NULL),
 	BT_GATT_CHARACTERISTIC(&redcon_state_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
 			       BT_GATT_PERM_READ, read_state, NULL, &redcon_state_value),
@@ -690,8 +737,10 @@ BT_GATT_SERVICE_DEFINE(redcon_svc,
 
 static void notify_redcon_state(void)
 {
-	(void)bt_gatt_notify(NULL, &redcon_svc.attrs[4], redcon_state_payload,
-			     sizeof(redcon_state_payload));
+	uint8_t payload[TXING_REDCON_STATE_PAYLOAD_SIZE];
+
+	copy_redcon_state_payload(payload);
+	(void)bt_gatt_notify(NULL, &redcon_svc.attrs[4], payload, sizeof(payload));
 }
 
 static void notify_power_measurement(void)
@@ -761,31 +810,32 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	set_connected_conn(conn);
-	if (current_redcon == TXING_REDCON_IDLE) {
+	if (get_current_redcon() == TXING_REDCON_IDLE) {
 		schedule_idle_measurement_notification();
 	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	uint8_t redcon;
+
 	ARG_UNUSED(conn);
 	ARG_UNUSED(reason);
 
 	cancel_idle_measurement_notifications();
 	set_connected_conn(NULL);
 
-	if (redcon_is_wakeup(current_redcon) &&
+	redcon = get_current_redcon();
+	if (redcon_is_wakeup(redcon) &&
 	    IS_ENABLED(CONFIG_REDCON_PRESERVE_LEVEL_ON_DISCONNECT)) {
 		set_wakeup_hardware_state(true);
-		encode_redcon_state(current_redcon);
 		(void)k_work_reschedule(
 			&measurement_notify_work,
 			K_SECONDS(CONFIG_REDCON_BLE_MEASUREMENT_NOTIFY_INTERVAL_SECONDS));
 	} else {
-		current_redcon = TXING_REDCON_IDLE;
+		set_current_redcon(TXING_REDCON_IDLE);
 		(void)k_work_cancel_delayable(&measurement_notify_work);
 		enter_sleep_hardware_state();
-		encode_redcon_state(TXING_REDCON_IDLE);
 	}
 	k_work_submit(&advertise_work);
 }
@@ -812,7 +862,7 @@ int txing_redcon_run(const struct txing_redcon_ops *ops)
 	txing_redcon_configure_output_inactive(redcon_ops->led);
 	txing_redcon_configure_output_inactive(redcon_ops->power);
 	enter_sleep_hardware_state();
-	encode_redcon_state(current_redcon);
+	set_current_redcon(TXING_REDCON_IDLE);
 
 	err = bt_enable(NULL);
 	if (err < 0) {

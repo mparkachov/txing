@@ -39,6 +39,9 @@ common stock Zephyr install/build path.
 - reset default: `REDCON 4`, D1 off, LED off, load regulators disabled, ADC suspended
 - `REDCON 1`, `2`, and `3`: D1/LED on, state reported, battery sampled/notified, periodic active battery reports
 - `REDCON 4`: D1 off, BLE remains connected when possible, idle battery reports every `60 s`, advertising resumes after disconnect
+- REDCON GATT command writes support write-without-response; firmware validates
+  the two-byte payload, records the accepted target state, and runs queued
+  wake/sleep side effects after the command is accepted
 - `unit` accepts REDCON `1`/`2`/`3`/`4` and preserves the current REDCON level across BLE disconnect
 - `power` accepts REDCON `3`/`4` and preserves REDCON `3` across BLE disconnect
 - `weather` accepts REDCON `4` idempotently, rejects other command levels, and exposes the weather measurement characteristic

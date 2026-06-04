@@ -404,7 +404,7 @@ func TestSessionCommandReusesConnectedDevice(t *testing.T) {
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
 }
 
-func TestIdleCommandVerifiesConnectedStateBeforeWriteWithoutPostConfirmation(t *testing.T) {
+func TestIdleCommandVerifiesConnectedStateBeforeAndAfterWrite(t *testing.T) {
 	state := testSessionRuntime(t)
 	statuses := []string{}
 	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
@@ -427,6 +427,40 @@ func TestIdleCommandVerifiesConnectedStateBeforeWriteWithoutPostConfirmation(t *
 		t.Fatalf("disconnects = %d, want idle command to keep the connection available", conn.disconnects)
 	}
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
+}
+
+func TestCommandFailsWhenStateConfirmationDoesNotReachTarget(t *testing.T) {
+	state := testSessionRuntime(t)
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	published := []rigble.CapabilitySample{}
+	state.sampleSink = func(sample rigble.CapabilitySample, includeShadow bool, includeCapabilityState bool) {
+		if includeCapabilityState {
+			published = append(published, sample)
+		}
+	}
+	conn := &fakeBLEConnection{
+		connected:  true,
+		address:    "AA:BB:CC:DD:EE:FF",
+		powerState: rigble.PowerState{Redcon: rigble.RedconIdle},
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = conn
+
+	session.handleCommand(context.Background(), testCommandWithDeadline(t, "unit-1", rigble.RedconActive, 20*time.Millisecond))
+
+	if len(conn.writes) != 1 || conn.writes[0] != rigble.RedconActive {
+		t.Fatalf("writes = %#v, want REDCON 3 write", conn.writes)
+	}
+	if conn.disconnects != 0 {
+		t.Fatalf("disconnects = %d, want readable GATT connection retained on state mismatch", conn.disconnects)
+	}
+	if len(published) == 0 || !published[len(published)-1].BLEAvailable {
+		t.Fatalf("published capability samples = %#v, want latest readable BLE state retained", published)
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandFailed})
 }
 
 func TestCommandFailsBeforeWriteWhenConnectedStateVerificationFails(t *testing.T) {

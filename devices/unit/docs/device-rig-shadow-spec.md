@@ -171,7 +171,12 @@ device update BLE identity shadow fields and can trigger connection attempts,
 but they do not publish capability availability. `capability.ble=true` requires
 an established GATT session with a successful state read or command-applied
 state. `power`, `weather`, and other device-domain capabilities also require
-GATT state/measurement evidence.
+GATT state/measurement evidence. The rig sends MCU REDCON commands as GATT
+write-without-response and treats them as successful only after a GATT state
+read confirms the target REDCON. The shared firmware validates accepted command
+payloads, records the target state, and runs wake/sleep hardware side effects,
+measurement sampling, and notifications on queued firmware work after the
+command is accepted.
 
 ## Acceptance Criteria
 

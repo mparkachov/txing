@@ -276,7 +276,12 @@ BLE identity shadow fields and can trigger connection attempts, but they do not
 publish `sparkplug=true`, `ble=true`, or other capability availability.
 `capability.ble=true` requires an established GATT session with a successful
 state read or command-applied state. `power`, `weather`, and other device-domain
-capabilities also require GATT state/measurement evidence.
+capabilities also require GATT state/measurement evidence. The rig sends REDCON
+commands as GATT write-without-response and reports command success only after a
+GATT state read confirms the target REDCON. The MCU validates accepted command
+payloads, records the target state, and runs wake/sleep hardware side effects,
+measurement sampling, and notifications from queued firmware work after the
+command is accepted.
 Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit devices can
 converge through the full REDCON ladder.
 
