@@ -18,6 +18,7 @@ const (
 	connectedStateRefresh        = 30 * time.Second
 	advertisementBroadcastPeriod = 1 * time.Second
 	commandConnectRetryDelay     = 1 * time.Second
+	commandWriteMaxAttempts      = 2
 )
 
 type connectOutcome uint8
@@ -222,18 +223,22 @@ func (d *deviceSession) backgroundConnectFailureLogLevel(err error) string {
 
 func (d *deviceSession) handleCommand(ctx context.Context, command protocol.CapabilityCommand) {
 	d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command received thing=%s targetRedcon=%d command=%s", command.ThingName, command.Target.Redcon, command.CommandID))
+	d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command received thing=%s targetRedcon=%d command=%s", command.ThingName, command.Target.Redcon, command.CommandID))
 	if protocol.CommandDeadlineExpired(command, uint64(time.Now().UnixMilli())) {
 		message := "command deadline expired"
+		d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command failed thing=%s targetRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, command.CommandID, message))
 		d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
 		return
 	}
 	if reason := rigble.WeatherCommandRejectReason(command, d.spec); reason != nil {
+		d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command rejected thing=%s targetRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, command.CommandID, *reason))
 		d.runtime.publishCommandResult(ctx, command, protocol.CommandRejected, reason, &command.Target.Redcon)
 		return
 	}
 	normalized, err := protocol.NormalizeBleTargetRedcon(command.Target.Redcon)
 	if err != nil {
 		message := err.Error()
+		d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command rejected thing=%s targetRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, command.CommandID, message))
 		d.runtime.publishCommandResult(ctx, command, protocol.CommandRejected, &message, &command.Target.Redcon)
 		return
 	}
@@ -241,31 +246,45 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 
 	commandCtx, cancel := d.runtime.commandContext(ctx, command)
 	defer cancel()
-	if err := d.connectForCommand(commandCtx, command); err != nil {
-		retryDelay := d.recordConnectFailure(err)
-		d.nextConnectAfter = time.Now().Add(retryDelay)
-		message := fmt.Sprintf("BLE connection failed before command write: %v", err)
-		d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, err))
-		d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
-		return
-	}
-	if protocol.CommandDeadlineExpired(command, uint64(time.Now().UnixMilli())) {
-		message := "command deadline expired"
-		d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
-		return
-	}
-	if d.connected == nil {
-		message := "BLE connection is unavailable"
-		d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
-		return
-	}
-	if err := d.connected.WriteRedcon(normalized); err != nil {
-		retryDelay := d.recordConnectFailure(err)
-		d.nextConnectAfter = time.Now().Add(retryDelay)
-		d.disconnect()
-		message := fmt.Sprintf("BLE command write failed: %v", err)
-		d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
-		return
+	for attempt := 1; attempt <= commandWriteMaxAttempts; attempt++ {
+		if err := d.connectForCommand(commandCtx, command); err != nil {
+			retryDelay := d.recordConnectFailure(err)
+			d.nextConnectAfter = time.Now().Add(retryDelay)
+			message := fmt.Sprintf("BLE connection failed before command write: %v", err)
+			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, err))
+			d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, message))
+			d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
+			return
+		}
+		if protocol.CommandDeadlineExpired(command, uint64(time.Now().UnixMilli())) {
+			message := "command deadline expired"
+			d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, message))
+			d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
+			return
+		}
+		if d.connected == nil {
+			message := "BLE connection is unavailable"
+			d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, message))
+			d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
+			return
+		}
+		if err := d.connected.WriteRedcon(normalized); err != nil {
+			d.disconnect()
+			if attempt < commandWriteMaxAttempts && d.commandCanRetry(commandCtx) {
+				d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command write retry thing=%s targetRedcon=%d normalizedRedcon=%d command=%s attempt=%d error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, attempt, err))
+				d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command write retry thing=%s targetRedcon=%d normalizedRedcon=%d command=%s attempt=%d error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, attempt, err))
+				continue
+			}
+			retryDelay := d.recordConnectFailure(err)
+			d.nextConnectAfter = time.Now().Add(retryDelay)
+			message := fmt.Sprintf("BLE command write failed: %v", err)
+			d.runtime.debugPrint(ctx, fmt.Sprintf("BLE command write failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s attempt=%d error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, attempt, err))
+			d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command write failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s attempt=%d error=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, attempt, err))
+			d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
+			return
+		}
+		d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command written thing=%s targetRedcon=%d normalizedRedcon=%d command=%s attempt=%d", command.ThingName, command.Target.Redcon, normalized, command.CommandID, attempt))
+		break
 	}
 	d.setLastRedcon(normalized)
 	if normalized >= rigble.RedconIdle {
@@ -282,6 +301,7 @@ func (d *deviceSession) handleCommand(ctx context.Context, command protocol.Capa
 	if err := d.seedConnectedState(ctx); err != nil {
 		d.disconnect()
 		message := fmt.Sprintf("BLE state confirmation failed after command write: %v", err)
+		d.runtime.infoPrint(ctx, fmt.Sprintf("BLE REDCON command confirmation failed thing=%s targetRedcon=%d normalizedRedcon=%d command=%s reason=%q", command.ThingName, command.Target.Redcon, normalized, command.CommandID, message))
 		d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
 		return
 	}

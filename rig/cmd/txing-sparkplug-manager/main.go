@@ -364,6 +364,7 @@ func (s *runtimeState) handleMQTTMessage(ctx context.Context, message mqttx.Mess
 		if command == nil {
 			return
 		}
+		s.infoPrint(ctx, fmt.Sprintf("REDCON command received thing=%s targetRedcon=%d command=%s source=sparkplug-dcmd topic=%s", thingName, command.Target.Redcon, command.CommandID, message.Topic))
 		payload, err := command.Marshal()
 		if err != nil {
 			s.logger.Print(ctx, "warning", fmt.Sprintf("command encode failed thing=%s error=%q", thingName, err))
@@ -596,6 +597,13 @@ func (d *managedDevice) nextSeq() uint64 {
 	seq := d.seq
 	d.seq = (d.seq + 1) % 256
 	return seq
+}
+
+func (s *runtimeState) infoPrint(ctx context.Context, message string) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Print(ctx, "info", message)
 }
 
 func parseSparkplugDCMDTopic(groupID, edgeNodeID, topic string) (string, bool) {

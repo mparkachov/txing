@@ -726,6 +726,13 @@ func (s *runtimeState) debugPrint(ctx context.Context, message string) {
 	s.logger.Print(ctx, "debug", message)
 }
 
+func (s *runtimeState) infoPrint(ctx context.Context, message string) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Print(ctx, "info", message)
+}
+
 func looksLikeTxingThingName(name string) bool {
 	return strings.HasPrefix(name, "unit-") ||
 		strings.HasPrefix(name, "power-") ||

@@ -403,6 +403,85 @@ func TestIdleCommandDoesNotWaitForStateConfirmation(t *testing.T) {
 	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
 }
 
+func TestCommandRetriesWriteFailureAfterReconnect(t *testing.T) {
+	state := testSessionRuntime(t)
+	reconnected := &fakeBLEConnection{
+		connected:  true,
+		address:    "AA:BB:CC:DD:EE:FF",
+		powerState: rigble.PowerState{Redcon: rigble.RedconActive},
+	}
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{
+			connection: reconnected,
+			outcome:    connectOutcomeConnected,
+		}},
+	}
+	state.connector = connector
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	stale := &fakeBLEConnection{
+		connected: true,
+		address:   "AA:BB:CC:DD:EE:FF",
+		writeErrs: []error{errors.New("stale BLE connection")},
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = stale
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", time.Now()))
+
+	session.handleCommand(context.Background(), testCommand(t, "unit-1", 3))
+
+	if stale.disconnects != 1 {
+		t.Fatalf("stale disconnects = %d, want 1", stale.disconnects)
+	}
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want reconnect after stale write", connector.calls)
+	}
+	if len(reconnected.writes) != 1 || reconnected.writes[0] != rigble.RedconActive {
+		t.Fatalf("reconnected writes = %#v, want REDCON 3 write", reconnected.writes)
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandSucceeded})
+}
+
+func TestCommandFailsAfterBoundedWriteRetries(t *testing.T) {
+	state := testSessionRuntime(t)
+	reconnected := &fakeBLEConnection{
+		connected: true,
+		address:   "AA:BB:CC:DD:EE:FF",
+		writeErrs: []error{errors.New("write still failed")},
+	}
+	connector := &fakeBLEConnector{
+		results: []fakeConnectResult{{
+			connection: reconnected,
+			outcome:    connectOutcomeConnected,
+		}},
+	}
+	state.connector = connector
+	statuses := []string{}
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+	stale := &fakeBLEConnection{
+		connected: true,
+		address:   "AA:BB:CC:DD:EE:FF",
+		writeErrs: []error{errors.New("stale BLE connection")},
+	}
+	session := newDeviceSession(state, rigble.DeviceSpec{ThingName: "unit-1", Kind: rigble.DeviceKindPower})
+	session.connected = stale
+	session.lastAdvertisement = cloneAdvertisement(testAdvertisement("unit-1", time.Now()))
+
+	session.handleCommand(context.Background(), testCommand(t, "unit-1", 3))
+
+	if connector.calls != 1 {
+		t.Fatalf("connector calls = %d, want one bounded reconnect", connector.calls)
+	}
+	if session.connected != nil {
+		t.Fatal("failed write retry should leave the session disconnected")
+	}
+	assertStatuses(t, statuses, []string{protocol.CommandAccepted, protocol.CommandFailed})
+}
+
 func TestCommandWaitsForFreshAdvertisementBeforeConnectRetry(t *testing.T) {
 	state := testSessionRuntime(t)
 	connector := &fakeBLEConnector{
@@ -700,6 +779,7 @@ type fakeBLEConnection struct {
 	weatherState       rigble.WeatherState
 	powerMeasurement   rigble.PowerMeasurement
 	weatherMeasurement rigble.WeatherMeasurement
+	writeErrs          []error
 	writes             []uint8
 	notifications      []bleNotification
 	disconnects        int
@@ -720,6 +800,11 @@ func (f *fakeBLEConnection) Disconnect() {
 
 func (f *fakeBLEConnection) WriteRedcon(redcon uint8) error {
 	f.writes = append(f.writes, redcon)
+	if len(f.writeErrs) > 0 {
+		err := f.writeErrs[0]
+		f.writeErrs = f.writeErrs[1:]
+		return err
+	}
 	return nil
 }
 
