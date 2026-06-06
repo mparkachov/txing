@@ -107,7 +107,7 @@ func TestAdvertisementSampleDoesNotCarryCapabilityEvidence(t *testing.T) {
 	}
 }
 
-func TestAdvertisementSamplePublishesOnlyBleShadowWithoutMeasurements(t *testing.T) {
+func TestAdvertisementSampleDoesNotBuildShadowUpdates(t *testing.T) {
 	spec := DeviceSpec{ThingName: "power-1", Kind: DeviceKindPower}
 	name := "power-1"
 	rssi := int16(-50)
@@ -123,19 +123,8 @@ func TestAdvertisementSamplePublishesOnlyBleShadowWithoutMeasurements(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updates) != 1 {
-		t.Fatalf("update count = %d, want 1", len(updates))
-	}
-	if updates[0].Topic != "$aws/things/power-1/shadow/name/ble/update" {
-		t.Fatalf("topic = %s", updates[0].Topic)
-	}
-	payload := decodePayload(t, updates[0].Payload)
-	reported := payload["state"].(map[string]any)["reported"].(map[string]any)
-	if reported["bleAddress"] != "AA:BB:CC:DD:EE:FF" || reported["bleLocalName"] != "power-1" {
-		t.Fatalf("reported = %#v", reported)
-	}
-	if reported["observedAtMs"] != nil || reported["seq"] != nil {
-		t.Fatalf("reported timestamps should be null: %#v", reported)
+	if len(updates) != 0 {
+		t.Fatalf("update count = %d, want 0", len(updates))
 	}
 }
 

@@ -273,6 +273,9 @@ func CapabilityStateFromSample(adapterID string, sample CapabilitySample) protoc
 }
 
 func ShadowUpdatesFromSample(sample CapabilitySample) ([]ShadowUpdate, error) {
+	if !sampleCarriesGattEvidence(sample) {
+		return []ShadowUpdate{}, nil
+	}
 	updates := []ShadowUpdate{}
 	bleUpdate, err := BuildShadowUpdate(sample.ThingName, BLEShadowName, map[string]any{
 		"bleAddress":   optionalString(sample.BLEAddress),
@@ -311,6 +314,10 @@ func ShadowUpdatesFromSample(sample CapabilitySample) ([]ShadowUpdate, error) {
 		updates = append(updates, weatherUpdate)
 	}
 	return updates, nil
+}
+
+func sampleCarriesGattEvidence(sample CapabilitySample) bool {
+	return sample.Redcon != nil && sample.SparkplugAvailable && sample.BLEAvailable
 }
 
 func BuildShadowUpdate(thingName string, shadowName string, reported map[string]any) (ShadowUpdate, error) {

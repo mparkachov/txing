@@ -221,8 +221,8 @@ func (d *deviceSession) observeMatchingAdvertisement(ctx context.Context, advert
 }
 
 func (d *deviceSession) publishAdvertisementSample(ctx context.Context, advertisement rigble.Advertisement) {
-	d.runtime.publishSample(ctx, rigble.AdvertisementSample(d.spec, advertisement, d.runtime.nextSeq()), true, rigble.AdvertisementPublishesCapabilityState(d.spec))
-	d.runtime.debugPrint(ctx, fmt.Sprintf("BLE advertisement published thing=%s address=%s", d.spec.ThingName, advertisement.Address))
+	d.runtime.publishSample(ctx, rigble.AdvertisementSample(d.spec, advertisement, d.runtime.nextSeq()), false, rigble.AdvertisementPublishesCapabilityState(d.spec))
+	d.runtime.debugPrint(ctx, fmt.Sprintf("BLE advertisement observed thing=%s address=%s", d.spec.ThingName, advertisement.Address))
 }
 
 func (d *deviceSession) logBackgroundConnectFailure(ctx context.Context, err error, retryDelay time.Duration) {

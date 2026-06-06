@@ -271,9 +271,10 @@ newer observation timestamp can raise board-owned capabilities again; older
 board retained state cannot override newer BLE REDCON 4 evidence.
 BLE state-read and command-applied capability states carry internal
 `metrics.bleRedcon` evidence for this gate; advertisement-only BLE reachability
-does not. Advertisement-only samples from any XIAO nRF54L15 MCU device update
-BLE identity shadow fields and can trigger connection attempts, but they do not
-publish `sparkplug=true`, `ble=true`, or other capability availability.
+does not. Advertisement-only samples from any XIAO nRF54L15 MCU device refresh
+local scanner identity/freshness and can trigger connection attempts, but they
+do not update Thing Shadows or publish `sparkplug=true`, `ble=true`, or other
+capability availability.
 `capability.ble=true` requires an established GATT session with a successful
 state read or command-applied state. `power`, `weather`, and other device-domain
 capabilities also require GATT state/measurement evidence. The rig sends REDCON

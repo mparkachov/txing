@@ -333,7 +333,7 @@ func TestSessionIgnoresStaleAdvertisement(t *testing.T) {
 	}
 }
 
-func TestAdvertisementPublishesBleShadowOnly(t *testing.T) {
+func TestAdvertisementDoesNotPublishShadowOrCapabilityState(t *testing.T) {
 	state := testSessionRuntime(t)
 	samples := []rigble.CapabilitySample{}
 	includeShadows := []bool{}
@@ -351,8 +351,8 @@ func TestAdvertisementPublishesBleShadowOnly(t *testing.T) {
 	if len(samples) != 1 {
 		t.Fatalf("samples = %#v, want one advertisement sample", samples)
 	}
-	if !includeShadows[0] || includeCapabilityStates[0] {
-		t.Fatalf("include shadow/capability = %t/%t, want true/false", includeShadows[0], includeCapabilityStates[0])
+	if includeShadows[0] || includeCapabilityStates[0] {
+		t.Fatalf("include shadow/capability = %t/%t, want false/false", includeShadows[0], includeCapabilityStates[0])
 	}
 	if samples[0].BLEAddress == nil || *samples[0].BLEAddress != "AA:BB:CC:DD:EE:FF" {
 		t.Fatalf("advertisement sample address = %#v", samples[0].BLEAddress)
