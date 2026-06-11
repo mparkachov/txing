@@ -278,5 +278,11 @@ Expected behavior:
 - manager logs show inventory refreshes and Sparkplug MQTT connection
 - BLE logs show inventory reconciliation and scanner activity
 - CloudWatch receives logs under `txing/<town>/<rig>`
+- `txing-sparkplug-manager` subscribes to `spBv1.0/<town>/NCMD/<rig>` for rig
+  REDCON control
+- `NCMD.redcon=4` keeps only the node MQTT session and NCMD path alive, then
+  publishes `NBIRTH redcon=4`
+- `NCMD.redcon=1` resumes inventory, per-device sessions, board retained-state
+  subscriptions, device publications, and publishes `NBIRTH redcon=1`
 - Sparkplug DBIRTH/DDATA/DDEATH follows the same REDCON projection as before
 - BLE-owned `mcu` and device-type named shadow updates continue to reach AWS IoT

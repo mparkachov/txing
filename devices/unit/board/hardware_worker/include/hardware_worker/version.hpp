@@ -4,7 +4,7 @@
 namespace txing::unit::hardware_worker {
 
 #ifndef TXING_UNIT_HARDWARE_WORKER_VERSION
-#define TXING_UNIT_HARDWARE_WORKER_VERSION "0.14.4"
+#define TXING_UNIT_HARDWARE_WORKER_VERSION "0.14.10"
 #endif
 
 inline constexpr const char* kTxingUnitHardwareWorkerVersion = TXING_UNIT_HARDWARE_WORKER_VERSION;

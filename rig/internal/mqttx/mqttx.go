@@ -180,6 +180,26 @@ func (c *Client) Subscribe(filter string, handler func(Message)) error {
 	return err
 }
 
+func (c *Client) Unsubscribe(filter string) error {
+	c.mu.Lock()
+	delete(c.subscriptions, filter)
+	c.mu.Unlock()
+
+	manager, err := c.connection()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = manager.Unsubscribe(ctx, &paho.Unsubscribe{
+		Topics: []string{filter},
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("MQTT unsubscribe %s timed out: %w", filter, err)
+	}
+	return err
+}
+
 func (c *Client) Publish(topic string, payload []byte, retained bool) error {
 	manager, err := c.connection()
 	if err != nil {

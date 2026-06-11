@@ -11,7 +11,9 @@
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
 - Sparkplug MQTT is the source protocol
 - The `sparkplug` named shadow is the AWS-side materialized Sparkplug view, not device intent storage
-- `DCMD.redcon` is the only writable lifecycle command path
+- Writable lifecycle command paths are:
+  - `DCMD.redcon` for managed devices
+  - `NCMD.redcon` for rig edge nodes
 
 ## Hard Edge Node Requirement
 
@@ -21,14 +23,23 @@ production, `raspi` rigs publish that edge node from the standalone
 the cloud rig runtime Lambda recorded in `/txing/stack/CloudRigRuntimeFunctionName`.
 
 - `spBv1.0/<town>/NBIRTH/<rig>` means the rig edge node is born.
-- `spBv1.0/<town>/NDEATH/<rig>` means the rig edge node is dead.
-- A born rig edge node is healthy REDCON 1. For `raspi`, if
-  `rig-daemon.target` is running, both rig daemon services are active, and
-  `just rig::check` passes, the rig thing's Sparkplug projection must be
-  `NBIRTH` with `payload.metrics.redcon=1`. For `cloud`, the EventBridge minute
-  schedule must refresh `NBIRTH` within the witness timeout. A retained
-  `NDEATH`, missing `NBIRTH`, or any non-1 born rig REDCON in those conditions
-  is a rig defect.
+- `spBv1.0/<town>/NCMD/<rig>` carries rig REDCON commands.
+- `spBv1.0/<town>/NDEATH/<rig>` means the rig edge node is unavailable and
+  requires manual intervention, such as switching on the device or starting the
+  rig service.
+- A born rig edge node is reachable and commandable. `NBIRTH` with
+  `payload.metrics.redcon=1` means the full rig runtime is active. `NBIRTH` with
+  `payload.metrics.redcon=4` means the rig runtime is intentionally in the
+  low-cost commandable state: the node MQTT session and `NCMD` subscription stay
+  alive, but full tick/device work is stopped.
+- For `raspi`, if `rig-daemon.target` is running, both rig daemon services are
+  active, and `just rig::check` passes, the rig thing's Sparkplug projection
+  must be `NBIRTH` with either `redcon=1` or an intentionally commanded
+  `redcon=4`.
+- For `cloud`, `NBIRTH redcon=1` is refreshed by the EventBridge minute
+  schedule. `NCMD.redcon=4` disables that recurring schedule and publishes
+  `NBIRTH redcon=4`; `NCMD.redcon=1` enables the schedule and runs the scheduler
+  body once immediately.
 - This is a Sparkplug lifecycle contract, not a `rig::check` responsibility.
   `rig::check` remains a configuration and connectivity check; it is only one
   of the preconditions under which the Sparkplug projection is expected to show
@@ -39,6 +50,12 @@ the cloud rig runtime Lambda recorded in `/txing/stack/CloudRigRuntimeFunctionNa
 - systemd service status, Lambda invocation status, and AWS IoT MQTT lifecycle
   events are observability signals only; they do not replace Sparkplug `NBIRTH`
   and `NDEATH`.
+- Cloud rig `NDEATH` publication design is intentionally deferred. This
+  milestone does not select whether cloud rig death is published by Lambda,
+  EventBridge, an external watchdog, or another AWS-side signal.
+- Raspi physical/service death also needs watchdog or external publication in a
+  future milestone. The current raspi manager publishes its normal MQTT will and
+  graceful shutdown death, but this does not cover every physical failure mode.
 - For `raspi`, the Sparkplug node MQTT session uses
   `<rig>-sparkplug-manager` as its AWS IoT MQTT client id. For `cloud`, the
   Lambda runtime publishes the same Sparkplug topic model from the AWS-hosted
@@ -193,6 +210,7 @@ Current rig death payload policy:
 
 - `NDEATH` carries `bdSeq` and `redcon=4`
 - `DDEATH` carries no device metrics; `payload.metrics` is an empty object in the witness projection
+- REDCON 4 is not death. Death is represented only by `NDEATH` or `DDEATH`.
 
 Current device metric policy:
 
@@ -229,6 +247,11 @@ The root [README](../README.md) is the canonical lifecycle contract. In brief:
 
 - `DDEATH` means the device is unavailable and `redcon` is not defined.
 - `DBIRTH` / `DDATA` with `redcon=4` means the device is alive but in the sleep state.
+- `NDEATH` means the rig is unavailable and `redcon` is not commandable in the UI.
+- `NBIRTH` with `redcon=4` means the rig is reachable and commandable but not
+  running full tick/device work.
+- `NBIRTH` with `redcon=1` means the rig is running the full active cloud or
+  raspi runtime.
 
 The born-state REDCON ladder is:
 
@@ -287,7 +310,8 @@ Together with BLE `sparkplug`/`ble`/`power` state, upgraded unit devices can
 converge through the full REDCON ladder.
 
 Commandable REDCON levels are a txing type capability, exposed as the comma-separated
-`redconCommandLevels` thing attribute from each device manifest's `redcon_command_levels`.
+`redconCommandLevels` thing attribute. Device things get the value from their
+device manifest's `redcon_command_levels`; rig things expose `1,4`.
 The UI still displays the current Sparkplug REDCON even when that level is not commandable,
 but it only enables switching to levels listed for the thing type.
 
@@ -295,6 +319,20 @@ but it only enables switching to levels listed for the thing type.
 
 Rig receives target REDCON only through Sparkplug.
 
+- target rig `NCMD.redcon=4`
+  - stop full rig work while keeping the node MQTT session and `NCMD`
+    subscription alive
+  - publish Sparkplug node `NBIRTH redcon=4`
+  - cloud rig disables recurring EventBridge tick work
+  - raspi rig stops recurring inventory, per-device MQTT sessions, device
+    publications, board retained-state subscriptions, and BLE-driven command
+    forwarding
+- target rig `NCMD.redcon=1`
+  - resume full rig work
+  - publish Sparkplug node `NBIRTH redcon=1`
+  - cloud rig enables EventBridge and runs the scheduler body once immediately
+  - raspi rig resumes inventory, device sessions, board subscriptions, and
+    device publication
 - target `redcon=4`
   - converge txing to the sleep state
   - publish Sparkplug device `redcon=4`

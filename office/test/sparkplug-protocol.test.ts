@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  buildSparkplugNodeRedconCommandPacket,
+  buildSparkplugNodeTopics,
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
   decodeSparkplugPayload,
@@ -12,6 +14,7 @@ describe('sparkplug protocol helpers', () => {
     expect(buildSparkplugTopics('town', 'rig', 'txing')).toEqual({
       nbirth: 'spBv1.0/town/NBIRTH/rig',
       ndata: 'spBv1.0/town/NDATA/rig',
+      ncmd: 'spBv1.0/town/NCMD/rig',
       dcmd: 'spBv1.0/town/DCMD/rig/txing',
       dbirth: 'spBv1.0/town/DBIRTH/rig/txing',
       ddata: 'spBv1.0/town/DDATA/rig/txing',
@@ -39,6 +42,22 @@ describe('sparkplug protocol helpers', () => {
         stringValue: null,
         timestamp: null,
       },
+    ])
+  })
+
+  test('encodes a node redcon command payload for NCMD', () => {
+    const topics = buildSparkplugNodeTopics('town', 'rig')
+    const packet = buildSparkplugNodeRedconCommandPacket(topics, 4, 8, 12345)
+    const decoded = decodeSparkplugPayload(packet.payload)
+
+    expect(packet.topicName).toBe('spBv1.0/town/NCMD/rig')
+    expect(decoded.timestamp).toBe(12345)
+    expect(decoded.seq).toBe(8)
+    expect(decoded.metrics).toEqual([
+      expect.objectContaining({
+        name: 'redcon',
+        intValue: 4,
+      }),
     ])
   })
 

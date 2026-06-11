@@ -29,6 +29,8 @@ import (
 const (
 	managerID                          = "dev.txing.rig.SparkplugManager"
 	nodeBDSeq                          = uint64(1)
+	nodeRedconActive                   = uint8(1)
+	nodeRedconCommandable              = uint8(4)
 	devicePublishInterval              = 2 * time.Second
 	boardRetainedCapabilityStateFilter = "txings/+/capability/v2/state"
 	shadowUpdateFilter                 = "$aws/things/+/shadow/name/+/update"
@@ -40,7 +42,7 @@ type runtimeState struct {
 	broker                  *ipc.Broker
 	ipcClient               *ipc.Client
 	registry                *registry.Client
-	nodeMQTT                *mqttx.Client
+	nodeMQTT                nodeMQTTClient
 	devices                 map[string]*managedDevice
 	deviceMu                sync.RWMutex
 	boardStateMu            sync.Mutex
@@ -48,6 +50,7 @@ type runtimeState struct {
 	inventorySeq            uint64
 	nodeSeq                 uint64
 	commandSeq              uint64
+	nodeRedcon              atomic.Uint32
 }
 
 type managedDevice struct {
@@ -58,7 +61,9 @@ type managedDevice struct {
 
 type nodeMQTTClient interface {
 	Subscribe(filter string, handler func(mqttx.Message)) error
+	Unsubscribe(filter string) error
 	Publish(topic string, payload []byte, retained bool) error
+	Disconnect(quiesce uint)
 }
 
 type managedMQTTClient interface {
@@ -178,11 +183,16 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 		case err := <-ipcErrors:
 			return fmt.Errorf("IPC receive failed: %w", err)
 		case <-inventoryTicker.C:
+			if state.currentNodeRedcon() == nodeRedconCommandable {
+				continue
+			}
 			if err := state.refreshInventory(ctx); err != nil {
 				logger.Print(ctx, "warning", fmt.Sprintf("inventory refresh failed error=%q", err))
 			}
 		case <-publishTicker.C:
-			state.publishDeviceState(ctx)
+			if state.currentNodeRedcon() != nodeRedconCommandable {
+				state.publishDeviceState(ctx)
+			}
 		case message := <-messages:
 			state.handleIPCMessage(ctx, message)
 		}
@@ -244,30 +254,23 @@ func (s *runtimeState) connectNodeMQTT(ctx context.Context) error {
 }
 
 func (s *runtimeState) publishNodeOnline(client nodeMQTTClient) error {
-	if err := client.Subscribe(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DCMD", s.cfg.RigID, "+"), nil); err != nil {
+	if err := client.Subscribe(sparkplug.BuildNodeCommandTopic(s.cfg.TownID, s.cfg.RigID), nil); err != nil {
 		return err
 	}
-	if err := client.Subscribe(boardRetainedCapabilityStateFilter, nil); err != nil {
-		return err
-	}
-	s.resetBoardStateSubscriptions()
-	for _, thingName := range s.knownDeviceNames() {
-		if err := s.ensureBoardStateSubscription(client, thingName); err != nil {
+
+	redcon := s.currentNodeRedcon()
+	if redcon != nodeRedconCommandable {
+		if err := s.subscribeActiveNodeWork(client); err != nil {
 			return err
 		}
 	}
-	seq := s.nextNodeSeq()
-	payload, err := sparkplug.BuildNodeBirthPayload(manager.NodeRedconBorn, nodeBDSeq, seq, uint64(time.Now().UnixMilli()))
-	if err != nil {
-		return err
-	}
-	if err := client.Publish(sparkplug.BuildNodeTopic(s.cfg.TownID, "NBIRTH", s.cfg.RigID), payload, false); err != nil {
-		return err
-	}
-	return nil
+	return s.publishNodeBirth(client, redcon, nil)
 }
 
 func (s *runtimeState) refreshInventory(ctx context.Context) error {
+	if s.currentNodeRedcon() == nodeRedconCommandable {
+		return nil
+	}
 	loaded, err := s.registry.LoadInventory(ctx, s.cfg.RigID)
 	if err != nil {
 		return err
@@ -353,6 +356,13 @@ func (s *runtimeState) ensureDeviceMQTT(thingName string, managed *managedDevice
 }
 
 func (s *runtimeState) handleMQTTMessage(ctx context.Context, message mqttx.Message) {
+	if parseSparkplugNCMDTopic(s.cfg.TownID, s.cfg.RigID, message.Topic) {
+		s.handleNodeCommand(ctx, message)
+		return
+	}
+	if s.currentNodeRedcon() == nodeRedconCommandable {
+		return
+	}
 	if thingName, ok := parseSparkplugDCMDTopic(s.cfg.TownID, s.cfg.RigID, message.Topic); ok {
 		s.commandSeq++
 		deadline := uint64(time.Now().Add(s.cfg.CommandDeadline).UnixMilli())
@@ -404,6 +414,9 @@ func (s *runtimeState) handleMQTTMessage(ctx context.Context, message mqttx.Mess
 }
 
 func (s *runtimeState) handleIPCMessage(ctx context.Context, message ipc.Message) {
+	if s.currentNodeRedcon() == nodeRedconCommandable {
+		return
+	}
 	if isThingShadowUpdateTopic(message.Topic) {
 		if s.nodeMQTT == nil {
 			s.logger.Print(ctx, "warning", fmt.Sprintf("shadow update dropped before MQTT connection topic=%s", message.Topic))
@@ -460,6 +473,9 @@ func (s *runtimeState) handleIPCMessage(ctx context.Context, message ipc.Message
 }
 
 func (s *runtimeState) publishDeviceState(ctx context.Context) {
+	if s.currentNodeRedcon() == nodeRedconCommandable {
+		return
+	}
 	for thingName, managed := range s.devices {
 		if managed.mqtt == nil {
 			if err := s.ensureDeviceMQTT(thingName, managed); err != nil {
@@ -533,6 +549,18 @@ func (s *runtimeState) nextNodeSeq() uint64 {
 	return seq
 }
 
+func (s *runtimeState) currentNodeRedcon() uint8 {
+	value := s.nodeRedcon.Load()
+	if value == 0 {
+		return nodeRedconActive
+	}
+	return uint8(value)
+}
+
+func (s *runtimeState) setNodeRedcon(redcon uint8) {
+	s.nodeRedcon.Store(uint32(redcon))
+}
+
 func (s *runtimeState) knownDeviceNames() []string {
 	s.deviceMu.RLock()
 	defer s.deviceMu.RUnlock()
@@ -552,6 +580,22 @@ func (s *runtimeState) deviceSnapshot() map[string]*managedDevice {
 		snapshot[thingName] = managed
 	}
 	return snapshot
+}
+
+func (s *runtimeState) subscribeActiveNodeWork(client nodeMQTTClient) error {
+	if err := client.Subscribe(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DCMD", s.cfg.RigID, "+"), nil); err != nil {
+		return err
+	}
+	if err := client.Subscribe(boardRetainedCapabilityStateFilter, nil); err != nil {
+		return err
+	}
+	s.resetBoardStateSubscriptions()
+	for _, thingName := range s.knownDeviceNames() {
+		if err := s.ensureBoardStateSubscription(client, thingName); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *runtimeState) ensureBoardStateSubscription(client nodeMQTTClient, thingName string) error {
@@ -575,6 +619,129 @@ func (s *runtimeState) ensureBoardStateSubscription(client nodeMQTTClient, thing
 		return fmt.Errorf("subscribe %s: %w", topic, err)
 	}
 	return nil
+}
+
+func (s *runtimeState) publishNodeBirth(client nodeMQTTClient, redcon uint8, metrics []sparkplug.Metric) error {
+	seq := s.nextNodeSeq()
+	payload, err := sparkplug.BuildNodeBirthPayloadWithMetrics(redcon, nodeBDSeq, seq, uint64(time.Now().UnixMilli()), metrics)
+	if err != nil {
+		return err
+	}
+	return client.Publish(sparkplug.BuildNodeTopic(s.cfg.TownID, "NBIRTH", s.cfg.RigID), payload, false)
+}
+
+func (s *runtimeState) handleNodeCommand(ctx context.Context, message mqttx.Message) {
+	command, err := sparkplug.DecodeRedconCommand(message.Payload)
+	if err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("NCMD decode failed topic=%s error=%q", message.Topic, err))
+		return
+	}
+	if command == nil {
+		return
+	}
+	s.commandSeq++
+	s.infoPrint(ctx, fmt.Sprintf("REDCON command received rig=%s targetRedcon=%d command=ncmd-%s-%d source=sparkplug-ncmd topic=%s", s.cfg.RigID, command.Value, s.cfg.RigID, s.commandSeq, message.Topic))
+	switch command.Value {
+	case nodeRedconActive:
+		s.enterNodeRedconActive(ctx, command)
+	case nodeRedconCommandable:
+		s.enterNodeRedconCommandable(ctx, command)
+	default:
+		metrics := s.nodeCommandResultMetrics(command, protocol.CommandFailed, "rig supports REDCON 1 and 4 only")
+		if s.nodeMQTT != nil {
+			if err := s.publishNodeBirth(s.nodeMQTT, s.currentNodeRedcon(), metrics); err != nil {
+				s.logger.Print(ctx, "warning", fmt.Sprintf("publish NCMD failure result failed error=%q", err))
+			}
+		}
+	}
+}
+
+func (s *runtimeState) enterNodeRedconCommandable(ctx context.Context, command *sparkplug.DecodedCommand) {
+	s.teardownActiveNodeWork(ctx)
+	s.setNodeRedcon(nodeRedconCommandable)
+	if s.nodeMQTT == nil {
+		return
+	}
+	metrics := s.nodeCommandResultMetrics(command, protocol.CommandSucceeded, "")
+	if err := s.publishNodeBirth(s.nodeMQTT, nodeRedconCommandable, metrics); err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("publish NBIRTH redcon=4 failed error=%q", err))
+	}
+}
+
+func (s *runtimeState) enterNodeRedconActive(ctx context.Context, command *sparkplug.DecodedCommand) {
+	if s.nodeMQTT == nil {
+		return
+	}
+	if err := s.subscribeActiveNodeWork(s.nodeMQTT); err != nil {
+		metrics := s.nodeCommandResultMetrics(command, protocol.CommandFailed, err.Error())
+		if publishErr := s.publishNodeBirth(s.nodeMQTT, s.currentNodeRedcon(), metrics); publishErr != nil {
+			s.logger.Print(ctx, "warning", fmt.Sprintf("publish NCMD failure result failed error=%q", publishErr))
+		}
+		return
+	}
+	s.setNodeRedcon(nodeRedconActive)
+	metrics := s.nodeCommandResultMetrics(command, protocol.CommandSucceeded, "")
+	if err := s.publishNodeBirth(s.nodeMQTT, nodeRedconActive, metrics); err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("publish NBIRTH redcon=1 failed error=%q", err))
+	}
+	if s.registry == nil {
+		return
+	}
+	if err := s.refreshInventory(ctx); err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("inventory refresh after NCMD redcon=1 failed error=%q", err))
+	}
+}
+
+func (s *runtimeState) teardownActiveNodeWork(ctx context.Context) {
+	if s.nodeMQTT != nil {
+		for _, filter := range append([]string{
+			sparkplug.BuildDeviceTopic(s.cfg.TownID, "DCMD", s.cfg.RigID, "+"),
+			boardRetainedCapabilityStateFilter,
+		}, s.boardStateSubscriptionTopics()...) {
+			if err := s.nodeMQTT.Unsubscribe(filter); err != nil {
+				s.logger.Print(ctx, "warning", fmt.Sprintf("unsubscribe failed filter=%s error=%q", filter, err))
+			}
+		}
+	}
+	s.resetBoardStateSubscriptions()
+
+	s.deviceMu.Lock()
+	for _, managed := range s.devices {
+		if managed.mqtt == nil {
+			continue
+		}
+		managed.mqtt.Disconnect(250)
+		managed.mqtt = nil
+	}
+	s.deviceMu.Unlock()
+}
+
+func (s *runtimeState) boardStateSubscriptionTopics() []string {
+	s.boardStateMu.Lock()
+	defer s.boardStateMu.Unlock()
+	topics := make([]string, 0, len(s.boardStateSubscriptions))
+	for thingName := range s.boardStateSubscriptions {
+		topics = append(topics, boardRetainedCapabilityStateTopic(thingName))
+	}
+	sort.Strings(topics)
+	return topics
+}
+
+func (s *runtimeState) nodeCommandResultMetrics(command *sparkplug.DecodedCommand, status string, message string) []sparkplug.Metric {
+	seq := uint64(0)
+	if command.Seq != nil {
+		seq = *command.Seq
+	}
+	metrics := []sparkplug.Metric{
+		sparkplug.NewStringMetric("redconCommandStatus", status),
+		sparkplug.NewInt32Metric("redconCommandSeq", int32(seq)),
+		sparkplug.NewStringMetric("redconCommandId", fmt.Sprintf("ncmd-%s-%d", s.cfg.RigID, s.commandSeq)),
+		sparkplug.NewInt32Metric("redconCommandTarget", int32(command.Value)),
+	}
+	if message != "" {
+		metrics = append(metrics, sparkplug.NewStringMetric("redconCommandMessage", message))
+	}
+	return metrics
 }
 
 func (s *runtimeState) resetBoardStateSubscriptions() {
@@ -613,6 +780,10 @@ func parseSparkplugDCMDTopic(groupID, edgeNodeID, topic string) (string, bool) {
 		return "", false
 	}
 	return thingName, true
+}
+
+func parseSparkplugNCMDTopic(groupID, edgeNodeID, topic string) bool {
+	return topic == sparkplug.BuildNodeCommandTopic(groupID, edgeNodeID)
 }
 
 func parseBoardCapabilityStateTopic(topic string) (string, bool) {

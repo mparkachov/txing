@@ -12,7 +12,9 @@ import (
 
 type fakeNodeMQTTClient struct {
 	subscriptions []string
+	unsubscribes  []string
 	publishes     []fakePublish
+	disconnects   int
 }
 
 type fakePublish struct {
@@ -26,6 +28,11 @@ func (f *fakeNodeMQTTClient) Subscribe(filter string, _ func(mqttx.Message)) err
 	return nil
 }
 
+func (f *fakeNodeMQTTClient) Unsubscribe(filter string) error {
+	f.unsubscribes = append(f.unsubscribes, filter)
+	return nil
+}
+
 func (f *fakeNodeMQTTClient) Publish(topic string, payload []byte, retained bool) error {
 	f.publishes = append(f.publishes, fakePublish{
 		topic:    topic,
@@ -35,7 +42,7 @@ func (f *fakeNodeMQTTClient) Publish(topic string, payload []byte, retained bool
 	return nil
 }
 
-func (f *fakeNodeMQTTClient) Disconnect(uint) {}
+func (f *fakeNodeMQTTClient) Disconnect(uint) { f.disconnects++ }
 
 func TestIsThingShadowUpdateTopic(t *testing.T) {
 	for _, topic := range []string{
@@ -70,6 +77,7 @@ func TestPublishNodeOnlineRestoresSubscriptionsAndPublishesBirth(t *testing.T) {
 	}
 
 	wantSubscriptions := []string{
+		sparkplug.BuildNodeCommandTopic("town-1", "rig-1"),
 		sparkplug.BuildDeviceTopic("town-1", "DCMD", "rig-1", "+"),
 		boardRetainedCapabilityStateFilter,
 	}
@@ -130,6 +138,7 @@ func TestPublishNodeOnlineRestoresExactBoardRetainedSubscriptions(t *testing.T) 
 	}
 
 	wantSubscriptions := []string{
+		sparkplug.BuildNodeCommandTopic("town-1", "rig-1"),
 		sparkplug.BuildDeviceTopic("town-1", "DCMD", "rig-1", "+"),
 		boardRetainedCapabilityStateFilter,
 		boardRetainedCapabilityStateTopic("unit-a"),
@@ -144,6 +153,116 @@ func TestPublishNodeOnlineRestoresExactBoardRetainedSubscriptions(t *testing.T) 
 	if client.publishes[0].retained {
 		t.Fatal("NBIRTH publish must not be retained")
 	}
+}
+
+func TestPublishNodeOnlineInRedconFourKeepsOnlyNodeCommandPath(t *testing.T) {
+	state := &runtimeState{cfg: rigconfig.Config{
+		TownID: "town-1",
+		RigID:  "rig-1",
+	}}
+	state.setNodeRedcon(nodeRedconCommandable)
+	client := &fakeNodeMQTTClient{}
+
+	if err := state.publishNodeOnline(client); err != nil {
+		t.Fatal(err)
+	}
+
+	wantSubscriptions := []string{sparkplug.BuildNodeCommandTopic("town-1", "rig-1")}
+	if !reflect.DeepEqual(client.subscriptions, wantSubscriptions) {
+		t.Fatalf("subscriptions = %#v, want %#v", client.subscriptions, wantSubscriptions)
+	}
+	payload, err := sparkplug.DecodePayload(client.publishes[0].payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMetric(t, payload.Metrics, sparkplug.NewInt32Metric("redcon", 4))
+}
+
+func TestNodeRedconFourCommandTearsDownActiveWorkAndPublishesBirth(t *testing.T) {
+	node := &fakeNodeMQTTClient{}
+	device := &fakeNodeMQTTClient{}
+	state := &runtimeState{
+		cfg: rigconfig.Config{
+			TownID: "town-1",
+			RigID:  "rig-1",
+		},
+		nodeMQTT: node,
+		devices: map[string]*managedDevice{
+			"unit-1": {mqtt: device},
+		},
+		boardStateSubscriptions: map[string]struct{}{
+			"unit-1": {},
+		},
+	}
+
+	state.handleMQTTMessage(context.Background(), mqttx.Message{
+		Topic:   sparkplug.BuildNodeCommandTopic("town-1", "rig-1"),
+		Payload: redconCommandPayload(t, 4, 7),
+	})
+
+	wantUnsubscribes := []string{
+		sparkplug.BuildDeviceTopic("town-1", "DCMD", "rig-1", "+"),
+		boardRetainedCapabilityStateFilter,
+		boardRetainedCapabilityStateTopic("unit-1"),
+	}
+	if !reflect.DeepEqual(node.unsubscribes, wantUnsubscribes) {
+		t.Fatalf("unsubscribes = %#v, want %#v", node.unsubscribes, wantUnsubscribes)
+	}
+	if device.disconnects != 1 {
+		t.Fatalf("device disconnects = %d, want 1", device.disconnects)
+	}
+	if state.devices["unit-1"].mqtt != nil {
+		t.Fatal("device MQTT client should be cleared")
+	}
+	if state.currentNodeRedcon() != nodeRedconCommandable {
+		t.Fatalf("node redcon = %d, want 4", state.currentNodeRedcon())
+	}
+	payload, err := sparkplug.DecodePayload(node.publishes[0].payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMetric(t, payload.Metrics, sparkplug.NewInt32Metric("redcon", 4))
+	assertMetric(t, payload.Metrics, sparkplug.NewStringMetric("redconCommandStatus", "succeeded"))
+	assertMetric(t, payload.Metrics, sparkplug.NewInt32Metric("redconCommandSeq", 7))
+	assertMetric(t, payload.Metrics, sparkplug.NewInt32Metric("redconCommandTarget", 4))
+}
+
+func TestNodeRedconOneCommandRestoresActiveSubscriptions(t *testing.T) {
+	node := &fakeNodeMQTTClient{}
+	state := &runtimeState{
+		cfg: rigconfig.Config{
+			TownID: "town-1",
+			RigID:  "rig-1",
+		},
+		nodeMQTT:                node,
+		devices:                 map[string]*managedDevice{},
+		boardStateSubscriptions: map[string]struct{}{},
+	}
+	state.setNodeRedcon(nodeRedconCommandable)
+
+	state.handleMQTTMessage(context.Background(), mqttx.Message{
+		Topic:   sparkplug.BuildNodeCommandTopic("town-1", "rig-1"),
+		Payload: redconCommandPayload(t, 1, 8),
+	})
+
+	wantSubscriptions := []string{
+		sparkplug.BuildDeviceTopic("town-1", "DCMD", "rig-1", "+"),
+		boardRetainedCapabilityStateFilter,
+	}
+	if !reflect.DeepEqual(node.subscriptions, wantSubscriptions) {
+		t.Fatalf("subscriptions = %#v, want %#v", node.subscriptions, wantSubscriptions)
+	}
+	if state.currentNodeRedcon() != nodeRedconActive {
+		t.Fatalf("node redcon = %d, want 1", state.currentNodeRedcon())
+	}
+	payload, err := sparkplug.DecodePayload(node.publishes[0].payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMetric(t, payload.Metrics, sparkplug.NewInt32Metric("redcon", 1))
+	assertMetric(t, payload.Metrics, sparkplug.NewStringMetric("redconCommandStatus", "succeeded"))
+	assertMetric(t, payload.Metrics, sparkplug.NewInt32Metric("redconCommandSeq", 8))
+	assertMetric(t, payload.Metrics, sparkplug.NewInt32Metric("redconCommandTarget", 1))
 }
 
 func TestEnsureBoardStateSubscriptionDeduplicatesExactTopic(t *testing.T) {
@@ -191,6 +310,21 @@ func TestSparkplugDevicePublicationsAreNotRetained(t *testing.T) {
 			t.Fatalf("%s publish must not be retained", wantTopic)
 		}
 	}
+}
+
+func redconCommandPayload(t *testing.T, redcon uint8, seq uint64) []byte {
+	t.Helper()
+	payload, err := sparkplug.EncodePayload(sparkplug.Payload{
+		Timestamp: 1714380000000,
+		Seq:       &seq,
+		Metrics: []sparkplug.Metric{
+			sparkplug.NewInt32Metric("redcon", int32(redcon)),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func assertMetric(t *testing.T, metrics []sparkplug.Metric, want sparkplug.Metric) {

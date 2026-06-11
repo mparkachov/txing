@@ -20,7 +20,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize AWS cloud client: %v", err)
 	}
-	lambda.StartWithOptions(func(ctx context.Context, _ json.RawMessage) (map[string]any, error) {
-		return cloudmcu.HandleRigLambdaEvent(ctx, awsClient)
+	lambda.StartWithOptions(func(ctx context.Context, rawEvent json.RawMessage) (map[string]any, error) {
+		var event map[string]any
+		if len(rawEvent) > 0 {
+			if err := json.Unmarshal(rawEvent, &event); err != nil {
+				return nil, err
+			}
+		}
+		if event == nil {
+			event = map[string]any{}
+		}
+		return cloudmcu.HandleRigLambdaEvent(ctx, event, awsClient)
 	})
 }

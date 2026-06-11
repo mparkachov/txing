@@ -5,6 +5,7 @@ import {
   deriveTxingPowerTransitionPending,
   deriveTxingPoweredOn,
   extractIsSparkplugDeviceUnavailable,
+  extractIsSparkplugUnavailable,
   extractReportedBatteryMv,
   extractReportedMcuOnline,
   extractReportedRedcon,
@@ -96,7 +97,7 @@ describe('app model helpers', () => {
     ).toBe(1)
   })
 
-  test('reads node death redcon only from sparkplug payload metrics', () => {
+  test('treats node death redcon as unavailable even if a legacy metric is present', () => {
     expect(
       extractReportedRedcon({
         namedShadows: {
@@ -107,6 +108,32 @@ describe('app model helpers', () => {
                   namespace: 'spBv1.0',
                   groupId: 'town',
                   messageType: 'NDEATH',
+                  edgeNodeId: 'rig',
+                },
+                payload: {
+                  metrics: {
+                    redcon: 4,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toBeNull()
+  })
+
+  test('reads node birth redcon 4 as reachable and commandable', () => {
+    expect(
+      extractReportedRedcon({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                topic: {
+                  namespace: 'spBv1.0',
+                  groupId: 'town',
+                  messageType: 'NBIRTH',
                   edgeNodeId: 'rig',
                 },
                 payload: {
@@ -198,6 +225,7 @@ describe('app model helpers', () => {
 
     expect(extractSparkplugMessageType(deviceDeathShadow)).toBe('DDEATH')
     expect(extractIsSparkplugDeviceUnavailable(deviceDeathShadow)).toBe(true)
+    expect(extractIsSparkplugUnavailable(deviceDeathShadow)).toBe(true)
     expect(
       extractIsSparkplugDeviceUnavailable({
         namedShadows: {
@@ -221,6 +249,29 @@ describe('app model helpers', () => {
         },
       }),
     ).toBe(false)
+    expect(
+      extractIsSparkplugUnavailable({
+        namedShadows: {
+          sparkplug: {
+            state: {
+              reported: {
+                topic: {
+                  namespace: 'spBv1.0',
+                  groupId: 'town',
+                  edgeNodeId: 'rig',
+                  messageType: 'NDEATH',
+                },
+                payload: {
+                  metrics: {
+                    redcon: 4,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(true)
   })
 
   test('extracts reported battery from power named shadow', () => {

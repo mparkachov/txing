@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  extractIsSparkplugUnavailable,
   extractSparkplugCapabilityAvailability,
   extractSparkplugRedconCommandStatus,
   shouldClearPendingTargetRedcon,
@@ -50,6 +51,40 @@ describe('sparkplug model helpers', () => {
         },
       }),
     ).toBeNull()
+  })
+
+  test('treats node and device death as unavailable', () => {
+    expect(
+      extractIsSparkplugUnavailable({
+        state: {
+          reported: {
+            topic: {
+              messageType: 'NDEATH',
+            },
+            payload: {
+              metrics: {
+                redcon: 4,
+              },
+            },
+          },
+        },
+      }),
+    ).toBe(true)
+    expect(
+      extractIsSparkplugUnavailable({
+        state: {
+          reported: {
+            topic: {
+              deviceId: 'unit-a1',
+              messageType: 'DDEATH',
+            },
+            payload: {
+              metrics: {},
+            },
+          },
+        },
+      }),
+    ).toBe(true)
   })
 
   test('extracts capability availability from sparkplug metrics', () => {

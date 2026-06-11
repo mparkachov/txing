@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iot"
 	"github.com/aws/aws-sdk-go-v2/service/iotdataplane"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -25,6 +26,7 @@ import (
 const (
 	CloudMcuThingType      = "cloud-mcu"
 	CloudRigThingType      = "cloud"
+	RigKindAttribute       = "rigType"
 	ThingIndexName         = "AWS_Things"
 	CloudMcuSearchQuery    = "thingTypeName:cloud-mcu"
 	CloudMcuSearchPageSize = int32(100)
@@ -118,6 +120,8 @@ type AWSClientAPI interface {
 	DescribeThing(ctx context.Context, thingName string) (ThingDescription, error)
 	Publish(ctx context.Context, topic string, payload []byte) error
 	SendTickBatch(ctx context.Context, ticks []CloudMcuTick) error
+	EnableCloudRigSchedule(ctx context.Context) error
+	DisableCloudRigSchedule(ctx context.Context) error
 	GetThingShadow(ctx context.Context, thingName, shadowName string) ([]byte, bool, error)
 	UpdateThingShadow(ctx context.Context, thingName, shadowName string, payload []byte) error
 	ListDeviceTasks(ctx context.Context, thingName string) ([]EcsTaskState, error)
@@ -131,7 +135,9 @@ type AWSClient struct {
 	iotData           *iotdataplane.Client
 	sqs               *sqs.Client
 	ecs               *ecs.Client
+	events            *eventbridge.Client
 	tickQueueURL      string
+	cloudRigRuleName  string
 	ecsCluster        string
 	ecsTaskDefinition string
 	ecsSubnets        []string
@@ -159,7 +165,9 @@ func NewAWSClient(ctx context.Context) (*AWSClient, error) {
 		iotData:           iotData,
 		sqs:               sqs.NewFromConfig(cfg),
 		ecs:               ecs.NewFromConfig(cfg),
+		events:            eventbridge.NewFromConfig(cfg),
 		tickQueueURL:      envNonempty("CLOUD_MCU_TICK_QUEUE_URL"),
+		cloudRigRuleName:  envNonempty("CLOUD_RIG_SCHEDULE_RULE_NAME"),
 		ecsCluster:        envNonempty("CLOUD_MCU_ECS_CLUSTER"),
 		ecsTaskDefinition: envNonempty("CLOUD_MCU_ECS_TASK_DEFINITION"),
 		ecsSubnets:        envCSV("CLOUD_MCU_ECS_SUBNETS"),
@@ -172,6 +180,13 @@ func (c *AWSClient) requiredTickQueueURL() (string, error) {
 		return "", errors.New("CLOUD_MCU_TICK_QUEUE_URL is required")
 	}
 	return c.tickQueueURL, nil
+}
+
+func (c *AWSClient) requiredCloudRigRuleName() (string, error) {
+	if c.cloudRigRuleName == "" {
+		return "", errors.New("CLOUD_RIG_SCHEDULE_RULE_NAME is required")
+	}
+	return c.cloudRigRuleName, nil
 }
 
 func (c *AWSClient) requiredECSCluster() (string, error) {
@@ -261,6 +276,24 @@ func (c *AWSClient) SendTickBatch(ctx context.Context, ticks []CloudMcuTick) err
 		return fmt.Errorf("cloud MCU SQS tick batch had failed entries: %s", strings.Join(failures, ","))
 	}
 	return nil
+}
+
+func (c *AWSClient) EnableCloudRigSchedule(ctx context.Context) error {
+	ruleName, err := c.requiredCloudRigRuleName()
+	if err != nil {
+		return err
+	}
+	_, err = c.events.EnableRule(ctx, &eventbridge.EnableRuleInput{Name: aws.String(ruleName)})
+	return err
+}
+
+func (c *AWSClient) DisableCloudRigSchedule(ctx context.Context) error {
+	ruleName, err := c.requiredCloudRigRuleName()
+	if err != nil {
+		return err
+	}
+	_, err = c.events.DisableRule(ctx, &eventbridge.DisableRuleInput{Name: aws.String(ruleName)})
+	return err
 }
 
 func (c *AWSClient) GetThingShadow(ctx context.Context, thingName, shadowName string) ([]byte, bool, error) {
@@ -519,7 +552,13 @@ func stringMetric(name string, value string) metric {
 }
 
 func BuildNodeBirthPayload(seq uint64, timestamp int64) ([]byte, error) {
-	return encodePayload(uint64(timestamp), &seq, []metric{uint64Metric("bdSeq", NodeBdSeq), int32Metric("redcon", int32(RedconReady))})
+	return buildNodeBirthPayload(RedconReady, seq, timestamp, nil)
+}
+
+func buildNodeBirthPayload(redcon uint8, seq uint64, timestamp int64, metrics []metric) ([]byte, error) {
+	all := []metric{uint64Metric("bdSeq", NodeBdSeq), int32Metric("redcon", int32(redcon))}
+	all = append(all, metrics...)
+	return encodePayload(uint64(timestamp), &seq, all)
 }
 
 func buildDeviceReportPayload(redcon uint8, seq uint64, timestamp int64, metrics []metric) ([]byte, error) {
@@ -538,10 +577,14 @@ func buildCapabilityMetrics(power bool) []metric {
 }
 
 func buildCommandResultMetrics(seq uint64, targetRedcon uint8, status string, message string) []metric {
+	return buildCommandResultMetricsWithID(fmt.Sprintf("dcmd-%d", seq), seq, targetRedcon, status, message)
+}
+
+func buildCommandResultMetricsWithID(commandID string, seq uint64, targetRedcon uint8, status string, message string) []metric {
 	metrics := []metric{
 		stringMetric("redconCommandStatus", status),
 		int32Metric("redconCommandSeq", int32(seq)),
-		stringMetric("redconCommandId", fmt.Sprintf("dcmd-%d", seq)),
+		stringMetric("redconCommandId", commandID),
 		int32Metric("redconCommandTarget", int32(targetRedcon)),
 	}
 	if message != "" {
@@ -904,6 +947,105 @@ func discoverCloudMcuDevices(ctx context.Context, awsClient AWSClientAPI) ([]Clo
 	}
 }
 
+type RigController struct{ aws AWSClientAPI }
+
+func NewRigController(aws AWSClientAPI) RigController { return RigController{aws: aws} }
+
+func (c RigController) HandleNCMDWithNow(ctx context.Context, event map[string]any, nowMs int64) (map[string]any, error) {
+	topic, ok := event["mqttTopic"].(string)
+	if !ok {
+		return nil, errors.New("NCMD event is missing mqttTopic")
+	}
+	townID, rigID, ok := parseNCMDTopic(topic)
+	if !ok {
+		return nil, fmt.Errorf("unsupported NCMD topic: %s", topic)
+	}
+	if err := c.validateCloudRigIdentity(ctx, townID, rigID); err != nil {
+		return nil, err
+	}
+	payload, err := decodeEventPayload(event)
+	if err != nil {
+		return nil, fmt.Errorf("decode NCMD payload: %w", err)
+	}
+	redcon, seq, ok, err := decodeRedconCommand(payload)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return map[string]any{"eventType": "ncmd", "rigId": rigID, "status": "ignored"}, nil
+	}
+	if redcon != RedconReady && redcon != RedconSleep {
+		metrics := buildCommandResultMetricsWithID(fmt.Sprintf("ncmd-%d", seq), seq, redcon, CommandFailed, "cloud rig supports REDCON 1 and 4 only")
+		if err := c.publishRigData(ctx, townID, rigID, seq, nowMs, metrics); err != nil {
+			return nil, err
+		}
+		return map[string]any{"eventType": "ncmd", "rigId": rigID, "status": CommandFailed, "targetRedcon": redcon}, nil
+	}
+	if redcon == RedconSleep {
+		if err := c.aws.DisableCloudRigSchedule(ctx); err != nil {
+			return nil, err
+		}
+		metrics := buildCommandResultMetricsWithID(fmt.Sprintf("ncmd-%d", seq), seq, redcon, CommandSucceeded, "")
+		if err := c.publishRigBirth(ctx, townID, rigID, RedconSleep, seq, nowMs, metrics); err != nil {
+			return nil, err
+		}
+		return map[string]any{"eventType": "ncmd", "rigId": rigID, "status": CommandSucceeded, "redcon": redcon}, nil
+	}
+	if err := c.aws.EnableCloudRigSchedule(ctx); err != nil {
+		return nil, err
+	}
+	metrics := buildCommandResultMetricsWithID(fmt.Sprintf("ncmd-%d", seq), seq, redcon, CommandSucceeded, "")
+	if err := c.publishRigBirth(ctx, townID, rigID, RedconReady, seq, nowMs, metrics); err != nil {
+		return nil, err
+	}
+	scheduleResult, err := NewRigScheduler(c.aws).HandleScheduleWithNow(ctx, nowMs)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"eventType": "ncmd", "rigId": rigID, "status": CommandSucceeded, "redcon": redcon, "schedule": scheduleResult}, nil
+}
+
+func (c RigController) validateCloudRigIdentity(ctx context.Context, townID, rigID string) error {
+	description, err := c.aws.DescribeThing(ctx, rigID)
+	if err != nil {
+		return err
+	}
+	if description.ThingTypeName == nil || *description.ThingTypeName != CloudRigThingType {
+		return fmt.Errorf("%s is not a cloud rig thing", rigID)
+	}
+	if description.Attributes["kind"] != RigKindAttribute {
+		return fmt.Errorf("%s does not identify a rig thing", rigID)
+	}
+	if description.Attributes["townId"] != townID {
+		return fmt.Errorf("%s townId does not match event", rigID)
+	}
+	return nil
+}
+
+func (c RigController) publishRigBirth(ctx context.Context, townID, rigID string, redcon uint8, seq uint64, nowMs int64, metrics []metric) error {
+	topic, err := BuildNodeTopic(townID, "NBIRTH", rigID)
+	if err != nil {
+		return err
+	}
+	payload, err := buildNodeBirthPayload(redcon, seq, nowMs, metrics)
+	if err != nil {
+		return err
+	}
+	return c.aws.Publish(ctx, topic, payload)
+}
+
+func (c RigController) publishRigData(ctx context.Context, townID, rigID string, seq uint64, nowMs int64, metrics []metric) error {
+	topic, err := BuildNodeTopic(townID, "NDATA", rigID)
+	if err != nil {
+		return err
+	}
+	payload, err := encodePayload(uint64(nowMs), &seq, metrics)
+	if err != nil {
+		return err
+	}
+	return c.aws.Publish(ctx, topic, payload)
+}
+
 type Runtime struct{ aws AWSClientAPI }
 
 func NewRuntime(aws AWSClientAPI) Runtime { return Runtime{aws: aws} }
@@ -1194,6 +1336,19 @@ func parseDCMDTopic(topic string) (string, string, string, bool) {
 	return parts[1], parts[3], parts[4], true
 }
 
+func parseNCMDTopic(topic string) (string, string, bool) {
+	parts := strings.Split(topic, "/")
+	if len(parts) != 4 || parts[0] != SparkplugNamespace || parts[2] != "NCMD" {
+		return "", "", false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return "", "", false
+		}
+	}
+	return parts[1], parts[3], true
+}
+
 func decodeEventPayload(event map[string]any) ([]byte, error) {
 	if payloadBase64, ok := event["payloadBase64"].(string); ok {
 		return base64.StdEncoding.DecodeString(payloadBase64)
@@ -1204,8 +1359,15 @@ func decodeEventPayload(event map[string]any) ([]byte, error) {
 	return nil, errors.New("event does not contain payloadBase64 or rawPayload")
 }
 
-func HandleRigLambdaEvent(ctx context.Context, awsClient AWSClientAPI) (map[string]any, error) {
-	return NewRigScheduler(awsClient).HandleScheduleWithNow(ctx, UTCNowMs())
+func HandleRigLambdaEvent(ctx context.Context, event map[string]any, awsClient AWSClientAPI) (map[string]any, error) {
+	return HandleRigLambdaEventWithNow(ctx, event, awsClient, UTCNowMs())
+}
+
+func HandleRigLambdaEventWithNow(ctx context.Context, event map[string]any, awsClient AWSClientAPI, nowMs int64) (map[string]any, error) {
+	if _, ok := event["mqttTopic"].(string); ok {
+		return NewRigController(awsClient).HandleNCMDWithNow(ctx, event, nowMs)
+	}
+	return NewRigScheduler(awsClient).HandleScheduleWithNow(ctx, nowMs)
 }
 
 func HandleMcuLambdaEvent(ctx context.Context, event map[string]any, awsClient AWSClientAPI) (map[string]any, error) {

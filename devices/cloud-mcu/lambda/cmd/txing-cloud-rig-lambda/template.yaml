@@ -58,6 +58,10 @@ Resources:
                 Effect: Allow
                 Action: iot:SearchIndex
                 Resource: "*"
+              - Sid: CloudRigRuntimeDescribeThing
+                Effect: Allow
+                Action: iot:DescribeThing
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
               - Sid: CloudRigRuntimeDescribeEndpoint
                 Effect: Allow
                 Action: iot:DescribeEndpoint
@@ -66,6 +70,12 @@ Resources:
                 Effect: Allow
                 Action: sqs:SendMessage
                 Resource: !Ref CloudMcuTickQueueArn
+              - Sid: CloudRigRuntimeScheduleControl
+                Effect: Allow
+                Action:
+                  - events:EnableRule
+                  - events:DisableRule
+                Resource: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/${EnvironmentStackName}-cloud-rig-runtime
 
   CloudRigFunction:
     Type: AWS::Lambda::Function
@@ -87,6 +97,7 @@ Resources:
       Environment:
         Variables:
           CLOUD_MCU_TICK_QUEUE_URL: !Ref CloudMcuTickQueueUrl
+          CLOUD_RIG_SCHEDULE_RULE_NAME: !Sub ${EnvironmentStackName}-cloud-rig-runtime
 
   CloudRigScheduleRule:
     Type: AWS::Events::Rule
@@ -106,6 +117,34 @@ Resources:
       FunctionName: !Ref CloudRigFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt CloudRigScheduleRule.Arn
+
+  CloudRigNcmdTopicRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: !Join
+        - "_"
+        - - !Join
+            - "_"
+            - !Split ["-", !Ref EnvironmentStackName]
+          - cloud_rig_ncmd
+      TopicRulePayload:
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        Sql: >-
+          SELECT topic() AS mqttTopic, encode(*, 'base64') AS payloadBase64, timestamp() AS observedAt
+          FROM 'spBv1.0/+/NCMD/+'
+          WHERE startswith(topic(4), 'cloud')
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt CloudRigFunction.Arn
+
+  CloudRigNcmdRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CloudRigFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt CloudRigNcmdTopicRule.Arn
 
   StackParameterCloudRigRuntimeFunctionName:
     Type: AWS::SSM::Parameter
@@ -128,6 +167,13 @@ Resources:
       Type: String
       Value: !Ref CloudRigScheduleRule
 
+  StackParameterCloudRigNcmdTopicRuleArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/CloudRigNcmdTopicRuleArn
+      Type: String
+      Value: !GetAtt CloudRigNcmdTopicRule.Arn
+
 Outputs:
   CloudRigRuntimeFunctionName:
     Value: !Ref CloudRigFunction
@@ -135,3 +181,5 @@ Outputs:
     Value: !GetAtt CloudRigFunction.Arn
   CloudRigRuntimeScheduleRuleName:
     Value: !Ref CloudRigScheduleRule
+  CloudRigNcmdTopicRuleArn:
+    Value: !GetAtt CloudRigNcmdTopicRule.Arn

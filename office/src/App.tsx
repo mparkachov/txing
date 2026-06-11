@@ -73,13 +73,15 @@ import type { RobotState, ShadowConnectionState, ShadowSession } from './shadow-
 import type { ShadowName } from './shadow-protocol'
 import {
   publishDirectSparkplugRedconCommand,
+  sparkplugCommandTargetMessageType,
+  sparkplugCommandTargetThingName,
   resolveThingSparkplugRedconCommandTarget,
 } from './sparkplug-command'
 import SparkplugPanel from './SparkplugPanel'
 import txingLogoUrl from '../../www/txing-logo.png'
 import {
   describeRedcon,
-  extractIsSparkplugDeviceUnavailable,
+  extractIsSparkplugUnavailable,
   extractReportedRedcon,
   extractSparkplugRedconCommandStatus,
   getTxingRedconToneClass,
@@ -423,8 +425,8 @@ function App({ initialAuthError = '' }: AppProps) {
     () => extractReportedRedcon(displayShadowDocument),
     [displayShadowDocument],
   )
-  const isSparkplugDeviceUnavailable = useMemo(
-    () => extractIsSparkplugDeviceUnavailable(displayShadowDocument),
+  const isSparkplugUnavailable = useMemo(
+    () => extractIsSparkplugUnavailable(displayShadowDocument),
     [displayShadowDocument],
   )
   const reportedRedcon = shadowReportedRedcon
@@ -450,7 +452,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const isSparkplugDeviceCommandAvailable =
     currentThingSparkplugCommandTarget !== null &&
     commandableRedconLevels.length > 0 &&
-    !isSparkplugDeviceUnavailable
+    !isSparkplugUnavailable
   const shouldRenderCatalogPanel = shouldRenderRouteCatalogPanel({
     thingKind: currentThingKind,
     reportedRedcon,
@@ -459,7 +461,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const isShadowConnected = shadowConnectionState === 'connected'
   const isRedconCommandPending =
     pendingTargetRedcon !== null &&
-    !isSparkplugDeviceUnavailable &&
+    !isSparkplugUnavailable &&
     (pendingTargetRedcon === 4 ? reportedRedcon !== 4 : true)
   const isRedconCommandDisabled =
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow || isRedconCommandPending
@@ -639,6 +641,7 @@ function App({ initialAuthError = '' }: AppProps) {
       thingName: string,
       targetRedcon: 1 | 2 | 3 | 4,
       commandSequence: number,
+      commandMessageType: 'DCMD' | 'NCMD',
     ): Promise<void> => {
       const deadlineMs = Date.now() + routeSparkplugRedconCommandTimeoutMs
       while (true) {
@@ -647,7 +650,7 @@ function App({ initialAuthError = '' }: AppProps) {
         }
 
         const nextShadow = await refreshRouteSparkplugShadow(thingName)
-        if (extractIsSparkplugDeviceUnavailable(nextShadow)) {
+        if (extractIsSparkplugUnavailable(nextShadow)) {
           if (targetRedcon === 4 && redconCommandSequenceRef.current === commandSequence) {
             setPendingTargetRedcon(null)
             return
@@ -662,8 +665,8 @@ function App({ initialAuthError = '' }: AppProps) {
           if (redconCommandSequenceRef.current === commandSequence) {
             setPendingTargetRedcon(null)
             enqueueRuntimeError(
-              `Sparkplug DCMD.redcon -> ${targetRedcon} failed: ${
-                commandStatus.message ?? 'device command failed'
+              `Sparkplug ${commandMessageType}.redcon -> ${targetRedcon} failed: ${
+                commandStatus.message ?? 'command failed'
               }`,
               'sparkplug-redcon-convergence',
             )
@@ -690,7 +693,7 @@ function App({ initialAuthError = '' }: AppProps) {
           if (redconCommandSequenceRef.current === commandSequence) {
             setPendingTargetRedcon(null)
             enqueueRuntimeError(
-              `Sparkplug DCMD.redcon -> ${targetRedcon} did not converge within ${
+              `Sparkplug ${commandMessageType}.redcon -> ${targetRedcon} did not converge within ${
                 routeSparkplugRedconCommandTimeoutMs / 1000
               }s`,
               'sparkplug-redcon-convergence',
@@ -787,12 +790,12 @@ function App({ initialAuthError = '' }: AppProps) {
       shouldClearPendingTargetRedcon({
         pendingTargetRedcon,
         reportedRedcon,
-        isSparkplugDeviceUnavailable,
+        isSparkplugDeviceUnavailable: isSparkplugUnavailable,
       })
     ) {
       setPendingTargetRedcon(null)
     }
-  }, [isSparkplugDeviceUnavailable, pendingTargetRedcon, reportedRedcon])
+  }, [isSparkplugUnavailable, pendingTargetRedcon, reportedRedcon])
 
   useEffect(() => {
     if (status !== 'signed_in') {
@@ -1678,6 +1681,7 @@ function App({ initialAuthError = '' }: AppProps) {
     setPendingTargetRedcon(redcon)
 
     try {
+      const commandMessageType = sparkplugCommandTargetMessageType(commandTarget)
       await publishDirectSparkplugRedconCommand(
         resolveSessionIdToken,
         commandTarget,
@@ -1687,11 +1691,16 @@ function App({ initialAuthError = '' }: AppProps) {
       if (redconCommandSequenceRef.current === commandSequence) {
         appendSessionLogEntry({
           tone: 'neutral',
-          message: `Sparkplug DCMD.redcon -> ${redcon}`,
+          message: `Sparkplug ${commandMessageType}.redcon -> ${redcon}`,
           dedupeKey: `sparkplug-redcon:${redcon}`,
           objectId: currentNotificationObjectId,
         })
-        void waitForRouteSparkplugRedcon(commandTarget.deviceId, redcon, commandSequence)
+        void waitForRouteSparkplugRedcon(
+          sparkplugCommandTargetThingName(commandTarget),
+          redcon,
+          commandSequence,
+          commandMessageType,
+        )
       }
       return true
     } catch (caughtError) {

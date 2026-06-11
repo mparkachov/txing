@@ -113,6 +113,14 @@ def _record_capabilities(record: dict[str, Any], *, path: str) -> tuple[str, ...
         thing_name=f"type catalog {path}",
     )
 
+
+def _record_string_list(record: dict[str, Any], key: str, *, path: str) -> tuple[str, ...]:
+    value = record.get(key)
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise DeviceRegistryError(f"SSM type catalog record {path!r} is missing {key}")
+    return tuple(value)
+
+
 @dataclass(slots=True, frozen=True)
 class ThingRegistration:
     thing_name: str
@@ -617,16 +625,27 @@ class AwsDeviceRegistry:
         town_registration = self.describe_thing(normalized_town_id)
         if town_registration.thing_type != TOWN_THING_TYPE:
             raise DeviceRegistryError(f"Thing {normalized_town_id!r} is not a town")
-        self._type_catalog.get_rig_type(normalized_rig_type)
+        rig_path = rig_type_path(normalized_rig_type)
+        rig_record = self._type_catalog.get_rig_type(normalized_rig_type)
+        rig_capabilities = _record_capabilities(rig_record, path=rig_path)
+        redcon_command_levels = _record_string_list(
+            rig_record,
+            "redconCommandLevels",
+            path=rig_path,
+        )
         thing_name, short_id = self._allocate_thing_name(normalized_rig_type)
         self._iot_client.create_thing(
             thingName=thing_name,
             thingTypeName=normalized_rig_type,
             attributePayload={
                 "attributes": {
+                    "kind": "rigType",
                     "name": normalized_rig_name,
                     "shortId": short_id,
+                    "rigType": normalized_rig_type,
                     TOWN_ID_ATTRIBUTE: town_registration.thing_name,
+                    "capabilities": ",".join(rig_capabilities),
+                    "redconCommandLevels": ",".join(redcon_command_levels),
                 }
             },
         )

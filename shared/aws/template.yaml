@@ -311,6 +311,7 @@ Resources:
         displayName: Raspberry Pi Rig
         defaultName: server
         capabilities: sparkplug
+        redconCommandLevels: 1,4
         requiredAttributes: name,shortId,townId
         searchableAttributes: name,townId
         hostServices: bluetooth.service
@@ -471,6 +472,7 @@ Resources:
         displayName: Cloud Rig
         defaultName: aws
         capabilities: sparkplug
+        redconCommandLevels: 1,4
         requiredAttributes: name,shortId,townId
         searchableAttributes: name,townId
 

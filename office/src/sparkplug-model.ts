@@ -132,11 +132,16 @@ const extractSparkplugDeviceMessageType = (shadow: unknown): string | null => {
   return typeof topic.messageType === 'string' ? topic.messageType : null
 }
 
+export const extractIsSparkplugUnavailable = (shadow: unknown): boolean => {
+  const messageType = extractSparkplugMessageType(shadow)
+  return messageType === 'NDEATH' || messageType === 'DDEATH'
+}
+
 export const extractIsSparkplugDeviceUnavailable = (shadow: unknown): boolean =>
   extractSparkplugDeviceMessageType(shadow) === 'DDEATH'
 
 export const extractReportedRedcon = (shadow: unknown): number | null => {
-  if (extractIsSparkplugDeviceUnavailable(shadow)) {
+  if (extractIsSparkplugUnavailable(shadow)) {
     return null
   }
   const metrics = extractSparkplugMetrics(shadow)
@@ -153,7 +158,7 @@ export const extractSparkplugCapabilityAvailability = (
   shadow: unknown,
   capabilityName: string,
 ): boolean | null => {
-  if (extractIsSparkplugDeviceUnavailable(shadow)) {
+  if (extractIsSparkplugUnavailable(shadow)) {
     return false
   }
   const metrics = extractSparkplugMetrics(shadow)
@@ -168,9 +173,6 @@ export const extractSparkplugCapabilityAvailability = (
   }
   if (capabilityName !== 'sparkplug') {
     return null
-  }
-  if (extractSparkplugMessageType(shadow) === 'NDEATH') {
-    return false
   }
   return coerceRedcon(metrics.redcon) === null ? null : true
 }

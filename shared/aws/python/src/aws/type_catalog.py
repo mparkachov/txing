@@ -85,6 +85,7 @@ class RigTypeDefinition:
     display_name: str
     default_name: str
     capabilities: tuple[str, ...]
+    redcon_command_levels: tuple[str, ...]
     host_services: tuple[str, ...] = ()
 
 
@@ -94,6 +95,7 @@ RIG_TYPE_DEFINITIONS: dict[str, RigTypeDefinition] = {
         display_name="Raspberry Pi Rig",
         default_name="server",
         capabilities=("sparkplug",),
+        redcon_command_levels=("1", "4"),
         host_services=("bluetooth.service",),
     ),
     "cloud": RigTypeDefinition(
@@ -101,6 +103,7 @@ RIG_TYPE_DEFINITIONS: dict[str, RigTypeDefinition] = {
         display_name="Cloud Rig",
         default_name="aws",
         capabilities=("sparkplug",),
+        redcon_command_levels=("1", "4"),
     ),
 }
 
@@ -139,6 +142,7 @@ def _rig_record(definition: RigTypeDefinition) -> dict[str, Any]:
             "displayName": definition.display_name,
             "defaultName": definition.default_name,
             "capabilities": list(definition.capabilities),
+            "redconCommandLevels": list(definition.redcon_command_levels),
             "searchableAttributes": ["name", "townId"],
             "requiredAttributes": [
                 "name",

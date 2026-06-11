@@ -311,8 +311,10 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertEqual(cloud["attributes"]["kind"], "rigType")
         self.assertEqual(cloud["attributes"]["rigType"], "cloud")
         self.assertEqual(cloud["attributes"]["townId"], town["thingName"])
+        self.assertEqual(cloud["attributes"]["redconCommandLevels"], "1,4")
         self.assertEqual(cloud["auxiliaryResources"]["thingGroupName"], "txing-rig-type-cloud")
         self.assertIn(cloud["thingName"], self.runtime.iot.thing_groups["txing-rig-type-cloud"])
+        self.assertEqual(raspi["attributes"]["redconCommandLevels"], "1,4")
         self.assertEqual(raspi["attributes"]["hostServices"], "bluetooth.service")
 
         thing_name = cloud["thingName"]

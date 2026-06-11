@@ -24,7 +24,8 @@ The video route is derived from the selected route and office origin. It is not 
 
 - route breadcrumbs and first-load metadata: AWS IoT HTTPS APIs
 - live shadow updates: named Thing Shadow over MQTT/WSS
-- lifecycle commands: Sparkplug `DCMD.redcon` over MQTT/WSS
+- lifecycle commands: Sparkplug `DCMD.redcon` for devices and `NCMD.redcon` for
+  rigs over MQTT/WSS
 - board control at REDCON `1`: MCP over the `txing.mcp.v1` WebRTC data channel
   on the board video KVS session
 - board control at REDCON `2`: MCP over MQTT/WSS when the daemon advertises
@@ -34,6 +35,10 @@ The video route is derived from the selected route and office origin. It is not 
 - board video: AWS KVS WebRTC
 
 The app expects `capabilities` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.
+For both rig and device routes, Sparkplug `NDEATH`/`DDEATH` means unavailable:
+REDCON indicators are grayed and REDCON command controls are disabled until the
+thing is born again. Rig routes read `redconCommandLevels=1,4` from thing
+metadata and publish to `spBv1.0/<town>/NCMD/<rig>`.
 
 For `unit` devices, the Go unit daemon publishes retained
 `txings/<device_id>/capability/v2/state` messages for `board`, `mcp`, and

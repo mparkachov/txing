@@ -96,6 +96,8 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/weather"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/power"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/cloud/cloud-mcu"]["rigType"], "cloud")
+        self.assertEqual(records["/txing/town/raspi"]["redconCommandLevels"], ["1", "4"])
+        self.assertEqual(records["/txing/town/cloud"]["redconCommandLevels"], ["1", "4"])
         self.assertEqual(records["/txing/town/raspi/unit"]["redconCommandLevels"], ["4", "3", "2", "1"])
         self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4"])
         self.assertEqual(records["/txing/town/raspi/power"]["redconCommandLevels"], ["4", "3"])
@@ -152,6 +154,8 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(ssm.parameters["/txing/town/raspi/unit/kind"], "deviceType")
         self.assertEqual(ssm.parameters["/txing/town/cloud/kind"], "rigType")
         self.assertEqual(ssm.parameters["/txing/town/cloud/cloud-mcu/kind"], "deviceType")
+        self.assertEqual(ssm.parameters["/txing/town/raspi/redconCommandLevels"], "1,4")
+        self.assertEqual(ssm.parameters["/txing/town/cloud/redconCommandLevels"], "1,4")
         self.assertEqual(
             ssm.parameters["/txing/town/cloud/cloud-mcu/capabilities"],
             "sparkplug,sqs,power,ecs",
@@ -240,6 +244,7 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertNotIn("cloud", town_record)
         self.assertNotIn("cloud-mcu", cloud_record)
         self.assertEqual(cloud_record["hostServices"], [])
+        self.assertEqual(cloud_record["redconCommandLevels"], ["1", "4"])
         self.assertEqual(cloud_mcu_record["capabilities"], ["sparkplug", "sqs", "power", "ecs"])
         self.assertEqual(cloud_mcu_record["redconCommandLevels"], ["4", "3"])
         self.assertEqual(

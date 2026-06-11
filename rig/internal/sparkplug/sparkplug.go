@@ -80,6 +80,10 @@ func BuildNodeTopic(groupID, messageType, edgeNodeID string) string {
 	return fmt.Sprintf("%s/%s/%s/%s", Namespace, groupID, messageType, edgeNodeID)
 }
 
+func BuildNodeCommandTopic(groupID, edgeNodeID string) string {
+	return BuildNodeTopic(groupID, "NCMD", edgeNodeID)
+}
+
 func BuildDeviceTopic(groupID, messageType, edgeNodeID, deviceID string) string {
 	return fmt.Sprintf("%s/%s/%s/%s/%s", Namespace, groupID, messageType, edgeNodeID, deviceID)
 }
@@ -349,16 +353,22 @@ func BuildDeviceDeathPayload(seq uint64, timestamp uint64) ([]byte, error) {
 }
 
 func BuildNodeBirthPayload(redcon uint8, bdSeq uint64, seq uint64, timestamp uint64) ([]byte, error) {
+	return BuildNodeBirthPayloadWithMetrics(redcon, bdSeq, seq, timestamp, nil)
+}
+
+func BuildNodeBirthPayloadWithMetrics(redcon uint8, bdSeq uint64, seq uint64, timestamp uint64, metrics []Metric) ([]byte, error) {
 	if err := ValidateRedcon(redcon); err != nil {
 		return nil, err
 	}
+	allMetrics := []Metric{
+		NewUInt64Metric("bdSeq", bdSeq),
+		NewInt32Metric("redcon", int32(redcon)),
+	}
+	allMetrics = append(allMetrics, metrics...)
 	return EncodePayload(Payload{
 		Timestamp: timestamp,
-		Metrics: []Metric{
-			NewUInt64Metric("bdSeq", bdSeq),
-			NewInt32Metric("redcon", int32(redcon)),
-		},
-		Seq: &seq,
+		Metrics:   allMetrics,
+		Seq:       &seq,
 	})
 }
 

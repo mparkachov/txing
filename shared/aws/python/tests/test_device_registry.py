@@ -283,9 +283,13 @@ class DeviceRegistryTests(unittest.TestCase):
         self.assertEqual(
             attributes,
             {
+                "kind": "rigType",
                 "name": "aws",
                 "shortId": "rig002",
+                "rigType": "cloud",
                 "townId": "town-ber001",
+                "capabilities": "sparkplug",
+                "redconCommandLevels": "1,4",
             },
         )
         self.assertEqual(runtime.ssm.put_requests, [])

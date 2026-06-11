@@ -49,6 +49,7 @@ describe('sparkplug command ack helper', () => {
         rigId: 'rig-a1',
       }),
     ).toEqual({
+      kind: 'device',
       groupId: 'town-a1',
       edgeNodeId: 'rig-a1',
       deviceId: 'unit-a1',
@@ -62,6 +63,7 @@ describe('sparkplug command ack helper', () => {
         rigId: 'rig-a1',
       }),
     ).toEqual({
+      kind: 'device',
       groupId: 'town-a1',
       edgeNodeId: 'rig-a1',
       deviceId: 'sensor-a1',
@@ -74,7 +76,11 @@ describe('sparkplug command ack helper', () => {
         townId: 'town-a1',
         rigId: 'rig-a1',
       }),
-    ).toBeNull()
+    ).toEqual({
+      kind: 'node',
+      groupId: 'town-a1',
+      edgeNodeId: 'rig-a1',
+    })
   })
 
   test('publishes direct device Sparkplug redcon commands through the IoT data plane', async () => {
@@ -83,6 +89,7 @@ describe('sparkplug command ack helper', () => {
     await publishDirectSparkplugRedconCommandWithClient(
       client,
       {
+        kind: 'device',
         groupId: 'town',
         edgeNodeId: 'rig',
         deviceId: 'unit-a1',
@@ -104,6 +111,37 @@ describe('sparkplug command ack helper', () => {
       expect.objectContaining({
         name: 'redcon',
         intValue: 3,
+      }),
+    ])
+  })
+
+  test('publishes direct rig Sparkplug redcon commands through NCMD', async () => {
+    const client = new FakeIotDataClient()
+
+    await publishDirectSparkplugRedconCommandWithClient(
+      client,
+      {
+        kind: 'node',
+        groupId: 'town',
+        edgeNodeId: 'rig',
+      },
+      4,
+      18,
+    )
+
+    expect(client.commands).toHaveLength(1)
+    expect(client.commands[0].constructor.name).toBe('PublishCommand')
+    expect(client.commands[0].input.topic).toBe('spBv1.0/town/NCMD/rig')
+    expect(client.commands[0].input.qos).toBe(1)
+
+    const payload = client.commands[0].input.payload
+    expect(payload).toBeInstanceOf(Uint8Array)
+    const decoded = decodeSparkplugPayload(payload as Uint8Array)
+    expect(decoded.seq).toBe(18)
+    expect(decoded.metrics).toEqual([
+      expect.objectContaining({
+        name: 'redcon',
+        intValue: 4,
       }),
     ])
   })

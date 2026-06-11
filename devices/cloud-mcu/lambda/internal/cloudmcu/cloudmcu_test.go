@@ -32,11 +32,14 @@ type fakeAWS struct {
 	publishErr      error
 	shadowErr       error
 	runTaskCount    int
+	enableSchedule  int
+	disableSchedule int
 	stoppedTasks    []string
 }
 
 func newFakeAWS() *fakeAWS {
 	thingType := CloudMcuThingType
+	rigThingType := CloudRigThingType
 	return &fakeAWS{
 		descriptions: map[string]ThingDescription{
 			"cloud-1": {
@@ -44,6 +47,13 @@ func newFakeAWS() *fakeAWS {
 				Attributes: map[string]string{
 					"townId": "town-1",
 					"rigId":  "rig-1",
+				},
+			},
+			"rig-1": {
+				ThingTypeName: &rigThingType,
+				Attributes: map[string]string{
+					"kind":   RigKindAttribute,
+					"townId": "town-1",
 				},
 			},
 		},
@@ -91,6 +101,16 @@ func (f *fakeAWS) SendTickBatch(_ context.Context, ticks []CloudMcuTick) error {
 		batch = append(batch, sentTick{tick: tick, delaySeconds: tick.TickOffsetSeconds})
 	}
 	f.sentTickBatches = append(f.sentTickBatches, batch)
+	return nil
+}
+
+func (f *fakeAWS) EnableCloudRigSchedule(context.Context) error {
+	f.enableSchedule++
+	return nil
+}
+
+func (f *fakeAWS) DisableCloudRigSchedule(context.Context) error {
+	f.disableSchedule++
 	return nil
 }
 
@@ -210,6 +230,76 @@ func TestSchedulerPropagatesSearchErrors(t *testing.T) {
 	aws.searchErr = fmt.Errorf("search failed")
 	if _, err := NewRigScheduler(aws).HandleScheduleWithNow(context.Background(), 1714380000000); err == nil {
 		t.Fatal("expected search error")
+	}
+}
+
+func TestRigNCMDRedconFourDisablesScheduleAndPublishesLowCostBirth(t *testing.T) {
+	aws := newFakeAWS()
+	event := map[string]any{
+		"mqttTopic":     "spBv1.0/town-1/NCMD/rig-1",
+		"payloadBase64": base64.StdEncoding.EncodeToString(redconCommand(RedconSleep, 7)),
+	}
+	result, err := HandleRigLambdaEventWithNow(context.Background(), event, aws, 1714380000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != CommandSucceeded || result["redcon"] != RedconSleep || aws.disableSchedule != 1 || aws.enableSchedule != 0 {
+		t.Fatalf("bad ncmd result=%#v enable=%d disable=%d", result, aws.enableSchedule, aws.disableSchedule)
+	}
+	if len(aws.sentTickBatches) != 0 {
+		t.Fatalf("redcon 4 must not schedule ticks: %#v", aws.sentTickBatches)
+	}
+	assertPublishedNodeRedcon(t, aws.published, RedconSleep, 7)
+}
+
+func TestRigNCMDRedconOneEnablesScheduleAndRunsSchedulerOnce(t *testing.T) {
+	aws := newFakeAWS()
+	aws.pages = append(aws.pages, SearchPage{Devices: []CloudMcuDevice{
+		{ThingName: "cloud-1", TownID: "town-1", RigID: "rig-1"},
+	}})
+	event := map[string]any{
+		"mqttTopic":     "spBv1.0/town-1/NCMD/rig-1",
+		"payloadBase64": base64.StdEncoding.EncodeToString(redconCommand(RedconReady, 8)),
+	}
+	result, err := HandleRigLambdaEventWithNow(context.Background(), event, aws, 1714380000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != CommandSucceeded || result["redcon"] != RedconReady || aws.enableSchedule != 1 || aws.disableSchedule != 0 {
+		t.Fatalf("bad ncmd result=%#v enable=%d disable=%d", result, aws.enableSchedule, aws.disableSchedule)
+	}
+	if len(aws.sentTickBatches) != 1 {
+		t.Fatalf("redcon 1 should schedule ticks immediately, batches=%d", len(aws.sentTickBatches))
+	}
+	assertPublishedNodeRedcon(t, aws.published[:1], RedconReady, 8)
+}
+
+func TestRigNCMDRejectsInvalidRigIdentity(t *testing.T) {
+	aws := newFakeAWS()
+	event := map[string]any{
+		"mqttTopic":     "spBv1.0/town-1/NCMD/missing-rig",
+		"payloadBase64": base64.StdEncoding.EncodeToString(redconCommand(RedconSleep, 7)),
+	}
+	if _, err := HandleRigLambdaEventWithNow(context.Background(), event, aws, 1714380000000); err == nil {
+		t.Fatal("expected invalid rig identity error")
+	}
+}
+
+func TestRigNCMDUnsupportedRedconPublishesFailureBirth(t *testing.T) {
+	aws := newFakeAWS()
+	event := map[string]any{
+		"mqttTopic":     "spBv1.0/town-1/NCMD/rig-1",
+		"payloadBase64": base64.StdEncoding.EncodeToString(redconCommand(2, 9)),
+	}
+	result, err := HandleRigLambdaEventWithNow(context.Background(), event, aws, 1714380000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != CommandFailed || aws.enableSchedule != 0 || aws.disableSchedule != 0 {
+		t.Fatalf("bad unsupported result=%#v enable=%d disable=%d", result, aws.enableSchedule, aws.disableSchedule)
+	}
+	if len(aws.published) != 1 || aws.published[0].topic != "spBv1.0/town-1/NDATA/rig-1" {
+		t.Fatalf("bad failure publication: %#v", aws.published)
 	}
 }
 
@@ -379,4 +469,22 @@ func mustJSON(value any) []byte {
 		panic(err)
 	}
 	return body
+}
+
+func assertPublishedNodeRedcon(t *testing.T, published []publishedMessage, wantRedcon uint8, wantSeq uint64) {
+	t.Helper()
+	if len(published) == 0 {
+		t.Fatal("missing published NBIRTH")
+	}
+	message := published[0]
+	if message.topic != "spBv1.0/town-1/NBIRTH/rig-1" {
+		t.Fatalf("publish topic = %s", message.topic)
+	}
+	redcon, seq, ok, err := decodeRedconCommand(message.payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || redcon != wantRedcon || seq != wantSeq {
+		t.Fatalf("redcon publish = redcon:%d seq:%d ok:%v, want redcon:%d seq:%d", redcon, seq, ok, wantRedcon, wantSeq)
+	}
 }

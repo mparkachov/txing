@@ -32,11 +32,14 @@ export type DecodedSparkplugPayload = {
 export type SparkplugTopics = {
   nbirth: string
   ndata: string
+  ncmd: string
   dcmd: string
   dbirth: string
   ddata: string
   ddeath: string
 }
+
+export type SparkplugNodeTopics = Pick<SparkplugTopics, 'nbirth' | 'ndata' | 'ncmd'>
 
 export type SparkplugPublishPacket = {
   topicName: string
@@ -389,14 +392,24 @@ export const buildSparkplugTopics = (
 ): SparkplugTopics => ({
   nbirth: `${SPARKPLUG_NAMESPACE}/${groupId}/NBIRTH/${edgeNodeId}`,
   ndata: `${SPARKPLUG_NAMESPACE}/${groupId}/NDATA/${edgeNodeId}`,
+  ncmd: `${SPARKPLUG_NAMESPACE}/${groupId}/NCMD/${edgeNodeId}`,
   dcmd: `${SPARKPLUG_NAMESPACE}/${groupId}/DCMD/${edgeNodeId}/${deviceId}`,
   dbirth: `${SPARKPLUG_NAMESPACE}/${groupId}/DBIRTH/${edgeNodeId}/${deviceId}`,
   ddata: `${SPARKPLUG_NAMESPACE}/${groupId}/DDATA/${edgeNodeId}/${deviceId}`,
   ddeath: `${SPARKPLUG_NAMESPACE}/${groupId}/DDEATH/${edgeNodeId}/${deviceId}`,
 })
 
-export const buildSparkplugRedconCommandPacket = (
-  topics: SparkplugTopics,
+export const buildSparkplugNodeTopics = (
+  groupId: string,
+  edgeNodeId: string,
+): SparkplugNodeTopics => ({
+  nbirth: `${SPARKPLUG_NAMESPACE}/${groupId}/NBIRTH/${edgeNodeId}`,
+  ndata: `${SPARKPLUG_NAMESPACE}/${groupId}/NDATA/${edgeNodeId}`,
+  ncmd: `${SPARKPLUG_NAMESPACE}/${groupId}/NCMD/${edgeNodeId}`,
+})
+
+const buildSparkplugRedconCommandPacketForTopic = (
+  topicName: string,
   redcon: number,
   seq: number,
   timestamp = Date.now(),
@@ -406,7 +419,7 @@ export const buildSparkplugRedconCommandPacket = (
   }
 
   return {
-    topicName: topics.dcmd,
+    topicName,
     qos: 1,
     payload: encodeSparkplugPayload({
       timestamp,
@@ -421,3 +434,19 @@ export const buildSparkplugRedconCommandPacket = (
     }),
   }
 }
+
+export const buildSparkplugRedconCommandPacket = (
+  topics: Pick<SparkplugTopics, 'dcmd'>,
+  redcon: number,
+  seq: number,
+  timestamp = Date.now(),
+): SparkplugPublishPacket =>
+  buildSparkplugRedconCommandPacketForTopic(topics.dcmd, redcon, seq, timestamp)
+
+export const buildSparkplugNodeRedconCommandPacket = (
+  topics: Pick<SparkplugNodeTopics, 'ncmd'>,
+  redcon: number,
+  seq: number,
+  timestamp = Date.now(),
+): SparkplugPublishPacket =>
+  buildSparkplugRedconCommandPacketForTopic(topics.ncmd, redcon, seq, timestamp)

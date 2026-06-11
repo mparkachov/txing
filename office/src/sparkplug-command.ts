@@ -8,6 +8,8 @@ import { appConfig } from './config'
 import { ensureIotPolicyAttached } from './iot-policy-attach'
 import { buildIotDataEndpointUrl, resolveIotDataEndpoint } from './iot-endpoint'
 import {
+  buildSparkplugNodeRedconCommandPacket,
+  buildSparkplugNodeTopics,
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
 } from './sparkplug-protocol'
@@ -17,9 +19,14 @@ type ResolveIdToken = () => Promise<string>
 type IotDataClient = Pick<IoTDataPlaneClient, 'send'>
 
 export type SparkplugRedconCommandTarget = {
+  kind: 'device'
   groupId: string
   edgeNodeId: string
   deviceId: string
+} | {
+  kind: 'node'
+  groupId: string
+  edgeNodeId: string
 }
 
 const createIotDataClient = async (
@@ -41,21 +48,35 @@ const createIotDataClient = async (
 export const resolveThingSparkplugRedconCommandTarget = (
   metadata: Pick<ThingMetadata, 'thingName' | 'kind' | 'townId' | 'rigId'> | null,
 ): SparkplugRedconCommandTarget | null => {
-  if (
-    !metadata ||
-    metadata.kind !== 'deviceType' ||
-    !metadata.townId ||
-    !metadata.rigId
-  ) {
+  if (!metadata || !metadata.townId) {
+    return null
+  }
+  if (metadata.kind === 'rigType') {
+    return {
+      kind: 'node',
+      groupId: metadata.townId,
+      edgeNodeId: metadata.thingName,
+    }
+  }
+  if (metadata.kind !== 'deviceType' || !metadata.rigId) {
     return null
   }
 
   return {
+    kind: 'device',
     groupId: metadata.townId,
     edgeNodeId: metadata.rigId,
     deviceId: metadata.thingName,
   }
 }
+
+export const sparkplugCommandTargetThingName = (
+  target: SparkplugRedconCommandTarget,
+): string => target.kind === 'device' ? target.deviceId : target.edgeNodeId
+
+export const sparkplugCommandTargetMessageType = (
+  target: SparkplugRedconCommandTarget,
+): 'DCMD' | 'NCMD' => target.kind === 'device' ? 'DCMD' : 'NCMD'
 
 export const publishDirectSparkplugRedconCommandWithClient = async (
   client: IotDataClient,
@@ -63,11 +84,17 @@ export const publishDirectSparkplugRedconCommandWithClient = async (
   redcon: 1 | 2 | 3 | 4,
   seq = 0,
 ): Promise<void> => {
-  const packet = buildSparkplugRedconCommandPacket(
-    buildSparkplugTopics(target.groupId, target.edgeNodeId, target.deviceId),
-    redcon,
-    seq,
-  )
+  const packet = target.kind === 'device'
+    ? buildSparkplugRedconCommandPacket(
+        buildSparkplugTopics(target.groupId, target.edgeNodeId, target.deviceId),
+        redcon,
+        seq,
+      )
+    : buildSparkplugNodeRedconCommandPacket(
+        buildSparkplugNodeTopics(target.groupId, target.edgeNodeId),
+        redcon,
+        seq,
+      )
   await client.send(
     new PublishCommand({
       topic: packet.topicName,

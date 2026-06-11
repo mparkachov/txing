@@ -491,6 +491,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ThingTypeName: cloud-mcu", cloud_mcu_lambda_template)
         self.assertIn("CloudRigFunction:", cloud_rig_template)
         self.assertIn("CloudMcuFunction:", cloud_mcu_lambda_template)
+        self.assertIn("CloudRigNcmdTopicRule:", cloud_rig_template)
+        self.assertIn("FROM 'spBv1.0/+/NCMD/+'", cloud_rig_template)
+        self.assertIn("CLOUD_RIG_SCHEDULE_RULE_NAME", cloud_rig_template)
+        self.assertIn("events:EnableRule", cloud_rig_template)
+        self.assertIn("events:DisableRule", cloud_rig_template)
         self.assertIn(
             "FunctionName: !Sub ${EnvironmentStackName}-cloud-rig", cloud_rig_template
         )
@@ -518,6 +523,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         )
 
         self.assertIn("CloudRigFunction:", template)
+        self.assertIn("CloudRigNcmdTopicRule:", template)
         self.assertIn("CloudMcuFunction:", template)
         self.assertIn("AWS::Lambda::Function", template)
         self.assertIn("AWS::Events::Rule", template)
@@ -560,6 +566,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("S3Bucket: !Ref LambdaArtifactsBucketName", template)
         self.assertIn("S3Key: lambda/txing-cloud-rig-lambda/current/bootstrap.zip", template)
         self.assertIn("S3Key: lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", template)
+        self.assertIn("FROM 'spBv1.0/+/NCMD/+'", template)
+        self.assertIn("events:EnableRule", template)
+        self.assertIn("events:DisableRule", template)
         self.assertNotIn("ThingName:", template)
         self.assertNotIn("THING_NAME", template)
         self.assertNotIn("${ThingName}", template)
