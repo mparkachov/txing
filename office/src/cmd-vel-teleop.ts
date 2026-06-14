@@ -1,7 +1,9 @@
 import {
-  applyCmdVelStep,
+  buildCmdVelTwistFromKeys,
   buildZeroTwist,
   isCmdVelControlKey,
+  isCmdVelDirectionalKey,
+  isCmdVelStopKey,
   isZeroTwist,
   twistEquals,
   type Twist,
@@ -17,6 +19,7 @@ export class CmdVelTeleopController {
   private readonly publishCmdVel: PublishCmdVel
   private active = false
   private currentTwist = buildZeroTwist()
+  private readonly heldKeys = new Set<string>()
 
   constructor(options: CmdVelTeleopControllerOptions) {
     this.publishCmdVel = options.publishCmdVel
@@ -34,13 +37,19 @@ export class CmdVelTeleopController {
     this.publishStop()
   }
 
-  handleKeyDown(key: string, repeat = false): boolean {
+  handleKeyDown(key: string, _repeat = false): boolean {
     if (!this.active || !isCmdVelControlKey(key)) {
       return false
     }
 
-    if (!repeat) {
-      this.publishNextTwist(applyCmdVelStep(this.currentTwist, key))
+    if (isCmdVelStopKey(key)) {
+      this.publishStop()
+      return true
+    }
+
+    if (isCmdVelDirectionalKey(key)) {
+      this.heldKeys.add(key)
+      this.publishNextTwist(buildCmdVelTwistFromKeys(this.heldKeys))
     }
     return true
   }
@@ -48,6 +57,10 @@ export class CmdVelTeleopController {
   handleKeyUp(key: string): boolean {
     if (!this.active || !isCmdVelControlKey(key)) {
       return false
+    }
+    if (isCmdVelDirectionalKey(key)) {
+      this.heldKeys.delete(key)
+      this.publishNextTwist(buildCmdVelTwistFromKeys(this.heldKeys))
     }
     return true
   }
@@ -84,6 +97,7 @@ export class CmdVelTeleopController {
   private publishStop(): void {
     const zeroTwist = buildZeroTwist()
     const shouldPublish = !isZeroTwist(this.currentTwist)
+    this.heldKeys.clear()
     this.currentTwist = zeroTwist
     if (shouldPublish) {
       void this.publishCmdVel(zeroTwist)

@@ -11,10 +11,8 @@ export type Twist = {
 
 const directionalKeys = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
 // Temporary browser teleop defaults; the MQTT contract stays strict ROS Twist semantics.
-export const cmdVelLinearStepMps = 0.1
-export const cmdVelAngularStepRadPerSec = 0.2
-export const cmdVelMaxLinearXMps = 0.5
-export const cmdVelMaxAngularZRadPerSec = 1.0
+export const cmdVelTeleopLinearTargetMps = 0.35
+export const cmdVelTeleopAngularTargetRadPerSec = 2.5
 const cmdVelAxisPrecision = 3
 
 const createZeroVector = (): Vector3 => ({
@@ -40,44 +38,34 @@ const clampAxis = (value: number, limit: number): number => Math.max(-limit, Mat
 const normalizeAxis = (value: number, limit: number): number =>
   Math.round(clampAxis(value, limit) * 10 ** cmdVelAxisPrecision) / 10 ** cmdVelAxisPrecision
 
-export const applyCmdVelStep = (
-  currentTwist: Twist,
-  key: string,
-): Twist => {
-  if (isCmdVelStopKey(key)) {
-    return buildZeroTwist()
-  }
+const getKeyAxisDirection = (
+  keys: ReadonlySet<string>,
+  positiveKey: string,
+  negativeKey: string,
+): number => {
+  const positive = keys.has(positiveKey) ? 1 : 0
+  const negative = keys.has(negativeKey) ? 1 : 0
+  return positive - negative
+}
 
-  let linearX = currentTwist.linear.x
-  let angularZ = currentTwist.angular.z
-
-  switch (key) {
-    case 'ArrowUp':
-      linearX += cmdVelLinearStepMps
-      break
-    case 'ArrowDown':
-      linearX -= cmdVelLinearStepMps
-      break
-    case 'ArrowLeft':
-      angularZ += cmdVelAngularStepRadPerSec
-      break
-    case 'ArrowRight':
-      angularZ -= cmdVelAngularStepRadPerSec
-      break
-    default:
-      return currentTwist
-  }
+export const buildCmdVelTwistFromKeys = (keys: Iterable<string>): Twist => {
+  const heldKeys = new Set(keys)
+  const linearX =
+    getKeyAxisDirection(heldKeys, 'ArrowUp', 'ArrowDown') * cmdVelTeleopLinearTargetMps
+  const angularZ =
+    getKeyAxisDirection(heldKeys, 'ArrowLeft', 'ArrowRight') *
+    cmdVelTeleopAngularTargetRadPerSec
 
   return {
     linear: {
-      x: normalizeAxis(linearX, cmdVelMaxLinearXMps),
+      x: normalizeAxis(linearX, cmdVelTeleopLinearTargetMps),
       y: 0,
       z: 0,
     },
     angular: {
       x: 0,
       y: 0,
-      z: normalizeAxis(angularZ, cmdVelMaxAngularZRadPerSec),
+      z: normalizeAxis(angularZ, cmdVelTeleopAngularTargetRadPerSec),
     },
   }
 }

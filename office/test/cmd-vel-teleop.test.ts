@@ -3,7 +3,7 @@ import { CmdVelTeleopController } from '../src/cmd-vel-teleop'
 import type { Twist } from '../src/cmd-vel'
 
 describe('cmd_vel teleop controller', () => {
-  test('publishes stepped ROS Twist updates only while active and ignores keyup state changes', () => {
+  test('publishes direct ROS Twist targets only while active and stops on keyup', () => {
     const published: Twist[] = []
     const controller = new CmdVelTeleopController({
       publishCmdVel: (twist) => {
@@ -20,17 +20,17 @@ describe('cmd_vel teleop controller', () => {
 
     expect(published).toEqual([
       {
-        linear: { x: 0.1, y: 0, z: 0 },
+        linear: { x: 0.35, y: 0, z: 0 },
         angular: { x: 0, y: 0, z: 0 },
       },
       {
-        linear: { x: 0.2, y: 0, z: 0 },
+        linear: { x: 0, y: 0, z: 0 },
         angular: { x: 0, y: 0, z: 0 },
       },
     ])
   })
 
-  test('ignores browser key repeat events so one held press only increments once', () => {
+  test('consumes browser key repeat events without republishing unchanged held state', () => {
     const published: Twist[] = []
     const controller = new CmdVelTeleopController({
       publishCmdVel: (twist) => {
@@ -44,13 +44,13 @@ describe('cmd_vel teleop controller', () => {
 
     expect(published).toEqual([
       {
-        linear: { x: 0.1, y: 0, z: 0 },
+        linear: { x: 0.35, y: 0, z: 0 },
         angular: { x: 0, y: 0, z: 0 },
       },
     ])
   })
 
-  test('repeats the last non-zero twist and stops only on explicit stop/deactivate', () => {
+  test('repeats the last non-zero twist and stops after directional key release', () => {
     const published: Twist[] = []
     const controller = new CmdVelTeleopController({
       publishCmdVel: (twist) => {
@@ -63,24 +63,81 @@ describe('cmd_vel teleop controller', () => {
     controller.tick()
     controller.handleKeyUp('ArrowUp')
     controller.tick()
-    controller.handleKeyDown('s')
-    controller.tick()
 
     expect(published).toEqual([
       {
-        linear: { x: 0.1, y: 0, z: 0 },
+        linear: { x: 0.35, y: 0, z: 0 },
         angular: { x: 0, y: 0, z: 0 },
       },
       {
-        linear: { x: 0.1, y: 0, z: 0 },
-        angular: { x: 0, y: 0, z: 0 },
-      },
-      {
-        linear: { x: 0.1, y: 0, z: 0 },
+        linear: { x: 0.35, y: 0, z: 0 },
         angular: { x: 0, y: 0, z: 0 },
       },
       {
         linear: { x: 0, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      },
+    ])
+  })
+
+  test('updates combined movement immediately as steering keys are pressed and released', () => {
+    const published: Twist[] = []
+    const controller = new CmdVelTeleopController({
+      publishCmdVel: (twist) => {
+        published.push(twist)
+      },
+    })
+
+    controller.activate()
+    controller.handleKeyDown('ArrowUp')
+    controller.handleKeyDown('ArrowLeft')
+    controller.handleKeyUp('ArrowLeft')
+    controller.handleKeyUp('ArrowUp')
+
+    expect(published).toEqual([
+      {
+        linear: { x: 0.35, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      },
+      {
+        linear: { x: 0.35, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 2.5 },
+      },
+      {
+        linear: { x: 0.35, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      },
+      {
+        linear: { x: 0, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      },
+    ])
+  })
+
+  test('opposing directional keys cancel and recover when one side is released', () => {
+    const published: Twist[] = []
+    const controller = new CmdVelTeleopController({
+      publishCmdVel: (twist) => {
+        published.push(twist)
+      },
+    })
+
+    controller.activate()
+    controller.handleKeyDown('ArrowUp')
+    controller.handleKeyDown('ArrowDown')
+    controller.handleKeyUp('ArrowDown')
+
+    expect(published).toEqual([
+      {
+        linear: { x: 0.35, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      },
+      {
+        linear: { x: 0, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      },
+      {
+        linear: { x: 0.35, y: 0, z: 0 },
         angular: { x: 0, y: 0, z: 0 },
       },
     ])
@@ -101,7 +158,7 @@ describe('cmd_vel teleop controller', () => {
     expect(published).toEqual([
       {
         linear: { x: 0, y: 0, z: 0 },
-        angular: { x: 0, y: 0, z: 0.2 },
+        angular: { x: 0, y: 0, z: 2.5 },
       },
       {
         linear: { x: 0, y: 0, z: 0 },
@@ -110,7 +167,38 @@ describe('cmd_vel teleop controller', () => {
     ])
   })
 
-  test('stops immediately on blur and document hide', () => {
+  test('stop key clears held keys and prevents keyup from resuming motion', () => {
+    const published: Twist[] = []
+    const controller = new CmdVelTeleopController({
+      publishCmdVel: (twist) => {
+        published.push(twist)
+      },
+    })
+
+    controller.activate()
+    controller.handleKeyDown('ArrowUp')
+    controller.handleKeyDown('ArrowLeft')
+    controller.handleKeyDown('s')
+    controller.handleKeyUp('ArrowUp')
+    controller.handleKeyUp('ArrowLeft')
+
+    expect(published).toEqual([
+      {
+        linear: { x: 0.35, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      },
+      {
+        linear: { x: 0.35, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 2.5 },
+      },
+      {
+        linear: { x: 0, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 0 },
+      },
+    ])
+  })
+
+  test('stops immediately on blur and document hide and clears held keys', () => {
     const published: Twist[] = []
     const controller = new CmdVelTeleopController({
       publishCmdVel: (twist) => {
@@ -122,17 +210,19 @@ describe('cmd_vel teleop controller', () => {
     controller.handleKeyDown('ArrowUp')
     controller.handleKeyDown('ArrowLeft')
     controller.handleBlur()
+    controller.handleKeyUp('ArrowUp')
+    controller.handleKeyUp('ArrowLeft')
     controller.handleKeyDown('ArrowLeft')
     controller.handleVisibilityHidden()
 
     expect(published).toEqual([
       {
-        linear: { x: 0.1, y: 0, z: 0 },
+        linear: { x: 0.35, y: 0, z: 0 },
         angular: { x: 0, y: 0, z: 0 },
       },
       {
-        linear: { x: 0.1, y: 0, z: 0 },
-        angular: { x: 0, y: 0, z: 0.2 },
+        linear: { x: 0.35, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: 2.5 },
       },
       {
         linear: { x: 0, y: 0, z: 0 },
@@ -140,7 +230,7 @@ describe('cmd_vel teleop controller', () => {
       },
       {
         linear: { x: 0, y: 0, z: 0 },
-        angular: { x: 0, y: 0, z: 0.2 },
+        angular: { x: 0, y: 0, z: 2.5 },
       },
       {
         linear: { x: 0, y: 0, z: 0 },

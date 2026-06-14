@@ -4,7 +4,9 @@ import {
   isMcpRequestTimeoutError,
   isMcpServiceUnavailableError,
   isMcpSessionNotInitializedError,
+  isMcpWebRtcResponseTimeoutError,
   isRecoverableMcpActiveControlError,
+  isRecoverableMcpDriveTransportError,
   shouldSuppressRobotStateTeardownError,
 } from '../src/mcp-errors'
 
@@ -27,7 +29,22 @@ describe('MCP error helpers', () => {
       isMcpRequestTimeoutError(new Error('Timed out waiting for MCP response to tools/call')),
     ).toBe(true)
     expect(
+      isMcpWebRtcResponseTimeoutError(new Error('Timed out waiting for MCP WebRTC response')),
+    ).toBe(true)
+    expect(
+      isMcpRequestTimeoutError(new Error('Timed out waiting for MCP WebRTC response')),
+    ).toBe(true)
+    expect(
+      isRecoverableMcpDriveTransportError(new Error('Timed out waiting for MCP WebRTC response')),
+    ).toBe(true)
+    expect(
+      isRecoverableMcpDriveTransportError(new Error('Timed out waiting for MCP response to tools/call')),
+    ).toBe(false)
+    expect(
       isExpectedMcpTeardownError(new Error('Timed out waiting for MCP response to tools/call')),
+    ).toBe(true)
+    expect(
+      isExpectedMcpTeardownError(new Error('Timed out waiting for MCP WebRTC response')),
     ).toBe(true)
     expect(isExpectedMcpTeardownError(new Error('MCP service is currently unavailable'))).toBe(
       true,

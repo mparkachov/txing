@@ -43,15 +43,17 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('{navigationCapabilities}')
   })
 
-  test('wake commands keep reflection sourced from shadow state', () => {
+  test('wake commands converge from reported shadow redcon without command-status success', () => {
     const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 
-    expect(appSource).toContain("commandStatus?.status === 'succeeded'")
+    expect(appSource).toContain('hasReachedTargetRedcon({')
+    expect(appSource).toContain('reportedRedcon: extractReportedRedcon(nextShadow)')
     expect(appSource).toContain('const commandSequence = createSparkplugRedconCommandSeq(')
     expect(appSource).toContain('commandStatus.seq === commandSequence')
     expect(appSource).toContain('setPendingTargetRedcon(redcon)')
     expect(appSource).toContain('sparkplugRedcon={reportedRedcon}')
     expect(appSource).toContain('reportedRedcon,')
+    expect(appSource).not.toContain("commandStatus?.status === 'succeeded'")
     expect(appSource).not.toContain('effectiveReportedRedcon')
     expect(appSource).not.toContain('isWakeRedconPending')
     expect(appSource).not.toContain('commandStatus.seq === commandSequence - 1')
@@ -91,6 +93,14 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('void requestRobotState()')
     expect(appSource).toContain('}, robotStatePollIntervalMs)')
     expect(appSource).not.toContain('if (isRobotMotionActive || isRobotControlActive)')
+  })
+
+  test('drive cmd_vel suppresses recoverable WebRTC transport timeouts', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain('isRecoverableMcpDriveTransportError')
+    expect(appSource).toContain('isRecoverableMcpDriveTransportError(caughtError)')
+    expect(appSource).toContain("'board-cmd-vel'")
   })
 
   test('drive input requires explicit active-control takeover when another session owns control', () => {

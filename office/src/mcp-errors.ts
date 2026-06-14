@@ -23,8 +23,15 @@ export const isMcpSessionNotInitializedError = (error: unknown): boolean =>
 export const isMcpServiceUnavailableError = (error: unknown): boolean =>
   getMessage(error).toLowerCase().includes('mcp service is currently unavailable')
 
+export const isMcpWebRtcResponseTimeoutError = (error: unknown): boolean =>
+  getMessage(error).toLowerCase().includes('timed out waiting for mcp webrtc response')
+
 export const isMcpRequestTimeoutError = (error: unknown): boolean =>
-  getMessage(error).toLowerCase().includes('timed out waiting for mcp response')
+  getMessage(error).toLowerCase().includes('timed out waiting for mcp response') ||
+  isMcpWebRtcResponseTimeoutError(error)
+
+export const isRecoverableMcpDriveTransportError = (error: unknown): boolean =>
+  isMcpWebRtcResponseTimeoutError(error)
 
 export const isExpectedMcpTeardownError = (error: unknown): boolean =>
   isMcpSessionNotInitializedError(error) ||

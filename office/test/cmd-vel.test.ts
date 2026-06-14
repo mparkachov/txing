@@ -1,11 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  applyCmdVelStep,
+  buildCmdVelTwistFromKeys,
   buildZeroTwist,
-  cmdVelAngularStepRadPerSec,
-  cmdVelLinearStepMps,
-  cmdVelMaxAngularZRadPerSec,
-  cmdVelMaxLinearXMps,
+  cmdVelTeleopAngularTargetRadPerSec,
+  cmdVelTeleopLinearTargetMps,
   isCmdVelControlKey,
   isCmdVelDirectionalKey,
   isCmdVelStopKey,
@@ -13,25 +11,23 @@ import {
 } from '../src/cmd-vel'
 
 describe('cmd_vel helpers', () => {
-  test('applies stepped ROS Twist changes in physical units', () => {
-    const afterFirstUp = applyCmdVelStep(buildZeroTwist(), 'ArrowUp')
-    const afterSecondUp = applyCmdVelStep(afterFirstUp, 'ArrowUp')
-    const afterLeft = applyCmdVelStep(afterSecondUp, 'ArrowLeft')
-    const afterStop = applyCmdVelStep(afterLeft, 's')
-
-    expect(afterFirstUp).toEqual({
-      linear: { x: 0.1, y: 0, z: 0 },
+  test('builds direct ROS Twist targets from held keys in physical units', () => {
+    expect(buildCmdVelTwistFromKeys(['ArrowUp'])).toEqual({
+      linear: { x: 0.35, y: 0, z: 0 },
       angular: { x: 0, y: 0, z: 0 },
     })
-    expect(afterSecondUp).toEqual({
-      linear: { x: 0.2, y: 0, z: 0 },
+    expect(buildCmdVelTwistFromKeys(['ArrowDown'])).toEqual({
+      linear: { x: -0.35, y: 0, z: 0 },
       angular: { x: 0, y: 0, z: 0 },
     })
-    expect(afterLeft).toEqual({
-      linear: { x: 0.2, y: 0, z: 0 },
-      angular: { x: 0, y: 0, z: 0.2 },
+    expect(buildCmdVelTwistFromKeys(['ArrowLeft'])).toEqual({
+      linear: { x: 0, y: 0, z: 0 },
+      angular: { x: 0, y: 0, z: 2.5 },
     })
-    expect(afterStop).toEqual(buildZeroTwist())
+    expect(buildCmdVelTwistFromKeys(['ArrowUp', 'ArrowLeft'])).toEqual({
+      linear: { x: 0.35, y: 0, z: 0 },
+      angular: { x: 0, y: 0, z: 2.5 },
+    })
   })
 
   test('recognizes only the supported teleop keys and zero twists', () => {
@@ -51,21 +47,17 @@ describe('cmd_vel helpers', () => {
     ).toBe(false)
   })
 
-  test('clamps stepped twist state at the configured physical limits', () => {
-    let twist = buildZeroTwist()
-    for (let index = 0; index < 10; index += 1) {
-      twist = applyCmdVelStep(twist, 'ArrowUp')
-    }
-    expect(twist.linear.x).toBe(cmdVelMaxLinearXMps)
-
-    for (let index = 0; index < 10; index += 1) {
-      twist = applyCmdVelStep(twist, 'ArrowRight')
-    }
-    expect(twist.angular.z).toBe(-cmdVelMaxAngularZRadPerSec)
+  test('cancels opposing held keys on each axis', () => {
+    expect(buildCmdVelTwistFromKeys(['ArrowUp', 'ArrowDown'])).toEqual(buildZeroTwist())
+    expect(buildCmdVelTwistFromKeys(['ArrowLeft', 'ArrowRight'])).toEqual(buildZeroTwist())
+    expect(buildCmdVelTwistFromKeys(['ArrowUp', 'ArrowDown', 'ArrowLeft'])).toEqual({
+      linear: { x: 0, y: 0, z: 0 },
+      angular: { x: 0, y: 0, z: 2.5 },
+    })
   })
 
-  test('exports the temporary browser teleop step sizes', () => {
-    expect(cmdVelLinearStepMps).toBe(0.1)
-    expect(cmdVelAngularStepRadPerSec).toBe(0.2)
+  test('exports the temporary browser teleop target velocities', () => {
+    expect(cmdVelTeleopLinearTargetMps).toBe(0.35)
+    expect(cmdVelTeleopAngularTargetRadPerSec).toBe(2.5)
   })
 })

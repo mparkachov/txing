@@ -60,6 +60,7 @@ import {
   shouldRenderRouteCatalogPanel,
 } from './level-detail-panel'
 import {
+  isRecoverableMcpDriveTransportError,
   isRecoverableMcpActiveControlError,
   shouldSuppressRobotStateTeardownError,
 } from './mcp-errors'
@@ -677,11 +678,7 @@ function App({ initialAuthError = '' }: AppProps) {
           hasReachedTargetRedcon({
             targetRedcon,
             reportedRedcon: extractReportedRedcon(nextShadow),
-          }) &&
-          (targetRedcon === 4 ||
-            (commandStatus?.status === 'succeeded' &&
-              commandStatus.seq === commandSequence &&
-              commandStatus.targetRedcon === targetRedcon))
+          })
         ) {
           if (redconCommandSequenceRef.current === commandSequence) {
             setPendingTargetRedcon(null)
@@ -1455,7 +1452,10 @@ function App({ initialAuthError = '' }: AppProps) {
     try {
       await shadowSession.publishCmdVel(twist)
     } catch (caughtError) {
-      if (isRecoverableMcpActiveControlError(caughtError)) {
+      if (
+        isRecoverableMcpActiveControlError(caughtError) ||
+        isRecoverableMcpDriveTransportError(caughtError)
+      ) {
         return
       }
       enqueueRuntimeError(
