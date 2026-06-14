@@ -22,10 +22,15 @@ std::int32_t ClampI32(std::int32_t value, std::int32_t low, std::int32_t high) {
     return std::max(low, std::min(value, high));
 }
 
-std::int32_t ApplyTrackPowerPercent(std::int32_t speed_percent, double track_power_percent) {
-    return static_cast<std::int32_t>(
-        std::llround(static_cast<double>(speed_percent) * (track_power_percent / 100.0))
+std::int32_t ApplyRawTrackPowerPercent(std::int32_t raw_speed, double track_power_percent, const MotorConfig& config) {
+    if (raw_speed == 0) {
+        return 0;
+    }
+    const auto trimmed = static_cast<std::int32_t>(
+        std::llround(static_cast<double>(std::abs(raw_speed)) * (track_power_percent / 100.0))
     );
+    const auto bounded = ClampI32(trimmed, config.cmd_raw_min_speed, config.cmd_raw_max_speed);
+    return raw_speed < 0 ? -bounded : bounded;
 }
 
 void WriteText(const std::filesystem::path& path, const std::string& value) {
@@ -245,9 +250,7 @@ public:
         SetRawSpeeds(0, 0);
     }
 
-    void SetSpeeds(std::int32_t left_percent, std::int32_t right_percent) {
-        const auto left_raw = ScalePercentToRaw(left_percent, config_);
-        const auto right_raw = ScalePercentToRaw(right_percent, config_);
+    void SetSpeeds(std::int32_t left_raw, std::int32_t right_raw) {
         try {
             SetRawSpeeds(left_raw, right_raw);
         } catch (const std::exception&) {
@@ -282,8 +285,8 @@ SysfsMotorDriver::SysfsMotorDriver(MotorConfig config) : impl_(std::make_unique<
 
 SysfsMotorDriver::~SysfsMotorDriver() = default;
 
-void SysfsMotorDriver::SetSpeeds(std::int32_t left_percent, std::int32_t right_percent) {
-    impl_->SetSpeeds(left_percent, right_percent);
+void SysfsMotorDriver::SetSpeeds(std::int32_t left_raw, std::int32_t right_raw) {
+    impl_->SetSpeeds(left_raw, right_raw);
 }
 
 void SysfsMotorDriver::Close() {
@@ -376,11 +379,18 @@ void MotorController::ApplySpeeds(std::int32_t left_speed, std::int32_t right_sp
     if (!force && motion_.left_speed == left_speed && motion_.right_speed == right_speed) {
         return;
     }
+    const auto left_raw = ApplyRawTrackPowerPercent(
+        ScalePercentToRaw(left_speed, config_),
+        config_.left_track_power_percent,
+        config_
+    );
+    const auto right_raw = ApplyRawTrackPowerPercent(
+        ScalePercentToRaw(right_speed, config_),
+        config_.right_track_power_percent,
+        config_
+    );
     try {
-        driver_->SetSpeeds(
-            ApplyTrackPowerPercent(left_speed, config_.left_track_power_percent),
-            ApplyTrackPowerPercent(right_speed, config_.right_track_power_percent)
-        );
+        driver_->SetSpeeds(left_raw, right_raw);
     } catch (const std::exception& err) {
         MarkError(err.what());
         throw;

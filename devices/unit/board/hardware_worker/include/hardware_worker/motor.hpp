@@ -47,13 +47,13 @@ struct HardwareStatus {
 class MotorDriver {
 public:
     virtual ~MotorDriver() = default;
-    virtual void SetSpeeds(std::int32_t left_percent, std::int32_t right_percent) = 0;
+    virtual void SetSpeeds(std::int32_t left_raw, std::int32_t right_raw) = 0;
     virtual void Close();
 };
 
 class NoopMotorDriver final : public MotorDriver {
 public:
-    void SetSpeeds(std::int32_t left_percent, std::int32_t right_percent) override;
+    void SetSpeeds(std::int32_t left_raw, std::int32_t right_raw) override;
 };
 
 class SysfsMotorDriver final : public MotorDriver {
@@ -61,7 +61,7 @@ public:
     explicit SysfsMotorDriver(MotorConfig config);
     ~SysfsMotorDriver() override;
 
-    void SetSpeeds(std::int32_t left_percent, std::int32_t right_percent) override;
+    void SetSpeeds(std::int32_t left_raw, std::int32_t right_raw) override;
     void Close() override;
 
 private:

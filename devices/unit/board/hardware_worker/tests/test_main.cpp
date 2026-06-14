@@ -33,11 +33,11 @@ hw::MotorConfig TestConfig() {
 
 class RecordingDriver final : public hw::MotorDriver {
 public:
-    void SetSpeeds(std::int32_t left_percent, std::int32_t right_percent) override {
+    void SetSpeeds(std::int32_t left_raw, std::int32_t right_raw) override {
         if (fail_writes) {
             throw std::runtime_error("injected hardware write failure");
         }
-        calls.emplace_back(left_percent, right_percent);
+        calls.emplace_back(left_raw, right_raw);
     }
 
     std::vector<std::pair<std::int32_t, std::int32_t>> calls;
@@ -113,13 +113,15 @@ void TestWatchdogNeutralizesOnDeadline() {
     const auto motion = controller.Motion();
     Expect(motion.left_speed == 0 && motion.right_speed == 0, "deadline stop should neutralize motion");
     Expect(
-        recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{50, 50}, {0, 0}}),
+        recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{149, 149}, {0, 0}}),
         "driver calls should include drive and stop"
     );
 }
 
 void TestTrackPowerTrimAppliesOnlyToDriverOutput() {
     auto config = TestConfig();
+    config.cmd_raw_min_speed = 100;
+    config.cmd_raw_max_speed = 200;
     config.right_track_power_percent = 50.0;
     auto driver = std::make_unique<RecordingDriver>();
     auto* recorder = driver.get();
@@ -130,16 +132,16 @@ void TestTrackPowerTrimAppliesOnlyToDriverOutput() {
     const auto drive = controller.ApplyVelocity(twist, 2'000, 1'000);
     Expect(drive.left_speed == 50 && drive.right_speed == 50, "track trim should not change reported logical motion");
     Expect(
-        recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{50, 25}}),
-        "track trim should reduce only the physical driver command"
+        recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{149, 100}}),
+        "track trim should reduce physical output without going below the configured raw minimum"
     );
 
     twist.linear.x = -0.25;
     const auto reverse = controller.ApplyVelocity(twist, 2'500, 1'500);
     Expect(reverse.left_speed == -50 && reverse.right_speed == -50, "track trim should not change reported logical reverse motion");
     Expect(
-        recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{50, 25}, {-50, -25}}),
-        "track trim should apply symmetrically to reverse physical output"
+        recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{149, 100}, {-149, -100}}),
+        "track trim should apply symmetrically to reverse physical output without going below the configured raw minimum"
     );
 }
 

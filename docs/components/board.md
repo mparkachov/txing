@@ -297,10 +297,11 @@ TXING_MOTOR_LEFT_TRACK_POWER_PERCENT=100
 TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=98
 ```
 
-Track power trim is board-local physical calibration. It is applied after
-logical tank mixing and before raw PWM scaling, so user-facing
-`motion.leftSpeed` and `motion.rightSpeed` still report the untrimmed logical
-command.
+Track power trim is board-local physical calibration. User-facing
+`motion.leftSpeed` and `motion.rightSpeed` report the untrimmed logical
+command. The worker maps that logical command into the configured raw motor
+range, applies per-track trim, and keeps every nonzero physical output within
+`TXING_MOTOR_CMD_RAW_MIN_SPEED` and `TXING_MOTOR_CMD_RAW_MAX_SPEED`.
 
 The default video channel is `<thing_id>-board-video`. The default bridge
 socket path is `/run/txing-unit-daemon/board-video-bridge.sock`. Existing
