@@ -22,6 +22,10 @@ std::int32_t ClampI32(std::int32_t value, std::int32_t low, std::int32_t high) {
     return std::max(low, std::min(value, high));
 }
 
+std::int32_t ApplyTrackPowerPercent(double speed, double track_power_percent) {
+    return static_cast<std::int32_t>(std::llround(speed * track_power_percent));
+}
+
 void WriteText(const std::filesystem::path& path, const std::string& value) {
     std::ofstream stream(path);
     if (!stream) {
@@ -442,8 +446,8 @@ std::pair<std::int32_t, std::int32_t> MixTwistToTankSpeeds(const Twist& twist, c
     const auto left = std::clamp(left_wheel_linear_speed / config.max_wheel_linear_speed_mps, -1.0, 1.0);
     const auto right = std::clamp(right_wheel_linear_speed / config.max_wheel_linear_speed_mps, -1.0, 1.0);
     return {
-        static_cast<std::int32_t>(std::llround(left * 100.0)),
-        static_cast<std::int32_t>(std::llround(right * 100.0)),
+        ApplyTrackPowerPercent(left, config.left_track_power_percent),
+        ApplyTrackPowerPercent(right, config.right_track_power_percent),
     };
 }
 

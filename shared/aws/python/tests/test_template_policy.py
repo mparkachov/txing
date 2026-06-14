@@ -322,6 +322,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "TXING_MOTOR_RIGHT_INVERTED",
             "TXING_MOTOR_TRACK_WIDTH_M",
             "TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS",
+            "TXING_MOTOR_LEFT_TRACK_POWER_PERCENT",
+            "TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT",
             "TXING_MOTOR_WATCHDOG_TIMEOUT_MS",
         ):
             self.assertIn(key, daemon_env_values)
@@ -342,6 +344,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         max_wheel_linear_speed_mps = float(
             daemon_env_values["TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS"]
         )
+        left_track_power_percent = float(daemon_env_values["TXING_MOTOR_LEFT_TRACK_POWER_PERCENT"])
+        right_track_power_percent = float(
+            daemon_env_values["TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT"]
+        )
         watchdog_timeout_ms = int(daemon_env_values["TXING_MOTOR_WATCHDOG_TIMEOUT_MS"])
 
         self.assertGreater(raw_max_speed, 0)
@@ -356,6 +362,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertGreater(track_width_m, 0.0)
         self.assertTrue(math.isfinite(max_wheel_linear_speed_mps))
         self.assertGreater(max_wheel_linear_speed_mps, 0.0)
+        self.assertTrue(math.isfinite(left_track_power_percent))
+        self.assertGreater(left_track_power_percent, 0.0)
+        self.assertLessEqual(left_track_power_percent, 100.0)
+        self.assertTrue(math.isfinite(right_track_power_percent))
+        self.assertGreater(right_track_power_percent, 0.0)
+        self.assertLessEqual(right_track_power_percent, 100.0)
         self.assertGreater(watchdog_timeout_ms, 0)
         self.assertNotIn("\nBOARD_DRIVE_", "\n" + daemon_env_template)
         self.assertNotIn("\nBOARD_VIDEO_", "\n" + daemon_env_template)

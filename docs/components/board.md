@@ -287,6 +287,16 @@ Default runtime inputs include:
 - `TXING_MOTOR_*`
 - CloudWatch log configuration
 
+Motor calibration supports per-track output trim through the shared
+`daemon.env` file. Values are numeric percentages in `(0, 100]`; omit the `%`
+sign. For example, if straight driving drifts left because the right track is
+stronger, reduce the right side:
+
+```text
+TXING_MOTOR_LEFT_TRACK_POWER_PERCENT=100
+TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=98
+```
+
 The default video channel is `<thing_id>-board-video`. The default bridge
 socket path is `/run/txing-unit-daemon/board-video-bridge.sock`. Existing
 boards with an older generated `daemon.env` must remove leading `export `
@@ -294,9 +304,12 @@ prefixes for systemd `EnvironmentFile=` compatibility and add
 `TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`,
 `TXING_HARDWARE_WORKER_SOCKET_PATH`, and
 `TXING_HARDWARE_WORKER_TIMEOUT_MS`; generated config files are not overwritten
-by binary upgrades. The daemon ignores `TXING_MOTOR_*`; those values are
-consumed by `txing-unit-hardware-worker` when its systemd unit loads the same
-root-owned env file.
+by binary upgrades. Existing boards must also add
+`TXING_MOTOR_LEFT_TRACK_POWER_PERCENT=100` and
+`TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=100` if their `daemon.env` predates
+track power trim. The daemon ignores `TXING_MOTOR_*`; those values are consumed
+by `txing-unit-hardware-worker` when its systemd unit loads the same root-owned
+env file.
 
 ## Release Artifacts
 

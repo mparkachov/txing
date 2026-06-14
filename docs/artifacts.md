@@ -156,6 +156,9 @@ runtime defaults for video, capabilities, CloudWatch, hardware-worker socket
 configuration, and motor control. The Go daemon consumes the daemon/cloud/video
 keys. The hardware worker consumes the `TXING_HARDWARE_WORKER_*` and
 `TXING_MOTOR_*` keys when its systemd unit loads the same root-owned env file.
+Track power trim uses numeric percentage keys such as
+`TXING_MOTOR_LEFT_TRACK_POWER_PERCENT=100` and
+`TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=98`; omit the `%` sign.
 Certificate paths are omitted by default; the daemon derives colocated
 certificate paths from the loaded `daemon.env` directory.
 

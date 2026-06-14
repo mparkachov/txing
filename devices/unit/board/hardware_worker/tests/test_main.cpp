@@ -50,6 +50,10 @@ void TestTwistValidationAndMixing() {
     forward.linear.x = 0.50;
     Expect(hw::MixTwistToTankSpeeds(forward, config) == std::make_pair(100, 100), "forward cmd_vel should saturate both sides");
 
+    config.right_track_power_percent = 98.0;
+    Expect(hw::MixTwistToTankSpeeds(forward, config) == std::make_pair(100, 98), "right track power trim should reduce straight-line right output");
+    config.right_track_power_percent = 100.0;
+
     hw::Twist turn;
     turn.angular.z = 1.0;
     Expect(hw::MixTwistToTankSpeeds(turn, config) == std::make_pair(-28, 28), "yaw cmd_vel should mix differential speeds");
@@ -71,6 +75,28 @@ void TestRawScaling() {
     Expect(hw::ScalePercentToRaw(1, config) == 50, "one percent should map to configured minimum raw speed");
     Expect(hw::ScalePercentToRaw(100, config) == 250, "full percent should map to configured max command raw speed");
     Expect(hw::ScalePercentToRaw(-100, config) == -250, "negative full percent should map to negative max command raw speed");
+}
+
+void TestTrackPowerValidation() {
+    auto config = TestConfig();
+    config.left_track_power_percent = 0.0;
+    bool rejected = false;
+    try {
+        hw::ValidateMotorConfig(config);
+    } catch (const std::exception& err) {
+        rejected = std::string(err.what()).find("motor-left-track-power-percent") != std::string::npos;
+    }
+    Expect(rejected, "zero left track power percent should be rejected");
+
+    config = TestConfig();
+    config.right_track_power_percent = 101.0;
+    rejected = false;
+    try {
+        hw::ValidateMotorConfig(config);
+    } catch (const std::exception& err) {
+        rejected = std::string(err.what()).find("motor-right-track-power-percent") != std::string::npos;
+    }
+    Expect(rejected, "right track power percent above 100 should be rejected");
 }
 
 void TestWatchdogNeutralizesOnDeadline() {
@@ -135,6 +161,8 @@ void TestCliParsesMotorEnvironment() {
         {"TXING_MOTOR_ENABLED", "false"},
         {"TXING_MOTOR_CMD_RAW_MIN_SPEED", "100"},
         {"TXING_MOTOR_CMD_RAW_MAX_SPEED", "200"},
+        {"TXING_MOTOR_LEFT_TRACK_POWER_PERCENT", "99.5"},
+        {"TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT", "98"},
     };
     auto parsed = hw::ParseCli({"txing-unit-hardware-worker"}, [&](const std::string& name) -> std::optional<std::string> {
         const auto found = values.find(name);
@@ -147,6 +175,8 @@ void TestCliParsesMotorEnvironment() {
     Expect(!parsed.config.motor.enabled, "CLI should parse motor-enabled from env");
     Expect(parsed.config.motor.cmd_raw_min_speed == 100, "CLI should parse min speed from env");
     Expect(parsed.config.motor.cmd_raw_max_speed == 200, "CLI should parse max speed from env");
+    Expect(parsed.config.motor.left_track_power_percent == 99.5, "CLI should parse left track power percent from env");
+    Expect(parsed.config.motor.right_track_power_percent == 98.0, "CLI should parse right track power percent from env");
 }
 
 }  // namespace
@@ -155,6 +185,7 @@ int main() {
     try {
         TestTwistValidationAndMixing();
         TestRawScaling();
+        TestTrackPowerValidation();
         TestWatchdogNeutralizesOnDeadline();
         TestDeadlineIsClampedToWatchdogTimeout();
         TestHardwareErrorNeutralizesMotion();

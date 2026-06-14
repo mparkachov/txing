@@ -28,6 +28,8 @@ struct MotorConfig {
     bool right_inverted = false;
     double track_width_m = 0.28;
     double max_wheel_linear_speed_mps = 0.50;
+    double left_track_power_percent = 100.0;
+    double right_track_power_percent = 100.0;
     std::uint64_t watchdog_timeout_ms = 5'000;
 };
 

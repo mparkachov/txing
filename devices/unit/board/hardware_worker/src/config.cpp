@@ -200,6 +200,8 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
     motor.right_dir_gpio = ParseOptional(options, "motor-right-dir-gpio", lookup_env, "TXING_MOTOR_RIGHT_DIR_GPIO", motor.right_dir_gpio, ParseU32Value);
     motor.track_width_m = ParseOptional(options, "motor-track-width-m", lookup_env, "TXING_MOTOR_TRACK_WIDTH_M", motor.track_width_m, ParseDoubleValue);
     motor.max_wheel_linear_speed_mps = ParseOptional(options, "motor-max-wheel-linear-speed-mps", lookup_env, "TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS", motor.max_wheel_linear_speed_mps, ParseDoubleValue);
+    motor.left_track_power_percent = ParseOptional(options, "motor-left-track-power-percent", lookup_env, "TXING_MOTOR_LEFT_TRACK_POWER_PERCENT", motor.left_track_power_percent, ParseDoubleValue);
+    motor.right_track_power_percent = ParseOptional(options, "motor-right-track-power-percent", lookup_env, "TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT", motor.right_track_power_percent, ParseDoubleValue);
     motor.watchdog_timeout_ms = ParseOptional(options, "motor-watchdog-timeout-ms", lookup_env, "TXING_MOTOR_WATCHDOG_TIMEOUT_MS", motor.watchdog_timeout_ms, ParseU64Value);
     ValidateMotorConfig(motor);
     return parsed;
@@ -236,6 +238,8 @@ std::string UsageText() {
         << "  --motor-right-inverted <bool>         or TXING_MOTOR_RIGHT_INVERTED\n"
         << "  --motor-track-width-m <meters>        or TXING_MOTOR_TRACK_WIDTH_M\n"
         << "  --motor-max-wheel-linear-speed-mps <m/s> or TXING_MOTOR_MAX_WHEEL_LINEAR_SPEED_MPS\n"
+        << "  --motor-left-track-power-percent <percent> or TXING_MOTOR_LEFT_TRACK_POWER_PERCENT\n"
+        << "  --motor-right-track-power-percent <percent> or TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT\n"
         << "  --motor-watchdog-timeout-ms <ms>      or TXING_MOTOR_WATCHDOG_TIMEOUT_MS\n"
         << "  --version\n"
         << "  --help\n";
@@ -282,6 +286,12 @@ void ValidateMotorConfig(const MotorConfig& config) {
     }
     if (config.max_wheel_linear_speed_mps <= 0.0 || !std::isfinite(config.max_wheel_linear_speed_mps)) {
         throw std::runtime_error("motor-max-wheel-linear-speed-mps must be a positive finite number");
+    }
+    if (config.left_track_power_percent <= 0.0 || config.left_track_power_percent > 100.0 || !std::isfinite(config.left_track_power_percent)) {
+        throw std::runtime_error("motor-left-track-power-percent must be a finite percentage in (0, 100]");
+    }
+    if (config.right_track_power_percent <= 0.0 || config.right_track_power_percent > 100.0 || !std::isfinite(config.right_track_power_percent)) {
+        throw std::runtime_error("motor-right-track-power-percent must be a finite percentage in (0, 100]");
     }
     if (config.watchdog_timeout_ms == 0) {
         throw std::runtime_error("motor-watchdog-timeout-ms must be positive");
