@@ -44,7 +44,8 @@ RPCs:
 - `state`: `STARTING`, `READY`, `DEGRADED`, `ERROR`, or `STOPPED`
 - `actuator_ready`
 - `last_error`
-- `motion.leftSpeed`, `motion.rightSpeed`, and `motion.sequence`
+- `motion.leftSpeed`, `motion.rightSpeed`, and `motion.sequence`; track speed
+  values are logical command percentages before board-local motor power trim
 - `active_deadline_unix_ms`
 - `worker_version`
 

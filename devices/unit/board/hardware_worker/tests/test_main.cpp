@@ -51,7 +51,7 @@ void TestTwistValidationAndMixing() {
     Expect(hw::MixTwistToTankSpeeds(forward, config) == std::make_pair(100, 100), "forward cmd_vel should saturate both sides");
 
     config.right_track_power_percent = 98.0;
-    Expect(hw::MixTwistToTankSpeeds(forward, config) == std::make_pair(100, 98), "right track power trim should reduce straight-line right output");
+    Expect(hw::MixTwistToTankSpeeds(forward, config) == std::make_pair(100, 100), "track power trim should not affect logical straight-line output");
     config.right_track_power_percent = 100.0;
 
     hw::Twist turn;
@@ -115,6 +115,31 @@ void TestWatchdogNeutralizesOnDeadline() {
     Expect(
         recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{50, 50}, {0, 0}}),
         "driver calls should include drive and stop"
+    );
+}
+
+void TestTrackPowerTrimAppliesOnlyToDriverOutput() {
+    auto config = TestConfig();
+    config.right_track_power_percent = 50.0;
+    auto driver = std::make_unique<RecordingDriver>();
+    auto* recorder = driver.get();
+    hw::MotorController controller(config, std::move(driver));
+    hw::Twist twist;
+    twist.linear.x = 0.25;
+
+    const auto drive = controller.ApplyVelocity(twist, 2'000, 1'000);
+    Expect(drive.left_speed == 50 && drive.right_speed == 50, "track trim should not change reported logical motion");
+    Expect(
+        recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{50, 25}}),
+        "track trim should reduce only the physical driver command"
+    );
+
+    twist.linear.x = -0.25;
+    const auto reverse = controller.ApplyVelocity(twist, 2'500, 1'500);
+    Expect(reverse.left_speed == -50 && reverse.right_speed == -50, "track trim should not change reported logical reverse motion");
+    Expect(
+        recorder->calls == std::vector<std::pair<std::int32_t, std::int32_t>>({{50, 25}, {-50, -25}}),
+        "track trim should apply symmetrically to reverse physical output"
     );
 }
 
@@ -187,6 +212,7 @@ int main() {
         TestRawScaling();
         TestTrackPowerValidation();
         TestWatchdogNeutralizesOnDeadline();
+        TestTrackPowerTrimAppliesOnlyToDriverOutput();
         TestDeadlineIsClampedToWatchdogTimeout();
         TestHardwareErrorNeutralizesMotion();
         TestCliParsesMotorEnvironment();
