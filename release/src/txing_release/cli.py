@@ -169,6 +169,11 @@ def print_component_audit(component: Component, version: str) -> list[str]:
     return problems
 
 
+def print_versions() -> None:
+    for component in COMPONENTS.values():
+        print(f"{component.name}: {read_component_version(component)}")
+
+
 def bump(component_name: str, target: str) -> None:
     component = parse_component(component_name)
     target_tuple = validate_semver(target)
@@ -254,10 +259,13 @@ def main() -> None:
     bump_parser = subparsers.add_parser("bump", help="bump or repair managed version surfaces")
     bump_parser.add_argument("component", choices=tuple(COMPONENTS))
     bump_parser.add_argument("version")
+    subparsers.add_parser("print", help="print release component versions")
     args = parser.parse_args()
 
     if args.command == "bump":
         bump(args.component, args.version)
+    elif args.command == "print":
+        print_versions()
     else:
         parser.error(f"unsupported command {args.command!r}")
 

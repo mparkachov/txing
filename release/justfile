@@ -32,6 +32,9 @@ bump component='' target='':
     esac
     uv run --project "{{ release_dir }}" txing-release bump "{{ component }}" "{{ target }}"
 
+print:
+    uv run --project "{{ release_dir }}" txing-release print
+
 build component='' ref='':
     #!/bin/sh
     set -eu

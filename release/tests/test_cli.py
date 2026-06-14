@@ -177,6 +177,28 @@ class ReleaseCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("invalid choice", stderr.getvalue())
 
+    def test_print_command_lists_release_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cli.ROOT = Path(temp_dir)
+            self._write_minimal_repo()
+            self._write("release/versions/office", "4.5.6\n")
+
+            argv = sys.argv
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            try:
+                sys.argv = ["txing-release", "print"]
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    cli.main()
+            finally:
+                sys.argv = argv
+
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertEqual(
+                stdout.getvalue(),
+                "rig: 1.2.3\nlambda: 1.2.3\nunit: 1.2.3\noffice: 4.5.6\n",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
