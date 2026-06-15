@@ -392,13 +392,6 @@ function App({ initialAuthError = '' }: AppProps) {
         : null
   const hasShadowBootstrapFailure = shadowBootstrapError !== '' && lastShadowUpdateAtMs === null
 
-  const adminEmailMismatch = useMemo(() => {
-    if (!appConfig.adminEmail || !authUser?.email) {
-      return false
-    }
-    return authUser.email.toLowerCase() !== appConfig.adminEmail
-  }, [authUser?.email])
-
   const shadowDocument = useMemo<unknown>(() => {
     try {
       return JSON.parse(shadowJson)
@@ -798,30 +791,16 @@ function App({ initialAuthError = '' }: AppProps) {
     if (status !== 'signed_in') {
       return
     }
-    if (!adminEmailMismatch) {
-      return
-    }
-
-    clearAuthState()
-    setStatus('signed_out')
-    setBlockingError(`Signed-in user is not allowed. Expected: ${appConfig.adminEmail}`)
-  }, [adminEmailMismatch, status])
-
-  useEffect(() => {
-    if (status !== 'signed_in' || adminEmailMismatch) {
-      return
-    }
     if (route.kind !== 'root') {
       return
     }
 
     navigateToPath(configuredTownPath, true)
-  }, [adminEmailMismatch, configuredTownPath, navigateToPath, route.kind, status])
+  }, [configuredTownPath, navigateToPath, route.kind, status])
 
   useEffect(() => {
     if (
       status !== 'signed_in' ||
-      adminEmailMismatch ||
       !currentRouteThingName ||
       hasUnsupportedTown
     ) {
@@ -906,7 +885,6 @@ function App({ initialAuthError = '' }: AppProps) {
       cancelled = true
     }
   }, [
-    adminEmailMismatch,
     currentRouteThingName,
     hasUnsupportedTown,
     resolveSessionIdToken,
@@ -917,7 +895,6 @@ function App({ initialAuthError = '' }: AppProps) {
   useEffect(() => {
     if (
       status !== 'signed_in' ||
-      adminEmailMismatch ||
       route.kind !== 'town' ||
       hasUnsupportedTown
     ) {
@@ -1050,7 +1027,6 @@ function App({ initialAuthError = '' }: AppProps) {
       }
     }
   }, [
-    adminEmailMismatch,
     hasUnsupportedTown,
     currentTownCatalogName,
     resolveSessionIdToken,
@@ -1063,7 +1039,6 @@ function App({ initialAuthError = '' }: AppProps) {
   useEffect(() => {
     if (
       status !== 'signed_in' ||
-      adminEmailMismatch ||
       route.kind !== 'rig' ||
       !currentRigCatalogThingName ||
       hasUnsupportedTown
@@ -1201,7 +1176,6 @@ function App({ initialAuthError = '' }: AppProps) {
       }
     }
   }, [
-    adminEmailMismatch,
     hasUnsupportedTown,
     currentRigCatalogThingName,
     navigationRigLabel,
@@ -1215,7 +1189,6 @@ function App({ initialAuthError = '' }: AppProps) {
   useEffect(() => {
     if (
       status !== 'signed_in' ||
-      adminEmailMismatch ||
       hasUnsupportedTown ||
       !currentRouteThingName ||
       routeHeaderState.status !== 'ready'
@@ -1238,7 +1211,6 @@ function App({ initialAuthError = '' }: AppProps) {
       window.clearInterval(intervalId)
     }
   }, [
-    adminEmailMismatch,
     currentRouteThingName,
     hasUnsupportedTown,
     refreshRouteSparkplugShadow,
@@ -1248,7 +1220,7 @@ function App({ initialAuthError = '' }: AppProps) {
   ])
 
   useEffect(() => {
-    if (status !== 'signed_in' || adminEmailMismatch || hasUnsupportedTown) {
+    if (status !== 'signed_in' || hasUnsupportedTown) {
       setShadowTargetState(emptyShadowTargetState())
       return
     }
@@ -1300,7 +1272,6 @@ function App({ initialAuthError = '' }: AppProps) {
       error: '',
     })
   }, [
-    adminEmailMismatch,
     hasUnsupportedTown,
     isSelectedDeviceValid,
     route,

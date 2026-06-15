@@ -68,12 +68,16 @@ just aws::deploy-device <rig-id> unit bot
 ```
 
 `just aws::deploy-init` is a one-off manual step before first installation. It
-reads `shared/aws/deploy-init.json` and stores the office/admin deploy parameters
-as separate SSM Parameter Store parameters:
+reads `shared/aws/deploy-init.json` and stores the office/bootstrap deploy
+parameters as separate SSM Parameter Store parameters:
 
 - `/txing/stack/CognitoDomainPrefix`
 - `/txing/stack/AdminEmail`
 - `/txing/stack/WebAppUrl`
+
+`/txing/stack/AdminEmail` is the seed admin email used by
+`just aws::create-admin-user`. It is not an office allow-list; office access is
+controlled by membership in the configured Cognito User Pool.
 
 After that, CloudFormation reads those SSM parameters directly. Each stack also
 publishes its operational values under `/txing/stack/...`, for example Lambda
@@ -154,11 +158,21 @@ stays in AWS IoT thing attributes and named shadows, not SSM.
 
 ## Web Admin
 
-Create or update the Cognito admin user after `aws::deploy`:
+The configured Cognito User Pool is the office access boundary. Any user
+enrolled in that pool can sign in through the existing Cognito Hosted UI flow
+and uses the same office Identity Pool authenticated role for IoT, Sparkplug,
+MCP, and KVS viewer operations. Add additional office users in the AWS Cognito
+console for the existing user pool.
+
+Create or update the seed Cognito admin user after `aws::deploy`:
 
 ```bash
 just aws::create-admin-user '<strong-password>'
 ```
+
+The seed user is named by `WebExpectedAdminEmail`, which comes from the
+`AdminEmail` deploy-init parameter. It is a bootstrap convenience only, not an
+office allow-list.
 
 Generate and build the SPA:
 
@@ -190,7 +204,6 @@ Cloudflare Pages:
   - `VITE_COGNITO_IDENTITY_POOL_ID`
   - `VITE_IOT_POLICY_NAME`
   - `VITE_COGNITO_SCOPE`
-  - `VITE_ADMIN_EMAIL`
 
 `VITE_TXING_VERSION`, `VITE_DEVICE_THING_NAME`, and
 `VITE_SPARKPLUG_EDGE_NODE_ID` are intentionally absent from Cloudflare
@@ -335,6 +348,9 @@ CloudFormation-owned `/txing/stack/...` operational parameters and all
 - `/txing/stack/CognitoDomainPrefix`
 - `/txing/stack/AdminEmail`
 - `/txing/stack/WebAppUrl`
+
+`/txing/stack/AdminEmail` is only the seed admin input for the bootstrap helper;
+it is not used to restrict office sign-in after deployment.
 
 To remove those final manual inputs as well:
 

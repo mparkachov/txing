@@ -266,6 +266,31 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("/txing/stack/AdminEmail", result.stdout)
         self.assertIn("/txing/stack/WebAppUrl", result.stdout)
 
+    def test_office_docs_describe_cognito_pool_user_enrollment(self) -> None:
+        aws_docs = (REPO_ROOT / "docs" / "aws.md").read_text(encoding="utf-8")
+        office_docs = (REPO_ROOT / "docs" / "components" / "office.md").read_text(
+            encoding="utf-8"
+        )
+        normalized_aws_docs = " ".join(aws_docs.split())
+        normalized_office_docs = " ".join(office_docs.split())
+
+        self.assertIn(
+            "The configured Cognito User Pool is the office access boundary",
+            aws_docs,
+        )
+        self.assertIn(
+            "Add additional office users in the AWS Cognito console",
+            normalized_aws_docs,
+        )
+        self.assertIn("The seed user is named by `WebExpectedAdminEmail`", aws_docs)
+        self.assertIn(
+            "Office users are enrolled in the configured Cognito User Pool",
+            office_docs,
+        )
+        self.assertIn("users in the AWS Cognito console", normalized_office_docs)
+        self.assertNotIn("`VITE_ADMIN_EMAIL`", aws_docs)
+        self.assertNotIn("`VITE_ADMIN_EMAIL`", office_docs)
+
     def test_aws_check_default_does_not_require_rig_or_device_ids(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             bin_dir = Path(temp_dir)

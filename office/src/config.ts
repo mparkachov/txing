@@ -25,7 +25,6 @@ export const getRuntimeAppUrl = (): string => {
 
 const buildConfig = () => {
   const cognitoDomain = toUrl(requireEnv('VITE_COGNITO_DOMAIN'), '')
-  const adminEmail = requireEnv('VITE_ADMIN_EMAIL')?.toLowerCase() ?? ''
   const awsRegion = requireEnv('VITE_AWS_REGION') ?? ''
   const cognitoUserPoolId = requireEnv('VITE_COGNITO_USER_POOL_ID') ?? ''
   const cognitoIdentityPoolId = requireEnv('VITE_COGNITO_IDENTITY_POOL_ID') ?? ''
@@ -63,10 +62,6 @@ const buildConfig = () => {
   if (!sparkplugGroupId) {
     errors.push('Missing VITE_SPARKPLUG_GROUP_ID')
   }
-  if (!adminEmail) {
-    errors.push('Missing VITE_ADMIN_EMAIL')
-  }
-
   return {
     errors,
     awsRegion,
@@ -74,7 +69,6 @@ const buildConfig = () => {
     townThingName,
     sparkplugGroupId,
     txingVersion,
-    adminEmail,
     cognitoDomain,
     cognitoClientId: requireEnv('VITE_COGNITO_CLIENT_ID') ?? '',
     cognitoScope: requireEnv('VITE_COGNITO_SCOPE') ?? 'openid email profile',

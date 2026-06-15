@@ -6,10 +6,20 @@ The office app is the operator and admin SPA for browsing towns, rigs, and devic
 
 - static SPA built with Vite
 - Cognito hosted UI sign-in
+- configured Cognito User Pool membership as the office access boundary
 - Cognito Identity Pool exchange for temporary AWS credentials
 - direct AWS IoT reads for initial route metadata
 - MQTT/WSS for live named-shadow updates, Sparkplug commands, and MCP traffic
 - AWS KVS WebRTC viewer for the `/<town>/<rig>/<device>/video` route
+
+## Access Model
+
+Office users are enrolled in the configured Cognito User Pool. Operators add
+users in the AWS Cognito console, and users sign in through the existing Cognito
+Hosted UI flow. All enrolled users share the same current office permissions
+through the authenticated Cognito Identity Pool role; office does not use
+Cognito groups, custom claims, per-device restrictions, or an in-app user
+management screen.
 
 ## Routes
 
@@ -109,7 +119,6 @@ settings:
   - `VITE_COGNITO_IDENTITY_POOL_ID`
   - `VITE_IOT_POLICY_NAME`
   - `VITE_COGNITO_SCOPE`
-  - `VITE_ADMIN_EMAIL`
 
 Cloudflare Pages provides SPA fallback automatically when there is no top-level
 `404.html`. The app does not use a `/* /index.html 200` `_redirects` rule

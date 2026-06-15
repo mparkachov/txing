@@ -790,6 +790,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Default: /txing/stack/CognitoDomainPrefix", root_template)
         self.assertIn("Default: /txing/stack/AdminEmail", root_template)
         self.assertIn("Default: /txing/stack/WebAppUrl", root_template)
+        self.assertIn(
+            "Description: SSM parameter containing the seed admin email used by the bootstrap admin-user helper.",
+            root_template,
+        )
+        self.assertNotIn("single admin email expected by the SPA", root_template)
         for parameter_name in (
             "WebCognitoDomain",
             "WebCognitoUserPoolClientId",
@@ -802,7 +807,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         ):
             self.assertIn(f"Name: /txing/stack/{parameter_name}", root_template)
         self.assertIn("Domain: !Ref StackCognitoDomainPrefix", root_template)
-        self.assertIn("admin-email: !Ref StackAdminEmail", root_template)
+        self.assertIn("seed-admin-email: !Ref StackAdminEmail", root_template)
+        self.assertIn(
+            "Description: Seed admin email for the bootstrap admin-user helper; not an office allow-list.",
+            root_template,
+        )
         self.assertIn('!Sub "${StackWebAppUrl}/"', root_template)
         self.assertNotIn("TemplateURL:", root_template)
         self.assertIn("Runtime: provided.al2023", lambda_templates)

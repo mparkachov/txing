@@ -5,6 +5,14 @@ import { resolve } from 'node:path'
 const repoRoot = resolve(import.meta.dir, '../..')
 
 describe('app route catalog source wiring', () => {
+  test('signed-in Cognito users are not filtered by token email', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
+
+    expect(appSource).not.toContain('adminEmailMismatch')
+    expect(appSource).not.toContain('Signed-in user is not allowed')
+    expect(appSource).not.toContain('appConfig.adminEmail')
+  })
+
   test('rig device catalog queries by rig thing id, not display name', () => {
     const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 

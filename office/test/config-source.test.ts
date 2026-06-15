@@ -21,6 +21,8 @@ describe('office config wiring', () => {
     expect(justfile).not.toContain('VITE_SPARKPLUG_EDGE_NODE_ID')
     expect(justfile).not.toContain('VITE_DEVICE_THING_NAME')
     expect(justfile).not.toContain('VITE_TXING_VERSION')
+    expect(justfile).not.toContain('VITE_ADMIN_EMAIL')
+    expect(justfile).not.toContain('WebExpectedAdminEmail')
   })
 
   test('runtime config requires the configured town thing and uses build-time version', () => {
@@ -39,6 +41,8 @@ describe('office config wiring', () => {
     expect(configSource).toContain("errors.push('Missing VITE_SPARKPLUG_GROUP_ID')")
     expect(configSource).not.toContain('VITE_DEVICE_THING_NAME')
     expect(configSource).not.toContain('VITE_TXING_VERSION')
+    expect(configSource).not.toContain('VITE_ADMIN_EMAIL')
+    expect(configSource).not.toContain('adminEmail')
     expect(viteConfigSource).toContain('__TXING_VERSION__')
     expect(viteConfigSource).toContain("./package.json")
     expect(viteConfigSource).not.toContain("../VERSION")

@@ -9,7 +9,7 @@ Parameters:
   StackAdminEmail:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /txing/stack/AdminEmail
-    Description: SSM parameter containing the single admin email expected by the SPA.
+    Description: SSM parameter containing the seed admin email used by the bootstrap admin-user helper.
   LocalhostAppUrl:
     Type: String
     Default: http://localhost:5173
@@ -137,7 +137,7 @@ Resources:
       UserPoolTags:
         project: txing
         app: web-admin
-        admin-email: !Ref StackAdminEmail
+        seed-admin-email: !Ref StackAdminEmail
 
   TxingAdminUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -868,6 +868,7 @@ Resources:
     Type: AWS::SSM::Parameter
     Properties:
       Name: /txing/stack/WebExpectedAdminEmail
+      Description: Seed admin email for the bootstrap admin-user helper; not an office allow-list.
       Type: String
       Value: !Ref StackAdminEmail
 
@@ -991,6 +992,7 @@ Outputs:
   WebAppUrl:
     Value: !Sub "${StackWebAppUrl}/"
   WebExpectedAdminEmail:
+    Description: Seed admin email for the bootstrap admin-user helper; not an office allow-list.
     Value: !Ref StackAdminEmail
   RigRuntimeRoleArn:
     Value: !GetAtt TxingRigRuntimeRole.Arn

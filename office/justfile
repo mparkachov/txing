@@ -63,9 +63,8 @@ write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
     cognito_user_pool_id="$(stack_parameter WebCognitoUserPoolId)"
     cognito_identity_pool_id="$(stack_parameter WebCognitoIdentityPoolId)"
     web_iot_policy_name="$(stack_parameter WebIotPolicyName)"
-    admin_email="$(stack_parameter WebExpectedAdminEmail)"
 
-    if [ "$cognito_domain" = "None" ] || [ "$cognito_client_id" = "None" ] || [ "$cognito_user_pool_id" = "None" ] || [ "$cognito_identity_pool_id" = "None" ] || [ "$web_iot_policy_name" = "None" ] || [ "$admin_email" = "None" ]; then
+    if [ "$cognito_domain" = "None" ] || [ "$cognito_client_id" = "None" ] || [ "$cognito_user_pool_id" = "None" ] || [ "$cognito_identity_pool_id" = "None" ] || [ "$web_iot_policy_name" = "None" ]; then
       echo "Required office parameters are missing under /txing/stack. Run just aws::deploy first." >&2
       exit 1
     fi
@@ -90,7 +89,6 @@ write-env sparkplug_group_id='' town_thing_name='' stack_name=stack_name:
       "VITE_COGNITO_IDENTITY_POOL_ID=$cognito_identity_pool_id" \
       "VITE_IOT_POLICY_NAME=$web_iot_policy_name" \
       "VITE_COGNITO_SCOPE=openid email profile" \
-      "VITE_ADMIN_EMAIL=$admin_email" \
       > .env.local
 
     echo "Wrote {{office_dir}}/.env.local from /txing/stack parameters."
