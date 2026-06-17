@@ -68,6 +68,22 @@ describe('app route catalog source wiring', () => {
     expect(appSource).not.toContain('commandSequence - 1')
   })
 
+  test('redcon commandability remains governed by sparkplug wiring, not mcp control state', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
+    const commandabilityMatch = appSource.match(
+      /const isSparkplugDeviceCommandAvailable =([\s\S]*?)\n {2}const isRedconCommandDisabled/,
+    )
+
+    expect(commandabilityMatch?.[1]).toContain('currentThingSparkplugCommandTarget !== null')
+    expect(commandabilityMatch?.[1]).toContain('commandableRedconLevels.length > 0')
+    expect(commandabilityMatch?.[1]).toContain('!isSparkplugUnavailable')
+    expect(commandabilityMatch?.[1]).not.toMatch(
+      /canUseDriveControl|isDriveControl|isDriveInputEnabled|isDriveControlOwnedByOther|robotState|mcp|Mcp/,
+    )
+    expect(appSource).toContain('isInteractive={isSparkplugDeviceCommandAvailable}')
+    expect(appSource).toContain('sparkplugRedcon={reportedRedcon}')
+  })
+
   test('route transitions use busy navigation styling instead of transient loading copy', () => {
     const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
 

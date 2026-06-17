@@ -10,4 +10,19 @@ describe('shadow MQTT client ids', () => {
       'eu-central-1:identity-session-b',
     )
   })
+
+  test('allows two browser sessions for the same identity to observe the same device', () => {
+    const firstBrowserClientId = buildShadowMqttClientId(
+      'eu-central-1:identity',
+      'browser-session-a',
+    )
+    const secondBrowserClientId = buildShadowMqttClientId(
+      'eu-central-1:identity',
+      'browser-session-b',
+    )
+
+    expect(firstBrowserClientId).toBe('eu-central-1:identity-browser-session-a')
+    expect(secondBrowserClientId).toBe('eu-central-1:identity-browser-session-b')
+    expect(firstBrowserClientId).not.toBe(secondBrowserClientId)
+  })
 })
