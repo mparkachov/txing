@@ -88,7 +88,7 @@ describe('txing panel', () => {
     expect(markup).not.toContain('txing-video-panel')
   })
 
-  test('renders a take-control affordance when no active MCP owner exists', () => {
+  test('renders no active MCP owner as an actionable take-control affordance', () => {
     const markup = renderToStaticMarkup(
       <TxingPanel
         isBoardVideoExpanded={true}
@@ -122,6 +122,7 @@ describe('txing panel', () => {
     expect(markup).toContain('status-video-take-control-button')
     expect(markup).toContain('aria-label="Take active control"')
     expect(markup).toContain('title="Take active control"')
+    expect(markup).not.toContain('aria-label="No active controller"')
     expect(markup).toContain('data-mcp-control-owner="none"')
   })
 

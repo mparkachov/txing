@@ -71,7 +71,20 @@ describe('shadow api runtime helpers', () => {
     expect(runtimeSource).toContain('this.updateRobotControlFromMcpStatus(parsed)')
     expect(runtimeSource).toContain('this.updateRobotControlFromMcpStatus(status)')
     expect(runtimeSource).toContain('activeControl.sessionId === this.mcpSessionId')
-    expect(runtimeSource).toContain('this.mcpActiveControl = null')
+    expect(runtimeSource).toContain('this.setMcpActiveControl(null)')
+  })
+
+  test('maintains active control while idle instead of releasing on stop', () => {
+    const zeroTwistMatch = runtimeSource.match(
+      /if \(isZeroTwist\(twist\)\) \{([\s\S]*?)\n {4}const active = await this\.ensureMcpActiveControl\(\)/,
+    )
+
+    expect(runtimeSource).toContain('private scheduleMcpActiveControlRenew')
+    expect(runtimeSource).toContain('void this.renewMcpActiveControlLease()')
+    expect(runtimeSource).toContain('private async renewMcpActiveControlLease()')
+    expect(zeroTwistMatch?.[1]).toContain("this.callMcpToolInternal('cmd_vel.stop'")
+    expect(zeroTwistMatch?.[1]).not.toContain('control.release_active')
+    expect(zeroTwistMatch?.[1]).not.toContain('buildLocalRobotControlState(null, false)')
   })
 
   test('keeps browser live-shadow, Sparkplug command, and MCP paths on MQTT5', () => {

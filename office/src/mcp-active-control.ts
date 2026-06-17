@@ -11,6 +11,17 @@ export type McpSteadyMotionActiveControlState = {
 export const getMcpActiveControlRenewBeforeMs = (activeTtlMs: number): number =>
   Math.min(1500, Math.max(300, Math.round(activeTtlMs * 0.4)))
 
+export const getMcpActiveControlRenewDelayMs = ({
+  activeTtlMs,
+  expiresAtMs,
+  nowMs,
+}: {
+  activeTtlMs: number
+  expiresAtMs: number
+  nowMs: number
+}): number =>
+  Math.max(0, expiresAtMs - getMcpActiveControlRenewBeforeMs(activeTtlMs) - nowMs)
+
 export const getMcpSteadyMotionHeartbeatIntervalMs = (activeTtlMs: number): number =>
   Math.min(2_000, Math.max(1_000, Math.round(activeTtlMs * 0.4)))
 

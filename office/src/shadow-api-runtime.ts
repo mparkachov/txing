@@ -11,7 +11,10 @@ import {
   isMcpSessionNotInitializedError,
   isRecoverableMcpActiveControlError,
 } from './mcp-errors'
-import { getMcpActiveControlRenewBeforeMs } from './mcp-active-control'
+import {
+  getMcpActiveControlRenewBeforeMs,
+  getMcpActiveControlRenewDelayMs,
+} from './mcp-active-control'
 import {
   hasMcpMqttTransport,
   parseMcpDescriptor,
@@ -573,6 +576,7 @@ class AwsIotShadowSession implements ShadowSession {
   private mcpDiscovery: McpDiscoverySummary
   private mcpDescriptor: McpDescriptor | null = null
   private mcpActiveControl: McpActiveControlState | null = null
+  private mcpActiveControlRenewTimerId: number | null = null
   private latestRobotState: RobotState | null = null
   private mcpSessionId: string | null = null
   private mcpSessionSubscribed = false
@@ -1300,6 +1304,57 @@ class AwsIotShadowSession implements ShadowSession {
     }
   }
 
+  private clearMcpActiveControlRenewTimer(): void {
+    if (this.mcpActiveControlRenewTimerId === null) {
+      return
+    }
+    window.clearTimeout(this.mcpActiveControlRenewTimerId)
+    this.mcpActiveControlRenewTimerId = null
+  }
+
+  private setMcpActiveControl(active: McpActiveControlState | null): void {
+    this.mcpActiveControl = active
+    if (!active) {
+      this.clearMcpActiveControlRenewTimer()
+      return
+    }
+    this.scheduleMcpActiveControlRenew(active)
+  }
+
+  private scheduleMcpActiveControlRenew(active: McpActiveControlState): void {
+    this.clearMcpActiveControlRenewTimer()
+    if (this.closed) {
+      return
+    }
+    const knownActiveTtlMs = this.mcpDescriptor?.activeTtlMs ?? this.mcpDiscovery.activeTtlMs ?? 5_000
+    const activeTtlMs = active.activeTtlMs || knownActiveTtlMs
+    const renewDelayMs = getMcpActiveControlRenewDelayMs({
+      activeTtlMs,
+      expiresAtMs: active.expiresAtMs,
+      nowMs: Date.now(),
+    })
+    this.mcpActiveControlRenewTimerId = window.setTimeout(() => {
+      this.mcpActiveControlRenewTimerId = null
+      void this.renewMcpActiveControlLease()
+    }, renewDelayMs)
+  }
+
+  private updateLocalRobotControlFromActive(
+    active: McpActiveControlState | null,
+    activeHeldByCaller: boolean,
+  ): void {
+    if (!this.latestRobotState) {
+      return
+    }
+    this.setLatestRobotState({
+      ...this.latestRobotState,
+      control: this.buildLocalRobotControlState(
+        active ? this.robotActiveControlFromMcpActive(active) : null,
+        activeHeldByCaller,
+      ),
+    })
+  }
+
   private updateRobotControlFromMcpStatus(status: Record<string, unknown>): void {
     if (!('activeControl' in status)) {
       return
@@ -1318,8 +1373,18 @@ class AwsIotShadowSession implements ShadowSession {
       return
     }
 
-    if (!activeHeldByCaller) {
-      this.mcpActiveControl = null
+    if (activeHeldByCaller && activeControl !== null) {
+      const knownActiveTtlMs = this.mcpDescriptor?.activeTtlMs ?? this.mcpDiscovery.activeTtlMs ?? 5_000
+      const active = parseMcpActiveControlState(
+        {
+          activeControl,
+          activeTtlMs: knownActiveTtlMs,
+        },
+        knownActiveTtlMs,
+      )
+      this.setMcpActiveControl(active)
+    } else {
+      this.setMcpActiveControl(null)
     }
 
     this.setLatestRobotState({
@@ -1360,11 +1425,11 @@ class AwsIotShadowSession implements ShadowSession {
         this.updateRobotStateToLocalStop()
         return
       }
-      const epoch = this.mcpActiveControl.epoch
       try {
+        const active = await this.ensureMcpActiveControl()
         const motionResult = parseMcpMotionCommandResult(
           await this.callMcpToolInternal('cmd_vel.stop', {
-            epoch,
+            epoch: active.epoch,
           }),
         )
         if (!motionResult) {
@@ -1381,16 +1446,9 @@ class AwsIotShadowSession implements ShadowSession {
         if (isMcpSessionNotInitializedError(caughtError)) {
           this.mcpInitialized = false
         }
-        this.mcpActiveControl = null
+        this.setMcpActiveControl(null)
         this.updateRobotStateToLocalStop()
         return
-      }
-      await this.releaseMcpControlBestEffort()
-      if (this.latestRobotState) {
-        this.setLatestRobotState({
-          ...this.latestRobotState,
-          control: this.buildLocalRobotControlState(null, false),
-        })
       }
       return
     }
@@ -1535,7 +1593,7 @@ class AwsIotShadowSession implements ShadowSession {
         return this.mcpActiveControl
       }
       const renewed = await this.renewMcpActiveControl(this.mcpActiveControl.epoch)
-      this.mcpActiveControl = renewed
+      this.setMcpActiveControl(renewed)
       return renewed
     }
 
@@ -1582,21 +1640,6 @@ class AwsIotShadowSession implements ShadowSession {
     })
   }
 
-  private async releaseMcpControlBestEffort(): Promise<void> {
-    const active = this.mcpActiveControl
-    this.mcpActiveControl = null
-    if (!active) {
-      return
-    }
-    try {
-      await this.callMcpToolInternal('control.release_active', {
-        epoch: active.epoch,
-      })
-    } catch {
-      return
-    }
-  }
-
   private async activateMcpControl(takeover = false): Promise<McpActiveControlState> {
     const activateArguments = buildMcpActivateArguments(this.options.mcpActor, takeover)
     let acquiredResult: unknown
@@ -1615,7 +1658,7 @@ class AwsIotShadowSession implements ShadowSession {
     if (!acquired) {
       throw new Error('MCP control.activate returned an invalid payload')
     }
-    this.mcpActiveControl = acquired
+    this.setMcpActiveControl(acquired)
     return acquired
   }
 
@@ -1629,6 +1672,36 @@ class AwsIotShadowSession implements ShadowSession {
       throw new Error('MCP control.renew_active returned an invalid payload')
     }
     return renewed
+  }
+
+  private async renewMcpActiveControlLease(): Promise<void> {
+    const active = this.mcpActiveControl
+    if (!active || this.closed) {
+      return
+    }
+    try {
+      const renewed = await this.renewMcpActiveControl(active.epoch)
+      if (
+        !this.mcpActiveControl ||
+        this.mcpActiveControl.sessionId !== active.sessionId ||
+        this.mcpActiveControl.epoch !== active.epoch
+      ) {
+        return
+      }
+      this.setMcpActiveControl(renewed)
+      this.updateLocalRobotControlFromActive(renewed, true)
+    } catch (caughtError) {
+      if (isMcpSessionNotInitializedError(caughtError)) {
+        this.mcpInitialized = false
+      }
+      this.setMcpActiveControl(null)
+      this.updateLocalRobotControlFromActive(null, false)
+      this.options.onError(
+        caughtError instanceof Error
+          ? `Unable to renew MCP active control: ${caughtError.message}`
+          : 'Unable to renew MCP active control',
+      )
+    }
   }
 
   private async callCmdVelPublish(epoch: number, twist: Twist): Promise<McpMotionCommandResult> {
@@ -1663,7 +1736,7 @@ class AwsIotShadowSession implements ShadowSession {
       if (isMcpSessionNotInitializedError(caughtError)) {
         this.mcpInitialized = false
       }
-      this.mcpActiveControl = null
+      this.setMcpActiveControl(null)
       const refreshedActive = await this.activateMcpControl()
       return this.callCmdVelPublish(refreshedActive.epoch, twist)
     }
@@ -1687,7 +1760,7 @@ class AwsIotShadowSession implements ShadowSession {
     this.publishMcpToolCallBestEffort('control.release_active', {
       epoch: active.epoch,
     })
-    this.mcpActiveControl = null
+    this.setMcpActiveControl(null)
   }
 
   private publishMcpToolCallBestEffort(
@@ -1874,7 +1947,7 @@ class AwsIotShadowSession implements ShadowSession {
   private handleMcpWebRtcFailure(): void {
     this.mcpWebRtcUnavailable = hasMcpMqttTransport(this.mcpDescriptor)
     this.closeMcpWebRtcHandle()
-    this.mcpActiveControl = null
+    this.setMcpActiveControl(null)
     this.mcpInitialized = false
     this.mcpSessionReadyPromise = null
     this.mcpSessionSubscribed = false
@@ -1887,7 +1960,7 @@ class AwsIotShadowSession implements ShadowSession {
   private resetMcpConnectionState(): void {
     this.closeMcpWebRtcHandle()
     this.mcpSessionReadyPromise = null
-    this.mcpActiveControl = null
+    this.setMcpActiveControl(null)
     this.mcpInitialized = false
     this.mcpSessionSubscribed = false
     this.mcpSessionId = null

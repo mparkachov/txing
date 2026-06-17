@@ -355,12 +355,10 @@ function TxingPanel({
   const activeControlLabel =
     activeControlOwnership === 'current'
       ? 'You have active control'
-      : activeControlOwnership === 'none'
-        ? 'No active controller'
+      : activeControlOwnership === 'other' && activeControlActor
+        ? `Active control held by ${activeControlActor}`
         : activeControlOwnership === 'other'
-          ? activeControlActor
-            ? `Active control held by ${activeControlActor}`
-            : 'Active control held by another session'
+          ? 'Active control held by another session'
           : 'MCP active-control status pending'
   const takeControlTitle =
     activeControlOwnership === 'other' && activeControlActor

@@ -852,7 +852,6 @@ func (s *RuntimeState) HandleVideoEvent(ctx context.Context, publisher Publisher
 	}
 	nextTransport := s.mcpTransportMode()
 	if previousTransport != nextTransport {
-		_ = s.stopIfRequired(ctx, s.mcp.ClearActive())
 		if err := s.publishMCPDiscovery(ctx, publisher, observedAtMS); err != nil {
 			return err
 		}

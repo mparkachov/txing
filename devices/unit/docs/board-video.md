@@ -21,7 +21,7 @@ Explicit non-goals for this slice:
 
 - HLS/DASH as the live control path
 - WebRTC ingestion/storage as the default live path
-- multiviewer as a requirement
+- a separate multiviewer relay, media fanout service, or viewer admission-control service
 - a second direct device-to-operator video path by default
 - recording as a requirement
 - low-latency ML consumption
@@ -32,12 +32,14 @@ Explicit non-goals for this slice:
 - `txing-unit-daemon` publishes board power and wifi state for the stable Go
   runtime path.
 - `txing-unit-daemon` publishes retained video descriptor/status topics under `txings/<device_id>/video/*`.
-- The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> operator.
+- The current implementation uses one live video path only: board camera -> plain AWS WebRTC signaling channel -> one or more browser viewers.
 - The operator watches the plain AWS WebRTC path, not a board-local viewer page.
 - KVS dual-stack endpoints and IPv6-preferred TURN behavior are enabled by
   default for the current worker/browser path.
-- The current implementation does not use WebRTC ingestion/storage, multiviewer, or `kvssink`.
-- The current implementation assumes one human operator at a time operationally, but does not enforce single-viewer admission control in the repo.
+- The current implementation does not use WebRTC ingestion/storage, a separate
+  multiviewer relay, or `kvssink`.
+- The current implementation assumes one active human controller at a time, but
+  does not enforce single-viewer admission control in the repo.
 - ML and other cloud-side consumers are explicitly outside the current media path.
 - A second direct operator path remains deferred. The recorded manual field validation did not justify reopening it.
 - The native sender implementation is shipped in-tree and packaged as the
@@ -55,7 +57,8 @@ txing-unit-daemon
 
 native sender command
   -> is shipped as txing-unit-kvs-master
-  -> owns the actual camera capture, encode, and KVS master session
+  -> owns the actual camera capture, encode, and single KVS master session
+  -> creates one WebRTC peer session per viewer client on the same signaling channel
   -> connects to BoardVideoBridge for config, credentials, state, and MCP forwarding
 
 operator client
@@ -153,7 +156,8 @@ Notes:
 - `board.video.local.*` is no longer part of the active contract.
 - `ready` and `viewerConnected` are coarse runtime signals reported over the
   bridge, not a full media-quality guarantee.
-- Single-operator scope is an operational assumption only. `viewerConnected` is not an admission-control signal and does not prove that only one viewer exists.
+- `viewerConnected` is a coarse observability boolean. It is not an
+  admission-control signal and does not prove that only one viewer exists.
 
 ## Runtime Layout
 
@@ -191,7 +195,8 @@ Responsibilities:
 - open the board camera
 - encode H.264
 - establish the plain AWS WebRTC master session
-- publish a single live path to the operator
+- publish a single live path through one AWS KVS signaling channel
+- maintain separate WebRTC peer sessions for viewer clients on that channel
 
 ### Operator Client
 
@@ -206,7 +211,9 @@ Responsibilities:
 
 Operator scope note:
 
-- one human operator is the intended operational model
+- one active human controller is the intended operational model
+- multiple browser viewers may observe the same video channel at the same time
+- video viewing does not grant MCP active control
 - the current repo does not enforce single-viewer admission control
 
 Control contract notes:
@@ -223,13 +230,15 @@ The current implementation uses:
 - plain AWS WebRTC signaling as the only live operator video path
 - H.264 as the expected video codec
 - one live uplink from the device
+- one AWS KVS signaling channel per video-capable device
+- one WebRTC peer session per connected viewer client on that channel
 - no direct browser-to-board media path in the default design
 - a repo-managed native sender that runs as its own systemd service by default
 
 The current implementation does not use:
 
 - WebRTC ingestion/storage
-- multiviewer
+- a separate multiviewer relay or viewer admission-control service
 - a repo-managed `kvssink`-based sender implementation
 - HLS/DASH for live control
 - a board-local iframe viewer page
@@ -260,7 +269,7 @@ Not part of the current implementation:
 - recording as a requirement
 - low-latency ML consumption
 - cloud-side video ingestion/storage
-- multiviewer
+- a separate multiviewer relay or viewer admission-control service
 - HLS/DASH as the operator path
 - a second direct operator video path unless future field use justifies it
 

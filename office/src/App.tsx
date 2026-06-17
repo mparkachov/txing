@@ -486,7 +486,8 @@ function App({ initialAuthError = '' }: AppProps) {
     route.kind === 'device' && isBotPanelOpen && canUseDriveControl && isShadowConnected
   const driveControlOwnership = getDriveControlOwnership(robotState)
   const isDriveInputEnabled =
-    isDriveControlActive && driveControlOwnership === 'current-browser'
+    isDriveControlActive &&
+    (driveControlOwnership === 'current-browser' || driveControlOwnership === 'no-owner')
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
     robotState?.control.activeTtlMs ?? defaultMcpActiveTtlMs,
   )

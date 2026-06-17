@@ -56,6 +56,9 @@ Rig, MCU, board, and cloud-facing systems are correctness-critical.
   authoritative after a hard board power cut.
 - The current implementation uses plain AWS KVS WebRTC signaling as the live
   operator video path.
+- Video-capable devices keep one AWS KVS signaling channel as the browser media
+  path. Multiple browser viewers may observe through separate WebRTC peer
+  sessions on that channel; this is distinct from MCP active control.
 - `txing-unit-daemon` writes local runtime state, receives coarse sender
   readiness over BoardVideoBridge gRPC, publishes retained video
   descriptor/status topics for `rig`, and mirrors descriptor/status into the

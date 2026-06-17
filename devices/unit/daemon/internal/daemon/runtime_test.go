@@ -518,6 +518,76 @@ func TestMCPMultiSessionActiveControlPolicy(t *testing.T) {
 	}
 }
 
+func TestMCPActiveControlSurvivesObserverReconnectAndVideoReadinessChurn(t *testing.T) {
+	ctx := context.Background()
+	publisher := &fakePublisher{}
+	hardware := &fakeHardwareClient{}
+	state := testRuntimeState(t, hardware)
+
+	if err := state.HandleVideoEvent(ctx, publisher, VideoWorkerEvent{Kind: VideoWorkerReady}, 100); err != nil {
+		t.Fatalf("handle video ready: %v", err)
+	}
+	sessionAActive := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-a", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"control.activate","arguments":{"actor":"operator-a"}}}`, 110))["activeControl"].(map[string]interface{})
+	if sessionAActive["sessionId"] != "session-a" || sessionAActive["epoch"].(float64) != 1 {
+		t.Fatalf("unexpected session-a active control: %#v", sessionAActive)
+	}
+	publisher.Clear()
+
+	if err := state.HandleMCPIPCEvent(ctx, publisher, RuntimeMcpOpenEvent{SessionID: "session-b", Transport: string(MCPTransportWebRTCDataChannel), PeerID: "peer-b"}, 120); err != nil {
+		t.Fatalf("handle observer open: %v", err)
+	}
+	if status := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-b", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"control.get_state"}}`, 130)); status["activeOwnerSessionId"] != "session-a" {
+		t.Fatalf("observer reconnect should see session-a still active: %#v", status)
+	}
+
+	if err := state.HandleVideoEvent(ctx, publisher, VideoWorkerEvent{Kind: VideoWorkerStarting}, 140); err != nil {
+		t.Fatalf("handle video starting: %v", err)
+	}
+	activeWhileStarting := latestMCPStatus(t, publisher.Messages())["activeControl"].(map[string]interface{})
+	if activeWhileStarting["sessionId"] != "session-a" || activeWhileStarting["epoch"].(float64) != 1 {
+		t.Fatalf("video readiness churn cleared active control: %#v", activeWhileStarting)
+	}
+	if len(hardware.Calls()) != 0 {
+		t.Fatalf("observer/video churn should not stop hardware: %v", hardware.Calls())
+	}
+	publisher.Clear()
+
+	if err := state.HandleVideoEvent(ctx, publisher, VideoWorkerEvent{Kind: VideoWorkerReady}, 150); err != nil {
+		t.Fatalf("handle video ready again: %v", err)
+	}
+	activeAfterReady := latestMCPStatus(t, publisher.Messages())["activeControl"].(map[string]interface{})
+	if activeAfterReady["sessionId"] != "session-a" || activeAfterReady["epoch"].(float64) != 1 {
+		t.Fatalf("video ready rediscovery cleared active control: %#v", activeAfterReady)
+	}
+	publisher.Clear()
+
+	if err := state.HandleMCPIPCEvent(ctx, publisher, RuntimeMcpCloseEvent{SessionID: "session-b", Reason: "refresh"}, 160); err != nil {
+		t.Fatalf("handle observer close: %v", err)
+	}
+	if status := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-a", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"control.get_state"}}`, 170)); status["activeOwnerSessionId"] != "session-a" {
+		t.Fatalf("observer close should not clear session-a active control: %#v", status)
+	}
+
+	sessionAPublish := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-a", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"cmd_vel.publish","arguments":{"epoch":1,"twist":{"linear":{"x":1,"y":0,"z":0},"angular":{"x":0,"y":0,"z":0.5}}}}}`, 180))
+	if sessionAPublish["motion"].(map[string]interface{})["leftSpeed"].(float64) != 50 {
+		t.Fatalf("active owner should still control after observer reconnect: %#v", sessionAPublish)
+	}
+	if !reflect.DeepEqual(hardware.Calls(), []string{"apply"}) {
+		t.Fatalf("expected only active-owner apply before owner close: %v", hardware.Calls())
+	}
+
+	if err := state.HandleMCPIPCEvent(ctx, publisher, RuntimeMcpCloseEvent{SessionID: "session-a", Reason: "owner closed"}, 190); err != nil {
+		t.Fatalf("handle owner close: %v", err)
+	}
+	statusAfterOwnerClose := latestMCPStatus(t, publisher.Messages())
+	if statusAfterOwnerClose["activeControl"] != nil {
+		t.Fatalf("owner close should clear active control: %#v", statusAfterOwnerClose)
+	}
+	if !reflect.DeepEqual(hardware.Calls(), []string{"apply", "stop"}) {
+		t.Fatalf("owner close should stop motion: %v", hardware.Calls())
+	}
+}
+
 func TestBoardVideoBridgeWorkerConfigAndUnixSocketEvents(t *testing.T) {
 	ctx := context.Background()
 	socketPath := shortUnixSocketPath(t, "board-video.sock")

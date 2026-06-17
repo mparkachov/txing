@@ -127,7 +127,7 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain("'board-cmd-vel'")
   })
 
-  test('drive input requires explicit active-control takeover when another session owns control', () => {
+  test('drive input auto-acquires control when no owner exists and requires takeover for another owner', () => {
     const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
     const shadowRuntimeSource = readFileSync(resolve(repoRoot, 'office/src/shadow-api-runtime.ts'), 'utf-8')
 
@@ -136,9 +136,10 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain("return 'no-owner'")
     expect(appSource).toContain("return robotState.control.activeHeldByCaller ? 'current-browser' : 'another-session'")
     expect(appSource).toContain(
-      "isDriveControlActive && driveControlOwnership === 'current-browser'",
+      "driveControlOwnership === 'current-browser' || driveControlOwnership === 'no-owner'",
     )
     expect(appSource).toContain('await shadowSession.takeMcpControl()')
+    expect(shadowRuntimeSource).toContain('return this.activateMcpControl()')
     expect(shadowRuntimeSource).toContain("this.activateMcpControl(true)")
     expect(shadowRuntimeSource).toContain('buildMcpActivateArguments(this.options.mcpActor, takeover)')
     expect(shadowRuntimeSource).toContain('activateArguments.takeover = true')
