@@ -83,6 +83,10 @@ Rig, MCU, board, and cloud-facing systems are correctness-critical.
   takeover is explicit.
 - `control.activate`, `takeover`, session identity, transport, and epoch
   enforcement are the active-control protocol baseline.
+- MCP status publishes `activeControl=null` when no session owns actuator
+  authority, or an active-control object with `sessionId`, `actor`,
+  `transport`, `sinceMs`, `expiresAtMs`, and `epoch`. Office consumes this
+  status to distinguish observers from the active controller.
 
 ## Power terminology
 

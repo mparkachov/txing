@@ -112,6 +112,38 @@ Existing retained AWS IoT messages published before expiry was added are
 replaced only by a same-topic daemon republish; orphaned retained topics require
 manual AWS IoT retained-message cleanup if they matter operationally.
 
+The daemon also publishes retained MCP service topics:
+
+- `txings/<device_id>/mcp/descriptor` is retained discovery/config and has no MQTT message expiry.
+- `txings/<device_id>/mcp/status` is retained dynamic state and is published
+  with a MQTT 5 Message Expiry Interval equal to
+  `TXING_CAPABILITY_TTL_SECONDS`, defaulting to `150` seconds.
+
+```json
+// txings/<device_id>/mcp/status
+{
+  "serviceId": "mcp",
+  "available": true,
+  "status": "ready",
+  "protocolVersion": "2026-05-19",
+  "observedAtMs": 1776761234567,
+  "activeControl": {
+    "sessionId": "browser-session-id",
+    "actor": "operator@example.com",
+    "transport": "webrtc-datachannel",
+    "sinceMs": 1776761230000,
+    "expiresAtMs": 1776761235000,
+    "epoch": 12
+  }
+}
+```
+
+`activeControl` is `null` when no MCP session owns actuator authority. Read-only
+MCP tools such as `robot.get_state` and `control.get_state` do not acquire
+active control. Actuator tools require the caller's active `sessionId` and
+current `epoch`; `control.activate` with `takeover: true` switches ownership,
+increments the epoch, and stops previous motion.
+
 Notes:
 
 - `transport=aws-webrtc` is the current choice.

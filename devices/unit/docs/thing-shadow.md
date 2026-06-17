@@ -112,7 +112,7 @@ Metric names preserve Sparkplug structure by splitting both `.` and `/` into nes
 - `power.state.reported.batteryMv` is the latest battery measurement in millivolts.
 - `board.state.reported.power` is best-effort board power state; stale `true` must not be treated as authoritative after a hard power cut.
 - `board.state.reported.wifi.online`, `ipv4`, and `ipv6` are refreshed by the board control loop.
-- `mcp.state.reported.descriptor` and `mcp.state.reported.status` mirror retained board MCP MQTT topics.
+- `mcp.state.reported.descriptor` and `mcp.state.reported.status` mirror retained board MCP MQTT topics. `mcp.state.reported.status.activeControl` is either `null` or an object with `sessionId`, `actor`, `transport`, `sinceMs`, `expiresAtMs`, and `epoch`; Office uses it to display MCP active-control ownership and to keep observer sessions read-only.
 - `video.state.reported.descriptor` and `video.state.reported.status` mirror retained board video MQTT topics.
 - UI capability indicators should use
   `sparkplug.state.reported.payload.metrics.capability.*` as the reflected

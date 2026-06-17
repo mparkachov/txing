@@ -452,6 +452,72 @@ func TestMCPActiveControlRejectsBusyAndStaleEpoch(t *testing.T) {
 	}
 }
 
+func TestMCPMultiSessionActiveControlPolicy(t *testing.T) {
+	ctx := context.Background()
+	publisher := &fakePublisher{}
+	hardware := &fakeHardwareClient{}
+	state := testRuntimeState(t, hardware)
+
+	sessionAState := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-a", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"robot.get_state"}}`, 100))
+	sessionBControl := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-b", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"control.get_state"}}`, 110))
+	if sessionAState["control"].(map[string]interface{})["activeOwnerSessionId"] != nil {
+		t.Fatalf("read-only robot.get_state should not acquire active control: %#v", sessionAState)
+	}
+	if sessionBControl["activeOwnerSessionId"] != nil {
+		t.Fatalf("read-only control.get_state should not acquire active control: %#v", sessionBControl)
+	}
+	if len(hardware.Calls()) != 0 {
+		t.Fatalf("read-only MCP calls should not touch actuators: %v", hardware.Calls())
+	}
+
+	sessionAActive := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-a", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"control.activate","arguments":{"actor":"operator-a"}}}`, 120))["activeControl"].(map[string]interface{})
+	if sessionAActive["sessionId"] != "session-a" || sessionAActive["actor"] != "operator-a" || sessionAActive["epoch"].(float64) != 1 {
+		t.Fatalf("unexpected session-a active control: %#v", sessionAActive)
+	}
+	statusAfterActivate := latestMCPStatus(t, publisher.Messages())
+	activeAfterActivate := statusAfterActivate["activeControl"].(map[string]interface{})
+	if activeAfterActivate["sessionId"] != "session-a" || activeAfterActivate["epoch"].(float64) != 1 {
+		t.Fatalf("status did not publish session-a ownership: %#v", statusAfterActivate)
+	}
+
+	nonOwnerPublish := callMCP(t, ctx, state, publisher, "session-b", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"cmd_vel.publish","arguments":{"epoch":1,"twist":{"linear":{"x":1,"y":0,"z":0},"angular":{"x":0,"y":0,"z":0}}}}}`, 130)
+	if nonOwnerPublish["error"].(map[string]interface{})["code"].(float64) != -32011 {
+		t.Fatalf("expected non-owner actuator call to be rejected as unauthorized: %#v", nonOwnerPublish)
+	}
+	if len(hardware.Calls()) != 0 {
+		t.Fatalf("non-owner actuator call should not touch hardware: %v", hardware.Calls())
+	}
+
+	sessionAPublish := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-a", `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"cmd_vel.publish","arguments":{"epoch":1,"twist":{"linear":{"x":1,"y":0,"z":0},"angular":{"x":0,"y":0,"z":0.5}}}}}`, 140))
+	if sessionAPublish["motion"].(map[string]interface{})["leftSpeed"].(float64) != 50 {
+		t.Fatalf("active owner actuator call should publish motion: %#v", sessionAPublish)
+	}
+	if !reflect.DeepEqual(hardware.Calls(), []string{"apply"}) {
+		t.Fatalf("expected one active-owner apply call: %v", hardware.Calls())
+	}
+
+	sessionBActive := mcpStructuredContent(callMCP(t, ctx, state, publisher, "session-b", `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"control.activate","arguments":{"actor":"operator-b","takeover":true}}}`, 150))["activeControl"].(map[string]interface{})
+	if sessionBActive["sessionId"] != "session-b" || sessionBActive["actor"] != "operator-b" || sessionBActive["epoch"].(float64) != 2 {
+		t.Fatalf("unexpected session-b takeover active control: %#v", sessionBActive)
+	}
+	if !reflect.DeepEqual(hardware.Calls(), []string{"apply", "stop"}) {
+		t.Fatalf("takeover should stop previous motion: %v", hardware.Calls())
+	}
+	statusAfterTakeover := latestMCPStatus(t, publisher.Messages())
+	activeAfterTakeover := statusAfterTakeover["activeControl"].(map[string]interface{})
+	if activeAfterTakeover["sessionId"] != "session-b" || activeAfterTakeover["epoch"].(float64) != 2 {
+		t.Fatalf("status did not publish session-b takeover: %#v", statusAfterTakeover)
+	}
+
+	oldEpochPublish := callMCP(t, ctx, state, publisher, "session-a", `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"cmd_vel.publish","arguments":{"epoch":1,"twist":{"linear":{"x":1,"y":0,"z":0},"angular":{"x":0,"y":0,"z":0}}}}}`, 160)
+	if oldEpochPublish["error"].(map[string]interface{})["code"].(float64) != -32011 {
+		t.Fatalf("expected old epoch to be rejected after takeover: %#v", oldEpochPublish)
+	}
+	if !reflect.DeepEqual(hardware.Calls(), []string{"apply", "stop"}) {
+		t.Fatalf("old epoch publish should not touch hardware: %v", hardware.Calls())
+	}
+}
+
 func TestBoardVideoBridgeWorkerConfigAndUnixSocketEvents(t *testing.T) {
 	ctx := context.Background()
 	socketPath := shortUnixSocketPath(t, "board-video.sock")
@@ -714,6 +780,25 @@ func callMCP(t *testing.T, ctx context.Context, state *RuntimeState, publisher P
 	var response map[string]interface{}
 	mustJSON(t, []byte(*responseText), &response)
 	return response
+}
+
+func mcpStructuredContent(response map[string]interface{}) map[string]interface{} {
+	result := response["result"].(map[string]interface{})
+	return result["structuredContent"].(map[string]interface{})
+}
+
+func latestMCPStatus(t *testing.T, messages []PublishedMessage) map[string]interface{} {
+	t.Helper()
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Topic != "txings/unit-local/mcp/status" {
+			continue
+		}
+		var status map[string]interface{}
+		mustJSON(t, messages[index].Payload, &status)
+		return status
+	}
+	t.Fatalf("missing MCP status message")
+	return nil
 }
 
 func mustJSON(t *testing.T, payload []byte, target interface{}) {

@@ -30,18 +30,58 @@
                 "descriptorTopic": {
                   "type": "string"
                 },
+                "statusTopic": {
+                  "type": "string"
+                },
                 "mcpProtocolVersion": {
                   "type": "string"
                 },
-                "leaseRequired": {
-                  "type": "boolean"
+                "protocolVersion": {
+                  "type": "string"
                 },
-                "leaseTtlMs": {
-                  "type": "integer",
-                  "minimum": 1
+                "serverInfo": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  }
                 },
                 "serverVersion": {
                   "type": "string"
+                },
+                "control": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "mode": {
+                      "const": "active"
+                    },
+                    "activeTtlMs": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                },
+                "transports": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "required": ["type"],
+                    "properties": {
+                      "type": {
+                        "enum": ["mqtt-jsonrpc", "webrtc-datachannel"]
+                      },
+                      "priority": {
+                        "type": "number"
+                      }
+                    }
+                  }
                 }
               }
             },
@@ -56,16 +96,47 @@
                 "available": {
                   "type": "boolean"
                 },
-                "leaseOwnerSessionId": {
+                "status": {
                   "type": "string"
                 },
-                "leaseExpiresAtMs": {
+                "protocolVersion": {
+                  "type": "string"
+                },
+                "observedAtMs": {
                   "type": "integer",
                   "minimum": 0
                 },
                 "updatedAtMs": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "activeControl": {
+                  "type": ["object", "null"],
+                  "additionalProperties": true,
+                  "required": ["sessionId", "transport", "sinceMs", "expiresAtMs", "epoch"],
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "actor": {
+                      "type": ["string", "null"]
+                    },
+                    "transport": {
+                      "enum": ["mqtt-jsonrpc", "webrtc-datachannel"]
+                    },
+                    "sinceMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "expiresAtMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "epoch": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
                 }
               }
             }
