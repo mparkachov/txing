@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { parseRobotState } from '../src/shadow-api-runtime'
+import {
+  buildMcpActivateArguments,
+  normalizeMcpActor,
+  parseRobotState,
+} from '../src/shadow-api-runtime'
 
 const repoRoot = resolve(import.meta.dir, '../..')
 const runtimeSource = readFileSync(resolve(repoRoot, 'office/src/shadow-api-runtime.ts'), 'utf-8')
@@ -49,6 +53,25 @@ describe('shadow api runtime helpers', () => {
     })
     expect(robotState?.control.activeOwnerSessionId).toBe('session-a')
     expect(robotState?.control.activeEpoch).toBe(9)
+  })
+
+  test('builds active-control activation arguments from the signed-in actor', () => {
+    expect(normalizeMcpActor(' operator@example.com ')).toBe('operator@example.com')
+    expect(normalizeMcpActor('   ')).toBe('unknown signed-in user')
+    expect(buildMcpActivateArguments('operator@example.com')).toEqual({
+      actor: 'operator@example.com',
+    })
+    expect(buildMcpActivateArguments('operator@example.com', true)).toEqual({
+      actor: 'operator@example.com',
+      takeover: true,
+    })
+  })
+
+  test('consumes MCP status active-control ownership updates', () => {
+    expect(runtimeSource).toContain('this.updateRobotControlFromMcpStatus(parsed)')
+    expect(runtimeSource).toContain('this.updateRobotControlFromMcpStatus(status)')
+    expect(runtimeSource).toContain('activeControl.sessionId === this.mcpSessionId')
+    expect(runtimeSource).toContain('this.mcpActiveControl = null')
   })
 
   test('keeps browser live-shadow, Sparkplug command, and MCP paths on MQTT5', () => {

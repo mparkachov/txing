@@ -27,6 +27,7 @@ type TrackGaugeProps = {
   side: 'Left' | 'Right'
   speed: number | null
 }
+type ActiveControlOwnership = 'unknown' | 'none' | 'current' | 'other'
 type BatteryCurvePoint = readonly [mv: number, percent: number]
 
 const batterySocCurve: readonly BatteryCurvePoint[] = [
@@ -214,6 +215,58 @@ function TakeControlGlyph() {
   )
 }
 
+function ActiveControlGlyph({ ownership }: { ownership: ActiveControlOwnership }) {
+  return (
+    <svg
+      className="status-mcp-control-glyph"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {ownership === 'current' ? (
+        <path
+          d="M5 12.8 9.4 17 19 7"
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2.4"
+        />
+      ) : (
+        <>
+          <circle
+            cx="12"
+            cy="12"
+            r="7"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.9"
+          />
+          <path
+            d="M12 7.6v4.8M12 16.2h.01"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeWidth="2.2"
+          />
+        </>
+      )}
+    </svg>
+  )
+}
+
+const getActiveControlOwnership = (
+  robotControl: RobotControlState | null,
+): ActiveControlOwnership => {
+  if (!robotControl) {
+    return 'unknown'
+  }
+  if (robotControl.activeOwnerSessionId === null) {
+    return 'none'
+  }
+  return robotControl.activeHeldByCaller ? 'current' : 'other'
+}
+
 function McpTransportGlyph({ transport }: { transport: McpTransportKind | null }) {
   const label =
     transport === 'webrtc-datachannel'
@@ -295,14 +348,24 @@ function TxingPanel({
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
   const shouldRenderBoardVideo = isBoardVideoExpanded && reportedRedcon === 1
-  const activeOwnerSessionId = robotControl?.activeOwnerSessionId ?? null
-  const isControlOwnedByOther =
-    activeOwnerSessionId !== null &&
-    robotControl?.activeHeldByCaller === false
+  const activeControlOwnership = getActiveControlOwnership(robotControl)
   const activeControlActor = robotControl?.activeControl?.actor
-  const takeControlTitle = activeControlActor
-    ? `Take active control from ${activeControlActor}`
-    : 'Take active control'
+  const shouldRenderTakeControlButton =
+    activeControlOwnership === 'none' || activeControlOwnership === 'other'
+  const activeControlLabel =
+    activeControlOwnership === 'current'
+      ? 'You have active control'
+      : activeControlOwnership === 'none'
+        ? 'No active controller'
+        : activeControlOwnership === 'other'
+          ? activeControlActor
+            ? `Active control held by ${activeControlActor}`
+            : 'Active control held by another session'
+          : 'MCP active-control status pending'
+  const takeControlTitle =
+    activeControlOwnership === 'other' && activeControlActor
+      ? `Take active control from ${activeControlActor}`
+      : 'Take active control'
   const videoOverlay = (
     <div className="status-video-overlay-bar">
       <div className="status-video-overlay-side status-video-overlay-side-start">
@@ -322,18 +385,29 @@ function TxingPanel({
             <DebugGlyph />
           </button>
         ) : null}
-        {isControlOwnedByOther ? (
+        {shouldRenderTakeControlButton ? (
           <button
             type="button"
             className="status-video-take-control-button"
             aria-label="Take active control"
             disabled={!isShadowConnected || isTakeControlPending}
             title={takeControlTitle}
+            data-mcp-control-owner={activeControlOwnership}
             onClick={onTakeControl}
           >
             <TakeControlGlyph />
           </button>
-        ) : null}
+        ) : (
+          <span
+            className={`status-mcp-control status-mcp-control-${activeControlOwnership}`}
+            role="img"
+            aria-label={activeControlLabel}
+            title={activeControlLabel}
+            data-mcp-control-owner={activeControlOwnership}
+          >
+            <ActiveControlGlyph ownership={activeControlOwnership} />
+          </span>
+        )}
         <McpTransportGlyph transport={mcpTransport} />
       </div>
       <div className="status-video-overlay-lockup">

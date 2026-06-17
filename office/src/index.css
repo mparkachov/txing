@@ -1421,6 +1421,37 @@ h1 {
   flex: 0 0 auto;
 }
 
+.status-mcp-control {
+  width: 2.05rem;
+  height: 2.05rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: rgba(207, 218, 232, 0.72);
+  background: rgba(4, 9, 14, 0.42);
+  outline: 1px solid rgba(207, 218, 232, 0.18);
+  filter: drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
+}
+
+.status-mcp-control-current {
+  color: rgba(50, 213, 131, 0.95);
+  outline-color: rgba(50, 213, 131, 0.42);
+  box-shadow: inset 0 0 0.9rem rgba(50, 213, 131, 0.12);
+}
+
+.status-mcp-control-unknown {
+  color: rgba(207, 218, 232, 0.52);
+  outline-color: rgba(207, 218, 232, 0.14);
+}
+
+.status-mcp-control-glyph {
+  width: 1.14rem;
+  height: 1.14rem;
+  display: block;
+  flex: 0 0 auto;
+}
+
 .status-mcp-transport {
   width: 2.05rem;
   height: 2.05rem;

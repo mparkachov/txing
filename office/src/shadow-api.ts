@@ -50,6 +50,7 @@ export type ShadowSessionOptions = {
   sparkplugGroupId: string
   sparkplugEdgeNodeId: string
   capabilities: readonly ShadowName[]
+  mcpActor: string
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: 'get' | 'update') => void
   onRobotStateChange: (state: RobotState | null) => void

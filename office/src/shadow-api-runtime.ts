@@ -113,6 +113,7 @@ export type ShadowSessionOptions = {
   sparkplugGroupId: string
   sparkplugEdgeNodeId: string
   capabilities: readonly ShadowName[]
+  mcpActor: string
   resolveIdToken: ResolveIdToken
   onShadowDocument: (shadow: unknown, operation: ShadowOperation) => void
   onRobotStateChange: (state: RobotState | null) => void
@@ -273,6 +274,24 @@ const createMcpSessionId = (): string =>
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+export const normalizeMcpActor = (actor: string): string => {
+  const trimmedActor = actor.trim()
+  return trimmedActor || 'unknown signed-in user'
+}
+
+export const buildMcpActivateArguments = (
+  actor: string,
+  takeover = false,
+): Record<string, unknown> => {
+  const activateArguments: Record<string, unknown> = {
+    actor: normalizeMcpActor(actor),
+  }
+  if (takeover) {
+    activateArguments.takeover = true
+  }
+  return activateArguments
+}
 
 const parseNonNegativeTimestamp = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -1144,6 +1163,7 @@ class AwsIotShadowSession implements ShadowSession {
       const parsed = parseShadowPayload(payload)
       if (isRecord(parsed) && typeof parsed.available === 'boolean') {
         this.updateMcpAvailability(parsed.available, parsed.observedAtMs ?? parsed.updatedAtMs)
+        this.updateRobotControlFromMcpStatus(parsed)
       }
       return
     }
@@ -1167,6 +1187,7 @@ class AwsIotShadowSession implements ShadowSession {
 
     if (typeof status?.available === 'boolean') {
       this.updateMcpAvailability(status.available, status.observedAtMs ?? status.updatedAtMs)
+      this.updateRobotControlFromMcpStatus(status)
     }
     const parsedDescriptor = parseMcpDescriptor(descriptor)
     if (parsedDescriptor) {
@@ -1277,6 +1298,35 @@ class AwsIotShadowSession implements ShadowSession {
       expiresAtMs: active.serverExpiresAtMs ?? active.expiresAtMs,
       epoch: active.epoch,
     }
+  }
+
+  private updateRobotControlFromMcpStatus(status: Record<string, unknown>): void {
+    if (!('activeControl' in status)) {
+      return
+    }
+    const activeControl = parseRobotActiveControlState(status.activeControl)
+    const activeHeldByCaller =
+      activeControl !== null &&
+      this.mcpSessionId !== null &&
+      activeControl.sessionId === this.mcpSessionId
+
+    if (
+      activeControl !== null &&
+      this.mcpActiveControl !== null &&
+      activeControl.epoch < this.mcpActiveControl.epoch
+    ) {
+      return
+    }
+
+    if (!activeHeldByCaller) {
+      this.mcpActiveControl = null
+    }
+
+    this.setLatestRobotState({
+      control: this.buildLocalRobotControlState(activeControl, activeHeldByCaller),
+      motion: this.latestRobotState?.motion ?? createStoppedRobotMotionState(null),
+      video: this.latestRobotState?.video ?? createDefaultRobotVideoState(),
+    })
   }
 
   private updateRobotStateFromMotionResult(
@@ -1548,9 +1598,7 @@ class AwsIotShadowSession implements ShadowSession {
   }
 
   private async activateMcpControl(takeover = false): Promise<McpActiveControlState> {
-    const activateArguments = takeover
-      ? { actor: 'txing-web', takeover: true }
-      : { actor: 'txing-web' }
+    const activateArguments = buildMcpActivateArguments(this.options.mcpActor, takeover)
     let acquiredResult: unknown
     try {
       acquiredResult = await this.callMcpToolInternal('control.activate', activateArguments)

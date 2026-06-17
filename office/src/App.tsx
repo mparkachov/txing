@@ -94,6 +94,7 @@ type SessionStatus = 'loading' | 'authenticating' | 'signed_out' | 'signed_in'
 type AppProps = {
   initialAuthError?: string
 }
+type DriveControlOwnership = 'unknown' | 'no-owner' | 'current-browser' | 'another-session'
 type ShadowSnapshotView = {
   json: string
   updatedAtMs: number
@@ -189,6 +190,23 @@ const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
   json: formatJson(shadow),
   updatedAtMs: Date.now(),
 })
+
+const buildMcpActor = (authUser: AuthUser | null): string => {
+  const actor = authUser?.email ?? authUser?.name ?? authUser?.sub ?? ''
+  return actor.trim() || 'unknown signed-in user'
+}
+
+const getDriveControlOwnership = (
+  robotState: RobotState | null,
+): DriveControlOwnership => {
+  if (!robotState) {
+    return 'unknown'
+  }
+  if (robotState.control.activeOwnerSessionId === null) {
+    return 'no-owner'
+  }
+  return robotState.control.activeHeldByCaller ? 'current-browser' : 'another-session'
+}
 
 const loadShadowApiModule = (): Promise<typeof import('./shadow-api')> => {
   if (!shadowApiModulePromise) {
@@ -304,6 +322,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const configuredTownThingName = appConfig.townThingName
   const configuredTownLabel = appConfig.sparkplugGroupId || configuredTownThingName
   const configuredTownPath = buildTownPath(configuredTownThingName)
+  const mcpActor = useMemo(() => buildMcpActor(authUser), [authUser])
   const currentRouteTown = useMemo(() => describeRouteTown(route), [route])
   const currentNotificationObjectId = useMemo(() => {
     if (route.kind === 'town') {
@@ -465,11 +484,9 @@ function App({ initialAuthError = '' }: AppProps) {
   const canUseDriveControl = currentDeviceAdapter?.canUseDriveControl(reportedRedcon) ?? false
   const isDriveControlActive =
     route.kind === 'device' && isBotPanelOpen && canUseDriveControl && isShadowConnected
-  const activeControlOwnerSessionId = robotState?.control.activeOwnerSessionId ?? null
-  const isDriveControlOwnedByOther =
-    activeControlOwnerSessionId !== null &&
-    robotState?.control.activeHeldByCaller === false
-  const isDriveInputEnabled = isDriveControlActive && !isDriveControlOwnedByOther
+  const driveControlOwnership = getDriveControlOwnership(robotState)
+  const isDriveInputEnabled =
+    isDriveControlActive && driveControlOwnership === 'current-browser'
   const cmdVelRepeatIntervalMs = getMcpSteadyMotionHeartbeatIntervalMs(
     robotState?.control.activeTtlMs ?? defaultMcpActiveTtlMs,
   )
@@ -1342,6 +1359,7 @@ function App({ initialAuthError = '' }: AppProps) {
           sparkplugGroupId: activeShadowTarget.sparkplugGroupId,
           sparkplugEdgeNodeId: activeShadowTarget.sparkplugEdgeNodeId,
           capabilities: activeShadowTarget.capabilities,
+          mcpActor,
           resolveIdToken: resolveSessionIdToken,
           onShadowDocument: (shadow) => {
             if (cancelled) {
@@ -1411,6 +1429,7 @@ function App({ initialAuthError = '' }: AppProps) {
     activeShadowTarget,
     applyShadowSnapshot,
     enqueueRuntimeError,
+    mcpActor,
     resolveSessionIdToken,
   ])
 

@@ -131,10 +131,26 @@ describe('app route catalog source wiring', () => {
     const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
     const shadowRuntimeSource = readFileSync(resolve(repoRoot, 'office/src/shadow-api-runtime.ts'), 'utf-8')
 
-    expect(appSource).toContain('const isDriveControlOwnedByOther =')
-    expect(appSource).toContain('const isDriveInputEnabled = isDriveControlActive && !isDriveControlOwnedByOther')
+    expect(appSource).toContain("type DriveControlOwnership = 'unknown' | 'no-owner' | 'current-browser' | 'another-session'")
+    expect(appSource).toContain('const driveControlOwnership = getDriveControlOwnership(robotState)')
+    expect(appSource).toContain("return 'no-owner'")
+    expect(appSource).toContain("return robotState.control.activeHeldByCaller ? 'current-browser' : 'another-session'")
+    expect(appSource).toContain(
+      "isDriveControlActive && driveControlOwnership === 'current-browser'",
+    )
     expect(appSource).toContain('await shadowSession.takeMcpControl()')
     expect(shadowRuntimeSource).toContain("this.activateMcpControl(true)")
-    expect(shadowRuntimeSource).toContain("takeover: true")
+    expect(shadowRuntimeSource).toContain('buildMcpActivateArguments(this.options.mcpActor, takeover)')
+    expect(shadowRuntimeSource).toContain('activateArguments.takeover = true')
+    expect(shadowRuntimeSource).not.toContain("actor: 'txing-web'")
+  })
+
+  test('mcp active-control actor comes from the signed-in user', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain('const buildMcpActor = (authUser: AuthUser | null): string =>')
+    expect(appSource).toContain('authUser?.email ?? authUser?.name ?? authUser?.sub')
+    expect(appSource).toContain('const mcpActor = useMemo(() => buildMcpActor(authUser), [authUser])')
+    expect(appSource).toContain('mcpActor,')
   })
 })
