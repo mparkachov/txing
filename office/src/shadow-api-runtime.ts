@@ -37,6 +37,8 @@ import {
   type SparkplugTopics,
 } from './sparkplug-protocol'
 import type {
+  ActiveControlLossEvent,
+  ActiveControlLossReason,
   RobotActiveControlState,
   RobotControlState,
   RobotMotionState,
@@ -123,6 +125,7 @@ export type ShadowSessionOptions = {
   onMcpTransportChange: (transport: McpTransportKind | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
   onError: (message: string) => void
+  onActiveControlLost: (event: ActiveControlLossEvent) => void
 }
 export type ShadowSession = {
   start: () => Promise<unknown>
@@ -218,6 +221,21 @@ const getErrorMessage = (error: unknown, fallback = 'Thing Shadow request failed
   }
 
   return fallback
+}
+
+const describeActiveControlOwner = ({
+  sessionId,
+  actor,
+  epoch,
+}: {
+  sessionId: string | null
+  actor: string | null
+  epoch: number | null
+}): string => {
+  const sessionLabel = sessionId ? `session ${sessionId}` : 'unknown session'
+  const actorLabel = actor ? `, actor ${actor}` : ''
+  const epochLabel = epoch !== null ? `, epoch ${epoch}` : ''
+  return `${sessionLabel}${actorLabel}${epochLabel}`
 }
 
 const isForbiddenError = (error: unknown): boolean =>
@@ -584,6 +602,7 @@ class AwsIotShadowSession implements ShadowSession {
   private activeMcpTransport: McpTransportKind | null = null
   private mcpWebRtcHandle: McpDataChannelHandle | null = null
   private mcpSessionReadyPromise: Promise<void> | null = null
+  private mcpActiveControlReacquirePromise: Promise<void> | null = null
   private mcpWebRtcUnavailable = false
   private readonly mcpDescriptorWaiters = new Set<(descriptor: McpDescriptor | null) => void>()
   private readonly cmdVelPublisher: LatestAsyncValueRunner<Twist>
@@ -1321,6 +1340,109 @@ class AwsIotShadowSession implements ShadowSession {
     this.scheduleMcpActiveControlRenew(active)
   }
 
+  private reportActiveControlLoss(
+    reason: ActiveControlLossReason,
+    message: string,
+    nextOwner: RobotActiveControlState | null = null,
+  ): void {
+    const previous = this.mcpActiveControl
+    if (!previous) {
+      return
+    }
+    this.options.onActiveControlLost({
+      reason,
+      message,
+      previousOwnerSessionId: previous.sessionId,
+      previousActor: previous.actor,
+      previousEpoch: previous.epoch,
+      previousExpiresAtMs: previous.serverExpiresAtMs ?? previous.expiresAtMs,
+      nextOwnerSessionId: nextOwner?.sessionId ?? null,
+      nextActor: nextOwner?.actor ?? null,
+      nextEpoch: nextOwner?.epoch ?? null,
+    })
+  }
+
+  private reportActiveControlLossFromMcpStatus(activeControl: RobotActiveControlState): void {
+    const previous = this.mcpActiveControl
+    if (!previous) {
+      return
+    }
+    this.reportActiveControlLoss(
+      'mcp-status-another-owner',
+      `MCP active control lost: daemon status reported another active owner (${describeActiveControlOwner({
+        sessionId: activeControl.sessionId,
+        actor: activeControl.actor,
+        epoch: activeControl.epoch,
+      })}). Previous owner was ${describeActiveControlOwner({
+        sessionId: previous.sessionId,
+        actor: previous.actor,
+        epoch: previous.epoch,
+      })}. Take active control is available.`,
+      activeControl,
+    )
+  }
+
+  private tryReacquireActiveControlAfterNoOwnerStatus(): boolean {
+    const previous = this.mcpActiveControl
+    if (!previous) {
+      return false
+    }
+    if (this.mcpActiveControlReacquirePromise) {
+      return true
+    }
+
+    const reacquirePromise = (async (): Promise<void> => {
+      try {
+        await this.ensureMcpSessionReady()
+        if (
+          !this.mcpActiveControl ||
+          this.mcpActiveControl.sessionId !== previous.sessionId ||
+          this.mcpActiveControl.epoch !== previous.epoch
+        ) {
+          return
+        }
+        const active = await this.activateMcpControl()
+        this.updateLocalRobotControlFromActive(active, true)
+      } catch (caughtError) {
+        if (isMcpSessionNotInitializedError(caughtError)) {
+          this.mcpInitialized = false
+        }
+        if (
+          this.mcpActiveControl &&
+          this.mcpActiveControl.sessionId === previous.sessionId &&
+          this.mcpActiveControl.epoch === previous.epoch
+        ) {
+          this.reportActiveControlLoss(
+            'mcp-status-no-owner',
+            `MCP active control lost: automatic reacquire after daemon no-owner status failed (${getErrorMessage(
+              caughtError,
+              'reacquire failed',
+            )}). Previous owner was ${describeActiveControlOwner({
+              sessionId: previous.sessionId,
+              actor: previous.actor,
+              epoch: previous.epoch,
+            })}. Take active control is available.`,
+          )
+          this.setMcpActiveControl(null)
+          this.updateLocalRobotControlFromActive(null, false)
+        }
+        this.options.onError(
+          caughtError instanceof Error
+            ? `Unable to restore MCP active control: ${caughtError.message}`
+            : 'Unable to restore MCP active control',
+        )
+      }
+    })()
+
+    this.mcpActiveControlReacquirePromise = reacquirePromise
+    void reacquirePromise.finally(() => {
+      if (this.mcpActiveControlReacquirePromise === reacquirePromise) {
+        this.mcpActiveControlReacquirePromise = null
+      }
+    }).catch(() => undefined)
+    return true
+  }
+
   private scheduleMcpActiveControlRenew(active: McpActiveControlState): void {
     this.clearMcpActiveControlRenewTimer()
     if (this.closed) {
@@ -1384,6 +1506,12 @@ class AwsIotShadowSession implements ShadowSession {
       )
       this.setMcpActiveControl(active)
     } else {
+      if (activeControl === null && this.tryReacquireActiveControlAfterNoOwnerStatus()) {
+        return
+      }
+      if (activeControl !== null) {
+        this.reportActiveControlLossFromMcpStatus(activeControl)
+      }
       this.setMcpActiveControl(null)
     }
 
@@ -1446,6 +1574,13 @@ class AwsIotShadowSession implements ShadowSession {
         if (isMcpSessionNotInitializedError(caughtError)) {
           this.mcpInitialized = false
         }
+        this.reportActiveControlLoss(
+          'cmd-vel-stop-failed',
+          `MCP active control lost: cmd_vel.stop could not confirm the active session (${getErrorMessage(
+            caughtError,
+            'cmd_vel.stop failed',
+          )}). Take active control is available.`,
+        )
         this.setMcpActiveControl(null)
         this.updateRobotStateToLocalStop()
         return
@@ -1592,7 +1727,22 @@ class AwsIotShadowSession implements ShadowSession {
       if (nowMs < this.mcpActiveControl.expiresAtMs - renewBeforeMs) {
         return this.mcpActiveControl
       }
-      const renewed = await this.renewMcpActiveControl(this.mcpActiveControl.epoch)
+      let renewed: McpActiveControlState
+      try {
+        renewed = await this.renewMcpActiveControl(this.mcpActiveControl.epoch)
+      } catch (caughtError) {
+        if (
+          !isRecoverableMcpActiveControlError(caughtError) &&
+          !isMcpSessionNotInitializedError(caughtError)
+        ) {
+          throw caughtError
+        }
+        if (isMcpSessionNotInitializedError(caughtError)) {
+          this.mcpInitialized = false
+        }
+        this.setMcpActiveControl(null)
+        return this.activateMcpControl()
+      }
       this.setMcpActiveControl(renewed)
       return renewed
     }
@@ -1694,6 +1844,42 @@ class AwsIotShadowSession implements ShadowSession {
       if (isMcpSessionNotInitializedError(caughtError)) {
         this.mcpInitialized = false
       }
+      if (
+        isRecoverableMcpActiveControlError(caughtError) ||
+        isMcpSessionNotInitializedError(caughtError)
+      ) {
+        try {
+          const restored = await this.activateMcpControl()
+          this.updateLocalRobotControlFromActive(restored, true)
+          return
+        } catch (reacquireError) {
+          if (isMcpSessionNotInitializedError(reacquireError)) {
+            this.mcpInitialized = false
+          }
+          this.reportActiveControlLoss(
+            'renew-active-failed',
+            `MCP active control lost: control.renew_active failed and automatic reacquire failed (${getErrorMessage(
+              reacquireError,
+              'reacquire failed',
+            )}). Take active control is available.`,
+          )
+          this.setMcpActiveControl(null)
+          this.updateLocalRobotControlFromActive(null, false)
+          this.options.onError(
+            reacquireError instanceof Error
+              ? `Unable to restore MCP active control: ${reacquireError.message}`
+              : 'Unable to restore MCP active control',
+          )
+          return
+        }
+      }
+      this.reportActiveControlLoss(
+        'renew-active-failed',
+        `MCP active control lost: control.renew_active failed (${getErrorMessage(
+          caughtError,
+          'renew failed',
+        )}). Take active control is available.`,
+      )
       this.setMcpActiveControl(null)
       this.updateLocalRobotControlFromActive(null, false)
       this.options.onError(

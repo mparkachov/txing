@@ -18,14 +18,14 @@ describe('mcp active control helpers', () => {
       getMcpActiveControlRenewDelayMs({
         activeTtlMs: 5_000,
         expiresAtMs: 10_000,
-        nowMs: 7_000,
+        nowMs: 5_200,
       }),
-    ).toBe(1500)
+    ).toBe(800)
     expect(
       getMcpActiveControlRenewDelayMs({
         activeTtlMs: 5_000,
         expiresAtMs: 10_000,
-        nowMs: 8_700,
+        nowMs: 7_000,
       }),
     ).toBe(0)
   })

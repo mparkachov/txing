@@ -154,4 +154,14 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('const mcpActor = useMemo(() => buildMcpActor(authUser), [authUser])')
     expect(appSource).toContain('mcpActor,')
   })
+
+  test('mcp active-control loss is written to the session log', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain('onActiveControlLost: (event) =>')
+    expect(appSource).toContain('appendActiveControlLossLog(event, activeShadowTarget.thingName)')
+    expect(appSource).toContain('appendSessionLogEntry({')
+    expect(appSource).toContain("dedupeKey: `mcp-active-control-lost:${event.reason}")
+    expect(appSource).not.toContain("enqueueNotification({\n        tone: 'error',\n        message: event.message")
+  })
 })

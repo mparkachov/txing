@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-06-17 07:12'
-updated_date: '2026-06-17 20:36'
+updated_date: '2026-06-18 17:32'
 labels: []
 milestone: multi-user device observation
 dependencies: []
@@ -29,6 +29,7 @@ modified_files:
   - office/src/shadow-api-runtime.ts
   - office/test/shadow-api-runtime.test.ts
   - office/src/App.tsx
+  - office/src/shadow-api.ts
   - devices/unit/web/TxingPanel.tsx
   - office/test/app-source.test.ts
   - office/test/txing-panel.test.tsx
@@ -100,6 +101,27 @@ Observer reconnect issue found during manual validation:
 Additional validation run after daemon fix:
 - cd devices/unit/daemon && GOTMPDIR=/Users/Maxim/Developer/txing/tmp/gotmp go test ./internal/daemon -run 'TestMCPActiveControlSurvivesObserverReconnectAndVideoReadinessChurn|TestMCPMultiSessionActiveControlPolicy|TestVideoEventsSwitchMCPTransportAndPublishState' -count=1
 - cd devices/unit/daemon && GOTMPDIR=/Users/Maxim/Developer/txing/tmp/gotmp go test ./internal/daemon -count=1
+- cd office && bun test
+- cd office && bun run build
+
+Active-control diagnostic logging added after intermittent manual validation drops:
+- office/src/shadow-api.ts now exposes an ActiveControlLossEvent callback on the shadow session contract.
+- office/src/shadow-api-runtime.ts emits that event when the current browser loses active control because MCP status reports no owner, MCP status reports another owner, control.renew_active fails, or cmd_vel.stop cannot confirm the active session.
+- office/src/App.tsx writes the event to Session Log only, scoped to the device thing name, with reason text including previous owner session/actor/epoch, next owner when known, and lease timing for no-owner status.
+
+Additional validation run after diagnostic logging:
+- cd office && bun test test/app-source.test.ts test/shadow-api-runtime.test.ts
+- cd office && bun test
+- cd office && bun run build
+
+Follow-up from 2026-06-18 manual validation:
+- Session Log showed MCP active control dropped because daemon status reported no owner 215ms after the browser-local active lease expiry. This indicates delayed/missed lease renewal, not a takeover by the second browser.
+- office/src/mcp-active-control.ts now schedules idle active-control renewal near the start of each lease. For the current 5s daemon TTL, background renewal targets roughly 1s after acquisition instead of waiting until the final 1.5s.
+- office/src/shadow-api-runtime.ts now automatically reacquires control when daemon status reports no owner and this browser was the current local owner. It keeps local ownership optimistic during the reacquire attempt, so a transient no-owner status should not immediately expose the Take active control button on the active operator browser.
+- Recoverable control.renew_active failures and command-time active checks also reacquire with normal control.activate when the daemon reports no active/stale active control. Another real owner still wins; that path continues to require explicit takeover.
+
+Additional validation run after lease renewal/reacquire fix:
+- cd office && bun test test/mcp-active-control.test.ts test/shadow-api-runtime.test.ts test/app-source.test.ts
 - cd office && bun test
 - cd office && bun run build
 <!-- SECTION:NOTES:END -->

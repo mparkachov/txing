@@ -70,7 +70,12 @@ import CapabilityStack, { type CapabilityStackStatus } from './CapabilityStack'
 import NavigationUserMenu from './NavigationUserMenu'
 import NotificationLogPanel from './NotificationLogPanel'
 import NotificationTray from './NotificationTray'
-import type { RobotState, ShadowConnectionState, ShadowSession } from './shadow-api'
+import type {
+  ActiveControlLossEvent,
+  RobotState,
+  ShadowConnectionState,
+  ShadowSession,
+} from './shadow-api'
 import type { ShadowName } from './shadow-protocol'
 import {
   publishDirectSparkplugRedconCommand,
@@ -589,6 +594,18 @@ function App({ initialAuthError = '' }: AppProps) {
       objectId: currentNotificationObjectId,
     })
   }, [currentNotificationObjectId, enqueueNotification])
+
+  const appendActiveControlLossLog = useCallback(
+    (event: ActiveControlLossEvent, objectId: string): void => {
+      appendSessionLogEntry({
+        tone: 'error',
+        message: event.message,
+        dedupeKey: `mcp-active-control-lost:${event.reason}:${event.previousOwnerSessionId}:${event.previousEpoch}:${event.nextOwnerSessionId ?? 'none'}:${event.nextEpoch ?? 'none'}`,
+        objectId,
+      })
+    },
+    [appendSessionLogEntry],
+  )
 
   const applyShadowSnapshot = useCallback((shadow: unknown): void => {
     const snapshotView = createShadowSnapshotView(shadow)
@@ -1394,6 +1411,11 @@ function App({ initialAuthError = '' }: AppProps) {
               enqueueRuntimeError(message, 'shadow-session')
             }
           },
+          onActiveControlLost: (event) => {
+            if (!cancelled) {
+              appendActiveControlLossLog(event, activeShadowTarget.thingName)
+            }
+          },
         })
 
         if (cancelled) {
@@ -1429,6 +1451,7 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [
     activeShadowTarget,
     applyShadowSnapshot,
+    appendActiveControlLossLog,
     enqueueRuntimeError,
     mcpActor,
     resolveSessionIdToken,

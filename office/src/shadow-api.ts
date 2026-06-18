@@ -44,6 +44,24 @@ export type RobotState = {
   video: RobotVideoState
 }
 
+export type ActiveControlLossReason =
+  | 'mcp-status-no-owner'
+  | 'mcp-status-another-owner'
+  | 'renew-active-failed'
+  | 'cmd-vel-stop-failed'
+
+export type ActiveControlLossEvent = {
+  reason: ActiveControlLossReason
+  message: string
+  previousOwnerSessionId: string
+  previousActor: string | null
+  previousEpoch: number
+  previousExpiresAtMs: number | null
+  nextOwnerSessionId: string | null
+  nextActor: string | null
+  nextEpoch: number | null
+}
+
 export type ShadowSessionOptions = {
   thingName: string
   awsRegion: string
@@ -57,6 +75,7 @@ export type ShadowSessionOptions = {
   onMcpTransportChange: (transport: McpTransportKind | null) => void
   onConnectionStateChange: (state: ShadowConnectionState) => void
   onError: (message: string) => void
+  onActiveControlLost: (event: ActiveControlLossEvent) => void
 }
 
 export type ShadowSession = {
