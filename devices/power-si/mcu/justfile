@@ -1,0 +1,23 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet
+
+mcu_dir := source_directory()
+project_root := canonicalize(mcu_dir + "/../../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
+zephyr_python := env_var_or_default("TXING_MCU_ZEPHYR_PYTHON", "python3")
+zephyr_script := common_mcu_dir + "/scripts/stock_zephyr_mcu.py"
+device_type := "power-si"
+
+@build:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build
+
+@factory-hex thing_name dataset_tlvs:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" thread-factory-hex "{{ thing_name }}" "{{ dataset_tlvs }}"
+
+@clean:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" clean
+
+@default:
+    @just --list

@@ -1,0 +1,32 @@
+/ {
+	aliases {
+		power = &power_out;
+	};
+
+	power_outputs {
+		compatible = "gpio-leds";
+
+		power_out: power_out {
+			gpios = <&xiao_d 1 GPIO_ACTIVE_HIGH>;
+			label = "Power output D1";
+		};
+	};
+
+	chosen {
+		zephyr,settings-partition = &storage_partition;
+	};
+};
+
+&storage_partition {
+	reg = <0x0017e000 DT_SIZE_K(8)>;
+};
+
+&flash0 {
+	partitions {
+		txing_factory_partition: partition@17c000 {
+			label = "txing-factory";
+			reg = <0x0017c000 DT_SIZE_K(8)>;
+			read-only;
+		};
+	};
+};
