@@ -200,6 +200,7 @@ Rig assets:
 ```text
 txing-sparkplug-manager-linux-aarch64.tar.gz
 txing-ble-connectivity-linux-aarch64.tar.gz
+txing-thread-connectivity-linux-aarch64.tar.gz
 ```
 
 Installed commands:

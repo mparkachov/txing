@@ -47,13 +47,19 @@ AWS bring-up and teardown live in [aws.md](./aws.md).
 ## Raspi Rig Host
 
 The `raspi` rig is the always-on host coordinator that owns Sparkplug
-publication for local BLE-managed devices. Production `raspi` rig hosts run
-`txing-sparkplug-manager`, `txing-thread-connectivity`, and
+publication for local BLE and Thread-managed devices. Production `raspi` rig
+hosts run `txing-sparkplug-manager`, `txing-thread-connectivity`, and
 `txing-ble-connectivity` as standalone systemd services.
 
 Canonical `raspi` rig installation, Bluetooth setup, root-owned `mise`,
 systemd units, health-check, and update instructions live in
 [components/rig.md](./components/rig.md).
+
+`power-si` Thread devices also require an already configured external OTBR on
+the rig network. OTBR installation is intentionally not automated by txing; the
+operator must prepare OTBR, provision the device factory dataset, and flash the
+XIAO MG24 manually as documented in
+[Power SI Device](../devices/power-si/README.md).
 
 The short production flow is:
 
@@ -70,6 +76,8 @@ The short production flow is:
    `rig-daemon.target` manually.
 6. Start or upgrade with `sudo systemctl restart rig-daemon.target` after
    `mise upgrade`.
+7. For `power-si`, verify OTBR readiness and SRP/DNS-SD discovery separately
+   before expecting `txing-thread-connectivity` to publish Thread state.
 
 ## Cloud Rig Runtime
 
