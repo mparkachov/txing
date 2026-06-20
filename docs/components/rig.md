@@ -1,7 +1,7 @@
 # Rig
 
 The `raspi` rig is the always-on host coordinator for local MCU devices. It runs
-two standalone Go daemons:
+three standalone Go daemons:
 
 - `txing-sparkplug-manager`: owns AWS IoT MQTT, Sparkplug node/device
   publication, inventory loading, board retained capability-state ingestion,
@@ -9,6 +9,10 @@ two standalone Go daemons:
 - `txing-ble-connectivity`: owns BLE scan/connect/read/write behavior and
   publishes local capability state, command results, and BLE-owned shadow
   updates.
+- `txing-thread-connectivity`: owns Thread SRP/DNS-SD discovery and CoAP
+  communication for `power-si` devices, and publishes local capability state,
+  command results, and Thread/power shadow updates. It assumes an external OTBR
+  is already configured on the rig network.
 
 The daemons communicate only through local IPC. The default Linux IPC socket is
 `/run/txing-rig/rig-ipc.sock`; the macOS development default is under
@@ -29,13 +33,15 @@ rig host. It uses the rig certificate and IoT role alias to:
 - forward BLE-owned named-shadow updates from IPC to AWS IoT MQTT
 - write CloudWatch logs to `txing/<town>/<rig>`
 
-`txing-ble-connectivity` has no direct AWS MQTT dependency. It consumes rig
-inventory over IPC, manages BLE advertisements and connections, and publishes:
+`txing-ble-connectivity` and `txing-thread-connectivity` have no direct AWS MQTT
+dependency. They consume rig inventory over IPC and publish:
 
 - retained local capability state under `dev/txing/rig/v2/state/...`
 - local command results under `dev/txing/rig/v2/command-result/...`
 - BLE-owned `$aws/things/<device>/shadow/name/<shadow>/update` messages for the
   manager to forward
+- Thread-owned `$aws/things/<device>/shadow/name/thread/update` messages and
+  `power` battery updates for the manager to forward
 
 ## Local Development
 
@@ -77,6 +83,10 @@ Important defaults:
 - `TXING_BLE_CONNECT_TIMEOUT_MS=8000`
 - `TXING_BLE_COMMAND_TIMEOUT_MS=8000`
 - `TXING_CLOUDWATCH_LOG_GROUP=txing/<town>/<rig>`
+- `TXING_THREAD_SERVICE_DOMAIN=default.service.arpa`
+- `TXING_THREAD_DISCOVERY_INTERVAL_MS=10000`
+- `TXING_THREAD_POLL_INTERVAL_MS=10000`
+- `TXING_THREAD_COAP_TIMEOUT_MS=8000`
 
 Generate rig daemon material on the operator machine:
 
@@ -89,12 +99,13 @@ under `/root/.config/txing/rig-daemon`.
 
 ## Release Artifacts
 
-Production `raspi` rigs install two GitHub Release assets with root-owned
+Production `raspi` rigs install three GitHub Release assets with root-owned
 `mise`:
 
 ```text
 txing-sparkplug-manager-linux-aarch64.tar.gz
 txing-ble-connectivity-linux-aarch64.tar.gz
+txing-thread-connectivity-linux-aarch64.tar.gz
 ```
 
 Each archive contains one root-level executable with the same command name.
@@ -133,6 +144,7 @@ fetch_remote_versions_cache = "0s"
 [tool_alias]
 txing-sparkplug-manager = "github:mparkachov/txing"
 txing-ble-connectivity = "github:mparkachov/txing"
+txing-thread-connectivity = "github:mparkachov/txing"
 
 [tools.txing-sparkplug-manager]
 version = "latest"
@@ -143,10 +155,15 @@ asset_pattern = "txing-sparkplug-manager-linux-aarch64.tar.gz"
 version = "latest"
 version_prefix = "rig-v"
 asset_pattern = "txing-ble-connectivity-linux-aarch64.tar.gz"
+
+[tools.txing-thread-connectivity]
+version = "latest"
+version_prefix = "rig-v"
+asset_pattern = "txing-thread-connectivity-linux-aarch64.tar.gz"
 EOF
 
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise install txing-sparkplug-manager@latest txing-ble-connectivity@latest
+  /root/.local/bin/mise install txing-sparkplug-manager@latest txing-ble-connectivity@latest txing-thread-connectivity@latest
 ```
 
 Check installed versions:
@@ -154,6 +171,7 @@ Check installed versions:
 ```bash
 /root/.local/share/mise/installs/txing-sparkplug-manager/latest/txing-sparkplug-manager --version
 /root/.local/share/mise/installs/txing-ble-connectivity/latest/txing-ble-connectivity --version
+/root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity --version
 ```
 
 Write the systemd units manually:
@@ -177,6 +195,31 @@ RuntimeDirectoryMode=0755
 ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-sparkplug-manager/latest/txing-sparkplug-manager
 ExecStartPre=-/root/.local/share/mise/installs/txing-sparkplug-manager/latest/txing-sparkplug-manager --version
 ExecStart=/root/.local/share/mise/installs/txing-sparkplug-manager/latest/txing-sparkplug-manager
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=rig-daemon.target
+```
+
+```ini
+# /etc/systemd/system/txing-thread-connectivity.service
+[Unit]
+Description=Txing Thread connectivity
+PartOf=rig-daemon.target
+Requires=txing-sparkplug-manager.service
+Wants=network-online.target systemd-time-wait-sync.service
+After=txing-sparkplug-manager.service network-online.target systemd-time-wait-sync.service time-sync.target
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=/root
+Environment=TXING_RIG_CONFIG_DIR=/root/.config/txing/rig-daemon
+Environment=TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock
+ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity
+ExecStartPre=-/root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity --version
+ExecStart=/root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity
 Restart=always
 RestartSec=5
 
@@ -213,8 +256,8 @@ WantedBy=rig-daemon.target
 # /etc/systemd/system/rig-daemon.target
 [Unit]
 Description=Txing rig daemons
-Requires=txing-sparkplug-manager.service txing-ble-connectivity.service
-After=txing-sparkplug-manager.service txing-ble-connectivity.service
+Requires=txing-sparkplug-manager.service txing-thread-connectivity.service txing-ble-connectivity.service
+After=txing-sparkplug-manager.service txing-thread-connectivity.service txing-ble-connectivity.service
 
 [Install]
 WantedBy=multi-user.target
@@ -229,6 +272,7 @@ systemctl enable rig-daemon.target
 systemctl restart rig-daemon.target
 systemctl status --no-pager -l rig-daemon.target
 journalctl -u txing-sparkplug-manager.service -u txing-ble-connectivity.service -n 160 --no-pager
+journalctl -u txing-thread-connectivity.service -n 160 --no-pager
 ```
 
 ## Upgrade
@@ -238,9 +282,10 @@ while the filesystem is writable and run:
 
 ```bash
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise upgrade txing-sparkplug-manager txing-ble-connectivity
+  /root/.local/bin/mise upgrade txing-sparkplug-manager txing-ble-connectivity txing-thread-connectivity
 /root/.local/share/mise/installs/txing-sparkplug-manager/latest/txing-sparkplug-manager --version
 /root/.local/share/mise/installs/txing-ble-connectivity/latest/txing-ble-connectivity --version
+/root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity --version
 sync
 ```
 
@@ -267,8 +312,8 @@ Useful rig checks:
 
 ```bash
 systemctl status --no-pager -l rig-daemon.target
-systemctl status --no-pager -l txing-sparkplug-manager.service txing-ble-connectivity.service
-journalctl -u txing-sparkplug-manager.service -u txing-ble-connectivity.service -b --no-pager
+systemctl status --no-pager -l txing-sparkplug-manager.service txing-thread-connectivity.service txing-ble-connectivity.service
+journalctl -u txing-sparkplug-manager.service -u txing-thread-connectivity.service -u txing-ble-connectivity.service -b --no-pager
 test -S /run/txing-rig/rig-ipc.sock
 /root/.local/bin/mise list
 ```
@@ -276,6 +321,8 @@ test -S /run/txing-rig/rig-ipc.sock
 Expected behavior:
 
 - manager logs show inventory refreshes and Sparkplug MQTT connection
+- Thread logs show inventory reconciliation and `_txing-coap._udp` discovery
+  attempts once an external OTBR is available
 - BLE logs show inventory reconciliation and scanner activity
 - CloudWatch receives logs under `txing/<town>/<rig>`
 - `txing-sparkplug-manager` subscribes to `spBv1.0/<town>/NCMD/<rig>` for rig

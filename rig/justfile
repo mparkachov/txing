@@ -39,6 +39,8 @@ build:
       -o "{{bin_dir}}/txing-sparkplug-manager" ./cmd/txing-sparkplug-manager
     go build -ldflags "-X github.com/mparkachov/txing/rig/internal/version.Version=$version" \
       -o "{{bin_dir}}/txing-ble-connectivity" ./cmd/txing-ble-connectivity
+    go build -ldflags "-X github.com/mparkachov/txing/rig/internal/version.Version=$version" \
+      -o "{{bin_dir}}/txing-thread-connectivity" ./cmd/txing-thread-connectivity
 
 start config_dir=config_dir no_ble='false':
     #!/bin/sh
@@ -66,6 +68,22 @@ start config_dir=config_dir no_ble='false':
       echo "$!" >"{{run_dir}}/txing-sparkplug-manager.pid"
     fi
     sleep 1
+    if [ -f "{{run_dir}}/txing-thread-connectivity.pid" ] &&
+      kill -0 "$(cat "{{run_dir}}/txing-thread-connectivity.pid")" >/dev/null 2>&1; then
+      echo "txing-thread-connectivity already running"
+    else
+      if [ -n "$requested_config_dir" ]; then
+        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+          nohup "{{bin_dir}}/txing-thread-connectivity" --config-dir "$requested_config_dir" \
+          >"{{run_dir}}/txing-thread-connectivity.log" 2>&1 &
+      else
+        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+          nohup "{{bin_dir}}/txing-thread-connectivity" \
+          >"{{run_dir}}/txing-thread-connectivity.log" 2>&1 &
+      fi
+      echo "$!" >"{{run_dir}}/txing-thread-connectivity.pid"
+    fi
+    sleep 1
     if [ -f "{{run_dir}}/txing-ble-connectivity.pid" ] &&
       kill -0 "$(cat "{{run_dir}}/txing-ble-connectivity.pid")" >/dev/null 2>&1; then
       echo "txing-ble-connectivity already running"
@@ -87,15 +105,15 @@ start config_dir=config_dir no_ble='false':
           nohup "{{bin_dir}}/txing-ble-connectivity" \
           >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
       fi
-      echo "$!" >"{{run_dir}}/txing-ble-connectivity.pid"
+    echo "$!" >"{{run_dir}}/txing-ble-connectivity.pid"
     fi
     echo "rig daemons started"
-    echo "logs: {{run_dir}}/txing-sparkplug-manager.log {{run_dir}}/txing-ble-connectivity.log"
+    echo "logs: {{run_dir}}/txing-sparkplug-manager.log {{run_dir}}/txing-thread-connectivity.log {{run_dir}}/txing-ble-connectivity.log"
 
 stop:
     #!/bin/sh
     set -eu
-    for name in txing-ble-connectivity txing-sparkplug-manager; do
+    for name in txing-ble-connectivity txing-thread-connectivity txing-sparkplug-manager; do
       pid_file="{{run_dir}}/${name}.pid"
       if [ ! -f "$pid_file" ]; then
         continue
@@ -126,7 +144,7 @@ restart config_dir=config_dir no_ble='false':
 log:
     #!/bin/sh
     set -eu
-    tail -n 160 -f "{{run_dir}}/txing-sparkplug-manager.log" "{{run_dir}}/txing-ble-connectivity.log"
+    tail -n 160 -f "{{run_dir}}/txing-sparkplug-manager.log" "{{run_dir}}/txing-thread-connectivity.log" "{{run_dir}}/txing-ble-connectivity.log"
 
 check config_dir=config_dir:
     #!/bin/sh
@@ -134,9 +152,11 @@ check config_dir=config_dir:
     just --justfile "{{rig_dir}}/justfile" build
     if [ -n "{{config_dir}}" ]; then
       "{{bin_dir}}/txing-sparkplug-manager" --dry-run --config-dir "{{config_dir}}"
+      "{{bin_dir}}/txing-thread-connectivity" --dry-run --config-dir "{{config_dir}}"
       "{{bin_dir}}/txing-ble-connectivity" --dry-run --config-dir "{{config_dir}}" --no-ble
     else
       "{{bin_dir}}/txing-sparkplug-manager" --dry-run
+      "{{bin_dir}}/txing-thread-connectivity" --dry-run
       "{{bin_dir}}/txing-ble-connectivity" --dry-run --no-ble
     fi
 

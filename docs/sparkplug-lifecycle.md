@@ -32,7 +32,7 @@ the cloud rig runtime Lambda recorded in `/txing/stack/CloudRigRuntimeFunctionNa
   `payload.metrics.redcon=4` means the rig runtime is intentionally in the
   low-cost commandable state: the node MQTT session and `NCMD` subscription stay
   alive, but full tick/device work is stopped.
-- For `raspi`, if `rig-daemon.target` is running, both rig daemon services are
+- For `raspi`, if `rig-daemon.target` is running, all rig daemon services are
   active, and `just rig::check` passes, the rig thing's Sparkplug projection
   must be `NBIRTH` with either `redcon=1` or an intentionally commanded
   `redcon=4`.

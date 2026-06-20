@@ -19,6 +19,7 @@ const (
 	CapabilityCommandResultTopicPrefix = LocalTopicRoot + "/capability/command-result"
 	CapabilityHeartbeatTopicPrefix     = LocalTopicRoot + "/capability/heartbeat"
 	BleRedconMetric                    = "bleRedcon"
+	TransportRedconMetric              = "transportRedcon"
 	CommandPending                     = "pending"
 	CommandAccepted                    = "accepted"
 	CommandSucceeded                   = "succeeded"
@@ -548,6 +549,15 @@ func NormalizeBleTargetRedcon(redcon uint8) (uint8, error) {
 		return redcon, nil
 	default:
 		return 0, fmt.Errorf("unsupported BLE target REDCON %d", redcon)
+	}
+}
+
+func NormalizeThreadTargetRedcon(redcon uint8) (uint8, error) {
+	switch redcon {
+	case 3, 4:
+		return redcon, nil
+	default:
+		return 0, fmt.Errorf("unsupported Thread target REDCON %d", redcon)
 	}
 }
 

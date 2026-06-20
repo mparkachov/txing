@@ -33,6 +33,7 @@ fetch_remote_versions_cache = "0s"
 [tool_alias]
 txing-sparkplug-manager = "github:$owner/$repo"
 txing-ble-connectivity = "github:$owner/$repo"
+txing-thread-connectivity = "github:$owner/$repo"
 
 [tools.txing-sparkplug-manager]
 version = "latest"
@@ -43,6 +44,11 @@ asset_pattern = "txing-sparkplug-manager-linux-aarch64.tar.gz"
 version = "latest"
 version_prefix = "rig-v"
 asset_pattern = "txing-ble-connectivity-linux-aarch64.tar.gz"
+
+[tools.txing-thread-connectivity]
+version = "latest"
+version_prefix = "rig-v"
+asset_pattern = "txing-thread-connectivity-linux-aarch64.tar.gz"
 EOF
 
 install -m 600 "$tmp" "$config_file"

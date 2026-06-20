@@ -113,7 +113,7 @@ func (s *DeviceRuntimeState) ObserveState(state protocol.CapabilityState) error 
 			return nil
 		}
 	}
-	if stateReportsBleRedcon4(state) {
+	if stateReportsTransportRedcon4(state) {
 		observedAtMS := state.ObservedAtMS
 		for adapterID, existing := range s.adapterStates {
 			if stateDeclaresBoardOwnedCapability(existing) && existing.ObservedAtMS <= observedAtMS {
@@ -122,7 +122,7 @@ func (s *DeviceRuntimeState) ObserveState(state protocol.CapabilityState) error 
 		}
 	} else if stateDeclaresBoardOwnedCapability(state) {
 		for _, existing := range s.adapterStates {
-			if stateReportsBleRedcon4(existing) && existing.ObservedAtMS >= state.ObservedAtMS {
+			if stateReportsTransportRedcon4(existing) && existing.ObservedAtMS >= state.ObservedAtMS {
 				delete(s.adapterStates, state.AdapterID)
 				return nil
 			}
@@ -150,13 +150,13 @@ func (s *DeviceRuntimeState) Snapshot(nowMS uint64) DeviceSnapshot {
 		}
 	}
 
-	bleRedcon4Observed := false
+	redcon4Observed := false
 	for _, state := range s.adapterStates {
 		if state.ObservedAtMS+StateTTLMS < nowMS {
 			continue
 		}
 		newerOrEqualToBoard := latestBoardStateMS == nil || state.ObservedAtMS >= *latestBoardStateMS
-		bleRedcon4Observed = bleRedcon4Observed || (stateReportsBleRedcon4(state) && newerOrEqualToBoard)
+		redcon4Observed = redcon4Observed || (stateReportsTransportRedcon4(state) && newerOrEqualToBoard)
 		for capability, available := range state.Capabilities {
 			if current, ok := capabilities[capability]; ok {
 				capabilities[capability] = current || available
@@ -164,7 +164,7 @@ func (s *DeviceRuntimeState) Snapshot(nowMS uint64) DeviceSnapshot {
 		}
 	}
 
-	applyCapabilityDependencyGates(capabilities, bleRedcon4Observed)
+	applyCapabilityDependencyGates(capabilities, redcon4Observed)
 	redcon := SelectBestRedcon(s.inventory.RedconRules, s.inventory.RedconCommandLevels, capabilities)
 	sparkplugAvailable := capabilities["sparkplug"]
 	return DeviceSnapshot{
@@ -258,16 +258,21 @@ func applyCapabilityDependencyGates(capabilities map[string]bool, bleRedcon4Obse
 	}
 }
 
-func stateReportsBleRedcon4(state protocol.CapabilityState) bool {
+func stateReportsTransportRedcon4(state protocol.CapabilityState) bool {
 	if !capabilityIsDeclared(state.Capabilities, PowerCapability) || capabilityIsAvailable(state.Capabilities, PowerCapability) {
 		return false
 	}
-	metric, ok := state.Metrics[protocol.BleRedconMetric]
-	if !ok {
-		return false
+	for _, metricName := range []string{protocol.TransportRedconMetric, protocol.BleRedconMetric} {
+		metric, ok := state.Metrics[metricName]
+		if !ok {
+			continue
+		}
+		value, ok := protocol.IntMetricValue(metric.Value)
+		if ok && value == 4 {
+			return true
+		}
 	}
-	value, ok := protocol.IntMetricValue(metric.Value)
-	return ok && value == 4
+	return false
 }
 
 func stateReportsOnlyScannerReachability(state protocol.CapabilityState) bool {

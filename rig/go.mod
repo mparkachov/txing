@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.6
 	github.com/eclipse/paho.golang v0.23.0
 	github.com/godbus/dbus/v5 v5.1.0
+	golang.org/x/net v0.44.0
 	tinygo.org/x/bluetooth v0.15.0
 )
 
@@ -37,6 +38,5 @@ require (
 	github.com/tinygo-org/cbgo v0.0.4 // indirect
 	github.com/tinygo-org/pio v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20241204233417-43b7b7cde48d // indirect
-	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 )

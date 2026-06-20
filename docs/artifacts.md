@@ -40,6 +40,7 @@ Rig releases publish these Linux `aarch64` assets:
 ```text
 txing-sparkplug-manager-linux-aarch64.tar.gz
 txing-ble-connectivity-linux-aarch64.tar.gz
+txing-thread-connectivity-linux-aarch64.tar.gz
 ```
 
 Unit releases publish these Linux `aarch64` assets:
@@ -206,6 +207,7 @@ Installed commands:
 ```text
 txing-sparkplug-manager
 txing-ble-connectivity
+txing-thread-connectivity
 ```
 
 Rigs use root's persistent mise config and install tree:
@@ -215,8 +217,10 @@ Rigs use root's persistent mise config and install tree:
 /root/.config/mise/conf.d/txing-rig.toml
 /root/.local/share/mise/installs/txing-sparkplug-manager/latest/txing-sparkplug-manager
 /root/.local/share/mise/installs/txing-ble-connectivity/latest/txing-ble-connectivity
+/root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity
 /etc/systemd/system/txing-sparkplug-manager.service
 /etc/systemd/system/txing-ble-connectivity.service
+/etc/systemd/system/txing-thread-connectivity.service
 /etc/systemd/system/rig-daemon.target
 ```
 

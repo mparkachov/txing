@@ -20,6 +20,19 @@ func powerInventory() protocol.InventoryDevice {
 	}
 }
 
+func powerSIInventory() protocol.InventoryDevice {
+	return protocol.InventoryDevice{
+		ThingName:           "power-si-1",
+		ThingType:           "power-si",
+		Capabilities:        []string{"sparkplug", "thread", "power"},
+		RedconCommandLevels: []uint8{4, 3},
+		RedconRules: map[uint8][]string{
+			4: []string{"sparkplug", "thread"},
+			3: []string{"sparkplug", "thread", "power"},
+		},
+	}
+}
+
 func weatherInventoryWithStaleRedcon3Rule() protocol.InventoryDevice {
 	return protocol.InventoryDevice{
 		ThingName:           "weather-1",
@@ -296,6 +309,43 @@ func TestBleRedcon4EvidenceClearsBoardOwnedCapabilities(t *testing.T) {
 		sparkplug.NewBooleanMetric("capability.sparkplug", true),
 		sparkplug.NewBooleanMetric("capability.video", false),
 	})
+}
+
+func TestThreadPowerSIStateSelectsRedconFromThreadCapabilities(t *testing.T) {
+	state := NewDeviceRuntimeState(powerSIInventory())
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.rig.ThreadConnectivity",
+		"power-si-1",
+		map[string]bool{"sparkplug": true, "thread": true, PowerCapability: false},
+		map[string]protocol.MetricValue{protocol.TransportRedconMetric: protocol.MetricInt32(4)},
+		1000,
+		1,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := state.Snapshot(1000)
+	if got := redconValue(t, snapshot.Redcon); got != 4 {
+		t.Fatalf("redcon = %d, want 4", got)
+	}
+	assertCapability(t, snapshot.Capabilities, "thread", true)
+	assertCapability(t, snapshot.Capabilities, PowerCapability, false)
+
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.rig.ThreadConnectivity",
+		"power-si-1",
+		map[string]bool{"sparkplug": true, "thread": true, PowerCapability: true},
+		map[string]protocol.MetricValue{protocol.TransportRedconMetric: protocol.MetricInt32(3)},
+		2000,
+		2,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot = state.Snapshot(2000)
+	if got := redconValue(t, snapshot.Redcon); got != 3 {
+		t.Fatalf("redcon = %d, want 3", got)
+	}
+	assertCapability(t, snapshot.Capabilities, "thread", true)
+	assertCapability(t, snapshot.Capabilities, PowerCapability, true)
 }
 
 func TestBleRedcon4TransitionPublishesDataEvenWithRetainedBoardState(t *testing.T) {

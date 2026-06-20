@@ -16,6 +16,7 @@ env:
   RELEASE_TAG_PREFIX: rig-v
   SPARKPLUG_MANAGER_ASSET: txing-sparkplug-manager-linux-aarch64.tar.gz
   BLE_CONNECTIVITY_ASSET: txing-ble-connectivity-linux-aarch64.tar.gz
+  THREAD_CONNECTIVITY_ASSET: txing-thread-connectivity-linux-aarch64.tar.gz
 
 jobs:
   metadata:
@@ -140,6 +141,9 @@ jobs:
           - binary_name: txing-ble-connectivity
             package_path: ./cmd/txing-ble-connectivity
             asset_name: txing-ble-connectivity-linux-aarch64.tar.gz
+          - binary_name: txing-thread-connectivity
+            package_path: ./cmd/txing-thread-connectivity
+            asset_name: txing-thread-connectivity-linux-aarch64.tar.gz
 
     steps:
       - name: Check out repository

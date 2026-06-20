@@ -80,6 +80,25 @@ func TestCommandContextUsesCommandDeadlineInsteadOfBleAttemptTimeout(t *testing.
 	}
 }
 
+func TestDispatchCommandIgnoresNonBLEInventoryTargets(t *testing.T) {
+	state := &runtimeState{
+		specs: map[string]rigble.DeviceSpec{
+			"power-1": {ThingName: "power-1", Kind: rigble.DeviceKindPower},
+		},
+		sessions: map[string]*deviceSession{},
+	}
+	var statuses []string
+	state.commandResultSink = func(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) {
+		statuses = append(statuses, status)
+	}
+
+	state.dispatchCommand(context.Background(), testCommand(t, "power-si-1", 3))
+
+	if len(statuses) != 0 {
+		t.Fatalf("unexpected command results for non-BLE target: %#v", statuses)
+	}
+}
+
 func TestBackgroundConnectContextIsBounded(t *testing.T) {
 	state := &runtimeState{
 		cfg: rigconfig.Config{ConnectTimeout: 8 * time.Second},

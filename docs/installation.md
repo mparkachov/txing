@@ -48,8 +48,8 @@ AWS bring-up and teardown live in [aws.md](./aws.md).
 
 The `raspi` rig is the always-on host coordinator that owns Sparkplug
 publication for local BLE-managed devices. Production `raspi` rig hosts run
-`txing-sparkplug-manager` and `txing-ble-connectivity` as standalone systemd
-services.
+`txing-sparkplug-manager`, `txing-thread-connectivity`, and
+`txing-ble-connectivity` as standalone systemd services.
 
 Canonical `raspi` rig installation, Bluetooth setup, root-owned `mise`,
 systemd units, health-check, and update instructions live in
@@ -63,10 +63,11 @@ The short production flow is:
    `just aws::cert <rig-id>`.
 3. Copy and unpack `<rig-id>-rig-daemon-config.tgz` under
    `/root/.config/txing/rig-daemon`.
-4. Install `txing-sparkplug-manager` and `txing-ble-connectivity` through
-   root-owned `mise`.
+4. Install `txing-sparkplug-manager`, `txing-thread-connectivity`, and
+   `txing-ble-connectivity` through root-owned `mise`.
 5. Create `txing-sparkplug-manager.service`,
-   `txing-ble-connectivity.service`, and `rig-daemon.target` manually.
+   `txing-thread-connectivity.service`, `txing-ble-connectivity.service`, and
+   `rig-daemon.target` manually.
 6. Start or upgrade with `sudo systemctl restart rig-daemon.target` after
    `mise upgrade`.
 

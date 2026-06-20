@@ -422,7 +422,11 @@ func (s *runtimeState) dispatchAdvertisement(ctx context.Context, thingName stri
 func (s *runtimeState) dispatchCommand(ctx context.Context, command protocol.CapabilityCommand) {
 	s.mu.Lock()
 	session := s.sessions[command.ThingName]
+	_, managed := s.specs[command.ThingName]
 	s.mu.Unlock()
+	if !managed {
+		return
+	}
 	if session == nil {
 		message := "device is not managed by BLE connectivity"
 		s.publishCommandResult(ctx, command, protocol.CommandRejected, &message, &command.Target.Redcon)
