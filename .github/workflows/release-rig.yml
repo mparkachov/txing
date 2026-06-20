@@ -271,6 +271,7 @@ jobs:
           release_assets=(
             "$SPARKPLUG_MANAGER_ASSET"
             "$BLE_CONNECTIVITY_ASSET"
+            "$THREAD_CONNECTIVITY_ASSET"
           )
 
           release_asset_paths=()
