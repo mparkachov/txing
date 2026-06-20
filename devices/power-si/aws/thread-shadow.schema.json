@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-power-si-thread-shadow.schema.json",
+  "title": "Power SI Thread Named Shadow Contract",
+  "description": "Named shadow 'thread' AWS-side materialized Thread endpoint view for a power-si txing.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "serviceInstance": {
+              "type": ["string", "null"]
+            },
+            "serviceType": {
+              "type": ["string", "null"]
+            },
+            "host": {
+              "type": ["string", "null"]
+            },
+            "addresses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "port": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "txt": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

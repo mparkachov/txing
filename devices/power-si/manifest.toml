@@ -1,0 +1,25 @@
+type = "power-si"
+device_name = "power-si"
+display_name = "Power SI"
+capabilities = ["sparkplug", "thread", "power"]
+compatible_rig_types = ["raspi"]
+redcon_command_levels = [4, 3]
+
+[redcon_rules]
+4 = ["sparkplug", "thread"]
+3 = ["sparkplug", "thread", "power"]
+
+[shadows.sparkplug]
+schema = "aws/sparkplug-shadow.schema.json"
+default = "aws/default-sparkplug-shadow.json"
+
+[shadows.thread]
+schema = "aws/thread-shadow.schema.json"
+default = "aws/default-thread-shadow.json"
+
+[shadows.power]
+schema = "aws/power-shadow.schema.json"
+default = "aws/default-power-shadow.json"
+
+[web]
+adapter = "web/power-si-adapter.tsx"

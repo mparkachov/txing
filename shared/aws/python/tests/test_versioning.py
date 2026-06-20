@@ -321,6 +321,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "rig" / "justfile",
             REPO_ROOT / "devices" / "unit" / "justfile",
             REPO_ROOT / "devices" / "unit" / "daemon" / "justfile",
+            REPO_ROOT / "devices" / "power-si" / "justfile",
             REPO_ROOT / "office" / "justfile",
         ]
         for path in operator_files:
@@ -540,6 +541,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn(removed_version_env + "_BASE", root_justfile)
         self.assertNotIn("export_line " + removed_version_env, root_justfile)
         self.assertIn("_project-git-env", root_justfile)
+        self.assertIn("mod power-si 'devices/power-si/justfile'", root_justfile)
         self.assertIn("release/versions/rig", rig_justfile)
         self.assertNotIn("/" + "VERSION", rig_justfile)
         self.assertIn("release/versions/unit", unit_daemon_justfile)

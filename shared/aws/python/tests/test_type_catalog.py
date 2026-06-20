@@ -75,6 +75,7 @@ class TypeCatalogTests(unittest.TestCase):
                 "/txing/town/raspi/unit",
                 "/txing/town/raspi/weather",
                 "/txing/town/raspi/power",
+                "/txing/town/raspi/power-si",
                 "/txing/town/cloud",
                 "/txing/town/cloud/cloud-mcu",
             },
@@ -84,6 +85,7 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/unit"]["defaultName"], "bot")
         self.assertEqual(records["/txing/town/raspi/weather"]["defaultName"], "outside")
         self.assertEqual(records["/txing/town/raspi/power"]["defaultName"], "power")
+        self.assertEqual(records["/txing/town/raspi/power-si"]["defaultName"], "power-si")
         self.assertEqual(records["/txing/town/cloud/cloud-mcu"]["defaultName"], "cloud")
         self.assertEqual(records["/txing/town/raspi"]["thingType"], "raspi")
         self.assertEqual(records["/txing/town/cloud"]["thingType"], "cloud")
@@ -95,12 +97,14 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/unit"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/weather"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/power"]["rigType"], "raspi")
+        self.assertEqual(records["/txing/town/raspi/power-si"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/cloud/cloud-mcu"]["rigType"], "cloud")
         self.assertEqual(records["/txing/town/raspi"]["redconCommandLevels"], ["1", "4"])
         self.assertEqual(records["/txing/town/cloud"]["redconCommandLevels"], ["1", "4"])
         self.assertEqual(records["/txing/town/raspi/unit"]["redconCommandLevels"], ["4", "3", "2", "1"])
         self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4"])
         self.assertEqual(records["/txing/town/raspi/power"]["redconCommandLevels"], ["4", "3"])
+        self.assertEqual(records["/txing/town/raspi/power-si"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(records["/txing/town/cloud/cloud-mcu"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(
             records["/txing/town/raspi/unit"]["redconRules"],
@@ -116,6 +120,13 @@ class TypeCatalogTests(unittest.TestCase):
             {
                 "3": ["sparkplug", "ble", "power"],
                 "4": ["sparkplug", "ble"],
+            },
+        )
+        self.assertEqual(
+            records["/txing/town/raspi/power-si"]["redconRules"],
+            {
+                "3": ["sparkplug", "thread", "power"],
+                "4": ["sparkplug", "thread"],
             },
         )
         self.assertEqual(
@@ -193,6 +204,10 @@ class TypeCatalogTests(unittest.TestCase):
             "sparkplug,ble,power",
         )
         self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power-si/capabilities"],
+            "sparkplug,thread,power",
+        )
+        self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/redconCommandLevels"],
             "4",
         )
@@ -201,8 +216,28 @@ class TypeCatalogTests(unittest.TestCase):
             "4,3",
         )
         self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power-si/redconCommandLevels"],
+            "4,3",
+        )
+        self.assertEqual(
             ssm.parameters["/txing/town/raspi/power/redconRules/3"],
             "sparkplug,ble,power",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power-si/redconRules/3"],
+            "sparkplug,thread,power",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power-si/redconRules/4"],
+            "sparkplug,thread",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power-si/shadows/thread/schema"],
+            "aws/thread-shadow.schema.json",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/power-si/web/adapter"],
+            "web/power-si-adapter.tsx",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/cloud/cloud-mcu/redconRules/3"],
@@ -275,6 +310,7 @@ class TypeCatalogTests(unittest.TestCase):
             [
                 "/txing/town/raspi",
                 "/txing/town/raspi/power",
+                "/txing/town/raspi/power-si",
                 "/txing/town/raspi/unit",
                 "/txing/town/raspi/weather",
             ],

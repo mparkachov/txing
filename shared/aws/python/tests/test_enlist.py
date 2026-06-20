@@ -359,6 +359,21 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertTrue(board_video["created"])
         self.assertIn(board_video["channelName"], self.runtime.kinesisvideo.channels)
 
+    def test_enlist_power_si_initializes_thread_and_power_shadows(self) -> None:
+        town = self._enlist_town()
+        raspi = self._enlist_rig(town["thingName"], "raspi", "server")
+
+        result = self._enlist_device(raspi["thingName"], "power-si", "power-si")
+
+        self.assertEqual(result["thingTypeName"], "power-si")
+        self.assertEqual(result["attributes"]["kind"], "deviceType")
+        self.assertEqual(result["attributes"]["rigType"], "raspi")
+        self.assertEqual(result["attributes"]["deviceType"], "power-si")
+        self.assertEqual(result["attributes"]["webAdapter"], "web/power-si-adapter.tsx")
+        self.assertEqual(result["attributes"]["capabilities"], "sparkplug,thread,power")
+        self.assertEqual(result["attributes"]["redconCommandLevels"], "4,3")
+        self.assertEqual(result["initializedShadows"], ["sparkplug", "thread", "power"])
+
     def test_repeated_enlist_repairs_attrs_without_replacing_shadows(self) -> None:
         town = self._enlist_town()
         cloud = self._enlist_rig(town["thingName"], "cloud", "aws")

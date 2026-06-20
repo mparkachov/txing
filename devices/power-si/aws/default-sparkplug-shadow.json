@@ -1,0 +1,16 @@
+{
+  "state": {
+    "reported": {
+      "topic": {
+        "namespace": "spBv1.0",
+        "groupId": "town",
+        "messageType": "DDEATH",
+        "edgeNodeId": "rig",
+        "deviceId": "power-si-local"
+      },
+      "payload": {
+        "metrics": {}
+      }
+    }
+  }
+}

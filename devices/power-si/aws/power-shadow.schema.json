@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-power-si-power-shadow.schema.json",
+  "title": "Power SI Capability Named Shadow Contract",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "batteryMv": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

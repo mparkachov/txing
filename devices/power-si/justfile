@@ -1,0 +1,10 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet := true
+
+power_si_dir := source_directory()
+project_root := canonicalize(power_si_dir + "/../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+
+@default:
+    @just --list

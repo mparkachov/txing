@@ -316,6 +316,25 @@ class DeviceRegistryTests(unittest.TestCase):
         self.assertNotIn("capabilities", attributes)
         self.assertEqual(runtime.ssm.put_requests, [])
 
+    def test_register_power_si_uses_thread_capability_catalog(self) -> None:
+        runtime = _FakeRuntime()
+        registry = AwsDeviceRegistry(
+            runtime,
+            repo_root=REPO_ROOT,
+            random_source=_SequenceRandom("ps0001"),
+        )
+
+        registration = registry.register_device(rig_id="raspi-ras001", device_type="power-si")
+
+        self.assertEqual(registration.thing_name, "power-si-ps0001")
+        self.assertEqual(registration.capabilities, ("sparkplug", "thread", "power"))
+        self.assertEqual(runtime.iot.create_thing_requests[0]["thingTypeName"], "power-si")
+        self.assertEqual(
+            sorted(shadow_name for _thing_name, shadow_name in runtime.iot_data.shadows),
+            ["power", "sparkplug", "thread"],
+        )
+        self.assertEqual(runtime.ssm.put_requests, [])
+
     def test_assign_device_validates_target_rig_type_before_updating_parent_ids(self) -> None:
         runtime = _FakeRuntime()
         runtime.iot._things["raspi-ras002"] = {

@@ -8,6 +8,7 @@ describe('device web adapter registry', () => {
     const unitAdapter = getDeviceWebAdapter('unit')
     const weatherAdapter = getDeviceWebAdapter('weather')
     const powerAdapter = getDeviceWebAdapter('power')
+    const powerSiAdapter = getDeviceWebAdapter('power-si')
 
     expect(cloudMcuAdapter?.type).toBe('cloud-mcu')
     expect(cloudMcuAdapter?.canUseBoardVideo(1)).toBe(false)
@@ -24,12 +25,17 @@ describe('device web adapter registry', () => {
     expect(powerAdapter?.type).toBe('power')
     expect(powerAdapter?.canUseBoardVideo(1)).toBe(false)
     expect(powerAdapter?.canUseDriveControl(1)).toBe(false)
+    expect(powerSiAdapter?.type).toBe('power-si')
+    expect(powerSiAdapter?.displayName).toBe('Power SI')
+    expect(powerSiAdapter?.canUseBoardVideo(1)).toBe(false)
+    expect(powerSiAdapter?.canUseDriveControl(1)).toBe(false)
     expect(getDeviceWebAdapter('sensor')).toBeNull()
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
       'cloud-mcu',
       'unit',
       'weather',
       'power',
+      'power-si',
     ])
   })
 
@@ -110,6 +116,15 @@ describe('device web adapter registry', () => {
         shadow: {
           namedShadows: {
             power: { state: { reported: { batteryMv: 3890 } } },
+          },
+        },
+      },
+      {
+        type: 'power-si',
+        shadow: {
+          namedShadows: {
+            power: { state: { reported: { batteryMv: 3890 } } },
+            thread: { state: { reported: { serviceType: '_txing-coap._udp' } } },
           },
         },
       },

@@ -24,7 +24,7 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_lists_only_loadable_device_types(self) -> None:
         self.assertEqual(
             list_loadable_device_types(repo_root=REPO_ROOT),
-            ["cloud-mcu", "power", "unit", "weather"],
+            ["cloud-mcu", "power", "power-si", "unit", "weather"],
         )
 
     def test_loads_unit_manifest(self) -> None:
@@ -86,6 +86,33 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.render_board_video_channel_name(device_id="outside"), None)
         self.assertEqual(manifest.web_adapter, "web/weather-adapter.tsx")
 
+    def test_loads_power_si_manifest(self) -> None:
+        manifest = load_device_manifest("power-si", repo_root=REPO_ROOT)
+
+        self.assertEqual(manifest.type, "power-si")
+        self.assertEqual(manifest.device_name, "power-si")
+        self.assertEqual(manifest.display_name, "Power SI")
+        self.assertEqual(manifest.capabilities, ("sparkplug", "thread", "power"))
+        self.assertEqual(manifest.compatible_rig_types, ("raspi",))
+        self.assertEqual(manifest.redcon_command_levels, (4, 3))
+        self.assertEqual(
+            manifest.redcon_rules,
+            {
+                3: ("sparkplug", "thread", "power"),
+                4: ("sparkplug", "thread"),
+            },
+        )
+        self.assertEqual(
+            [contract.name for contract in manifest.shadows.values()],
+            ["sparkplug", "thread", "power"],
+        )
+        self.assertEqual(manifest.render_board_video_channel_name(device_id="power-si-a1"), None)
+        self.assertEqual(manifest.web_adapter, "web/power-si-adapter.tsx")
+        for shadow_name in ("sparkplug", "thread", "power"):
+            contract = manifest.shadow_contract(shadow_name)
+            self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
+            self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
+
     def test_template_is_not_loadable(self) -> None:
         with self.assertRaises(DeviceTypeNotFoundError):
             load_device_manifest("template", repo_root=REPO_ROOT)
@@ -103,6 +130,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(capabilities["cloud-mcu"], ("sparkplug", "sqs", "power", "ecs"))
         self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "power", "weather"))
         self.assertEqual(capabilities["power"], ("sparkplug", "ble", "power"))
+        self.assertEqual(capabilities["power-si"], ("sparkplug", "thread", "power"))
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
             ("sparkplug", "ble", "power", "board", "mcp", "video"),
@@ -114,6 +142,10 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(
             capabilities_for_thing_type("weather", repo_root=REPO_ROOT),
             ("sparkplug", "ble", "power", "weather"),
+        )
+        self.assertEqual(
+            capabilities_for_thing_type("power-si", repo_root=REPO_ROOT),
+            ("sparkplug", "thread", "power"),
         )
 
     def test_manifest_capabilities_are_device_defined(self) -> None:
