@@ -53,11 +53,41 @@ partition. The record contains:
 - CoAP port, normally `5683`
 - CRC
 
+The factory record is stored at `0x0817a000`. Zephyr/OpenThread settings use
+`0x0817c000..0x0817ffff` as a 16 KiB NVS area, because MG24 flash has 8 KiB
+erase blocks and Zephyr NVS requires at least two sectors. This uses one erase
+block from the board's unused secondary image slot.
+
 Real Thread dataset TLVs are credentials. Do not commit them, paste them into
 Backlog tasks, or store them under version control. Use a local ignored path
 such as `tmp/power-si-dataset.hex` or another operator-controlled secret
 location. Recording a short non-secret source label, timestamp, or OTBR/network
 name in acceptance notes is fine; recording the TLVs is not.
+
+On the OTBR, `ot-ctl dataset active` shows the active dataset in a
+human-readable form. Use it to confirm that the OTBR is on the expected Thread
+network:
+
+```bash
+sudo ot-ctl dataset active
+```
+
+The factory tool needs the same active dataset as raw Thread TLVs. Generate the
+hex input file with `-x` and keep only the hex line, not the trailing `Done`
+line:
+
+```bash
+mkdir -p tmp
+sudo ot-ctl dataset active -x \
+  | awk '{
+      gsub(/[[:space:]]/, "");
+      if ($0 ~ /^[[:xdigit:]]+$/) { print; found=1 }
+    } END { exit(found ? 0 : 1) }' \
+  > tmp/power-si-dataset.hex
+```
+
+Do not feed the human-readable `ot-ctl dataset active` output into the factory
+tool. It must receive the TLV hex produced by `ot-ctl dataset active -x`.
 
 Prepare the shared stock Zephyr workspace once:
 
@@ -66,22 +96,18 @@ just mcu::install
 just mcu::check
 ```
 
-Validate and generate the factory HEX:
+Validate the dataset TLV file before programming factory data:
 
 ```bash
 python3 devices/common/mcu/xiao_mg24/scripts/thread_factory.py validate \
   power-si-001 \
   --dataset-tlvs tmp/power-si-dataset.hex
-
-just power-si::mcu::factory-hex \
-  power-si-001 \
-  tmp/power-si-dataset.hex
 ```
 
-The default output is:
+Program the `TXT1` factory record with the shared NVE command:
 
-```text
-devices/common/mcu/build/power-si-thread-factory.hex
+```bash
+just mcu::nve power-si-001 tmp/power-si-dataset.hex
 ```
 
 ## Firmware Build
@@ -102,59 +128,170 @@ The build uses the repository's stock Zephyr workflow, currently defaulting to
 Zephyr `main` for XIAO MG24 IEEE 802.15.4 radio support. The firmware starts
 with D1 off and the board LED following the REDCON/power state. It will not
 start Thread, CoAP, or SRP services until valid `TXT1` factory data is present.
+The current application is a receiver-on MTD, not a sleepy end device; it does
+not make a low-power SED claim.
 
 ## Manual Flashing
 
-Agents must not flash hardware. The operator flashes both artifacts manually
-using the debugger and runner available for the XIAO MG24 setup.
+Agents must not flash hardware. The operator flashes firmware with
+`just power-si::mcu::flash` and programs factory data with `just mcu::nve`.
+Both commands use Zephyr's stock `west flash` path with the `pyocd` runner over
+the XIAO MG24 onboard CMSIS-DAP debugger.
+This procedure does not require J-Link.
 
-After `just power-si::mcu::build`, inspect the Zephyr runner context for the
-connected board:
+Run `just mcu::install` before flashing. It installs Zephyr's Python runner
+requirements into the repository-local MCU virtualenv, refreshes pyOCD's CMSIS
+pack index, and requests the EFR32MG24B220F1536IM48 pyOCD CMSIS target pack.
+The `power-si` flash path explicitly passes the repo-local pyOCD binary to
+Zephyr's pyOCD runner. `just mcu::check` verifies that pyOCD can see the
+EFR32MG24B220F1536IM48 target before any firmware or factory flash command is
+run.
 
-```bash
-devices/common/mcu/.venv/bin/west \
-  -z devices/common/mcu/zephyr/zephyr \
-  flash \
-  --context \
-  -d devices/power-si/mcu/build/zephyr-xiao_mg24
-```
-
-Then flash firmware with the appropriate runner. For a J-Link setup, the command
-shape is:
-
-```bash
-devices/common/mcu/.venv/bin/west \
-  -z devices/common/mcu/zephyr/zephyr \
-  flash \
-  -d devices/power-si/mcu/build/zephyr-xiao_mg24 \
-  -r jlink \
-  --no-rebuild
-```
-
-Program the factory HEX with the same connected-debugger tooling. Confirm the
-runner supports an external HEX override before running it:
+Flash the already-built firmware:
 
 ```bash
-devices/common/mcu/.venv/bin/west \
-  -z devices/common/mcu/zephyr/zephyr \
-  flash \
-  --context \
-  -d devices/power-si/mcu/build/zephyr-xiao_mg24 \
-  -r jlink
-
-devices/common/mcu/.venv/bin/west \
-  -z devices/common/mcu/zephyr/zephyr \
-  flash \
-  -d devices/power-si/mcu/build/zephyr-xiao_mg24 \
-  -r jlink \
-  --no-rebuild \
-  --hex-file devices/common/mcu/build/power-si-thread-factory.hex
+just power-si::mcu::flash
 ```
 
-If the selected runner does not support `--hex-file`, use the matching vendor
-programmer to write
-`devices/common/mcu/build/power-si-thread-factory.hex` without erasing the
-firmware image.
+If this board previously received an older `power-si` factory image at
+`0x0817c000`, erase the new settings range once before testing this firmware.
+Leaving the old `TXT1` bytes there can make Zephyr NVS fail before application
+logs start:
+
+```bash
+env \
+  HOME="$(pwd)/devices/common/mcu/.home" \
+  XDG_CACHE_HOME="$(pwd)/devices/common/mcu/.home/.cache" \
+  devices/common/mcu/.venv/bin/pyocd erase \
+  --target efr32mg24b220f1536im48 \
+  --sector \
+  0x0817c000-0x08180000
+```
+
+Program the `TXT1` factory record after generating the dataset TLV file:
+
+```bash
+just mcu::nve power-si-001 tmp/power-si-dataset.hex
+```
+
+## Production SRP Test
+
+The SRP server does not provide an administrative delete command for a device
+registration. Remove the existing registration through the currently running
+debug firmware, so the device signs and sends the required SRP unregistration.
+At the XIAO MG24 shell, while it is attached to Thread, run:
+
+```text
+ot srp client host remove 1 1
+```
+
+The first `1` removes the key lease and the second forces an unregistration
+update even if the client no longer considers its host registered. Confirm the
+server received it before flashing production firmware:
+
+```bash
+sudo ot-ctl srp server service
+sudo ot-ctl srp server host
+```
+
+The `power-si._txing-coap._udp.default.service.arpa.` entry should be present
+with `deleted: true`. Do not use `ot srp client host clear` for this test: it
+only clears local state and does not notify the server.
+
+Build and flash the release image, then program the factory record after the
+firmware so the final device state contains both images:
+
+```bash
+just power-si::mcu::build
+just power-si::mcu::flash
+just mcu::nve power-si-001 tmp/power-si-dataset.hex
+```
+
+Wait for the device to attach and register, then run the same two OTBR commands.
+The service must return to `deleted: false` with port `5683`, TXT values
+`type=power-si` and `pv=1`, and the device's current mesh-local address. This
+proves the production image read `TXT1` from flash and completed a fresh SRP
+registration without the debug-only compiled factory data.
+
+Production firmware intentionally emits no UART logs. A silent serial port
+after reset is expected; use the SRP/DNS-SD result above, followed by rig CoAP
+and shadow evidence, as the production validation signal.
+
+## Thread Attach Debugging
+
+If the OTBR `child table` does not show the XIAO MG24, debug Thread attachment
+before SRP, CoAP, or rig discovery. A missing child means the device has not
+joined the Thread mesh yet.
+
+Build a UART/shell debug image without changing the production build output:
+
+```bash
+just power-si::mcu::build-debug
+```
+
+The debug HEX is:
+
+```text
+devices/power-si/mcu/build/zephyr-xiao_mg24-debug/zephyr/zephyr.hex
+```
+
+To test that image on hardware, flash the debug build through the device-owned
+flash target:
+
+```bash
+just power-si::mcu::flash debug
+```
+
+Open the XIAO MG24 USB CDC serial port at 115200 baud:
+
+```bash
+just power-si::mcu::log
+just power-si::mcu::log <serial-port>
+```
+
+Keep the log open while resetting the board. If the board already booted before
+the serial session opened, press Enter to show the Zephyr shell prompt.
+
+Expected boot evidence:
+
+```text
+txing power-si boot
+loaded TXT1 factory data for <thing-name>
+Thread active dataset accepted: <n> TLV bytes
+Thread IPv6 interface enabled
+Thread protocol enabled
+Thread state flags=... role=child
+```
+
+If `loaded TXT1 factory data` is missing, debug factory programming or the flash
+partition before looking at radio behavior. If the dataset is accepted but the
+role stays `detached`, compare the active dataset with the OTBR and inspect
+radio/network state.
+
+Useful Zephyr shell checks on the XIAO MG24:
+
+```text
+ot state
+ot dataset active -x
+ot ipaddr
+ot srp client state
+ot srp client host
+ot srp client service
+```
+
+Do not paste or commit the dataset TLV output. It is only for local comparison
+with the OTBR dataset.
+
+Useful OTBR checks:
+
+```bash
+sudo ot-ctl state
+sudo ot-ctl dataset active -x
+sudo ot-ctl child table
+sudo ot-ctl neighbor table
+sudo ot-ctl srp server host
+sudo ot-ctl srp server service
+```
 
 ## Hardware Acceptance
 

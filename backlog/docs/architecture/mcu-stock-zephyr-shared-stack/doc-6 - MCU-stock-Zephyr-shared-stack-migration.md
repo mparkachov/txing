@@ -18,26 +18,27 @@ TASK-12 is the baseline: the power MCU has already validated stock Zephyr v4.4.0
 - The obsolete NCS helper, generated NCS workspace, and `modules/nrfconnect/sdk-nrf` submodule are retired by the MCU NCS cleanup milestone.
 
 ## Intended Command Contract
-Shared setup and hardware command surfaces move to root `mcu` recipes:
+Shared setup and factory/NVE programming command surfaces use root `mcu`
+recipes:
 
 ```sh
 just mcu::install
 just mcu::check
-just mcu::flash power
-just mcu::flash weather
-just mcu::flash unit
 just mcu::nve <thing-name>
 ```
 
-Device-owned build surfaces remain local:
+Device-owned build and firmware-flash surfaces remain local:
 
 ```sh
 just power::mcu::build
+just power::mcu::flash
 just weather::mcu::build
+just weather::mcu::flash
 just unit::mcu::build
+just unit::mcu::flash
 ```
 
-`mcu::flash <device-type>` flashes an already-built firmware HEX for that device and must not implicitly build firmware. NVE generation remains shared because the TXR1 record layout, address `0x000f0000`, and OpenOCD command are common across active MCU targets.
+`<device>::mcu::flash` flashes an already-built firmware HEX for that device and must not implicitly build firmware. NVE generation remains shared because the TXR1 record layout, address `0x000f0000`, and OpenOCD command are common across active nRF MCU targets.
 
 ## Phased Migration
 1. Build the shared stock-Zephyr toolchain/workspace in `devices/common/mcu/`, add root `mcu` recipes, and migrate `power` to prove the shared stack still works for the TASK-12 baseline.

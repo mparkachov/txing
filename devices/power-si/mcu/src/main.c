@@ -9,15 +9,20 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/openthread.h>
+#include <zephyr/psa/key_ids.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/crc.h>
+#include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 
 #include <openthread/coap.h>
 #include <openthread/dataset.h>
+#include <openthread/error.h>
 #include <openthread/ip6.h>
+#include <openthread/platform/crypto.h>
 #include <openthread/srp_client.h>
 #include <openthread/thread.h>
+#include <psa/crypto.h>
 
 LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 
@@ -60,6 +65,7 @@ static const struct json_obj_descr redcon_request_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct redcon_request, redcon, JSON_TOK_NUMBER),
 };
 
+static otIp6Address srp_host_address;
 static const uint8_t txt_type[] = "power-si";
 static const uint8_t txt_proto[] = "1";
 static const otDnsTxtEntry service_txt[] = {
@@ -78,7 +84,16 @@ static otSrpClientService srp_service = {
 
 static otCoapResource state_resource;
 static otCoapResource redcon_resource;
+static void thread_state_changed(uint32_t flags, void *context);
+static void srp_client_callback(otError error, const otSrpClientHostInfo *host_info,
+				const otSrpClientService *services,
+				const otSrpClientService *removed_services, void *context);
+static void srp_autostart_callback(const otSockAddr *server, void *context);
+static struct openthread_state_changed_callback thread_state_cb = {
+	.otCallback = thread_state_changed,
+};
 
+#if DT_NODE_EXISTS(DT_NODELABEL(txing_factory_partition))
 static uint16_t u16_le(const uint8_t *value)
 {
 	return value[0] | ((uint16_t)value[1] << 8);
@@ -155,6 +170,13 @@ out:
 	flash_area_close(area);
 	return rc;
 }
+#else
+static int load_factory_data(void)
+{
+	LOG_ERR("TXT1 factory partition is not configured");
+	return -ENOENT;
+}
+#endif
 
 static int set_outputs_for_redcon(int level)
 {
@@ -320,14 +342,33 @@ static int start_coap(otInstance *ot)
 	redcon_resource.mUriPath = "txing/v1/redcon";
 	redcon_resource.mHandler = redcon_handler;
 
+	openthread_mutex_lock();
 	error = otCoapStart(ot, factory.coap_port);
 	if (error != OT_ERROR_NONE) {
+		openthread_mutex_unlock();
 		LOG_ERR("CoAP start failed: %d", error);
 		return -EIO;
 	}
 	otCoapAddResource(ot, &state_resource);
 	otCoapAddResource(ot, &redcon_resource);
+	openthread_mutex_unlock();
+	LOG_INF("CoAP service started on port %u", factory.coap_port);
 	return 0;
+}
+
+static otError set_srp_host_address(otInstance *ot)
+{
+	const otIp6Address *mesh_local_eid = otThreadGetMeshLocalEid(ot);
+	char address_string[OT_IP6_ADDRESS_STRING_SIZE];
+
+	if (mesh_local_eid == NULL) {
+		return OT_ERROR_INVALID_STATE;
+	}
+
+	memcpy(&srp_host_address, mesh_local_eid, sizeof(srp_host_address));
+	otIp6AddressToString(&srp_host_address, address_string, sizeof(address_string));
+	LOG_INF("SRP host address set to mesh-local EID %s", address_string);
+	return otSrpClientSetHostAddresses(ot, &srp_host_address, 1);
 }
 
 static int start_srp(otInstance *ot)
@@ -337,22 +378,121 @@ static int start_srp(otInstance *ot)
 	srp_service.mInstanceName = factory.thing_name;
 	srp_service.mPort = factory.coap_port;
 
+	openthread_mutex_lock();
+	otSrpClientSetCallback(ot, srp_client_callback, ot);
 	error = otSrpClientSetHostName(ot, factory.thing_name);
 	if (error != OT_ERROR_NONE) {
+		openthread_mutex_unlock();
 		LOG_ERR("SRP host name failed: %d", error);
 		return -EIO;
 	}
-	error = otSrpClientEnableAutoHostAddress(ot);
+	error = set_srp_host_address(ot);
 	if (error != OT_ERROR_NONE) {
-		LOG_ERR("SRP auto address failed: %d", error);
+		openthread_mutex_unlock();
+		LOG_ERR("SRP host address failed: %d", error);
 		return -EIO;
 	}
 	error = otSrpClientAddService(ot, &srp_service);
 	if (error != OT_ERROR_NONE && error != OT_ERROR_ALREADY) {
+		openthread_mutex_unlock();
 		LOG_ERR("SRP service add failed: %d", error);
 		return -EIO;
 	}
-	otSrpClientEnableAutoStartMode(ot, NULL, NULL);
+	otSrpClientEnableAutoStartMode(ot, srp_autostart_callback, ot);
+	openthread_mutex_unlock();
+	LOG_INF("SRP service requested: %s.%s.default.service.arpa",
+		factory.thing_name, srp_service.mName);
+	return 0;
+}
+
+static void log_srp_host(const otSrpClientHostInfo *host_info)
+{
+	const char *name;
+
+	if (host_info == NULL) {
+		LOG_INF("SRP host: unavailable");
+		return;
+	}
+
+	name = host_info->mName == NULL ? "(unset)" : host_info->mName;
+	LOG_INF("SRP host %s state=%s autoAddress=%u addresses=%u",
+		name, otSrpClientItemStateToString(host_info->mState),
+		host_info->mAutoAddress, host_info->mNumAddresses);
+	for (uint8_t i = 0; i < host_info->mNumAddresses; i++) {
+		char address_string[OT_IP6_ADDRESS_STRING_SIZE];
+
+		otIp6AddressToString(&host_info->mAddresses[i], address_string,
+				     sizeof(address_string));
+		LOG_INF("SRP host address[%u]=%s", i, address_string);
+	}
+}
+
+static void log_srp_services(const char *label, const otSrpClientService *services)
+{
+	const otSrpClientService *service;
+
+	if (services == NULL) {
+		LOG_INF("SRP %s services: none", label);
+		return;
+	}
+
+	for (service = services; service != NULL; service = service->mNext) {
+		LOG_INF("SRP %s service %s.%s state=%s port=%u", label,
+			service->mInstanceName == NULL ? "(unset)" : service->mInstanceName,
+			service->mName == NULL ? "(unset)" : service->mName,
+			otSrpClientItemStateToString(service->mState), service->mPort);
+	}
+}
+
+static void srp_client_callback(otError error, const otSrpClientHostInfo *host_info,
+				const otSrpClientService *services,
+				const otSrpClientService *removed_services, void *context)
+{
+	ARG_UNUSED(context);
+
+	if (error == OT_ERROR_NONE) {
+		LOG_INF("SRP update accepted");
+	} else {
+		LOG_WRN("SRP update failed: %s (%d)", otThreadErrorToString(error), error);
+	}
+
+	log_srp_host(host_info);
+	log_srp_services("active", services);
+	log_srp_services("removed", removed_services);
+}
+
+static void srp_autostart_callback(const otSockAddr *server, void *context)
+{
+	char server_string[OT_IP6_SOCK_ADDR_STRING_SIZE];
+
+	ARG_UNUSED(context);
+
+	if (server == NULL) {
+		LOG_WRN("SRP auto-start stopped: no server in Thread network data");
+		return;
+	}
+
+	otIp6SockAddrToString(server, server_string, sizeof(server_string));
+	LOG_INF("SRP auto-start selected server %s", server_string);
+}
+
+static int configure_thread_device_mode(otInstance *ot)
+{
+	otLinkModeConfig link_mode;
+	otError error;
+
+	link_mode = otThreadGetLinkMode(ot);
+	link_mode.mRxOnWhenIdle = true;
+	link_mode.mDeviceType = false;
+	link_mode.mNetworkData = true;
+
+	error = otThreadSetLinkMode(ot, link_mode);
+	if (error != OT_ERROR_NONE) {
+		LOG_ERR("Thread link mode failed: %d", error);
+		return -EIO;
+	}
+
+	LOG_INF("Thread receiver-on MTD mode configured: rxOnWhenIdle=1 fullNetworkData=1");
 	return 0;
 }
 
@@ -367,28 +507,174 @@ static int start_thread(otInstance *ot)
 	}
 	memcpy(dataset.mTlvs, factory.dataset_tlvs, factory.dataset_tlvs_len);
 	dataset.mLength = factory.dataset_tlvs_len;
+
+	openthread_mutex_lock();
 	error = otDatasetSetActiveTlvs(ot, &dataset);
 	if (error != OT_ERROR_NONE) {
+		openthread_mutex_unlock();
 		LOG_ERR("Thread dataset set failed: %d", error);
+		return -EIO;
+	}
+	LOG_INF("Thread active dataset accepted: %u TLV bytes", factory.dataset_tlvs_len);
+	if (configure_thread_device_mode(ot) != 0) {
+		openthread_mutex_unlock();
 		return -EIO;
 	}
 	error = otIp6SetEnabled(ot, true);
 	if (error != OT_ERROR_NONE) {
+		openthread_mutex_unlock();
 		LOG_ERR("Thread IPv6 enable failed: %d", error);
 		return -EIO;
 	}
+	LOG_INF("Thread IPv6 interface enabled");
 	error = otThreadSetEnabled(ot, true);
 	if (error != OT_ERROR_NONE) {
+		openthread_mutex_unlock();
 		LOG_ERR("Thread enable failed: %d", error);
 		return -EIO;
 	}
+	LOG_INF("Thread protocol enabled");
+	openthread_mutex_unlock();
 	return 0;
 }
+
+static void thread_state_changed(uint32_t flags, void *context)
+{
+	otInstance *ot = context;
+
+	LOG_INF("Thread state flags=0x%08x role=%s", flags,
+		otThreadDeviceRoleToString(otThreadGetDeviceRole(ot)));
+}
+
+static void register_thread_state_logger(otInstance *ot)
+{
+	thread_state_cb.user_data = ot;
+	if (openthread_state_changed_callback_register(&thread_state_cb) != 0) {
+		LOG_WRN("Thread state logger registration failed");
+	}
+}
+
+#if defined(CONFIG_TXING_POWER_SI_SRP_PSA_DIAGNOSTICS)
+static const char *psa_status_label(psa_status_t status)
+{
+	switch (status) {
+	case PSA_SUCCESS:
+		return "SUCCESS";
+	case PSA_ERROR_ALREADY_EXISTS:
+		return "ALREADY_EXISTS";
+	case PSA_ERROR_BUFFER_TOO_SMALL:
+		return "BUFFER_TOO_SMALL";
+	case PSA_ERROR_DOES_NOT_EXIST:
+		return "DOES_NOT_EXIST";
+	case PSA_ERROR_INVALID_ARGUMENT:
+		return "INVALID_ARGUMENT";
+	case PSA_ERROR_INVALID_HANDLE:
+		return "INVALID_HANDLE";
+	case PSA_ERROR_INSUFFICIENT_MEMORY:
+		return "INSUFFICIENT_MEMORY";
+	case PSA_ERROR_NOT_PERMITTED:
+		return "NOT_PERMITTED";
+	case PSA_ERROR_NOT_SUPPORTED:
+		return "NOT_SUPPORTED";
+	case PSA_ERROR_STORAGE_FAILURE:
+		return "STORAGE_FAILURE";
+	default:
+		return "OTHER";
+	}
+}
+
+static void log_psa_status(const char *operation, psa_status_t status)
+{
+	LOG_INF("SRP PSA %s status=%ld (%s)", operation, (long)status,
+		psa_status_label(status));
+}
+
+static void log_psa_key_attributes(psa_key_id_t key_id)
+{
+	psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+	psa_status_t status;
+
+	status = psa_get_key_attributes(key_id, &attributes);
+	log_psa_status("get-key-attributes", status);
+	if (status == PSA_SUCCESS) {
+		LOG_INF("SRP PSA key id=0x%08lx type=0x%lx bits=%u usage=0x%lx alg=0x%lx lifetime=0x%lx",
+			(unsigned long)key_id,
+			(unsigned long)psa_get_key_type(&attributes),
+			(unsigned int)psa_get_key_bits(&attributes),
+			(unsigned long)psa_get_key_usage_flags(&attributes),
+			(unsigned long)psa_get_key_algorithm(&attributes),
+			(unsigned long)psa_get_key_lifetime(&attributes));
+	}
+	psa_reset_key_attributes(&attributes);
+}
+
+static void probe_psa_key_operations(psa_key_id_t key_id, const char *label)
+{
+	uint8_t public_key[1 + OT_CRYPTO_ECDSA_PUBLIC_KEY_SIZE];
+	uint8_t hash[OT_CRYPTO_SHA256_HASH_SIZE] = {0};
+	uint8_t signature[OT_CRYPTO_ECDSA_SIGNATURE_SIZE];
+	size_t length = 0;
+	psa_status_t status;
+
+	status = psa_export_public_key(key_id, public_key, sizeof(public_key), &length);
+	LOG_INF("SRP PSA %s export-public status=%ld (%s) length=%u", label,
+		(long)status, psa_status_label(status), (unsigned int)length);
+
+	status = psa_sign_hash(key_id, PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256),
+			       hash, sizeof(hash), signature, sizeof(signature), &length);
+	LOG_INF("SRP PSA %s sign-hash status=%ld (%s) length=%u", label,
+		(long)status, psa_status_label(status), (unsigned int)length);
+}
+
+static void probe_volatile_psa_key(void)
+{
+	psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+	psa_key_id_t key_id = PSA_KEY_ID_NULL;
+	psa_status_t status;
+
+	psa_set_key_usage_flags(&attributes,
+				PSA_KEY_USAGE_VERIFY_HASH | PSA_KEY_USAGE_SIGN_HASH);
+	psa_set_key_algorithm(&attributes, PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256));
+	psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+	psa_set_key_bits(&attributes, 256);
+
+	status = psa_generate_key(&attributes, &key_id);
+	log_psa_status("volatile-generate", status);
+	if (status == PSA_SUCCESS) {
+		probe_psa_key_operations(key_id, "volatile");
+		log_psa_status("volatile-destroy", psa_destroy_key(key_id));
+	}
+	psa_reset_key_attributes(&attributes);
+}
+
+static void log_srp_psa_diagnostics(void)
+{
+	const psa_key_id_t key_id =
+		(psa_key_id_t)ZEPHYR_PSA_OPENTHREAD_KEY_ID_RANGE_BEGIN + 7;
+	otError error;
+
+	LOG_INF("SRP PSA diagnostics start keyRef=0x%08lx", (unsigned long)key_id);
+	probe_volatile_psa_key();
+	log_psa_key_attributes(key_id);
+
+	error = otPlatCryptoEcdsaGenerateAndImportKey((otCryptoKeyRef)key_id);
+	LOG_INF("SRP PSA persistent generate/import result=%s (%d)",
+		otThreadErrorToString(error), error);
+	log_psa_key_attributes(key_id);
+	probe_psa_key_operations(key_id, "persistent");
+}
+#else
+static void log_srp_psa_diagnostics(void)
+{
+}
+#endif
 
 int main(void)
 {
 	otInstance *ot;
 	int rc;
+
+	printk("txing power-si boot\n");
 
 	rc = load_factory_data();
 	if (rc != 0) {
@@ -404,6 +690,8 @@ int main(void)
 		LOG_ERR("OpenThread instance unavailable");
 		return -ENODEV;
 	}
+	register_thread_state_logger(ot);
+	log_srp_psa_diagnostics();
 	if (start_thread(ot) != 0 || start_coap(ot) != 0 || start_srp(ot) != 0) {
 		LOG_ERR("power-si Thread services did not start");
 	}

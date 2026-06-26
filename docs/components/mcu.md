@@ -1,22 +1,22 @@
 # MCU
 
-Firmware for the XIAO nRF54L15 MCU used by `unit`, `power`, and `weather`.
-Shared REDCON BLE, factory/NVE, battery, advertising, connection, and idle
-hardware handling lives in `devices/common/mcu/xiao_nrf54l15`.
+Firmware covers the XIAO nRF54L15 BLE targets (`unit`, `power`, and `weather`)
+and the XIAO MG24 Thread target (`power-si`). These are separate board and
+transport stacks that share the stock Zephyr workspace and MCU command surface.
 
-## Shared Stack Invariant
+## nRF Shared Stack Invariant
 
-The active MCU firmware targets are `devices/unit/mcu`, `devices/power/mcu`,
-and `devices/weather/mcu`. `devices/template/mcu` is only a scaffold and does
-not build firmware.
+The nRF MCU firmware targets are `devices/unit/mcu`, `devices/power/mcu`, and
+`devices/weather/mcu`. `devices/template/mcu` is only a scaffold and does not
+build firmware.
 
-All active MCU targets use the same shared stack:
+All nRF MCU targets use the same shared stack:
 
 - each target's `zephyr/CMakeLists.txt` sets `TXING_XIAO_NRF54L15_DIR` to
   `devices/common/mcu/xiao_nrf54l15`
 - each target compiles `${TXING_XIAO_NRF54L15_DIR}/src/redcon.c`
 - each target includes `${TXING_XIAO_NRF54L15_DIR}/include`
-- shared setup and NVE actions run through root `mcu` recipes backed by
+- shared setup and factory/NVE actions run through root `mcu` recipes backed by
   `devices/common/mcu/scripts/stock_zephyr_mcu.py`
 - each target's `justfile` keeps device-owned `build`, `flash`, and `clean`
   recipes
@@ -29,10 +29,12 @@ overlays. The shared REDCON implementation remains single-source: active XIAO
 nRF54L15 targets share `redcon.c`, the REDCON UUID/payload handling, and the
 common stock Zephyr install/build path.
 
-## Current Behavior
+## nRF Current Behavior
 
 - target board: `xiao_nrf54l15/nrf54l15/cpuapp`
-- firmware stack: stock Zephyr v4.4.0 through `devices/common/mcu/zephyr`
+- firmware stack: stock Zephyr through `devices/common/mcu/zephyr`; the shared
+  workspace currently defaults to `main` and can be overridden with
+  `TXING_ZEPHYR_VERSION`
 - shared stock Zephyr build driver:
   `devices/common/mcu/scripts/stock_zephyr_mcu.py`
 - shared REDCON app entrypoint: `txing_redcon_run(&ops)`
@@ -51,6 +53,34 @@ common stock Zephyr install/build path.
 
 The integration contract is [devices/unit/docs/device-rig-shadow-spec.md](../../devices/unit/docs/device-rig-shadow-spec.md).
 
+## Power SI XIAO MG24
+
+`power-si` is a separate stock Zephyr/OpenThread application at
+`devices/power-si/mcu` for board `xiao_mg24`. It uses the stock Silabs
+IEEE 802.15.4 driver available from the shared Zephyr `main` workspace, CoAP
+over Thread, and no Matter/CHIP stack.
+
+- Thread role: receiver-on MTD, not a router. The current implementation sets
+  `mRxOnWhenIdle=true`; it is not yet a sleepy end device, so no low-power SED
+  claim should be made.
+- REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
+  and the board LED following the same state.
+- Factory data: `TXT1` written by
+  `just mcu::nve <thing-name> <dataset-tlvs-file>` at `0x0817a000`. The final
+  16 KiB of flash (`0x0817c000..0x0817ffff`) is reserved for Zephyr/OpenThread
+  settings and must not contain factory data.
+- State protocol: `GET /txing/v1/state` and `PUT /txing/v1/redcon` are served
+  over Thread CoAP on port `5683`; SRP registers `_txing-coap._udp` with TXT
+  records `type=power-si` and `pv=1`.
+- Battery: the current MCU state response returns `batteryMv: null`; the rig
+  only publishes a `power` battery shadow when the device supplies a value.
+- Production firmware deliberately disables UART, console, shell, and log
+  backends. Validate production attachment through SRP/DNS-SD and the rig, not
+  serial output.
+
+See [devices/power-si/README.md](../../devices/power-si/README.md) for OTBR
+prerequisites, provisioning, manual flashing, and hardware acceptance steps.
+
 ## Build Artifacts
 
 Run from the repo root:
@@ -61,6 +91,7 @@ just mcu::check
 just unit::mcu::build
 just power::mcu::build
 just weather::mcu::build
+just power-si::mcu::build
 ```
 
 Or from `devices/unit/mcu/`:
@@ -71,9 +102,26 @@ just build
 
 ## Flashing
 
-Firmware and NVE flashing remain manual user actions:
+Firmware flashing and NVE programming remain manual user actions. Firmware
+flashing is device-owned; factory/NVE programming is shared:
 
 ```bash
 just unit::mcu::flash
+just power::mcu::flash
+just weather::mcu::flash
+just power-si::mcu::flash
+just power-si::mcu::flash debug
 just mcu::nve <thing-name>
+just mcu::nve <thing-name> <dataset-tlvs-file>
 ```
+
+The one-argument NVE command preserves the nRF `TXR1` behavior. The
+two-argument form provisions `power-si` TXT1 factory data.
+
+Current runner split:
+
+- XIAO nRF54L15 targets use the stock Zephyr OpenOCD runner over the onboard
+  CMSIS-DAP debugger.
+- XIAO MG24 (`power-si`) uses the stock Zephyr pyOCD runner over the onboard
+  CMSIS-DAP debugger, with `mcu::install` installing the repo-local pyOCD
+  binary and requesting the EFR32MG24B220F1536IM48 CMSIS target pack.

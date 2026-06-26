@@ -1,0 +1,21 @@
+mainmenu "txing power-si MCU"
+
+source "Kconfig.zephyr"
+
+config TXING_POWER_SI_OPENTHREAD_SRP_PSA_PUBLIC_KEY
+	bool
+	default y
+	depends on OPENTHREAD_CRYPTO_PSA && OPENTHREAD_SRP_CLIENT
+	select PSA_WANT_KEY_TYPE_ECC_PUBLIC_KEY
+	help
+	  Zephyr's OpenThread PSA config selects the SRP ECDSA key-pair
+	  options, but SRP also exports the public key while preparing its DNS
+	  Update signature. Enable the matching public-key type for this app.
+
+config TXING_POWER_SI_SRP_PSA_DIAGNOSTICS
+	bool "Log SRP PSA key diagnostics"
+	depends on OPENTHREAD_CRYPTO_PSA && OPENTHREAD_SRP_CLIENT
+	default n
+	help
+	  Log exact PSA status values for the OpenThread SRP ECDSA key path.
+	  This is intended for debug firmware only.

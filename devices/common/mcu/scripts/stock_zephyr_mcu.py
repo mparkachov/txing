@@ -34,8 +34,10 @@ THREAD_FACTORY_SCRIPT = COMMON_MCU_DIR / "xiao_mg24" / "scripts" / "thread_facto
 COMMON_BUILD_DIR = COMMON_MCU_DIR / "build"
 NVE_HEX = COMMON_BUILD_DIR / "redcon-factory-nve.hex"
 POWER_SI_FACTORY_HEX = COMMON_BUILD_DIR / "power-si-thread-factory.hex"
-OPENOCD_SUPPORT_DIR = ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54l15" / "support"
-OPENOCD_CFG = OPENOCD_SUPPORT_DIR / "openocd.cfg"
+NRF_OPENOCD_SUPPORT_DIR = ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54l15" / "support"
+NRF_OPENOCD_CFG = NRF_OPENOCD_SUPPORT_DIR / "openocd.cfg"
+PYOCD_REQUIRED_TARGETS = ("EFR32MG24B220F1536IM48",)
+PYOCD_PACK_TARGETS = PYOCD_REQUIRED_TARGETS
 HAL_SILABS_BLOBS_DIR = WORKSPACE_DIR / "modules" / "hal" / "silabs" / "zephyr" / "blobs"
 POWER_SI_BLOB_REGEX = (
     r"simplicity_sdk/("
@@ -73,6 +75,7 @@ class DeviceConfig:
     build_name: str
     overlay_name: str
     extra_conf: Path | None = None
+    debug_conf: Path | None = None
     flash_runner: str | None = None
 
 
@@ -92,6 +95,13 @@ DEVICE_CONFIGS = {
         board="xiao_mg24",
         build_name="zephyr-xiao_mg24",
         overlay_name="xiao_mg24.overlay",
+        debug_conf=PROJECT_ROOT
+        / "devices"
+        / "power-si"
+        / "mcu"
+        / "zephyr"
+        / "debug.conf",
+        flash_runner="west-pyocd",
     ),
 }
 ACTIVE_DEVICES = tuple(DEVICE_CONFIGS)
@@ -230,6 +240,10 @@ def west_command() -> list[Path]:
     return [WEST_BIN]
 
 
+def pyocd_bin() -> Path:
+    return VENV_DIR / "bin" / "pyocd"
+
+
 def ensure_workspace() -> None:
     ensure_venv()
     if WORKSPACE_DIR.exists() and not WEST_CONFIG.exists():
@@ -254,6 +268,7 @@ def install_python_requirements() -> None:
     requirements = [
         ZEPHYR_BASE / "scripts" / "requirements-base.txt",
         ZEPHYR_BASE / "scripts" / "requirements-build-test.txt",
+        ZEPHYR_BASE / "scripts" / "requirements-run-test.txt",
     ]
     for requirement in requirements:
         if not requirement.exists():
@@ -262,6 +277,18 @@ def install_python_requirements() -> None:
     for requirement in requirements:
         args.extend(["-r", requirement])
     run(args, cwd=COMMON_MCU_DIR, env=local_env())
+
+
+def install_pyocd_packs() -> None:
+    if not pyocd_bin().exists():
+        fail("missing repo-local pyOCD after installing Zephyr requirements")
+    for pack in PYOCD_PACK_TARGETS:
+        run(
+            [pyocd_bin(), "pack", "install", "--update", pack],
+            cwd=COMMON_MCU_DIR,
+            env=local_env(),
+        )
+    require_pyocd_targets()
 
 
 def ensure_power_si_blobs() -> None:
@@ -313,6 +340,7 @@ def install() -> None:
     require_commands("git", "python3", "cmake", "ninja", "dtc", "arm-none-eabi-gcc")
     ensure_workspace()
     install_python_requirements()
+    install_pyocd_packs()
 
 
 def check() -> None:
@@ -323,11 +351,13 @@ def check() -> None:
         "ninja",
         "dtc",
         "arm-none-eabi-gcc",
-        "openocd",
     )
+    require_host_openocd()
     verify_workspace()
-    if not OPENOCD_CFG.exists():
-        fail(f"missing stock Zephyr Seeed OpenOCD config: {OPENOCD_CFG}. Run: just mcu::install")
+    if not NRF_OPENOCD_CFG.exists():
+        fail(f"missing stock Zephyr Seeed OpenOCD config: {NRF_OPENOCD_CFG}. Run: just mcu::install")
+    require_pyocd()
+    require_pyocd_targets()
     if not BOARD_CONF.exists():
         fail(f"missing shared XIAO nRF54L15 board config: {BOARD_CONF}")
     if not NVE_SCRIPT.exists():
@@ -337,8 +367,9 @@ def check() -> None:
     if not (ZEPHYR_BASE / "boards" / "seeed" / "xiao_mg24").is_dir():
         fail("missing stock Zephyr Seeed XIAO MG24 board support. Run: just mcu::install")
     log(
-        "ok: shared MCU toolchain, Zephyr workspace, Seeed OpenOCD config, "
-        "board config, NVE script, XIAO MG24 board support, and TXT1 factory script are available"
+        "ok: shared MCU toolchain, Zephyr workspace, nRF OpenOCD config, "
+        "pyOCD packs, board config, NVE script, XIAO MG24 board support, "
+        "and TXT1 factory script are available"
     )
 
 
@@ -379,30 +410,34 @@ def overlay_file(device: str) -> Path:
     return app_dir(device) / "boards" / device_config(device).overlay_name
 
 
-def build_dir(device: str) -> Path:
-    return device_mcu_dir(device) / "build" / device_config(device).build_name
+def build_dir(device: str, *, debug: bool = False) -> Path:
+    build_name = device_config(device).build_name
+    if debug:
+        build_name = f"{build_name}-debug"
+    return device_mcu_dir(device) / "build" / build_name
 
 
-def firmware_candidates(device: str) -> tuple[Path, Path]:
-    directory = build_dir(device)
+def firmware_candidates(device: str, *, debug: bool = False) -> tuple[Path, Path]:
+    directory = build_dir(device, debug=debug)
     return (
         directory / "zephyr" / "zephyr.hex",
         directory / "zephyr" / "zephyr" / "zephyr.hex",
     )
 
 
-def firmware_hex(device: str) -> Path:
-    candidates = firmware_candidates(device)
+def firmware_hex(device: str, *, debug: bool = False) -> Path:
+    candidates = firmware_candidates(device, debug=debug)
     for candidate in candidates:
         if candidate.exists():
             return candidate
     return candidates[0]
 
 
-def require_firmware_hex(device: str) -> Path:
-    candidate = firmware_hex(device)
+def require_firmware_hex(device: str, *, debug: bool = False) -> Path:
+    candidate = firmware_hex(device, debug=debug)
     if not candidate.exists():
-        fail(f"missing firmware hex. Run: just {device}::mcu::build")
+        target = "build-debug" if debug else "build"
+        fail(f"missing firmware hex. Run: just {device}::mcu::{target}")
     return candidate
 
 
@@ -422,7 +457,7 @@ def pristine_mode(device: str) -> str:
     return "auto"
 
 
-def build(device: str) -> None:
+def build(device: str, *, debug: bool = False) -> None:
     require_commands("git", "python3", "cmake", "ninja", "dtc", "arm-none-eabi-gcc")
     verify_workspace()
     if device == "power-si":
@@ -431,8 +466,14 @@ def build(device: str) -> None:
     conf = prj_conf(device)
     overlay = overlay_file(device)
     required_inputs = [conf, overlay]
+    extra_conf_files = []
     if config.extra_conf is not None:
-        required_inputs.append(config.extra_conf)
+        extra_conf_files.append(config.extra_conf)
+    if debug:
+        if config.debug_conf is None:
+            fail(f"{device} does not have a debug MCU build profile")
+        extra_conf_files.append(config.debug_conf)
+    required_inputs.extend(extra_conf_files)
     for path in required_inputs:
         if not path.exists():
             fail(f"missing build input: {path}")
@@ -441,8 +482,10 @@ def build(device: str) -> None:
         f"-DDTC_OVERLAY_FILE={overlay}",
         f"-DBUILD_VERSION={BUILD_VERSION}",
     ]
-    if config.extra_conf is not None:
-        cmake_args.append(f"-DEXTRA_CONF_FILE={config.extra_conf}")
+    if extra_conf_files:
+        cmake_args.append(
+            "-DEXTRA_CONF_FILE=" + ";".join(str(path) for path in extra_conf_files)
+        )
     run(
         west_command()
         + [
@@ -450,19 +493,19 @@ def build(device: str) -> None:
             ZEPHYR_BASE,
             "build",
             "-p",
-            pristine_mode(device),
+            "always" if debug else pristine_mode(device),
             "-b",
             config.board,
             app_dir(device),
             "-d",
-            build_dir(device),
+            build_dir(device, debug=debug),
             "--",
         ]
         + cmake_args,
         cwd=WORKSPACE_DIR,
         env=local_env(),
     )
-    hex_file = firmware_hex(device)
+    hex_file = firmware_hex(device, debug=debug)
     if not hex_file.exists():
         fail(f"build completed, but no expected firmware HEX was created: {hex_file}")
     log(f"ok: built {hex_file}")
@@ -475,13 +518,48 @@ def clean(device: str) -> None:
         shutil.rmtree(path)
 
 
-def openocd_command(hex_file: Path) -> list[str | Path]:
+def openocd_program() -> str:
+    return "openocd"
+
+
+def require_host_openocd() -> None:
+    if shutil.which(openocd_program()) is None:
+        fail("missing OpenOCD. Install OpenOCD and make sure openocd is on PATH")
+
+
+def require_pyocd() -> None:
+    if not pyocd_bin().exists():
+        fail("missing repo-local pyOCD. Run: just mcu::install")
+
+
+def require_pyocd_targets() -> None:
+    require_pyocd()
+    completed = run(
+        [pyocd_bin(), "list", "--targets"],
+        cwd=COMMON_MCU_DIR,
+        env=local_env(),
+        capture=True,
+    )
+    output = completed.stdout
+    missing = [
+        target for target in PYOCD_REQUIRED_TARGETS if target.lower() not in output.lower()
+    ]
+    if missing:
+        fail(
+            "missing pyOCD CMSIS target pack(s): "
+            + ", ".join(missing)
+            + ". Run: just mcu::install and confirm pyocd pack install "
+            + "EFR32MG24B220F1536IM48 succeeds"
+        )
+
+
+def nrf_openocd_command(hex_file: Path) -> list[str | Path]:
     return [
-        "openocd",
+        openocd_program(),
         "-s",
-        OPENOCD_SUPPORT_DIR,
+        NRF_OPENOCD_SUPPORT_DIR,
         "-f",
-        OPENOCD_CFG,
+        NRF_OPENOCD_CFG,
         "-c",
         "init",
         "-c",
@@ -499,23 +577,68 @@ def openocd_command(hex_file: Path) -> list[str | Path]:
     ]
 
 
-def require_openocd() -> None:
+def openocd_command(device: str, hex_file: Path) -> list[str | Path]:
+    runner = device_config(device).flash_runner
+    if runner == "openocd-nrf54l15":
+        return nrf_openocd_command(hex_file)
+    fail(f"{device} does not have an automated OpenOCD flash recipe")
+
+
+def require_openocd(device: str) -> None:
     verify_workspace()
-    if not OPENOCD_CFG.exists():
-        fail(f"missing stock Zephyr Seeed OpenOCD config: {OPENOCD_CFG}. Run: just mcu::install")
-    if shutil.which("openocd") is None:
-        fail("missing OpenOCD. Install manually with: brew install open-ocd")
+    runner = device_config(device).flash_runner
+    require_host_openocd()
+    if runner == "openocd-nrf54l15" and not NRF_OPENOCD_CFG.exists():
+        fail(f"missing stock Zephyr Seeed OpenOCD config: {NRF_OPENOCD_CFG}. Run: just mcu::install")
 
 
-def run_openocd(hex_file: Path) -> None:
-    require_openocd()
-    run(openocd_command(hex_file), cwd=PROJECT_ROOT, env=local_env())
+def run_openocd(device: str, hex_file: Path) -> None:
+    require_openocd(device)
+    run(openocd_command(device, hex_file), cwd=PROJECT_ROOT, env=local_env())
 
 
-def flash(device: str) -> None:
-    if device_config(device).flash_runner != "openocd-nrf54l15":
-        fail(f"{device} does not have an automated flash recipe; flash manually with Zephyr tooling")
-    run_openocd(require_firmware_hex(device))
+def west_flash_command(
+    device: str, hex_file: Path | None = None, *, debug: bool = False
+) -> list[str | Path]:
+    command: list[str | Path] = [
+        *west_command(),
+        "flash",
+        "--no-rebuild",
+        "-d",
+        build_dir(device, debug=debug),
+        "-r",
+        "pyocd",
+        "--",
+        "--pyocd",
+        pyocd_bin(),
+    ]
+    if hex_file is not None:
+        command.extend(["--hex-file", hex_file])
+    return command
+
+
+def run_west_flash(
+    device: str, hex_file: Path | None = None, *, debug: bool = False
+) -> None:
+    verify_workspace()
+    require_pyocd_targets()
+    run(
+        west_flash_command(device, hex_file, debug=debug),
+        cwd=WORKSPACE_DIR,
+        env=local_env(),
+    )
+
+
+def flash(device: str, *, debug: bool = False) -> None:
+    require_firmware_hex(device, debug=debug)
+    runner = device_config(device).flash_runner
+    if runner == "openocd-nrf54l15":
+        run_openocd(device, firmware_hex(device, debug=debug))
+        return
+    if runner == "west-pyocd":
+        run_west_flash(device, debug=debug)
+        return
+    fail(f"{device} does not have an automated flash recipe")
 
 
 def build_nve_hex(thing_name: str) -> None:
@@ -538,9 +661,9 @@ def build_nve_hex(thing_name: str) -> None:
     )
 
 
-def nve(thing_name: str) -> None:
+def nrf_nve(thing_name: str) -> None:
     build_nve_hex(thing_name)
-    run_openocd(NVE_HEX)
+    run_openocd("power", NVE_HEX)
 
 
 def build_thread_factory_hex(
@@ -568,6 +691,18 @@ def build_thread_factory_hex(
     )
 
 
+def power_si_nve(thing_name: str, dataset_tlvs: Path, port: int) -> None:
+    build_thread_factory_hex(thing_name, dataset_tlvs, POWER_SI_FACTORY_HEX, port)
+    run_west_flash("power-si", POWER_SI_FACTORY_HEX)
+
+
+def nve(thing_name: str, dataset_tlvs: Path | None, port: int) -> None:
+    if dataset_tlvs is None:
+        nrf_nve(thing_name)
+        return
+    power_si_nve(thing_name, dataset_tlvs, port)
+
+
 def require_device(command: str, device: str | None) -> str:
     if device is None:
         fail(f"{command} requires --device <device-type>")
@@ -581,12 +716,14 @@ def main() -> None:
     parser.add_argument("--device", choices=ACTIVE_DEVICES)
     parser.add_argument("--output", type=Path, help="output path for generated factory HEX")
     parser.add_argument("--port", type=int, default=5683, help="CoAP port for power-si TXT1 data")
+    parser.add_argument("--debug", action="store_true", help="flash debug firmware output")
     parser.add_argument(
         "command",
         choices=(
             "install",
             "check",
             "build",
+            "build-debug",
             "clean",
             "flash",
             "nve",
@@ -597,6 +734,9 @@ def main() -> None:
     parser.add_argument("dataset_tlvs", nargs="?")
     args = parser.parse_args()
 
+    if args.debug and args.command != "flash":
+        fail("--debug is only supported with flash")
+
     if args.command == "install":
         install()
     elif args.command == "check":
@@ -605,14 +745,20 @@ def main() -> None:
         check()
     elif args.command == "build":
         build(require_device(args.command, args.device))
+    elif args.command == "build-debug":
+        build(require_device(args.command, args.device), debug=True)
     elif args.command == "clean":
         clean(require_device(args.command, args.device))
     elif args.command == "flash":
-        flash(require_device(args.command, args.device))
+        flash(require_device(args.command, args.device), debug=args.debug)
     elif args.command == "nve":
         if args.thing_name is None:
             fail("nve requires <thing-name>")
-        nve(args.thing_name)
+        nve(
+            args.thing_name,
+            Path(args.dataset_tlvs) if args.dataset_tlvs is not None else None,
+            args.port,
+        )
     elif args.command == "thread-factory-hex":
         device = require_device(args.command, args.device)
         if device != "power-si":

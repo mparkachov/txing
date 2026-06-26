@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@Codex'
 created_date: '2026-06-20 07:12'
-updated_date: '2026-06-20 12:09'
+updated_date: '2026-06-26 16:28'
 labels: []
 milestone: m-0
 dependencies:
@@ -131,5 +131,5 @@ power-si output: devices/power-si/mcu/build/zephyr-xiao_mg24/zephyr/zephyr.hex. 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-power-si firmware and factory provisioning are buildable using stock Zephyr main on xiao_mg24. The build uses Zephyr/OpenThread MTD SED behavior, the stock Silabs EFR32 IEEE 802.15.4 driver with required hal_silabs blobs, TXT1 factory image generation, and unchanged nRF power build/TXR1 coverage. No hardware flashing or factory programming was run.
+power-si firmware and TXT1 factory provisioning are buildable using stock Zephyr main on xiao_mg24 with the stock Silabs EFR32 IEEE 802.15.4 driver and unchanged nRF power/TXR1 coverage. The current Thread configuration is receiver-on MTD, not a sleepy end device. This task did not flash or provision hardware; later production provisioning, release flashing, and SRP registration evidence is recorded in TASK-21.4.
 <!-- SECTION:FINAL_SUMMARY:END -->

@@ -27,11 +27,11 @@ The Office UI should reuse the current power model and panel behavior while regi
 
 ## Firmware and factory data
 
-Firmware targets the stock Zephyr board `xiao_mg24` using the repo stock Zephyr workflow. The application configures OpenThread as a sleepy/minimal Thread end device and does not enable Matter.
+Firmware targets the stock Zephyr board `xiao_mg24` using the repo stock Zephyr workflow and does not enable Matter. The current implementation is a receiver-on MTD for reliable SRP and CoAP operation; it is not yet a sleepy end device and must not be documented as one.
 
 Factory data for `power-si` uses a versioned `TXT1` record stored in MG24 nonvolatile flash. The record contains magic/version, Thing name, Thread Active Operational Dataset TLVs, CoAP port, and CRC. The existing nRF `TXR1` NVE format and commands remain unchanged.
 
-The XIAO MG24 flash layout should split the board stock 16 KiB storage region into an 8 KiB txing factory partition and an 8 KiB Zephyr/OpenThread settings partition, aligned to the MG24 erase block size. Real Thread dataset TLVs are secrets and must not be committed.
+The XIAO MG24 flash layout reserves an 8 KiB txing factory partition and a separate 16 KiB Zephyr/OpenThread settings partition aligned to the MG24 8 KiB erase block size. The settings partition must remain at least two erase sectors for Zephyr NVS, so the layout takes one erase block from the board's unused secondary image slot rather than splitting the stock 16 KiB storage area into two invalid 8 KiB regions. Real Thread dataset TLVs are secrets and must not be committed.
 
 D1 is the controlled power output. The board LED follows power state using the board active-low LED wiring.
 

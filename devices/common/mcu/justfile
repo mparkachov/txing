@@ -14,8 +14,14 @@ zephyr_script := mcu_dir + "/scripts/stock_zephyr_mcu.py"
 @check:
     "{{ zephyr_python }}" "{{ zephyr_script }}" check
 
-@nve thing_name:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" nve "{{ thing_name }}"
+@nve thing_name dataset_tlvs='':
+    #!/bin/sh
+    set -eu
+    if [ -n "{{ dataset_tlvs }}" ]; then
+      "{{ zephyr_python }}" "{{ zephyr_script }}" nve "{{ thing_name }}" "{{ dataset_tlvs }}"
+    else
+      "{{ zephyr_python }}" "{{ zephyr_script }}" nve "{{ thing_name }}"
+    fi
 
 @default:
     @just --list

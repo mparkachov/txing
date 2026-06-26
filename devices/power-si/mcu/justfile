@@ -8,13 +8,29 @@ export TMPDIR := tmp_dir
 common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
 zephyr_python := env_var_or_default("TXING_MCU_ZEPHYR_PYTHON", "python3")
 zephyr_script := common_mcu_dir + "/scripts/stock_zephyr_mcu.py"
+serial_python := common_mcu_dir + "/.venv/bin/python"
 device_type := "power-si"
 
 @build:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build
 
-@factory-hex thing_name dataset_tlvs:
-    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" thread-factory-hex "{{ thing_name }}" "{{ dataset_tlvs }}"
+@build-debug:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build-debug
+
+@flash profile='release':
+    @case "{{ profile }}" in \
+      release) "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash ;; \
+      debug) "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" --debug flash ;; \
+      *) echo "usage: just power-si::mcu::flash [release|debug]" >&2; exit 2 ;; \
+    esac
+
+@log port='' baud='115200':
+    @if [ -z "{{ port }}" ]; then \
+      "{{ serial_python }}" -m serial.tools.list_ports; \
+      echo "usage: just power-si::mcu::log <serial-port> [baud]" >&2; \
+    else \
+      "{{ serial_python }}" -m serial.tools.miniterm "{{ port }}" "{{ baud }}"; \
+    fi
 
 @clean:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" clean

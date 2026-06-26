@@ -10,6 +10,14 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "thread_factory.py"
+POWER_SI_OVERLAY = (
+    Path(__file__).resolve().parents[4]
+    / "power-si"
+    / "mcu"
+    / "zephyr"
+    / "boards"
+    / "xiao_mg24.overlay"
+)
 spec = importlib.util.spec_from_file_location("thread_factory", SCRIPT)
 thread_factory = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -67,8 +75,19 @@ class ThreadFactoryTests(unittest.TestCase):
             thread_factory.write_hex("power-si-001", b"\x01\x02", output)
             text = output.read_text(encoding="ascii")
 
-        self.assertIn(":020000040017E3", text)
+        self.assertIn(":020000040817DB", text)
+        self.assertIn(":10A00000", text)
         self.assertIn(":00000001FF", text)
+
+    def test_factory_partition_matches_programmed_factory_address(self) -> None:
+        overlay = POWER_SI_OVERLAY.read_text(encoding="ascii")
+        factory_offset = thread_factory.DEFAULT_FACTORY_DATA_ADDRESS - 0x08000000
+
+        self.assertIn(f"txing_factory_partition: partition@{factory_offset:x}", overlay)
+        self.assertIn(
+            f"reg = <0x{factory_offset:08x} 0x{thread_factory.FACTORY_PARTITION_SIZE:08x}>;",
+            overlay,
+        )
 
 
 if __name__ == "__main__":

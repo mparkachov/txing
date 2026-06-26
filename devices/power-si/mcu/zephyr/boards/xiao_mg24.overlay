@@ -17,16 +17,13 @@
 	};
 };
 
-&storage_partition {
-	reg = <0x0017e000 DT_SIZE_K(8)>;
-};
-
 &flash0 {
 	partitions {
-		txing_factory_partition: partition@17c000 {
+		/* The power-si does not use MCUBoot's secondary image slot. */
+		txing_factory_partition: partition@17a000 {
+			compatible = "zephyr,mapped-partition";
+			reg = <0x0017a000 0x00002000>;
 			label = "txing-factory";
-			reg = <0x0017c000 DT_SIZE_K(8)>;
-			read-only;
 		};
 	};
 };
