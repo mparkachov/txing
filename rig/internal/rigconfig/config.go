@@ -87,7 +87,7 @@ func Load(configDirOverride string) (Config, error) {
 		ThreadServiceDomain:     firstNonEmpty(lookup("TXING_THREAD_SERVICE_DOMAIN"), "default.service.arpa"),
 		ThreadDiscoveryInterval: millisEnv(lookup("TXING_THREAD_DISCOVERY_INTERVAL_MS"), 10*time.Second),
 		ThreadPollInterval:      millisEnv(lookup("TXING_THREAD_POLL_INTERVAL_MS"), 10*time.Second),
-		ThreadCoAPTimeout:       millisEnv(lookup("TXING_THREAD_COAP_TIMEOUT_MS"), 8*time.Second),
+		ThreadCoAPTimeout:       millisEnv(lookup("TXING_THREAD_COAP_TIMEOUT_MS"), 12*time.Second),
 		ThreadHeartbeatInterval: millisEnv(lookup("TXING_THREAD_HEARTBEAT_INTERVAL_MS"), 10*time.Second),
 		Debug:                   boolEnv(lookup("TXING_RIG_DEBUG"), false),
 	}

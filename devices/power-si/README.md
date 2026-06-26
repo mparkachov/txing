@@ -128,8 +128,10 @@ The build uses the repository's stock Zephyr workflow, currently defaulting to
 Zephyr `main` for XIAO MG24 IEEE 802.15.4 radio support. The firmware starts
 with D1 off and the board LED following the REDCON/power state. It will not
 start Thread, CoAP, or SRP services until valid `TXT1` factory data is present.
-The current application is a receiver-on MTD, not a sleepy end device; it does
-not make a low-power SED claim.
+The application runs as a Thread MTD Sleepy End Device with
+`mRxOnWhenIdle=false`, full network data, and a `5000 ms` poll period. Rig
+Thread REDCON commands remain synchronous; the default rig CoAP timeout is
+`12000 ms` so a command can wait for one sleepy poll window plus network jitter.
 
 ## Manual Flashing
 
@@ -258,6 +260,7 @@ Expected boot evidence:
 txing power-si boot
 loaded TXT1 factory data for <thing-name>
 Thread active dataset accepted: <n> TLV bytes
+Thread SED mode configured: rxOnWhenIdle=0 poll=5000 ms fullNetworkData=1
 Thread IPv6 interface enabled
 Thread protocol enabled
 Thread state flags=... role=child
@@ -272,6 +275,8 @@ Useful Zephyr shell checks on the XIAO MG24:
 
 ```text
 ot state
+ot mode
+ot pollperiod
 ot dataset active -x
 ot ipaddr
 ot srp client state
@@ -293,6 +298,34 @@ sudo ot-ctl srp server host
 sudo ot-ctl srp server service
 ```
 
+For the SED contract, the XIAO MG24 shell should report `ot mode` as `n` and
+`ot pollperiod` as `5000`. On the OTBR, the `child table` row for the device
+should show the receiver-on flag as false (`R=0`) while the SRP service remains
+registered.
+
+Minimal TASK-21.5 SED evidence to capture from the debug image:
+
+```text
+uart:~$ ot state
+child
+Done
+uart:~$ ot mode
+n
+Done
+uart:~$ ot pollperiod
+5000
+Done
+```
+
+```bash
+sudo ot-ctl child table
+sudo ot-ctl srp server service
+```
+
+The `child table` row for the XIAO MG24 extended MAC must show `R=0`, and the
+`power-si._txing-coap._udp.default.service.arpa.` service must show
+`deleted: false`, port `5683`, and TXT values for `type=power-si` and `pv=1`.
+
 ## Hardware Acceptance
 
 Record manual acceptance in the Backlog task or linked lab notes without
@@ -311,6 +344,7 @@ Factory HEX generated: pass/fail, command output summary:
 Firmware flashed manually: pass/fail, command output summary:
 Factory HEX flashed manually: pass/fail, command output summary:
 SRP service: _txing-coap._udp.default.service.arpa, instance, AAAA, TXT, port:
+SED evidence: ot mode=n, ot pollperiod=5000, OTBR child table R=0:
 Rig discovery log excerpt:
 REDCON 4 command result:
 REDCON 3 command result:

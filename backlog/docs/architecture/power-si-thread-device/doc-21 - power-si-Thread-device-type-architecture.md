@@ -27,7 +27,7 @@ The Office UI should reuse the current power model and panel behavior while regi
 
 ## Firmware and factory data
 
-Firmware targets the stock Zephyr board `xiao_mg24` using the repo stock Zephyr workflow and does not enable Matter. The current implementation is a receiver-on MTD for reliable SRP and CoAP operation; it is not yet a sleepy end device and must not be documented as one.
+Firmware targets the stock Zephyr board `xiao_mg24` using the repo stock Zephyr workflow and does not enable Matter. The implementation is a Thread MTD Sleepy End Device with `mRxOnWhenIdle=false`, full network data, and a `5000 ms` poll period so it matches the original low-power Thread intent while keeping bounded rig command latency.
 
 Factory data for `power-si` uses a versioned `TXT1` record stored in MG24 nonvolatile flash. The record contains magic/version, Thing name, Thread Active Operational Dataset TLVs, CoAP port, and CRC. The existing nRF `TXR1` NVE format and commands remain unchanged.
 
@@ -52,6 +52,8 @@ Add `txing-thread-connectivity` as a third rig daemon alongside Sparkplug manage
 Discovery uses SRP/DNS-SD under `default.service.arpa` and resolves PTR/SRV/TXT/AAAA records for `_txing-coap._udp`. The daemon filters discovered services to `type=power-si`, maps service instances to Thing names, polls state over CoAP, and sends REDCON commands over CoAP.
 
 The daemon publishes capability state, command results, thread shadow updates, and power shadow updates through the existing rig v2 local IPC protocol. Sparkplug manager transport handling must be generalized so BLE behavior remains unchanged while `power-si` uses Thread REDCON evidence for lifecycle and capability state.
+
+Because `power-si` sleeps between Thread polls, rig Thread CoAP requests remain synchronous but use a default `12000 ms` timeout. This preserves the existing command-result contract while allowing one 5 second sleepy poll window plus network jitter.
 
 ## Operations and acceptance
 

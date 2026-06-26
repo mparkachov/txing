@@ -60,9 +60,9 @@ The integration contract is [devices/unit/docs/device-rig-shadow-spec.md](../../
 IEEE 802.15.4 driver available from the shared Zephyr `main` workspace, CoAP
 over Thread, and no Matter/CHIP stack.
 
-- Thread role: receiver-on MTD, not a router. The current implementation sets
-  `mRxOnWhenIdle=true`; it is not yet a sleepy end device, so no low-power SED
-  claim should be made.
+- Thread role: MTD Sleepy End Device, not a router. The firmware sets
+  `mRxOnWhenIdle=false`, requests full network data, and uses a `5000 ms`
+  poll period so rig CoAP commands have bounded sleepy-device latency.
 - REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
   and the board LED following the same state.
 - Factory data: `TXT1` written by

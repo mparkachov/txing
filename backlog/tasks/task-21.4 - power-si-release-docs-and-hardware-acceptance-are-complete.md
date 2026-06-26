@@ -5,13 +5,14 @@ status: In Progress
 assignee:
   - '@Codex'
 created_date: '2026-06-20 07:12'
-updated_date: '2026-06-26 16:27'
+updated_date: '2026-06-26 16:59'
 labels: []
 milestone: m-0
 dependencies:
   - TASK-21.1
   - TASK-21.2
   - TASK-21.3
+  - TASK-21.5
 references:
   - rig/docs
   - docs/installation.md
@@ -65,7 +66,11 @@ Manual hardware evidence update (2026-06-26):
 - The operator flashed the production image. No UART output was expected because the release configuration disables serial, console, shell, and log backends.
 - OTBR then reported a fresh `power-si._txing-coap._udp.default.service.arpa.` service with `deleted: false`, port `5683`, TXT `type=power-si` and `pv=1`, proving release firmware read TXT1 factory data and completed SRP registration.
 
-TASK-21.4 AC #4 remains open. Still required: real rig DNS-SD discovery; rig CoAP GET state and REDCON 4/3 command confirmation; D1/LED measurements; Thread/power shadow evidence; and Sparkplug DBIRTH/DDATA/DDEATH evidence. The MCU currently reports `batteryMv: null`, so battery-shadow acceptance also requires battery measurement implementation before it can be demonstrated. The current Thread mode is receiver-on MTD, not a sleepy end device; its power behavior needs an explicit acceptance decision or SED implementation.
+TASK-21.4 AC #4 remains open. Still required: real rig DNS-SD discovery; rig CoAP GET state and REDCON 4/3 command confirmation; D1/LED measurements; Thread/power shadow evidence; and Sparkplug DBIRTH/DDATA/DDEATH evidence. The MCU currently reports `batteryMv: null`, so battery-shadow acceptance also requires battery measurement implementation before it can be demonstrated. TASK-21.5 has updated the firmware/software contract to a 5 second poll Thread SED, but user-run hardware evidence must still prove the SED child-table mode and SRP registration before final acceptance can close.
+
+SED follow-up split (2026-06-26): created TASK-21.5 to restore the original power-si Sleepy End Device intent with 5 second poll latency and 12 second rig Thread CoAP timeout. TASK-21.4 remains open for release documentation and hardware acceptance evidence, and now depends on TASK-21.5 before final acceptance can close.
+
+TASK-21.5 software update (2026-06-26): power-si firmware and docs now target a 5 second poll Thread SED. TASK-21.4 AC #4 still requires user-run hardware evidence for SED mode, rig discovery, REDCON 4/3, D1/LED, Thread/power shadows, and Sparkplug DBIRTH/DDATA/DDEATH behavior.
 <!-- SECTION:NOTES:END -->
 
 ## Validation

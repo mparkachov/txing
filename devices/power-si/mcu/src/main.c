@@ -19,6 +19,7 @@
 #include <openthread/dataset.h>
 #include <openthread/error.h>
 #include <openthread/ip6.h>
+#include <openthread/link.h>
 #include <openthread/platform/crypto.h>
 #include <openthread/srp_client.h>
 #include <openthread/thread.h>
@@ -37,6 +38,11 @@ LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 #define TXT1_DATASET_TLVS_SIZE 254
 #define STATE_JSON_SIZE 160
 #define REQUEST_JSON_SIZE 96
+
+BUILD_ASSERT(IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED),
+	     "power-si must build as a Thread Sleepy End Device");
+BUILD_ASSERT(CONFIG_OPENTHREAD_POLL_PERIOD == 5000,
+	     "power-si SED poll period must stay at 5000 ms");
 
 static const struct gpio_dt_spec power_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(power), gpios);
 static const struct gpio_dt_spec led_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
@@ -476,13 +482,13 @@ static void srp_autostart_callback(const otSockAddr *server, void *context)
 	LOG_INF("SRP auto-start selected server %s", server_string);
 }
 
-static int configure_thread_device_mode(otInstance *ot)
+static int configure_thread_sed_mode(otInstance *ot)
 {
 	otLinkModeConfig link_mode;
 	otError error;
 
 	link_mode = otThreadGetLinkMode(ot);
-	link_mode.mRxOnWhenIdle = true;
+	link_mode.mRxOnWhenIdle = false;
 	link_mode.mDeviceType = false;
 	link_mode.mNetworkData = true;
 
@@ -492,7 +498,14 @@ static int configure_thread_device_mode(otInstance *ot)
 		return -EIO;
 	}
 
-	LOG_INF("Thread receiver-on MTD mode configured: rxOnWhenIdle=1 fullNetworkData=1");
+	error = otLinkSetPollPeriod(ot, CONFIG_OPENTHREAD_POLL_PERIOD);
+	if (error != OT_ERROR_NONE) {
+		LOG_ERR("Thread poll period failed: %d", error);
+		return -EIO;
+	}
+
+	LOG_INF("Thread SED mode configured: rxOnWhenIdle=0 poll=%u ms fullNetworkData=1",
+		CONFIG_OPENTHREAD_POLL_PERIOD);
 	return 0;
 }
 
@@ -516,7 +529,7 @@ static int start_thread(otInstance *ot)
 		return -EIO;
 	}
 	LOG_INF("Thread active dataset accepted: %u TLV bytes", factory.dataset_tlvs_len);
-	if (configure_thread_device_mode(ot) != 0) {
+	if (configure_thread_sed_mode(ot) != 0) {
 		openthread_mutex_unlock();
 		return -EIO;
 	}

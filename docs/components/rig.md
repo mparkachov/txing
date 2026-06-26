@@ -43,6 +43,10 @@ dependency. They consume rig inventory over IPC and publish:
 - Thread-owned `$aws/things/<device>/shadow/name/thread/update` messages and
   `power` battery updates for the manager to forward
 
+`power-si` is a Thread Sleepy End Device with a 5 second poll period. Thread
+REDCON commands remain synchronous, so the Thread CoAP timeout is longer than
+the BLE command timeout to allow one sleepy poll window plus network jitter.
+
 ## Local Development
 
 From the repository checkout on macOS or Linux:
@@ -86,7 +90,7 @@ Important defaults:
 - `TXING_THREAD_SERVICE_DOMAIN=default.service.arpa`
 - `TXING_THREAD_DISCOVERY_INTERVAL_MS=10000`
 - `TXING_THREAD_POLL_INTERVAL_MS=10000`
-- `TXING_THREAD_COAP_TIMEOUT_MS=8000`
+- `TXING_THREAD_COAP_TIMEOUT_MS=12000`
 
 Generate rig daemon material on the operator machine:
 

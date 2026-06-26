@@ -26,11 +26,12 @@ This milestone does not cover Matter support, OTBR installation automation, clou
 - `TASK-21.1` - Register `power-si` across device contracts, catalog, shadow schemas, and Office UI.
 - `TASK-21.2` - Build the XIAO MG24 stock Zephyr/OpenThread firmware and factory provisioning surface.
 - `TASK-21.3` - Add rig Thread connectivity and Sparkplug manager transport integration.
+- `TASK-21.5` - Convert `power-si` from the temporary non-sleeping MTD profile to the intended bounded-latency Thread SED profile.
 - `TASK-21.4` - Package and document the Thread runtime with manual provisioning and hardware acceptance evidence.
 
 ## Acceptance summary
 
-The milestone is complete when `power-si` can be built/provisioned manually, discovered through SRP on a Thread network, controlled by the rig through CoAP REDCON commands, represented correctly in AWS/catalog and Office, and validated by automated tests plus documented manual hardware acceptance.
+The milestone is complete when `power-si` can be built/provisioned manually, joins as a 5 second poll Thread SED, is discovered through SRP on a Thread network, is controlled by the rig through synchronous CoAP REDCON commands, is represented correctly in AWS/catalog and Office, and is validated by automated tests plus documented manual hardware acceptance.
 
 ## Required references
 
