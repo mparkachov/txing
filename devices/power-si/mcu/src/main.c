@@ -11,6 +11,7 @@
 #include <zephyr/net/openthread.h>
 #include <zephyr/psa/key_ids.h>
 #include <zephyr/storage/flash_map.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/crc.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
@@ -38,6 +39,7 @@ LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 #define TXT1_DATASET_TLVS_SIZE 254
 #define STATE_JSON_SIZE 160
 #define REQUEST_JSON_SIZE 96
+#define SED_FALLBACK_GRACE_SECONDS 20
 
 BUILD_ASSERT(IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED),
 	     "power-si must build as a Thread Sleepy End Device");
@@ -90,11 +92,18 @@ static otSrpClientService srp_service = {
 
 static otCoapResource state_resource;
 static otCoapResource redcon_resource;
+static atomic_t srp_registration_accepted;
+static atomic_t sed_mode_active;
+static atomic_t sed_transition_failed;
 static void thread_state_changed(uint32_t flags, void *context);
 static void srp_client_callback(otError error, const otSrpClientHostInfo *host_info,
 				const otSrpClientService *services,
 				const otSrpClientService *removed_services, void *context);
 static void srp_autostart_callback(const otSockAddr *server, void *context);
+static void sed_transition_work_handler(struct k_work *work);
+static void sed_fallback_work_handler(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(sed_transition_work, sed_transition_work_handler);
+static K_WORK_DELAYABLE_DEFINE(sed_fallback_work, sed_fallback_work_handler);
 static struct openthread_state_changed_callback thread_state_cb = {
 	.otCallback = thread_state_changed,
 };
@@ -458,6 +467,11 @@ static void srp_client_callback(otError error, const otSrpClientHostInfo *host_i
 
 	if (error == OT_ERROR_NONE) {
 		LOG_INF("SRP update accepted");
+		atomic_set(&srp_registration_accepted, 1);
+		if (atomic_get(&sed_mode_active) == 0 &&
+		    atomic_get(&sed_transition_failed) == 0) {
+			(void)k_work_schedule(&sed_transition_work, K_MSEC(500));
+		}
 	} else {
 		LOG_WRN("SRP update failed: %s (%d)", otThreadErrorToString(error), error);
 	}
@@ -482,7 +496,34 @@ static void srp_autostart_callback(const otSockAddr *server, void *context)
 	LOG_INF("SRP auto-start selected server %s", server_string);
 }
 
-static int configure_thread_sed_mode(otInstance *ot)
+static int configure_thread_bootstrap_mode_locked(otInstance *ot)
+{
+	otLinkModeConfig link_mode;
+	otError error;
+
+	link_mode = otThreadGetLinkMode(ot);
+	link_mode.mRxOnWhenIdle = true;
+	link_mode.mDeviceType = false;
+	link_mode.mNetworkData = true;
+
+	error = otThreadSetLinkMode(ot, link_mode);
+	if (error != OT_ERROR_NONE) {
+		LOG_ERR("Thread bootstrap link mode failed: %d", error);
+		return -EIO;
+	}
+
+	error = otLinkSetPollPeriod(ot, CONFIG_OPENTHREAD_POLL_PERIOD);
+	if (error != OT_ERROR_NONE) {
+		LOG_ERR("Thread poll period failed: %d", error);
+		return -EIO;
+	}
+
+	LOG_INF("Thread SRP bootstrap mode configured: rxOnWhenIdle=1 poll=%u ms fullNetworkData=1",
+		CONFIG_OPENTHREAD_POLL_PERIOD);
+	return 0;
+}
+
+static int configure_thread_sed_mode_locked(otInstance *ot)
 {
 	otLinkModeConfig link_mode;
 	otError error;
@@ -504,9 +545,156 @@ static int configure_thread_sed_mode(otInstance *ot)
 		return -EIO;
 	}
 
-	LOG_INF("Thread SED mode configured: rxOnWhenIdle=0 poll=%u ms fullNetworkData=1",
+	LOG_INF("Thread SED link mode configured after SRP registration: rxOnWhenIdle=0 poll=%u ms fullNetworkData=1",
 		CONFIG_OPENTHREAD_POLL_PERIOD);
 	return 0;
+}
+
+static int restart_thread_with_config_locked(otInstance *ot,
+					     int (*configure)(otInstance *ot),
+					     const char *mode_name)
+{
+	otError error;
+	int rc;
+
+	error = otThreadSetEnabled(ot, false);
+	if (error != OT_ERROR_NONE && error != OT_ERROR_INVALID_STATE) {
+		LOG_ERR("Thread disable before %s restart failed: %d", mode_name, error);
+		return -EIO;
+	}
+
+	rc = configure(ot);
+	if (rc != 0) {
+		return rc;
+	}
+
+	error = otThreadSetEnabled(ot, true);
+	if (error != OT_ERROR_NONE) {
+		LOG_ERR("Thread %s restart failed: %d", mode_name, error);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static int switch_thread_to_sed_mode_locked(otInstance *ot)
+{
+	int rc = configure_thread_sed_mode_locked(ot);
+
+	if (rc != 0) {
+		return rc;
+	}
+
+	LOG_INF("Thread switched to SED mode after SRP registration");
+	return 0;
+}
+
+static int restart_thread_in_bootstrap_mode_locked(otInstance *ot)
+{
+	int rc = restart_thread_with_config_locked(ot, configure_thread_bootstrap_mode_locked,
+						   "SRP bootstrap");
+
+	if (rc != 0) {
+		return rc;
+	}
+
+	LOG_INF("Thread restarted in SRP bootstrap mode after SED fallback");
+	return 0;
+}
+
+static void schedule_sed_transition_if_ready(otDeviceRole role)
+{
+	if (role == OT_DEVICE_ROLE_CHILD &&
+	    atomic_get(&srp_registration_accepted) != 0 &&
+	    atomic_get(&sed_mode_active) == 0 &&
+	    atomic_get(&sed_transition_failed) == 0) {
+		(void)k_work_schedule(&sed_transition_work, K_NO_WAIT);
+	}
+}
+
+static void sed_transition_work_handler(struct k_work *work)
+{
+	otInstance *ot;
+	otDeviceRole role;
+	int rc;
+
+	ARG_UNUSED(work);
+
+	if (atomic_get(&srp_registration_accepted) == 0 ||
+	    atomic_get(&sed_mode_active) != 0) {
+		return;
+	}
+
+	ot = openthread_get_default_instance();
+	if (ot == NULL) {
+		LOG_WRN("Thread SED transition deferred: OpenThread instance unavailable");
+		(void)k_work_schedule(&sed_transition_work, K_SECONDS(1));
+		return;
+	}
+
+	openthread_mutex_lock();
+	role = otThreadGetDeviceRole(ot);
+	if (role != OT_DEVICE_ROLE_CHILD) {
+		LOG_INF("Thread SED transition deferred: role=%s",
+			otThreadDeviceRoleToString(role));
+		openthread_mutex_unlock();
+		(void)k_work_schedule(&sed_transition_work, K_SECONDS(1));
+		return;
+	}
+
+	rc = switch_thread_to_sed_mode_locked(ot);
+	openthread_mutex_unlock();
+	if (rc == 0) {
+		atomic_set(&sed_mode_active, 1);
+		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+		return;
+	}
+
+	(void)k_work_schedule(&sed_transition_work, K_SECONDS(5));
+}
+
+static void sed_fallback_work_handler(struct k_work *work)
+{
+	otInstance *ot;
+	otDeviceRole role;
+	otLinkModeConfig link_mode;
+	int rc;
+
+	ARG_UNUSED(work);
+
+	if (atomic_get(&sed_mode_active) == 0 ||
+	    atomic_get(&sed_transition_failed) != 0) {
+		return;
+	}
+
+	ot = openthread_get_default_instance();
+	if (ot == NULL) {
+		LOG_WRN("Thread SED fallback deferred: OpenThread instance unavailable");
+		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(5));
+		return;
+	}
+
+	openthread_mutex_lock();
+	role = otThreadGetDeviceRole(ot);
+	link_mode = otThreadGetLinkMode(ot);
+	if (role == OT_DEVICE_ROLE_CHILD && !link_mode.mRxOnWhenIdle) {
+		openthread_mutex_unlock();
+		return;
+	}
+
+	LOG_WRN("Thread SED mode did not remain attached: role=%s rxOnWhenIdle=%u; reverting to SRP bootstrap mode",
+		otThreadDeviceRoleToString(role), link_mode.mRxOnWhenIdle);
+	atomic_set(&sed_mode_active, 0);
+	atomic_set(&sed_transition_failed, 1);
+	rc = restart_thread_in_bootstrap_mode_locked(ot);
+	openthread_mutex_unlock();
+	if (rc == 0) {
+		return;
+	}
+
+	atomic_set(&sed_mode_active, 1);
+	atomic_set(&sed_transition_failed, 0);
+	(void)k_work_schedule(&sed_fallback_work, K_SECONDS(5));
 }
 
 static int start_thread(otInstance *ot)
@@ -529,7 +717,10 @@ static int start_thread(otInstance *ot)
 		return -EIO;
 	}
 	LOG_INF("Thread active dataset accepted: %u TLV bytes", factory.dataset_tlvs_len);
-	if (configure_thread_sed_mode(ot) != 0) {
+	atomic_set(&srp_registration_accepted, 0);
+	atomic_set(&sed_mode_active, 0);
+	atomic_set(&sed_transition_failed, 0);
+	if (configure_thread_bootstrap_mode_locked(ot) != 0) {
 		openthread_mutex_unlock();
 		return -EIO;
 	}
@@ -554,9 +745,16 @@ static int start_thread(otInstance *ot)
 static void thread_state_changed(uint32_t flags, void *context)
 {
 	otInstance *ot = context;
+	otDeviceRole role = otThreadGetDeviceRole(ot);
 
 	LOG_INF("Thread state flags=0x%08x role=%s", flags,
-		otThreadDeviceRoleToString(otThreadGetDeviceRole(ot)));
+		otThreadDeviceRoleToString(role));
+	if (atomic_get(&sed_mode_active) != 0 &&
+	    atomic_get(&sed_transition_failed) == 0 &&
+	    role != OT_DEVICE_ROLE_CHILD) {
+		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+	}
+	schedule_sed_transition_if_ready(role);
 }
 
 static void register_thread_state_logger(otInstance *ot)

@@ -8,15 +8,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 POWER_SI_MCU = PROJECT_ROOT / "devices" / "power-si" / "mcu"
 
 
-def read_prj_conf() -> dict[str, str]:
+def read_conf(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    for line in (POWER_SI_MCU / "zephyr" / "prj.conf").read_text(encoding="ascii").splitlines():
+    for line in path.read_text(encoding="ascii").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         values[key] = value
     return values
+
+
+def read_prj_conf() -> dict[str, str]:
+    return read_conf(POWER_SI_MCU / "zephyr" / "prj.conf")
 
 
 class PowerSiSedConfigTests(unittest.TestCase):
@@ -26,13 +30,55 @@ class PowerSiSedConfigTests(unittest.TestCase):
         self.assertEqual(values.get("CONFIG_OPENTHREAD_MTD"), "y")
         self.assertEqual(values.get("CONFIG_OPENTHREAD_MTD_SED"), "y")
         self.assertEqual(values.get("CONFIG_OPENTHREAD_POLL_PERIOD"), "5000")
+        self.assertEqual(values.get("CONFIG_OPENTHREAD_MIN_RECEIVE_ON_AFTER"), "5504")
+        self.assertEqual(values.get("CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE"), "4096")
+        self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", values)
 
-    def test_power_si_app_does_not_force_receiver_on_mode(self) -> None:
+    def test_debug_build_has_serial_diagnostics_without_radio_power_override(self) -> None:
+        values = read_conf(POWER_SI_MCU / "zephyr" / "debug.conf")
+
+        self.assertEqual(values.get("CONFIG_SERIAL"), "y")
+        self.assertEqual(values.get("CONFIG_OPENTHREAD_SHELL"), "y")
+        self.assertEqual(values.get("CONFIG_TXING_POWER_SI_SRP_PSA_DIAGNOSTICS"), "y")
+        self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", values)
+        self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_DBM", values)
+
+    def test_current_measurement_build_enables_pm_and_stays_silent(self) -> None:
+        values = read_conf(POWER_SI_MCU / "zephyr" / "current.conf")
+
+        self.assertEqual(values.get("CONFIG_PM"), "y")
+        self.assertEqual(values.get("CONFIG_TICKLESS_KERNEL"), "y")
+        self.assertEqual(values.get("CONFIG_LOG"), "n")
+        self.assertEqual(values.get("CONFIG_SERIAL"), "n")
+        self.assertEqual(values.get("CONFIG_CONSOLE"), "n")
+        self.assertEqual(values.get("CONFIG_UART_CONSOLE"), "n")
+        self.assertEqual(values.get("CONFIG_PRINTK"), "n")
+        self.assertEqual(values.get("CONFIG_BOOT_BANNER"), "n")
+        self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", values)
+
+    def test_power_si_app_transitions_to_sed_after_srp_registration(self) -> None:
         source = (POWER_SI_MCU / "src" / "main.c").read_text(encoding="ascii")
 
-        self.assertNotIn("mRxOnWhenIdle = true", source)
+        self.assertIn("Thread SRP bootstrap mode configured: rxOnWhenIdle=1", source)
+        self.assertIn("SRP update accepted", source)
+        self.assertIn("k_work_schedule(&sed_transition_work", source)
+        self.assertIn("switch_thread_to_sed_mode_locked", source)
+        self.assertIn(
+            "Thread SED link mode configured after SRP registration: rxOnWhenIdle=0",
+            source,
+        )
+        self.assertIn("Thread switched to SED mode after SRP registration", source)
+        self.assertNotIn("restart_thread_in_sed_mode_locked", source)
         self.assertIn("mRxOnWhenIdle = false", source)
         self.assertIn("otLinkSetPollPeriod(ot, CONFIG_OPENTHREAD_POLL_PERIOD)", source)
+        self.assertIn("atomic_set(&sed_mode_active, 1)", source)
+        self.assertIn("#define SED_FALLBACK_GRACE_SECONDS 20", source)
+        self.assertIn("Thread SED mode did not remain attached", source)
+        self.assertIn("restart_thread_in_bootstrap_mode_locked", source)
+        self.assertIn("Thread restarted in SRP bootstrap mode after SED fallback", source)
+        self.assertIn("atomic_set(&sed_transition_failed, 1)", source)
+        self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", source)
+        self.assertNotIn("Thread radio TX power override", source)
 
 
 if __name__ == "__main__":

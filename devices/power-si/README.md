@@ -128,10 +128,57 @@ The build uses the repository's stock Zephyr workflow, currently defaulting to
 Zephyr `main` for XIAO MG24 IEEE 802.15.4 radio support. The firmware starts
 with D1 off and the board LED following the REDCON/power state. It will not
 start Thread, CoAP, or SRP services until valid `TXT1` factory data is present.
-The application runs as a Thread MTD Sleepy End Device with
-`mRxOnWhenIdle=false`, full network data, and a `5000 ms` poll period. Rig
-Thread REDCON commands remain synchronous; the default rig CoAP timeout is
+The application builds as a stock Zephyr/OpenThread MTD Sleepy End Device with
+a `5000 ms` poll period. On XIAO MG24, the firmware uses a temporary
+receiver-on SRP bootstrap mode so the current Zephyr/Silabs stack can attach and
+complete SRP registration reliably; after SRP acceptance it updates the attached
+child into the intended steady-state SED posture with `mRxOnWhenIdle=false`, MTD
+mode, full network data, and the same `5000 ms` poll period. The firmware also
+restores OpenThread's `5504 us` receive-after-TX window because Zephyr's Silabs
+S2 default currently sets it to `0`, which can break rx-off data-poll responses.
+Rig Thread REDCON commands remain synchronous; the default rig CoAP timeout is
 `12000 ms` so a command can wait for one sleepy poll window plus network jitter.
+
+Normal release and debug builds use stock Zephyr sources. Current XIAO MG24 SED
+hardware evidence shows stock Zephyr/Silabs hardware MAC TX security breaks
+secured sleepy MAC Data Request frames: the OTBR rejects polls before data-poll
+handling, so the device cannot stay attached as an SED. Use the explicit SED
+test profiles below while the upstream issue is open. They apply only the
+minimal local Zephyr workaround needed for hardware validation: enable
+OpenThread software MAC TX security for Silabs S2 and stop advertising the
+Silabs `IEEE802154_HW_TX_SEC` capability. The build script applies the patch
+before the build and reverses it immediately afterward so the local Zephyr
+checkout returns to stock.
+
+Build a serial/shell functional SED test image:
+
+```bash
+just power-si::mcu::build-sed-debug
+```
+
+The expected debug SED test HEX is:
+
+```text
+devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex
+```
+
+Build a silent SED current-measurement image:
+
+```bash
+just power-si::mcu::build-sed-current
+```
+
+The expected current-measurement HEX is:
+
+```text
+devices/power-si/mcu/build/zephyr-xiao_mg24-sed-current/zephyr/zephyr.hex
+```
+
+The current-measurement profile keeps the same SED workaround and application
+behavior as `sed-debug`, but adds Zephyr PM (`CONFIG_PM=y`) and disables UART,
+console, printk, boot banner, and logging. Use `sed-debug` first to prove
+Thread/SRP/CoAP behavior, then flash `sed-current` for sleep-current
+measurement. A silent serial port is expected for `sed-current`.
 
 ## Manual Flashing
 
@@ -154,6 +201,17 @@ Flash the already-built firmware:
 ```bash
 just power-si::mcu::flash
 ```
+
+Profile-specific firmware flashing uses the already-built HEX for that profile:
+
+```bash
+just power-si::mcu::flash debug
+just power-si::mcu::flash sed-debug
+just power-si::mcu::flash sed-current
+```
+
+The flash recipe does not rebuild. Re-run the matching `build*` command after
+source or configuration changes before flashing a profile.
 
 If this board previously received an older `power-si` factory image at
 `0x0817c000`, erase the new settings range once before testing this firmware.
@@ -225,23 +283,38 @@ If the OTBR `child table` does not show the XIAO MG24, debug Thread attachment
 before SRP, CoAP, or rig discovery. A missing child means the device has not
 joined the Thread mesh yet.
 
-Build a UART/shell debug image without changing the production build output:
+Build the UART/shell SED functional test image without changing the production
+build output:
 
 ```bash
-just power-si::mcu::build-debug
+just power-si::mcu::build-sed-debug
 ```
 
-The debug HEX is:
+The SED debug HEX is:
 
 ```text
-devices/power-si/mcu/build/zephyr-xiao_mg24-debug/zephyr/zephyr.hex
+devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex
 ```
 
-To test that image on hardware, flash the debug build through the device-owned
-flash target:
+The `sed-debug` profile enables the UART shell and OpenThread logs, and applies
+the minimal Silabs SED workaround for this one build. It does not change radio
+TX power.
+
+If a SED test build is interrupted before cleanup and the Zephyr checkout is
+left dirty, reverse the test patch before running normal stock builds:
 
 ```bash
-just power-si::mcu::flash debug
+git -C devices/common/mcu/zephyr/zephyr apply --reverse \
+  ../../patches/silabs-efr32-sed-data-poll-rx-test.patch
+```
+
+To test that image on hardware, flash the SED debug build through the device-owned
+flash target. The flash recipe uses the already-built HEX and does not rebuild,
+so rerun `just power-si::mcu::build-sed-debug` after every firmware source change
+before flashing:
+
+```bash
+just power-si::mcu::flash sed-debug
 ```
 
 Open the XIAO MG24 USB CDC serial port at 115200 baud:
@@ -260,16 +333,36 @@ Expected boot evidence:
 txing power-si boot
 loaded TXT1 factory data for <thing-name>
 Thread active dataset accepted: <n> TLV bytes
-Thread SED mode configured: rxOnWhenIdle=0 poll=5000 ms fullNetworkData=1
+Thread SRP bootstrap mode configured: rxOnWhenIdle=1 poll=5000 ms fullNetworkData=1
 Thread IPv6 interface enabled
 Thread protocol enabled
 Thread state flags=... role=child
+SRP update accepted
+Thread SED link mode configured after SRP registration: rxOnWhenIdle=0 poll=5000 ms fullNetworkData=1
+Thread switched to SED mode after SRP registration
 ```
 
 If `loaded TXT1 factory data` is missing, debug factory programming or the flash
 partition before looking at radio behavior. If the dataset is accepted but the
 role stays `detached`, compare the active dataset with the OTBR and inspect
-radio/network state.
+radio/network state. If the device reaches `child` in the bootstrap posture but
+never logs `SRP update accepted`, debug SRP server discovery, reachability, and
+client state before looking at rig discovery.
+
+If the current Zephyr/Silabs SED path cannot keep the device attached, the debug
+log can show the SED transition followed by `role=detached` and data poll
+timeouts. After a short guard window, the firmware then restarts Thread in
+receiver-on SRP bootstrap mode once per boot to keep SRP/CoAP usable:
+
+```text
+Thread SED mode did not remain attached: role=detached rxOnWhenIdle=0; reverting to SRP bootstrap mode
+Thread SRP bootstrap mode configured: rxOnWhenIdle=1 poll=5000 ms fullNetworkData=1
+Thread restarted in SRP bootstrap mode after SED fallback
+```
+
+That fallback is not TASK-21.5 acceptance evidence. It is a hardware/software
+blocker signal to record with the log excerpt, OTBR child table, and SRP service
+output.
 
 Useful Zephyr shell checks on the XIAO MG24:
 
@@ -326,6 +419,38 @@ The `child table` row for the XIAO MG24 extended MAC must show `R=0`, and the
 `power-si._txing-coap._udp.default.service.arpa.` service must show
 `deleted: false`, port `5683`, and TXT values for `type=power-si` and `pv=1`.
 
+## SED Current Measurement
+
+Use current measurement only after the `sed-debug` image proves the device can
+attach, register SRP, and settle as `ot mode=n`. Build the silent PM-enabled
+image:
+
+```bash
+just power-si::mcu::build-sed-current
+```
+
+Flash the already-built current image manually:
+
+```bash
+just power-si::mcu::flash sed-current
+```
+
+The `sed-current` image has UART, shell, printk, boot banner, and logging
+disabled, and enables Zephyr PM so the SoC can sleep between the 5000 ms Thread
+polls. Do not use the USB serial log as the validation signal for this image; a
+silent port is expected. Validate from OTBR and rig-side evidence:
+
+```bash
+sudo ot-ctl child table
+sudo ot-ctl srp server service
+```
+
+The child table must show the device with `R=0`, and SRP must remain
+`deleted:false` on port `5683`. For current measurement, power the board from
+the measurement setup rather than relying on USB-powered serial debugging, and
+measure after the SRP registration has completed and the child has settled into
+the steady SED polling state.
+
 ## Hardware Acceptance
 
 Record manual acceptance in the Backlog task or linked lab notes without
@@ -345,6 +470,8 @@ Firmware flashed manually: pass/fail, command output summary:
 Factory HEX flashed manually: pass/fail, command output summary:
 SRP service: _txing-coap._udp.default.service.arpa, instance, AAAA, TXT, port:
 SED evidence: ot mode=n, ot pollperiod=5000, OTBR child table R=0:
+SED current profile flashed: pass/fail, command output summary:
+SED sleep-current measurement:
 Rig discovery log excerpt:
 REDCON 4 command result:
 REDCON 3 command result:

@@ -60,9 +60,22 @@ The integration contract is [devices/unit/docs/device-rig-shadow-spec.md](../../
 IEEE 802.15.4 driver available from the shared Zephyr `main` workspace, CoAP
 over Thread, and no Matter/CHIP stack.
 
-- Thread role: MTD Sleepy End Device, not a router. The firmware sets
-  `mRxOnWhenIdle=false`, requests full network data, and uses a `5000 ms`
-  poll period so rig CoAP commands have bounded sleepy-device latency.
+- Thread role: MTD Sleepy End Device, not a router. The firmware builds with
+  stock Zephyr/OpenThread SED support and uses a `5000 ms` poll period so rig
+  CoAP commands have bounded sleepy-device latency. On XIAO MG24, startup uses
+  a temporary receiver-on SRP bootstrap mode for reliable attach and service
+  registration, then updates the attached child into steady-state
+  `mRxOnWhenIdle=false` with full network data after SRP acceptance. If the
+  current Zephyr/Silabs SED path drops attachment after that update, firmware
+  restarts Thread back into receiver-on bootstrap mode once per boot so the
+  device remains discoverable while the upstream SED hardware blocker remains
+  open. TASK-21.5 SED validation uses explicit `sed-debug` and `sed-current`
+  test profiles. Those profiles temporarily apply a local Zephyr Silabs test
+  patch for the build only: OpenThread software MAC TX security is enabled and
+  the Silabs `IEEE802154_HW_TX_SEC` capability is not advertised. Normal
+  `build` and `build-debug` profiles keep stock Zephyr sources and do not apply
+  that workaround. The `sed-current` profile also enables Zephyr PM and disables
+  UART/log output for sleep-current measurement.
 - REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
   and the board LED following the same state.
 - Factory data: `TXT1` written by
@@ -92,6 +105,8 @@ just unit::mcu::build
 just power::mcu::build
 just weather::mcu::build
 just power-si::mcu::build
+just power-si::mcu::build-sed-debug
+just power-si::mcu::build-sed-current
 ```
 
 Or from `devices/unit/mcu/`:
@@ -111,6 +126,8 @@ just power::mcu::flash
 just weather::mcu::flash
 just power-si::mcu::flash
 just power-si::mcu::flash debug
+just power-si::mcu::flash sed-debug
+just power-si::mcu::flash sed-current
 just mcu::nve <thing-name>
 just mcu::nve <thing-name> <dataset-tlvs-file>
 ```

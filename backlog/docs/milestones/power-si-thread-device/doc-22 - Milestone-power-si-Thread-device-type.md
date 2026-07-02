@@ -31,7 +31,7 @@ This milestone does not cover Matter support, OTBR installation automation, clou
 
 ## Acceptance summary
 
-The milestone is complete when `power-si` can be built/provisioned manually, joins as a 5 second poll Thread SED, is discovered through SRP on a Thread network, is controlled by the rig through synchronous CoAP REDCON commands, is represented correctly in AWS/catalog and Office, and is validated by automated tests plus documented manual hardware acceptance.
+The milestone is complete when `power-si` can be built/provisioned manually, completes SRP registration on a Thread network, settles into a 5 second poll Thread SED on the accepted production path, is controlled by the rig through synchronous CoAP REDCON commands, is represented correctly in AWS/catalog and Office, and is validated by automated tests plus documented manual hardware acceptance. Current SED hardware validation uses an explicit local Zephyr test profile that enables OpenThread software MAC TX security while the upstream Silabs `IEEE802154_HW_TX_SEC` blocker remains open; that evidence is not itself the final production-path decision.
 
 ## Required references
 
