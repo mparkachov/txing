@@ -5,11 +5,10 @@ status: Done
 assignee:
   - Codex
 created_date: '2026-05-23 19:24'
-updated_date: '2026-05-23 22:12'
+updated_date: '2026-07-03 18:49'
 labels: []
 milestone: Power MCU stock Zephyr power trial
-dependencies:
-  - TASK-12.2
+dependencies: []
 references:
   - devices/power/mcu
   - devices/power/README.md

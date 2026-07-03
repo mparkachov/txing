@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@Codex'
 created_date: '2026-05-24 13:21'
-updated_date: '2026-05-24 17:41'
+updated_date: '2026-07-03 18:49'
 labels: []
 milestone: Weather MCU stock Zephyr migration
-dependencies:
-  - TASK-13
+dependencies: []
 references:
   - devices/common/mcu
   - devices/weather/mcu

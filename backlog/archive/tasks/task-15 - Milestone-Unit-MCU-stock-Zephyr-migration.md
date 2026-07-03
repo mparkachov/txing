@@ -4,12 +4,11 @@ title: 'Milestone: Unit MCU stock Zephyr migration'
 status: Done
 assignee:
   - '@Codex'
-updated_date: '2026-05-24 18:33'
 created_date: '2026-05-24 13:21'
+updated_date: '2026-07-03 18:49'
 labels: []
 milestone: Unit MCU stock Zephyr migration
-dependencies:
-  - TASK-14
+dependencies: []
 references:
   - devices/common/mcu
   - devices/unit/mcu

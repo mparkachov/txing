@@ -4,12 +4,11 @@ title: 'Milestone: MCU NCS cleanup'
 status: Done
 assignee:
   - '@Codex'
-updated_date: '2026-05-24 18:41'
 created_date: '2026-05-24 13:22'
+updated_date: '2026-07-03 18:49'
 labels: []
 milestone: MCU NCS cleanup
-dependencies:
-  - TASK-15
+dependencies: []
 references:
   - devices/common/mcu
   - devices/power/mcu

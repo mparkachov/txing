@@ -4,10 +4,10 @@ title: txing-mac-daemon joins the rig and converges REDCON 4-3
 status: To Do
 assignee: []
 created_date: '2026-07-03 07:45'
+updated_date: '2026-07-03 18:43'
 labels: []
 milestone: m-1
-dependencies:
-  - TASK-22.1
+dependencies: []
 references:
   - rig/internal/protocol/protocol.go
   - rig/internal/ipc/ipc.go

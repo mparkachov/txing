@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-05-23 14:30'
-updated_date: '2026-05-23 15:27'
+updated_date: '2026-07-03 18:49'
 labels: []
 milestone: Go unit board daemon replacement
-dependencies:
-  - TASK-11.1
+dependencies: []
 references:
   - docs/contracts/unit-device-contracts.md
   - docs/contracts/board-video-bridge.md
