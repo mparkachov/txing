@@ -3,7 +3,7 @@ id: doc-23
 title: Mac device type architecture
 type: specification
 created_date: '2026-07-03 07:44'
-updated_date: '2026-07-03 07:44'
+updated_date: '2026-07-03 19:45'
 tags:
   - mac
   - device-type
@@ -19,6 +19,7 @@ Add a `mac` txing device type that turns the development Mac into a managed end 
 
 - Camera capture/encode: AVFoundation + VideoToolbox (native Objective-C++ capturer, no GStreamer dependency).
 - MCP: read-only stub in this scope so the mac REDCON ladder mirrors the unit (`2 = board+mcp`, `1 = board+mcp+video`).
+- Rig placement: `mac` devices belong to a new `local` rig type, not `raspi`. A `local` rig is the same three standalone rig daemons registered as a `local` rig thing and run manually on the development Mac via `just rig::start` - no systemd, no autostart, no release install. It is born with `NBIRTH redcon=1` while running and projected `NDEATH` (graceful shutdown or MQTT will) when the process stops.
 - Code reuse: copy-and-trim. Go `internal/` packages cannot be imported across modules (`rig/`, `devices/unit/daemon/` are separate modules); `devices/template/README.md` blesses the generic v2 capability wire contract as the integration surface. Consolidating shared daemon code into `devices/common/` is a flagged follow-up once a second consumer stabilizes.
 
 ## Device type contract
@@ -27,7 +28,7 @@ Add a `mac` txing device type that turns the development Mac into a managed end 
 
 - `type = "mac"`, `device_name = "mac"`, `display_name = "Mac"`
 - `capabilities = ["sparkplug", "power", "board", "mcp", "video"]` (no ble/thread)
-- `compatible_rig_types = ["raspi"]`, `redcon_command_levels = [4, 3, 2, 1]`
+- `compatible_rig_types = ["local"]`, `redcon_command_levels = [4, 3, 2, 1]`
 - redcon_rules: `4=[sparkplug]`, `3=[sparkplug,power]`, `2=[sparkplug,power,board,mcp]`, `1=[sparkplug,power,board,mcp,video]`
 - `[shadows.<name>]` schema/default for every declared capability (manifest loading fails repo-wide otherwise)
 - `[web] adapter = "web/mac-adapter.tsx"`, `[resources.board_video] channel_name = "{device_id}-board-video"`
@@ -35,8 +36,10 @@ Add a `mac` txing device type that turns the development Mac into a managed end 
 The type catalog is triple-sourced and all three must stay in sync (registry validation requires the thing `capabilities` attribute to equal the SSM catalog):
 
 1. `devices/mac/manifest.toml`
-2. `MacTypeCatalogV2` in `shared/aws/template.yaml` (`Custom::TxingTypeCatalog`, `CatalogBasePath: /txing/town/raspi/mac`)
+2. `MacTypeCatalogV2` in `shared/aws/template.yaml` (`Custom::TxingTypeCatalog`, `CatalogBasePath: /txing/town/local/mac`)
 3. the device-type tuple in `shared/aws/python/src/aws/type_catalog.py` `build_type_records`
+
+The `local` rig type is declared in `RIG_TYPE_DEFINITIONS` (type_catalog.py), `LocalTypeCatalogV2` (template.yaml), and `shared/aws/thing-type-capabilities.json`; rig certificate bundles for `local` rig things reuse the raspi rig bundle path in `aws_lib.sh`.
 
 Certificate bundles need a `deviceType:mac` dispatch in `shared/aws/scripts/aws_lib.sh` mirroring the unit bundle (TxingDaemonIotPolicy cert, IAM role `txing-daemon-<thing>` including `kinesisvideo:ConnectAsMaster` on `channel/<thing>-board-video/*`, role alias, rendered `devices/mac/daemon.env.template`).
 
@@ -75,13 +78,22 @@ Extend `devices/unit/board/kvs_master` with a Darwin lane instead of adding a se
 
 The rig manager merges adapter states generically, the enlist Lambda creates the thing and the KVS signaling channel from the catalog `resources/boardVideo/channelName`, `TxingDaemonIotPolicy` is thing-variable-scoped, and the office Cognito viewer role already grants `kinesisvideo:ConnectAsViewer`.
 
-## Registration runbook (per mac device)
+## Registration runbook
 
-1. `just aws::deploy` (ships the `mac` thing type + SSM catalog)
-2. `just aws::deploy-device <rig_id> mac <name>` (thing + signaling channel)
-3. `just aws::cert <thing-id>` (cert bundle + IAM role/alias + rendered daemon.env)
-4. `just aws::init-shadow <thing-id>` plus per-shadow inits for power/board/mcp/video
-5. `just rig::start <rig-config-dir> true`, then `just mac::start <mac-config-dir>`
+Once per stack: `just aws::deploy` (ships the `local` rig type, the `mac` thing type, and the SSM catalog).
+
+Once per local rig (the development Mac):
+
+1. `just aws::deploy-rig <town-id> local <rig-name>`
+2. `just aws::cert <local-rig-id>`; unpack the rig-daemon config tarball into a local config directory
+
+Once per mac device:
+
+1. `just aws::deploy-device <local-rig-id> mac <name>` (thing + signaling channel)
+2. `just aws::cert <mac-thing-id>` (cert bundle + IAM role/alias + rendered daemon.env)
+3. `just aws::init-shadow <mac-thing-id>` plus per-shadow inits for power/board/mcp/video
+
+Run: `just rig::start <rig-config-dir> true`, then `just mac::start <mac-config-dir>`.
 
 ## Risks
 

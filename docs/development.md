@@ -104,7 +104,7 @@ just unit::mcu::build
 just rig::test
 just rig::build
 just rig::check <config-dir>
-just rig::start <config-dir> true
+just rig::start
 just rig::stop
 just unit::daemon::run
 just office::dev
@@ -170,10 +170,14 @@ Rig:
 ```bash
 just rig::test
 just rig::build
-just rig::start <config-dir> true
+just rig::start
 just rig::log
 just rig::stop
 ```
+
+`just rig::start` runs only the Sparkplug manager (the `local` rig default)
+and reads config from `TXING_RIG_CONFIG_DIR` or `~/.config/txing/rig-daemon`;
+pass a config directory and `all` to also start the Thread and BLE daemons.
 
 That source-checkout rig loop is for development. Production `raspi` rig hosts
 publish GitHub release assets through root-owned `mise` and systemd via

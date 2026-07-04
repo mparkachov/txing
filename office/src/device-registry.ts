@@ -3,6 +3,7 @@ import unitDeviceAdapter from '../../devices/unit/web/unit-adapter'
 import weatherDeviceAdapter from '../../devices/weather/web/weather-adapter'
 import powerDeviceAdapter from '../../devices/power/web/power-adapter'
 import powerSiDeviceAdapter from '../../devices/power-si/web/power-si-adapter'
+import macDeviceAdapter from '../../devices/mac/web/mac-adapter'
 import type { DeviceWebAdapter } from './device-adapter'
 
 const installedDeviceAdapters: readonly DeviceWebAdapter[] = [
@@ -11,6 +12,7 @@ const installedDeviceAdapters: readonly DeviceWebAdapter[] = [
   weatherDeviceAdapter,
   powerDeviceAdapter,
   powerSiDeviceAdapter,
+  macDeviceAdapter,
 ]
 
 const adaptersByType = new Map(

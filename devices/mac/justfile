@@ -1,0 +1,99 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet := true
+
+mac_dir := source_directory()
+project_root := canonicalize(mac_dir + "/../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+daemon_dir := mac_dir + "/daemon"
+bin_dir := daemon_dir + "/target/local"
+run_dir := env_var_or_default("TXING_MAC_RUN_DIR", "/tmp/txing-mac")
+rig_run_dir := env_var_or_default("TXING_RIG_RUN_DIR", "/tmp/txing-rig")
+default_rig_ipc_socket := rig_run_dir + "/rig-ipc.sock"
+dev_version := "0.0.0-dev"
+config_dir := ""
+
+test:
+    #!/bin/sh
+    set -eu
+    cd "{{daemon_dir}}"
+    go test ./...
+
+build:
+    #!/bin/sh
+    set -eu
+    cd "{{daemon_dir}}"
+    install -d -m 755 "{{bin_dir}}"
+    go build -ldflags "-X github.com/mparkachov/txing/devices/mac/daemon/internal/version.Version={{dev_version}}" \
+      -o "{{bin_dir}}/txing-mac-daemon" ./cmd/txing-mac-daemon
+
+start config_dir=config_dir:
+    #!/bin/sh
+    set -eu
+    requested_config_dir="{{config_dir}}"
+    case "$requested_config_dir" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
+    just --justfile "{{mac_dir}}/justfile" build
+    install -d -m 755 "{{run_dir}}"
+    export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_rig_ipc_socket}}}"
+    if [ -f "{{run_dir}}/txing-mac-daemon.pid" ] &&
+      kill -0 "$(cat "{{run_dir}}/txing-mac-daemon.pid")" >/dev/null 2>&1; then
+      echo "txing-mac-daemon already running"
+    else
+      if [ -n "$requested_config_dir" ]; then
+        nohup "{{bin_dir}}/txing-mac-daemon" --config-dir "$requested_config_dir" \
+          >"{{run_dir}}/txing-mac-daemon.log" 2>&1 &
+      else
+        nohup "{{bin_dir}}/txing-mac-daemon" \
+          >"{{run_dir}}/txing-mac-daemon.log" 2>&1 &
+      fi
+      echo "$!" >"{{run_dir}}/txing-mac-daemon.pid"
+    fi
+    echo "mac daemon started"
+    echo "logs: {{run_dir}}/txing-mac-daemon.log"
+
+stop:
+    #!/bin/sh
+    set -eu
+    pid_file="{{run_dir}}/txing-mac-daemon.pid"
+    if [ -f "$pid_file" ]; then
+      pid="$(cat "$pid_file")"
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid"
+        wait_attempts=0
+        while [ "$wait_attempts" -lt 40 ]; do
+          if ! kill -0 "$pid" >/dev/null 2>&1; then
+            break
+          fi
+          wait_attempts=$((wait_attempts + 1))
+          sleep 0.25
+        done
+      fi
+      rm -f "$pid_file"
+    fi
+    echo "mac daemon stopped"
+
+restart config_dir=config_dir:
+    #!/bin/sh
+    set -eu
+    just --justfile "{{mac_dir}}/justfile" stop
+    just --justfile "{{mac_dir}}/justfile" start "{{config_dir}}"
+
+log:
+    #!/bin/sh
+    set -eu
+    if [ ! -f "{{run_dir}}/txing-mac-daemon.log" ]; then
+      echo "No mac daemon log under {{run_dir}}." >&2
+      exit 1
+    fi
+    tail -n 160 -f "{{run_dir}}/txing-mac-daemon.log"
+
+check config_dir=config_dir:
+    #!/bin/sh
+    set -eu
+    just --justfile "{{mac_dir}}/justfile" build
+    export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_rig_ipc_socket}}}"
+    if [ -n "{{config_dir}}" ]; then
+      "{{bin_dir}}/txing-mac-daemon" --dry-run --config-dir "{{config_dir}}"
+    else
+      "{{bin_dir}}/txing-mac-daemon" --dry-run
+    fi

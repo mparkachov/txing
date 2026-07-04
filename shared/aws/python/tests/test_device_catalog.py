@@ -24,7 +24,7 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_lists_only_loadable_device_types(self) -> None:
         self.assertEqual(
             list_loadable_device_types(repo_root=REPO_ROOT),
-            ["cloud-mcu", "power", "power-si", "unit", "weather"],
+            ["cloud-mcu", "mac", "power", "power-si", "unit", "weather"],
         )
 
     def test_loads_unit_manifest(self) -> None:
@@ -113,6 +113,41 @@ class DeviceCatalogTests(unittest.TestCase):
             self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
             self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
 
+    def test_loads_mac_manifest(self) -> None:
+        manifest = load_device_manifest("mac", repo_root=REPO_ROOT)
+
+        self.assertEqual(manifest.type, "mac")
+        self.assertEqual(manifest.device_name, "mac")
+        self.assertEqual(manifest.display_name, "Mac")
+        self.assertEqual(
+            manifest.capabilities,
+            ("sparkplug", "power", "board", "mcp", "video"),
+        )
+        self.assertEqual(manifest.compatible_rig_types, ("local",))
+        self.assertEqual(manifest.redcon_command_levels, (4, 3, 2, 1))
+        self.assertEqual(
+            manifest.redcon_rules,
+            {
+                1: ("sparkplug", "power", "board", "mcp", "video"),
+                2: ("sparkplug", "power", "board", "mcp"),
+                3: ("sparkplug", "power"),
+                4: ("sparkplug",),
+            },
+        )
+        self.assertEqual(
+            [contract.name for contract in manifest.shadows.values()],
+            ["sparkplug", "power", "board", "mcp", "video"],
+        )
+        self.assertEqual(
+            manifest.render_board_video_channel_name(device_id="mac-a1"),
+            "mac-a1-board-video",
+        )
+        self.assertEqual(manifest.web_adapter, "web/mac-adapter.tsx")
+        for shadow_name in ("sparkplug", "power", "board", "mcp", "video"):
+            contract = manifest.shadow_contract(shadow_name)
+            self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
+            self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
+
     def test_template_is_not_loadable(self) -> None:
         with self.assertRaises(DeviceTypeNotFoundError):
             load_device_manifest("template", repo_root=REPO_ROOT)
@@ -123,6 +158,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(capabilities["town"], ("sparkplug",))
         self.assertEqual(capabilities["raspi"], ("sparkplug",))
         self.assertEqual(capabilities["cloud"], ("sparkplug",))
+        self.assertEqual(capabilities["local"], ("sparkplug",))
         self.assertEqual(
             capabilities["unit"],
             ("sparkplug", "ble", "power", "board", "mcp", "video"),
@@ -131,6 +167,10 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "power", "weather"))
         self.assertEqual(capabilities["power"], ("sparkplug", "ble", "power"))
         self.assertEqual(capabilities["power-si"], ("sparkplug", "thread", "power"))
+        self.assertEqual(
+            capabilities["mac"],
+            ("sparkplug", "power", "board", "mcp", "video"),
+        )
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
             ("sparkplug", "ble", "power", "board", "mcp", "video"),

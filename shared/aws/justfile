@@ -9,6 +9,7 @@ root_justfile := project_root + "/justfile"
 aws_lib := aws_dir + "/scripts/aws_lib.sh"
 rig_env_template := project_root + "/rig/rig-daemon.env.template"
 unit_daemon_env_template := project_root + "/devices/unit/daemon/daemon.env.template"
+mac_daemon_env_template := project_root + "/devices/mac/daemon.env.template"
 
 stack_name := ""
 template_file := "template.yaml"
@@ -604,7 +605,7 @@ cert thing_id='':
     txing_validate_iot_thing_id "$requested_thing_id" "Use: just aws::cert <thing-id>"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    txing_generate_iot_certificate_bundle "$requested_thing_id" "{{rig_env_template}}" "{{unit_daemon_env_template}}"
+    txing_generate_iot_certificate_bundle "$requested_thing_id" "{{rig_env_template}}" "{{unit_daemon_env_template}}" "{{mac_daemon_env_template}}"
 
 init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_response_file='':
     #!/bin/sh

@@ -105,6 +105,13 @@ RIG_TYPE_DEFINITIONS: dict[str, RigTypeDefinition] = {
         capabilities=("sparkplug",),
         redcon_command_levels=("1", "4"),
     ),
+    "local": RigTypeDefinition(
+        rig_type="local",
+        display_name="Local Rig",
+        default_name="dev",
+        capabilities=("sparkplug",),
+        redcon_command_levels=("1", "4"),
+    ),
 }
 
 
@@ -208,7 +215,7 @@ def build_type_records(*, repo_root: Path | None = None) -> dict[str, dict[str, 
     for definition in RIG_TYPE_DEFINITIONS.values():
         records[rig_type_path(definition.rig_type)] = _rig_record(definition)
 
-    for device_type in ("unit", "cloud-mcu", "weather", "power", "power-si"):
+    for device_type in ("unit", "cloud-mcu", "weather", "power", "power-si", "mac"):
         manifest = load_device_manifest(device_type, repo_root=root)
         for rig_type in manifest.compatible_rig_types:
             if rig_type not in RIG_TYPE_DEFINITIONS:

@@ -359,6 +359,29 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertTrue(board_video["created"])
         self.assertIn(board_video["channelName"], self.runtime.kinesisvideo.channels)
 
+    def test_enlist_mac_creates_all_shadows_and_board_video_channel(self) -> None:
+        town = self._enlist_town()
+        local = self._enlist_rig(town["thingName"], "local", "dev")
+
+        result = self._enlist_device(local["thingName"], "mac", "mac")
+
+        self.assertEqual(result["thingTypeName"], "mac")
+        self.assertEqual(result["attributes"]["deviceType"], "mac")
+        self.assertEqual(result["attributes"]["webAdapter"], "web/mac-adapter.tsx")
+        self.assertEqual(
+            result["attributes"]["capabilities"],
+            "sparkplug,power,board,mcp,video",
+        )
+        self.assertEqual(result["attributes"]["redconCommandLevels"], "4,3,2,1")
+        self.assertEqual(
+            result["initializedShadows"],
+            ["sparkplug", "power", "board", "mcp", "video"],
+        )
+        board_video = result["auxiliaryResources"]["boardVideo"]
+        self.assertIn(result["thingName"], board_video["channelName"])
+        self.assertTrue(board_video["created"])
+        self.assertIn(board_video["channelName"], self.runtime.kinesisvideo.channels)
+
     def test_enlist_power_si_initializes_thread_and_power_shadows(self) -> None:
         town = self._enlist_town()
         raspi = self._enlist_rig(town["thingName"], "raspi", "server")

@@ -7,7 +7,9 @@
 - Group model: `town` is the Sparkplug group id
 - Edge model: `rig` is the Sparkplug edge node. A `raspi` edge node is the
   standalone `txing-sparkplug-manager` daemon; a `cloud` edge node is the
-  AWS-hosted cloud rig runtime Lambda.
+  AWS-hosted cloud rig runtime Lambda; a `local` edge node is the same
+  standalone daemon started manually on a development Mac with
+  `just rig::start`.
 - Device model: each physical `txing` is one Sparkplug device and one AWS IoT thing
 - Sparkplug MQTT is the source protocol
 - The `sparkplug` named shadow is the AWS-side materialized Sparkplug view, not device intent storage
@@ -21,6 +23,8 @@ The rig is not a Sparkplug device. The rig is the Sparkplug edge node. In
 production, `raspi` rigs publish that edge node from the standalone
 `txing-sparkplug-manager` daemon, while `cloud` rigs publish it from
 the cloud rig runtime Lambda recorded in `/txing/stack/CloudRigRuntimeFunctionName`.
+`local` rigs publish the same edge node from the same standalone daemon, run
+manually on a development Mac.
 
 - `spBv1.0/<town>/NBIRTH/<rig>` means the rig edge node is born.
 - `spBv1.0/<town>/NCMD/<rig>` carries rig REDCON commands.
@@ -40,6 +44,10 @@ the cloud rig runtime Lambda recorded in `/txing/stack/CloudRigRuntimeFunctionNa
   schedule. `NCMD.redcon=4` disables that recurring schedule and publishes
   `NBIRTH redcon=4`; `NCMD.redcon=1` enables the schedule and runs the scheduler
   body once immediately.
+- For `local`, there is no systemd target, autostart, or watchdog by design.
+  The edge node is born with `NBIRTH redcon=1` while the manually started
+  `just rig::start` daemons run, and `NDEATH` is published through graceful
+  shutdown or the MQTT will as soon as the process stops.
 - This is a Sparkplug lifecycle contract, not a `rig::check` responsibility.
   `rig::check` remains a configuration and connectivity check; it is only one
   of the preconditions under which the Sparkplug projection is expected to show

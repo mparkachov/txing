@@ -18,6 +18,14 @@ The daemons communicate only through local IPC. The default Linux IPC socket is
 `/run/txing-rig/rig-ipc.sock`; the macOS development default is under
 `/tmp/txing-rig`.
 
+The same three daemons also back the `local` rig type: a development Mac
+registered as a `local` rig thing. A `local` rig has no systemd units, no
+autostart, and no release install; it exists only while `just rig::start` is
+running. Its Sparkplug edge node is born with `NBIRTH redcon=1` on start and
+projected `NDEATH` (graceful shutdown or MQTT will) as soon as the processes
+stop. `local` rigs manage `mac` devices; see
+[devices/mac/README.md](../../devices/mac/README.md).
+
 ## Runtime Contract
 
 `txing-sparkplug-manager` owns all external AWS connectivity for the standalone
@@ -53,14 +61,38 @@ From the repository checkout on macOS or Linux:
 
 ```bash
 just rig::test
-just rig::start <config-dir> true
+just rig::start
 just rig::log
-just rig::restart <config-dir> true
+just rig::restart
 just rig::stop
 ```
 
-The second `start` argument is `no_ble`. Use `true` on a Mac when you want the
-processes and IPC path without touching BLE hardware. Arguments are positional.
+By default `start` runs only `txing-sparkplug-manager` — the `local` rig
+default, where BLE and Thread transports are not used. The daemons resolve
+their config directory like the raspi services do: `TXING_RIG_CONFIG_DIR` if
+set, otherwise `~/.config/txing/rig-daemon` (raspi production is the same rule
+with `HOME=/root`). Arguments are positional:
+
+```bash
+just rig::start <config-dir>            # explicit config directory
+just rig::start "" all                  # also start Thread and BLE daemons
+just rig::start "" all true             # connectivity daemons with --no-ble
+```
+
+To run the Mac as a registered `local` rig, register a `local` rig thing and
+generate its config bundle from the operator machine:
+
+```bash
+just aws::deploy-rig <town-id> local <rig-name>
+just aws::cert <local-rig-id>
+```
+
+Unpack `certs/<local-rig-id>/<local-rig-id>-rig-daemon-config.tgz` into
+`~/.config/txing/rig-daemon` and run `just rig::start` with no arguments.
+The rendered `daemon.env` keeps the standard raspi contract, including the
+Linux IPC socket path; `just rig::start` exports the macOS `/tmp/txing-rig`
+IPC socket default, and process environment values take precedence over
+`daemon.env` values, so the bundle works on macOS unmodified.
 
 ## Runtime Configuration
 

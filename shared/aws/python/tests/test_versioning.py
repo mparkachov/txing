@@ -347,12 +347,13 @@ class VersionEnvironmentTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("start config_dir=config_dir no_ble='false':", rig_justfile)
+        self.assertIn("start config_dir=config_dir connectivity='none' no_ble='false':", rig_justfile)
         self.assertIn("stop:", rig_justfile)
-        self.assertIn("restart config_dir=config_dir no_ble='false':", rig_justfile)
-        self.assertIn("txing-sparkplug-manager.pid", rig_justfile)
-        self.assertIn("txing-ble-connectivity.pid", rig_justfile)
-        self.assertIn("txing-thread-connectivity.pid", rig_justfile)
+        self.assertIn("restart config_dir=config_dir connectivity='none' no_ble='false':", rig_justfile)
+        self.assertIn("start_daemon txing-sparkplug-manager", rig_justfile)
+        self.assertIn("start_daemon txing-ble-connectivity", rig_justfile)
+        self.assertIn("start_daemon txing-thread-connectivity", rig_justfile)
+        self.assertIn('echo "$!" >"{{run_dir}}/${daemon_name}.pid"', rig_justfile)
         self.assertIn("TXING_RIG_IPC_SOCKET", rig_justfile)
         self.assertIn("install-mise-tools:", rig_justfile)
         self.assertNotIn("TXING_RIG_ENV_FILE", rig_justfile)

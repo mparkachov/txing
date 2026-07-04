@@ -42,73 +42,53 @@ build:
     go build -ldflags "-X github.com/mparkachov/txing/rig/internal/version.Version=$version" \
       -o "{{bin_dir}}/txing-thread-connectivity" ./cmd/txing-thread-connectivity
 
-start config_dir=config_dir no_ble='false':
+start config_dir=config_dir connectivity='none' no_ble='false':
     #!/bin/sh
     set -eu
     requested_config_dir="{{config_dir}}"
+    requested_connectivity="{{connectivity}}"
     requested_no_ble="{{no_ble}}"
     case "$requested_config_dir" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
     case "$requested_no_ble" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
+    case "$requested_connectivity" in
+      none|all) ;;
+      *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;;
+      *) echo "Unsupported connectivity '$requested_connectivity'. Supported: none (sparkplug manager only, local rig default), all (also start Thread and BLE daemons)." >&2; exit 2 ;;
+    esac
     just --justfile "{{rig_dir}}/justfile" build
     install -d -m 755 "{{run_dir}}"
     export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_ipc_socket}}}"
-    if [ -f "{{run_dir}}/txing-sparkplug-manager.pid" ] &&
-      kill -0 "$(cat "{{run_dir}}/txing-sparkplug-manager.pid")" >/dev/null 2>&1; then
-      echo "txing-sparkplug-manager already running"
-    else
+    start_daemon() {
+      daemon_name="$1"
+      shift
+      if [ -f "{{run_dir}}/${daemon_name}.pid" ] &&
+        kill -0 "$(cat "{{run_dir}}/${daemon_name}.pid")" >/dev/null 2>&1; then
+        echo "${daemon_name} already running"
+        return 0
+      fi
       if [ -n "$requested_config_dir" ]; then
-        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-          nohup "{{bin_dir}}/txing-sparkplug-manager" --config-dir "$requested_config_dir" \
-          >"{{run_dir}}/txing-sparkplug-manager.log" 2>&1 &
-      else
-        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-          nohup "{{bin_dir}}/txing-sparkplug-manager" \
-          >"{{run_dir}}/txing-sparkplug-manager.log" 2>&1 &
+        set -- "$@" --config-dir "$requested_config_dir"
       fi
-      echo "$!" >"{{run_dir}}/txing-sparkplug-manager.pid"
-    fi
-    sleep 1
-    if [ -f "{{run_dir}}/txing-thread-connectivity.pid" ] &&
-      kill -0 "$(cat "{{run_dir}}/txing-thread-connectivity.pid")" >/dev/null 2>&1; then
-      echo "txing-thread-connectivity already running"
-    else
-      if [ -n "$requested_config_dir" ]; then
-        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-          nohup "{{bin_dir}}/txing-thread-connectivity" --config-dir "$requested_config_dir" \
-          >"{{run_dir}}/txing-thread-connectivity.log" 2>&1 &
+      TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
+        nohup "{{bin_dir}}/${daemon_name}" "$@" \
+        >"{{run_dir}}/${daemon_name}.log" 2>&1 &
+      echo "$!" >"{{run_dir}}/${daemon_name}.pid"
+    }
+    start_daemon txing-sparkplug-manager
+    started_logs="{{run_dir}}/txing-sparkplug-manager.log"
+    if [ "$requested_connectivity" = "all" ]; then
+      sleep 1
+      start_daemon txing-thread-connectivity
+      sleep 1
+      if [ "$requested_no_ble" = "true" ]; then
+        start_daemon txing-ble-connectivity --no-ble
       else
-        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-          nohup "{{bin_dir}}/txing-thread-connectivity" \
-          >"{{run_dir}}/txing-thread-connectivity.log" 2>&1 &
+        start_daemon txing-ble-connectivity
       fi
-      echo "$!" >"{{run_dir}}/txing-thread-connectivity.pid"
-    fi
-    sleep 1
-    if [ -f "{{run_dir}}/txing-ble-connectivity.pid" ] &&
-      kill -0 "$(cat "{{run_dir}}/txing-ble-connectivity.pid")" >/dev/null 2>&1; then
-      echo "txing-ble-connectivity already running"
-    else
-      if [ -n "$requested_config_dir" ] && [ "$requested_no_ble" = "true" ]; then
-        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-          nohup "{{bin_dir}}/txing-ble-connectivity" --config-dir "$requested_config_dir" --no-ble \
-          >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
-      elif [ -n "$requested_config_dir" ]; then
-        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-          nohup "{{bin_dir}}/txing-ble-connectivity" --config-dir "$requested_config_dir" \
-          >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
-      elif [ "$requested_no_ble" = "true" ]; then
-        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-          nohup "{{bin_dir}}/txing-ble-connectivity" --no-ble \
-          >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
-      else
-        TXING_RIG_IPC_SOCKET="$TXING_RIG_IPC_SOCKET" \
-          nohup "{{bin_dir}}/txing-ble-connectivity" \
-          >"{{run_dir}}/txing-ble-connectivity.log" 2>&1 &
-      fi
-    echo "$!" >"{{run_dir}}/txing-ble-connectivity.pid"
+      started_logs="$started_logs {{run_dir}}/txing-thread-connectivity.log {{run_dir}}/txing-ble-connectivity.log"
     fi
     echo "rig daemons started"
-    echo "logs: {{run_dir}}/txing-sparkplug-manager.log {{run_dir}}/txing-thread-connectivity.log {{run_dir}}/txing-ble-connectivity.log"
+    echo "logs: $started_logs"
 
 stop:
     #!/bin/sh
@@ -135,16 +115,26 @@ stop:
     rm -f "{{default_ipc_socket}}"
     echo "rig daemons stopped"
 
-restart config_dir=config_dir no_ble='false':
+restart config_dir=config_dir connectivity='none' no_ble='false':
     #!/bin/sh
     set -eu
     just --justfile "{{rig_dir}}/justfile" stop
-    just --justfile "{{rig_dir}}/justfile" start "{{config_dir}}" "{{no_ble}}"
+    just --justfile "{{rig_dir}}/justfile" start "{{config_dir}}" "{{connectivity}}" "{{no_ble}}"
 
 log:
     #!/bin/sh
     set -eu
-    tail -n 160 -f "{{run_dir}}/txing-sparkplug-manager.log" "{{run_dir}}/txing-thread-connectivity.log" "{{run_dir}}/txing-ble-connectivity.log"
+    log_files=""
+    for name in txing-sparkplug-manager txing-thread-connectivity txing-ble-connectivity; do
+      if [ -f "{{run_dir}}/${name}.log" ]; then
+        log_files="$log_files {{run_dir}}/${name}.log"
+      fi
+    done
+    if [ -z "$log_files" ]; then
+      echo "No rig daemon logs under {{run_dir}}." >&2
+      exit 1
+    fi
+    tail -n 160 -f $log_files
 
 check config_dir=config_dir:
     #!/bin/sh
