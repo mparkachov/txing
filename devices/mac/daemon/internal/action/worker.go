@@ -87,6 +87,12 @@ func (s *WorkerSupervisor) Stop() {
 }
 
 func (s *WorkerSupervisor) run(ctx context.Context) {
+	// The worker's own STOPPED bridge report only goes out when its
+	// shutdown finishes inside the SIGTERM grace period; a SIGKILL (or a
+	// crash during restart backoff) would otherwise leave video ready
+	// forever. Supervision owns the worker lifecycle, so it always drops
+	// video readiness once the supervised worker is confirmed gone.
+	defer s.sendEvent(VideoWorkerEvent{Kind: VideoWorkerStopped})
 	delay := s.restartBaseDelay
 	for {
 		started := time.Now()

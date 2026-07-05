@@ -50,9 +50,20 @@ while :; do sleep 0.05; done`)
 		t.Fatal("Stop must SIGTERM the worker and return promptly")
 	}
 
+	// A supervised stop must drop video readiness itself (the worker may
+	// die before its own STOPPED bridge report) and must not report an
+	// error.
 	select {
 	case event := <-events:
-		t.Fatalf("supervised stop must not report a worker error, got %+v", event)
+		if event.Kind != VideoWorkerStopped {
+			t.Fatalf("supervised stop must emit a stopped event, got %+v", event)
+		}
+	default:
+		t.Fatal("supervised stop must emit a stopped event")
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("supervised stop must not emit further events, got %+v", event)
 	default:
 	}
 }

@@ -1,9 +1,11 @@
 ---
 id: TASK-26
 title: Office treats expected board video teardown as an error
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-05 15:44'
+updated_date: '2026-07-05 20:23'
 labels: []
 dependencies: []
 references:
@@ -20,6 +22,24 @@ The shared board RTC session in office (video + MCP data channel over KVS WebRTC
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Office-commanded REDCON transitions out of level 1 and daemon-driven worker stop/restart cycles do not surface an MCP data channel error event in office.
-- [ ] #2 A data channel closure while the device still reports video ready continues to surface as a visible error.
+- [x] #1 Office-commanded REDCON transitions out of level 1 and daemon-driven worker stop/restart cycles do not surface an MCP data channel error event in office.
+- [x] #2 A data channel closure while the device still reports video ready continues to surface as a visible error.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause: the shared board RTC session treated every data channel close as a viewer failure (closePeer notify with a generic error event), and the dedicated device video route stays mounted regardless of REDCON, so office-commanded transitions and supervised worker stops always produced the 'MCP WebRTC data channel closed' feed entry. Fix: closures are now classified at the source. A clean remote data channel close - the shape produced by a commanded REDCON transition or a supervised SIGTERM worker stop - emits a new non-error 'ended' viewer event; the panel shows 'Board video ended by the device' and nothing reaches the runtime-error feed (the report effect only fires for status error). Unclean transport loss (connection failed/disconnected, data channel error, signaling and offer/answer failures) keeps the error classification and the feed entry, which is exactly the shape a worker crash produces. Changes: ViewerUiState/ViewerUiEvent gained the ended state in both the facade (video-session.ts) and the runtime (video-session-runtime.ts), closePeer takes a cause, the data channel close listener passes ended, VideoPanel labels the ended state. Reducer test added; 169/169 office tests pass, tsc clean; the single lint error is the pre-existing cmd-vel-teleop.ts unused-variable issue outside this change. Live drills pending.
+
+Drill round 1 found a daemon-side bug the office change exposed: commanding 2 from REDCON 1 showed the new 'Board video ended by the device' label with no feed entry (office behavior correct), but reported REDCON stuck at 1 with a frozen last frame. Cause: the worker's KVS teardown exceeded the 5s SIGTERM grace (viewer connected, TURN/signaling teardown), so supervision SIGKILLed it before the worker's own STOPPED bridge report went out, and the daemon's video state stayed ready - capability video:true kept derived REDCON at 1. The earlier 22.5 drills passed only because teardown happened to finish inside the grace window. Fix in the mac daemon supervisor (worker.go): supervision now always emits the VideoWorkerStopped event itself once the supervised worker is confirmed gone (deferred on every supervision exit path), so video readiness drops regardless of how the worker died; supervisor test updated to require exactly one stopped event and no error on supervised stops. Mac daemon suites pass; daemon rebuilt and restarted. Both drills pending re-run.
+
+Drill round 2: commanded 1->2 worked (label shown, REDCON dropped to 2 after the supervisor fix) but a 'Board RTC connection disconnected' feed entry appeared ~10s after the command: closure-shape classification alone is racy, because a SIGTERMed worker stops media before its SCTP close reliably reaches the browser, so the ICE timeout ('disconnected', classified failure) can win the race against the clean channel close ('ended'). Second fix, state-aware: the office video route's onRuntimeError now consults the live shadow-reported REDCON through the adapter's canUseBoardVideo gate and drops the feed entry when the device has already left its video-capable posture (the panel still shows the non-streaming state); closures while the device still reports REDCON 1 keep surfacing, which is AC 2's case. reportedRedcon==null (shadow not yet loaded) never suppresses. tsc clean, 169/169 office tests pass. AC2 drill needs a closure while the device still reports ready: freeze the worker with SIGSTOP (daemon keeps seeing it alive) rather than kill -9 (which degrades REDCON within seconds and correctly quiets the browser-side entry).
+
+User confirmed all functionality after the final drill round: the commanded 1->2 transition produces no notification feed entry (either the clean 'ended' close or the state-suppressed trailing ICE disconnect), reported REDCON drops to 2, and a transport failure while the device still reports REDCON 1 (worker frozen with SIGSTOP) still surfaces the feed error; the subsequent kill -9 recovery was caught by supervision (daemon log 20:21:41Z, restart within 1s) with video recovering automatically. Daemon-side companion fixes shipped along the way: supervision emits the stopped video event itself once the worker is confirmed gone (worker.go), covering SIGKILL-after-grace teardowns.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Office no longer flags expected board video teardown as an error. Two layers: (1) the shared board RTC session classifies a clean remote MCP data channel close as a non-error 'ended' viewer state (panel shows 'Board video ended by the device', nothing reaches the notification feed) while transport failures, signaling errors, and channel errors stay errors; (2) because a SIGTERMed worker's teardown races the browser's ICE timeout, the video route additionally gates feed entries on live device state - a closure reported after the shadow-reported REDCON has left the adapter's video-capable posture is dropped as the trailing edge of an expected teardown, while closures with the device still reporting video (validated with a SIGSTOP-frozen worker) keep surfacing. A daemon-side gap found during the drills was fixed in the mac supervisor: it now emits the stopped video event itself once the supervised worker is confirmed dead, so REDCON drops even when the worker is SIGKILLed before its own STOPPED bridge report. Validated live on mac-rcg3rg with user confirmation. Applies to all board-video device types (unit and mac). Rollout: office ships with the next Cloudflare Pages deploy; the mac daemon fix is dev-local (just mac::restart from the user's terminal).
+<!-- SECTION:FINAL_SUMMARY:END -->

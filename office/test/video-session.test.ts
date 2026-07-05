@@ -88,6 +88,16 @@ describe('video session helpers', () => {
     expect(reset).toEqual({ status: 'idle', error: '' })
   })
 
+  test('treats a device-ended session as a non-error state', () => {
+    const ended = reduceViewerUiState(
+      { status: 'streaming', error: '' },
+      { type: 'ended', message: 'MCP WebRTC data channel closed' },
+    )
+
+    expect(ended.status).toBe('ended')
+    expect(ended.error).toBe('')
+  })
+
   test('deduplicates concurrent KVS signaling metadata loads and reuses the cached result', async () => {
     let calls = 0
     let resolveLoad: ((metadata: KvsSignalingMetadata) => void) | null = null

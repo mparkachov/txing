@@ -1,5 +1,5 @@
 export type ViewerUiState = {
-  status: 'idle' | 'connecting' | 'streaming' | 'error'
+  status: 'idle' | 'connecting' | 'streaming' | 'ended' | 'error'
   error: string
 }
 
@@ -7,6 +7,7 @@ export type ViewerUiEvent =
   | { type: 'reset' }
   | { type: 'connecting' }
   | { type: 'streaming' }
+  | { type: 'ended'; message: string }
   | { type: 'error'; message: string }
 
 export type StartVideoViewerOptions = {
@@ -73,6 +74,8 @@ export const reduceViewerUiState = (
       return { status: 'connecting', error: '' }
     case 'streaming':
       return { status: 'streaming', error: '' }
+    case 'ended':
+      return { status: 'ended', error: '' }
     case 'error':
       return { status: 'error', error: event.message }
   }
