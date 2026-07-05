@@ -63,9 +63,27 @@ inventory to include the thing, and then publishes capability state
 REDCON 4, and the `transportRedcon` metric. All REDCON targets 1-4 are
 accepted; a command succeeds once the target is applied locally, and the
 reported REDCON converges to the highest level supported by published
-evidence (3 until the action layer provides board/mcp/video). The daemon
-reconnects if the rig restarts, and the rig projects DDEATH within the
-capability TTL after the daemon stops.
+evidence. The daemon reconnects if the rig restarts, and the rig projects
+DDEATH within the capability TTL after the daemon stops.
+
+At REDCON 2 and 1 the daemon also runs the action layer (adapter id
+`dev.txing.mac.DaemonBoard`): its own AWS IoT MQTT session with client id
+`<thing>-daemon-<pid>`, retained `txings/<thing>/capability/v2/state`
+(board/mcp true, video following worker readiness), retained MCP and video
+descriptor/status topics, board/mcp/video named-shadow updates, the
+BoardVideoBridge gRPC socket (`TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`,
+default `/tmp/txing-mac/board-video-bridge.sock`), and a read-only MCP
+stub over mqtt-jsonrpc sessions (`control.get_state`, `robot.get_state`;
+no actuator tools yet). Leaving REDCON 2 publishes the offline states
+before the watch layer reports the lower level, so no stale board
+evidence survives.
+
+The action layer requires the device certificate bundle: run
+`just aws::cert <thing-id>` on the operator machine and unpack
+`certs/<thing-id>/<thing-id>-daemon-config.tgz` into
+`~/.config/txing/mac-daemon`. Without those settings the daemon runs
+watch-layer only (REDCON tops out at 3) and logs a warning when 2 or 1
+is commanded.
 
 Design and milestone context:
 

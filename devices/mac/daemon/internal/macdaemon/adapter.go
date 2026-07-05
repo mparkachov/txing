@@ -81,10 +81,20 @@ type Publisher interface {
 	PublishRetained(topic string, payload []byte) error
 }
 
+// ActionController is notified after every applied REDCON target so the
+// action layer can start (targets 2, 1) or stop with offline
+// publications (targets 3, 4). SetTarget for a stop must complete its
+// cloud offline publications before returning, so the IPC sleep state
+// published afterwards carries the newest observation timestamp.
+type ActionController interface {
+	SetTarget(redcon uint8)
+}
+
 type Adapter struct {
 	ThingName string
 	Machine   *Machine
 	Publisher Publisher
+	Action    ActionController
 	NowMS     func() uint64
 
 	mu      sync.Mutex
@@ -178,6 +188,9 @@ func (a *Adapter) HandleCommand(command rigadapter.CapabilityCommand) error {
 	if _, err := a.Machine.Apply(command.Target.Redcon); err != nil {
 		message := err.Error()
 		return a.publishCommandResult(command, rigadapter.CommandRejected, &message)
+	}
+	if a.Action != nil {
+		a.Action.SetTarget(command.Target.Redcon)
 	}
 	if err := a.PublishState(); err != nil {
 		message := fmt.Sprintf("publish state failed: %v", err)

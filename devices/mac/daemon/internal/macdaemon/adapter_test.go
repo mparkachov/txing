@@ -275,6 +275,64 @@ func TestHandleCommandIgnoresOtherThings(t *testing.T) {
 	}
 }
 
+type orderRecorder struct {
+	events []string
+}
+
+type orderedPublisher struct {
+	recorder *orderRecorder
+}
+
+func (p *orderedPublisher) Publish(topic string, _ []byte) error {
+	p.recorder.events = append(p.recorder.events, "publish:"+topic)
+	return nil
+}
+
+func (p *orderedPublisher) PublishRetained(topic string, _ []byte) error {
+	p.recorder.events = append(p.recorder.events, "retained:"+topic)
+	return nil
+}
+
+type orderedController struct {
+	recorder *orderRecorder
+}
+
+func (c *orderedController) SetTarget(redcon uint8) {
+	c.recorder.events = append(c.recorder.events, "action:"+string('0'+rune(redcon)))
+}
+
+func TestHandleCommandDrivesActionLayerBeforeIPCState(t *testing.T) {
+	recorder := &orderRecorder{}
+	machine, err := NewMachine(2)
+	if err != nil {
+		t.Fatalf("NewMachine: %v", err)
+	}
+	adapter := NewAdapter("mac-ab12cd", machine, &orderedPublisher{recorder: recorder})
+	adapter.Action = &orderedController{recorder: recorder}
+	adapter.NowMS = func() uint64 { return 1_776_000_000_000 }
+	if _, _, err := adapter.ReconcileInventory(macInventory(macDevice("mac-ab12cd"))); err != nil {
+		t.Fatalf("ReconcileInventory: %v", err)
+	}
+	recorder.events = nil
+
+	if err := adapter.HandleCommand(command("mac-ab12cd", 4)); err != nil {
+		t.Fatalf("HandleCommand: %v", err)
+	}
+	stateTopic := "retained:" + rigadapter.CapabilityStateTopicPrefix + "/mac-ab12cd/" + AdapterID
+	actionIndex, stateIndex := -1, -1
+	for index, event := range recorder.events {
+		if event == "action:4" && actionIndex == -1 {
+			actionIndex = index
+		}
+		if event == stateTopic && stateIndex == -1 {
+			stateIndex = index
+		}
+	}
+	if actionIndex == -1 || stateIndex == -1 || actionIndex > stateIndex {
+		t.Fatalf("action stop must run before the IPC sleep state is published: %v", recorder.events)
+	}
+}
+
 func TestHeartbeatCarriesPresence(t *testing.T) {
 	adapter, publisher := newTestAdapter(t, 4)
 	if err := adapter.PublishHeartbeat(); err != nil {

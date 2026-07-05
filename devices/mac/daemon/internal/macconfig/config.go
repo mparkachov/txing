@@ -24,6 +24,24 @@ type Config struct {
 	InitialRedcon     uint8
 	StateInterval     time.Duration
 	HeartbeatInterval time.Duration
+
+	// Action-layer settings (board-style AWS IoT session). Optional:
+	// without the AWS fields the daemon runs watch-layer only.
+	AWSRegion             string
+	IoTEndpoint           string
+	IoTCredentialEndpoint string
+	IoTRoleAlias          string
+	IoTCertFile           string
+	IoTPrivateKeyFile     string
+	IoTRootCAFile         string
+	ClientID              string
+	Capabilities          []string
+	CapabilityTTL         time.Duration
+	ActionHeartbeat       time.Duration
+	VideoChannelName      string
+	BridgeSocketPath      string
+	KVSPreferIPv6         bool
+	KVSDisableIPv4TURN    bool
 }
 
 func Load(configDirOverride string) (Config, error) {
@@ -41,13 +59,30 @@ func Load(configDirOverride string) (Config, error) {
 		}
 		return strings.TrimSpace(values[name])
 	}
+	thingID := lookup("TXING_THING_ID")
 	cfg := Config{
 		ConfigDir:         configDir,
-		ThingID:           lookup("TXING_THING_ID"),
+		ThingID:           thingID,
 		IPCSocket:         firstNonEmpty(lookup("TXING_RIG_IPC_SOCKET"), defaultIPCSocket()),
 		InitialRedcon:     4,
 		StateInterval:     secondsEnv(lookup("TXING_MAC_STATE_INTERVAL_SECONDS"), 30*time.Second),
 		HeartbeatInterval: millisEnv(lookup("TXING_MAC_HEARTBEAT_INTERVAL_MS"), 10*time.Second),
+
+		AWSRegion:             firstNonEmpty(lookup("AWS_REGION"), lookup("TXING_AWS_REGION")),
+		IoTEndpoint:           lookup("TXING_IOT_ENDPOINT"),
+		IoTCredentialEndpoint: lookup("TXING_IOT_CREDENTIAL_ENDPOINT"),
+		IoTRoleAlias:          lookup("TXING_IOT_ROLE_ALIAS"),
+		IoTCertFile:           firstNonEmpty(lookup("TXING_IOT_CERT_FILE"), filepath.Join(configDir, "certificate.pem.crt")),
+		IoTPrivateKeyFile:     firstNonEmpty(lookup("TXING_IOT_PRIVATE_KEY_FILE"), filepath.Join(configDir, "private.pem.key")),
+		IoTRootCAFile:         firstNonEmpty(lookup("TXING_IOT_ROOT_CA_FILE"), filepath.Join(configDir, "AmazonRootCA1.pem")),
+		ClientID:              firstNonEmpty(lookup("TXING_DAEMON_CLIENT_ID"), fmt.Sprintf("%s-daemon-%d", thingID, os.Getpid())),
+		Capabilities:          splitCapabilities(firstNonEmpty(lookup("TXING_DAEMON_CAPABILITIES"), "board,mcp,video")),
+		CapabilityTTL:         secondsEnv(lookup("TXING_CAPABILITY_TTL_SECONDS"), 150*time.Second),
+		ActionHeartbeat:       secondsEnv(lookup("TXING_HEARTBEAT_SECONDS"), 60*time.Second),
+		VideoChannelName:      firstNonEmpty(lookup("TXING_BOARD_VIDEO_CHANNEL_NAME"), thingID+"-board-video"),
+		BridgeSocketPath:      firstNonEmpty(lookup("TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH"), defaultBridgeSocket()),
+		KVSPreferIPv6:         boolEnv(lookup("TXING_KVS_PREFER_IPV6"), true),
+		KVSDisableIPv4TURN:    boolEnv(lookup("TXING_KVS_DISABLE_IPV4_TURN"), false),
 	}
 	if raw := lookup("TXING_MAC_INITIAL_REDCON"); raw != "" {
 		level, err := strconv.ParseUint(raw, 10, 8)
@@ -113,6 +148,38 @@ func defaultIPCSocket() string {
 		return filepath.Join(os.TempDir(), "txing-rig", "rig-ipc.sock")
 	}
 	return "/run/txing-rig/rig-ipc.sock"
+}
+
+func defaultBridgeSocket() string {
+	if runtime.GOOS == "darwin" {
+		return "/tmp/txing-mac/board-video-bridge.sock"
+	}
+	return "/run/txing-mac-daemon/board-video-bridge.sock"
+}
+
+func splitCapabilities(raw string) []string {
+	parts := strings.Split(raw, ",")
+	capabilities := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			capabilities = append(capabilities, trimmed)
+		}
+	}
+	return capabilities
+}
+
+func boolEnv(raw string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return fallback
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func firstNonEmpty(values ...string) string {

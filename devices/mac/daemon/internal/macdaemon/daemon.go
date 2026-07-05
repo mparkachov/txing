@@ -13,11 +13,16 @@ type Logf func(level string, message string)
 
 // Run keeps the watch layer connected to the rig IPC socket for the
 // daemon lifetime. The REDCON machine survives IPC reconnects so a rig
-// restart does not reset the device posture.
-func Run(ctx context.Context, cfg macconfig.Config, logf Logf) error {
+// restart does not reset the device posture. The action controller is
+// driven by applied REDCON targets and stopped (with cloud offline
+// publications) on daemon shutdown.
+func Run(ctx context.Context, cfg macconfig.Config, action ActionController, logf Logf) error {
 	machine, err := NewMachine(cfg.InitialRedcon)
 	if err != nil {
 		return err
+	}
+	if action != nil {
+		action.SetTarget(machine.Redcon())
 	}
 	for {
 		logf("info", fmt.Sprintf("dialing rig IPC socket=%s", cfg.IPCSocket))
@@ -29,7 +34,7 @@ func Run(ctx context.Context, cfg macconfig.Config, logf Logf) error {
 			return err
 		}
 		logf("info", fmt.Sprintf("rig IPC connected socket=%s", cfg.IPCSocket))
-		err = runSession(ctx, cfg, machine, client, logf)
+		err = runSession(ctx, cfg, machine, action, client, logf)
 		_ = client.Close()
 		if ctx.Err() != nil {
 			return nil
@@ -43,7 +48,7 @@ func Run(ctx context.Context, cfg macconfig.Config, logf Logf) error {
 	}
 }
 
-func runSession(ctx context.Context, cfg macconfig.Config, machine *Machine, client *rigadapter.Client, logf Logf) error {
+func runSession(ctx context.Context, cfg macconfig.Config, machine *Machine, action ActionController, client *rigadapter.Client, logf Logf) error {
 	commandTopic, err := rigadapter.BuildCapabilityCommandTopic(cfg.ThingID)
 	if err != nil {
 		return err
@@ -54,6 +59,7 @@ func runSession(ctx context.Context, cfg macconfig.Config, machine *Machine, cli
 		}
 	}
 	adapter := NewAdapter(cfg.ThingID, machine, client)
+	adapter.Action = action
 
 	messages := make(chan rigadapter.Message, 64)
 	receiveErrors := make(chan error, 1)

@@ -169,7 +169,7 @@ func TestRunSessionBirthsFromRetainedInventoryAndHandlesCommand(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, cfg, func(string, string) {})
+		done <- Run(ctx, cfg, nil, func(string, string) {})
 	}()
 
 	// Retained inventory must birth the device: a retained state with
