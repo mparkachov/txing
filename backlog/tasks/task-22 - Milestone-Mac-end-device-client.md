@@ -1,9 +1,11 @@
 ---
 id: TASK-22
 title: 'Milestone: Mac end-device client'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-03 07:44'
+updated_date: '2026-07-05 15:45'
 labels: []
 milestone: m-1
 dependencies: []
@@ -35,3 +37,9 @@ Deliver the mac txing device type: the development Mac registers in AWS IoT, is 
 - [ ] #2 Existing unit, power, power-si, weather, and cloud-mcu device behavior is unchanged.
 - [ ] #3 Completion evidence includes automated test results plus a documented manual runbook covering registration, the REDCON ladder, and office-visible camera video.
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+All seven child tasks are Done and validated live on mac-rcg3rg under the local rig local-hz0ny3: the mac device type is first-class in the catalog and office UI (22.1), belongs to the new local rig type with manager-only defaults (22.6, 22.7), joins the rig over IPC and converges REDCON 4-3 (22.2), runs the unit-shaped action layer with board and read-only MCP evidence for REDCON 2 (22.3), builds and streams the Mac camera through the natively built KVS worker with AVFoundation + VideoToolbox (22.4), and reaches REDCON 1 with office-visible video under daemon worker supervision, including crash recovery and clean-death drills (22.5). Contract addition along the way: VideoState STOPPED in the BoardVideoBridge proto for supervision-free clean worker shutdown. Follow-ups outside this milestone: TASK-25 (macOS TLS CA log noise), TASK-26 (office flags expected video teardown as an error), milestone m-2 (rig REDCON 1 idle cost parity).
+<!-- SECTION:FINAL_SUMMARY:END -->

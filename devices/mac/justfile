@@ -7,6 +7,10 @@ tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
 daemon_dir := mac_dir + "/daemon"
 bin_dir := daemon_dir + "/target/local"
+kvs_master_dir := project_root + "/devices/unit/board/kvs_master"
+kvs_build_dir := kvs_master_dir + "/build-macos"
+built_kvs_master := kvs_build_dir + "/txing-unit-kvs-master"
+kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/cert.pem")
 run_dir := env_var_or_default("TXING_MAC_RUN_DIR", "/tmp/txing-mac")
 rig_run_dir := env_var_or_default("TXING_RIG_RUN_DIR", "/tmp/txing-rig")
 default_rig_ipc_socket := rig_run_dir + "/rig-ipc.sock"
@@ -35,6 +39,7 @@ start config_dir=config_dir:
     just --justfile "{{mac_dir}}/justfile" build
     install -d -m 755 "{{run_dir}}"
     export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_rig_ipc_socket}}}"
+    export TXING_KVS_MASTER_COMMAND="${TXING_KVS_MASTER_COMMAND:-{{built_kvs_master}}}"
     if [ -f "{{run_dir}}/txing-mac-daemon.pid" ] &&
       kill -0 "$(cat "{{run_dir}}/txing-mac-daemon.pid")" >/dev/null 2>&1; then
       echo "txing-mac-daemon already running"
@@ -92,8 +97,50 @@ check config_dir=config_dir:
     set -eu
     just --justfile "{{mac_dir}}/justfile" build
     export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_rig_ipc_socket}}}"
+    export TXING_KVS_MASTER_COMMAND="${TXING_KVS_MASTER_COMMAND:-{{built_kvs_master}}}"
     if [ -n "{{config_dir}}" ]; then
       "{{bin_dir}}/txing-mac-daemon" --dry-run --config-dir "{{config_dir}}"
     else
       "{{bin_dir}}/txing-mac-daemon" --dry-run
     fi
+
+kvs-build:
+    #!/bin/sh
+    set -eu
+    if [ "$(uname -s)" != "Darwin" ]; then
+      echo "mac::kvs-build only targets macOS; use unit::kvs-build-native elsewhere." >&2
+      exit 2
+    fi
+    missing=""
+    for formula in cmake openssl@3 libwebsockets srtp libusrsctp log4cplus protobuf grpc; do
+      if ! brew list --versions "$formula" >/dev/null 2>&1; then
+        missing="$missing $formula"
+      fi
+    done
+    if [ -n "$missing" ]; then
+      echo "Missing Homebrew KVS dependency/dependencies:$missing" >&2
+      echo "Install them with: brew install$missing" >&2
+      exit 1
+    fi
+    cmake \
+      -S "{{kvs_master_dir}}" \
+      -B "{{kvs_build_dir}}" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_TESTING=OFF \
+      -DTXING_KVS_REAL_SDK=ON \
+      -DTXING_KVS_GRPC_BRIDGE=ON \
+      -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{kvs_system_ca_cert_path}}"
+    cmake --build "{{kvs_build_dir}}" --config Release
+    test -x "{{built_kvs_master}}"
+    echo "KVS worker built: {{built_kvs_master}}"
+
+# Foreground capture-only run: triggers the macOS camera permission
+# prompt for this terminal application so later detached runs are not
+# silently denied. Expect the camera indicator to light briefly.
+camera-probe:
+    #!/bin/sh
+    set -eu
+    if [ ! -x "{{built_kvs_master}}" ]; then
+      just --justfile "{{mac_dir}}/justfile" kvs-build
+    fi
+    "{{built_kvs_master}}" --camera-probe

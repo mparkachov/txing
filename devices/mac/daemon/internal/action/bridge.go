@@ -127,8 +127,11 @@ func (s *BoardVideoBridgeService) ReportVideoState(_ context.Context, report *bo
 		}
 		s.sendVideoEvent(VideoWorkerEvent{Kind: VideoWorkerError, Detail: detail})
 		s.sendVideoEvent(VideoWorkerEvent{Kind: VideoWorkerViewerConnected, Connected: report.GetViewerCount() > 0})
+	case boardvideov1.VideoState_STOPPED:
+		s.sendVideoEvent(VideoWorkerEvent{Kind: VideoWorkerStopped})
+		s.sendVideoEvent(VideoWorkerEvent{Kind: VideoWorkerViewerConnected, Connected: false})
 	default:
-		return nil, status.Error(codes.InvalidArgument, "video state must be STARTING, READY, or ERROR")
+		return nil, status.Error(codes.InvalidArgument, "video state must be STARTING, READY, ERROR, or STOPPED")
 	}
 	return &boardvideov1.Ack{}, nil
 }

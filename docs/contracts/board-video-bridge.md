@@ -34,10 +34,12 @@ MCP response timeout, KVS network preferences, and temporary credentials.
 `RefreshCredentials` returns a fresh temporary credential set before the
 current set expires. The daemon remains the credential authority.
 
-`ReportVideoState` is coarse state only: `STARTING`, `READY`, or `ERROR`, plus
-viewer count and optional error text. `READY` means the worker is ready enough
-for the daemon to advertise WebRTC MCP transport; it is not a media-quality
-guarantee.
+`ReportVideoState` is coarse state only: `STARTING`, `READY`, `ERROR`, or
+`STOPPED`, plus viewer count and optional error text. `READY` means the worker
+is ready enough for the daemon to advertise WebRTC MCP transport; it is not a
+media-quality guarantee. `STOPPED` announces a clean worker shutdown so the
+daemon can drop video readiness immediately even when it does not supervise
+the worker process; crash exits still rely on daemon-side supervision.
 
 `OpenMcpSession`, `HandleMcp`, and `CloseMcpSession` forward MCP session
 lifecycle and opaque MCP JSON-RPC bytes. `txing-unit-kvs-master` does not

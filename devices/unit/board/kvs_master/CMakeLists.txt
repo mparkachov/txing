@@ -6,6 +6,24 @@ include(GNUInstallDirs)
 include(CTest)
 include(ExternalProject)
 
+if(APPLE)
+  enable_language(OBJCXX)
+  # Homebrew kegs are not on the default CMake search paths on macOS.
+  execute_process(
+    COMMAND brew --prefix
+    RESULT_VARIABLE _txing_brew_result
+    OUTPUT_VARIABLE TXING_KVS_HOMEBREW_PREFIX
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  if(_txing_brew_result EQUAL 0 AND EXISTS "${TXING_KVS_HOMEBREW_PREFIX}")
+    list(APPEND CMAKE_PREFIX_PATH
+      "${TXING_KVS_HOMEBREW_PREFIX}"
+      "${TXING_KVS_HOMEBREW_PREFIX}/opt/openssl@3"
+    )
+  endif()
+endif()
+
 set(_txing_kvs_real_sdk_default OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(_txing_kvs_real_sdk_default ON)
@@ -91,7 +109,14 @@ target_compile_options(
 )
 
 if(TXING_KVS_GRPC_BRIDGE)
-  find_package(Protobuf REQUIRED)
+  if(APPLE)
+    # Homebrew protobuf must be resolved in CONFIG mode: the module-mode
+    # find defines only part of the target set that gRPC's config then
+    # tries to define again.
+    find_package(Protobuf CONFIG REQUIRED)
+  else()
+    find_package(Protobuf REQUIRED)
+  endif()
   find_package(gRPC CONFIG REQUIRED)
   find_program(GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin REQUIRED)
 
@@ -173,6 +198,28 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_options(txing_unit_kvs_master_lib PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
   target_link_libraries(txing_unit_kvs_master_lib PRIVATE ${LIBCAMERA_LIBRARIES})
   target_compile_definitions(txing_unit_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=1)
+elseif(APPLE)
+  target_sources(txing_unit_kvs_master_lib PRIVATE src/video_capturer_avfoundation.mm)
+  set_source_files_properties(
+    src/video_capturer_avfoundation.mm
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc"
+  )
+  set_target_properties(
+    txing_unit_kvs_master_lib
+    PROPERTIES
+      OBJCXX_STANDARD 17
+      OBJCXX_STANDARD_REQUIRED ON
+  )
+  target_compile_definitions(txing_unit_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=0)
+  target_link_libraries(
+    txing_unit_kvs_master_lib
+    PRIVATE
+      "-framework AVFoundation"
+      "-framework CoreMedia"
+      "-framework CoreVideo"
+      "-framework VideoToolbox"
+      "-framework Foundation"
+  )
 else()
   target_sources(txing_unit_kvs_master_lib PRIVATE src/video_capturer_stub.cpp)
   target_compile_definitions(txing_unit_kvs_master_lib PRIVATE TXING_KVS_HAS_LIBCAMERA=0)
@@ -212,6 +259,15 @@ if(TXING_KVS_REAL_SDK)
   set(TXING_KVS_PIC_STATE_LIBRARY
       "${TXING_AWS_KVS_WEBRTC_SDK_INSTALL_DIR}/lib/libkvspicState.a")
 
+  set(_txing_kvs_sdk_env)
+  if(APPLE)
+    # CMake 4 removed compatibility with the pre-3.5 minimum versions some of
+    # the SDK's bundled dependency builds still declare.
+    set(_txing_kvs_sdk_env
+      "${CMAKE_COMMAND}" -E env "CMAKE_POLICY_VERSION_MINIMUM=3.5"
+    )
+  endif()
+
   ExternalProject_Add(
     txing_aws_kvs_webrtc_sdk
     GIT_REPOSITORY "${TXING_AWS_KVS_WEBRTC_SDK_GIT_REPOSITORY}"
@@ -227,7 +283,7 @@ if(TXING_KVS_REAL_SDK)
         "-DTXING_KVS_SYSTEM_DEPS_DIR=${TXING_AWS_KVS_WEBRTC_SDK_SYSTEM_DEPS_DIR}"
         "-DTXING_KVS_C_COMPILER=${CMAKE_C_COMPILER}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PrepareAwsKvsSystemDeps.cmake"
-      COMMAND "${CMAKE_COMMAND}"
+      COMMAND ${_txing_kvs_sdk_env} "${CMAKE_COMMAND}"
         -S "<SOURCE_DIR>"
         -B "<BINARY_DIR>"
         -DCMAKE_BUILD_TYPE=Release
@@ -244,7 +300,7 @@ if(TXING_KVS_REAL_SDK)
         "-DOPENSSL_INCLUDE_DIR=${OPENSSL_INCLUDE_DIR}"
         "-DOPENSSL_SSL_LIBRARY=${OPENSSL_SSL_LIBRARY}"
         "-DOPENSSL_CRYPTO_LIBRARY=${OPENSSL_CRYPTO_LIBRARY}"
-    BUILD_COMMAND "${CMAKE_COMMAND}" --build "<BINARY_DIR>" --config Release
+    BUILD_COMMAND ${_txing_kvs_sdk_env} "${CMAKE_COMMAND}" --build "<BINARY_DIR>" --config Release
     INSTALL_COMMAND
       "${CMAKE_COMMAND}" --install "<BINARY_DIR>" --config Release
       COMMAND "${CMAKE_COMMAND}" -E copy_directory

@@ -23,6 +23,13 @@ RuntimeHooks DefaultRuntimeHooks();
 void Run(const RuntimeConfig& config);
 void Run(const RuntimeConfig& config, const RuntimeHooks& hooks);
 
+// Capture-only foreground probe: starts the video capturer without any KVS
+// session or bridge so camera access (including the macOS permission prompt)
+// and encoding can be verified interactively. Throws unless encoded frames
+// with a keyframe arrive before a fixed deadline.
+void RunCameraProbe(const RuntimeConfig& config);
+void RunCameraProbe(const RuntimeConfig& config, const RuntimeHooks& hooks);
+
 }  // namespace txing::board::kvs_master
 
 #endif

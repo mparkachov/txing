@@ -48,6 +48,7 @@ func main() {
 		Heartbeat:             cfg.ActionHeartbeat,
 		VideoChannelName:      cfg.VideoChannelName,
 		BridgeSocketPath:      cfg.BridgeSocketPath,
+		KVSMasterCommand:      cfg.KVSMasterCommand,
 		KVSPreferIPv6:         cfg.KVSPreferIPv6,
 		KVSDisableIPv4TURN:    cfg.KVSDisableIPv4TURN,
 	}

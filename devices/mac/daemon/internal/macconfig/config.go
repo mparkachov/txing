@@ -40,6 +40,7 @@ type Config struct {
 	ActionHeartbeat       time.Duration
 	VideoChannelName      string
 	BridgeSocketPath      string
+	KVSMasterCommand      string
 	KVSPreferIPv6         bool
 	KVSDisableIPv4TURN    bool
 }
@@ -81,6 +82,7 @@ func Load(configDirOverride string) (Config, error) {
 		ActionHeartbeat:       secondsEnv(lookup("TXING_HEARTBEAT_SECONDS"), 60*time.Second),
 		VideoChannelName:      firstNonEmpty(lookup("TXING_BOARD_VIDEO_CHANNEL_NAME"), thingID+"-board-video"),
 		BridgeSocketPath:      firstNonEmpty(lookup("TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH"), defaultBridgeSocket()),
+		KVSMasterCommand:      lookup("TXING_KVS_MASTER_COMMAND"),
 		KVSPreferIPv6:         boolEnv(lookup("TXING_KVS_PREFER_IPV6"), true),
 		KVSDisableIPv4TURN:    boolEnv(lookup("TXING_KVS_DISABLE_IPV4_TURN"), false),
 	}

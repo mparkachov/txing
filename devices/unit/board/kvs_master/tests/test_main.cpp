@@ -5,6 +5,7 @@
 #include "kvs_master/version.hpp"
 #include "kvs_master/video_capturer.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <cstdlib>
@@ -188,6 +189,51 @@ class FakeVideoCapturer final : public VideoCapturer {
 
   private:
     FakeCapturerState* state_;
+};
+
+struct FakeBridgeState {
+    std::vector<txing::board::kvs_master::BridgeVideoState> reported_states;
+};
+
+class FakeBridgeClient final : public txing::board::kvs_master::BoardVideoBridgeClient {
+  public:
+    explicit FakeBridgeClient(FakeBridgeState* state) : state_(state) {}
+
+    txing::board::kvs_master::BridgeWorkerConfig GetWorkerConfig(
+        const std::string&,
+        const std::string&
+    ) override {
+        txing::board::kvs_master::BridgeWorkerConfig config;
+        config.runtime_config.region = "eu-central-1";
+        config.runtime_config.channel_name = "txing-board-video";
+        config.credentials.credentials.access_key_id = "bridge-access";
+        config.credentials.credentials.secret_access_key = "bridge-secret";
+        config.credentials.expires_at = std::chrono::system_clock::now() + std::chrono::hours(1);
+        return config;
+    }
+
+    txing::board::kvs_master::BridgeCredentials RefreshCredentials() override {
+        throw std::runtime_error("credential refresh is not expected in this test");
+    }
+
+    void ReportVideoState(
+        txing::board::kvs_master::BridgeVideoState state,
+        std::uint32_t,
+        const std::string&
+    ) override {
+        state_->reported_states.push_back(state);
+    }
+
+    void OpenMcpSession(const std::string&, const std::string&, const std::string&) override {}
+
+    std::optional<std::string> HandleMcp(const std::string&, const std::string&) override {
+        return std::nullopt;
+    }
+
+    void CloseMcpSession(const std::string&, const std::string&) override {}
+
+  private:
+    FakeBridgeState* state_;
 };
 
 class ScopedStdoutCapture {
@@ -508,6 +554,114 @@ void TestMarkerFormatting() {
     Expect(line == "TXING_KVS_ERROR detail=bad line here", "marker values should be sanitized");
 }
 
+void TestCameraProbeCliDoesNotRequireStaticWorkerConfig() {
+    const auto parsed = ParseCli({"txing-unit-kvs-master", "--camera-probe"}, EnvFrom({}));
+
+    Expect(parsed.camera_probe, "CLI should parse --camera-probe");
+    Expect(parsed.config.region.empty(), "camera probe should not require a static region");
+    Expect(parsed.config.channel_name.empty(), "camera probe should not require a static channel name");
+    Expect(
+        UsageText().find("--camera-probe") != std::string::npos,
+        "usage text should document the camera probe"
+    );
+}
+
+void TestCameraProbeCapturesFramesWithoutKvs() {
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    capturer_state.frames = {
+        EncodedVideoFrame {{0x00, 0x00, 0x01}, 1'000'000, true},
+        EncodedVideoFrame {{0x00, 0x00, 0x02}, 1'033'333, false},
+    };
+
+    ScopedStdoutCapture stdout_capture;
+    txing::board::kvs_master::RunCameraProbe(TestRuntimeConfig(), HooksFrom(&kvs_state, &capturer_state));
+    const auto output = stdout_capture.str();
+
+    Expect(capturer_state.configured, "camera probe should configure the video capturer");
+    Expect(capturer_state.started, "camera probe should start the video capturer");
+    Expect(capturer_state.stopped, "camera probe should stop the video capturer");
+    Expect(!kvs_state.started, "camera probe should not start a KVS session");
+    Expect(
+        output.find("TXING_KVS_CAMERA_PROBE_OK") != std::string::npos,
+        "camera probe should report success after encoded frames arrive"
+    );
+}
+
+void TestCameraProbeFailsWithoutFrames() {
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+
+    bool threw = false;
+    try {
+        txing::board::kvs_master::RunCameraProbe(TestRuntimeConfig(), HooksFrom(&kvs_state, &capturer_state));
+    } catch (const std::exception& error) {
+        threw = true;
+        Expect(
+            std::string(error.what()).find("no encoded frames") != std::string::npos,
+            "frameless camera probe should explain the failure"
+        );
+    }
+
+    Expect(threw, "camera probe should fail when no frames arrive");
+    Expect(capturer_state.stopped, "camera probe should stop the capturer after a failure");
+}
+
+void TestCameraProbePropagatesCapturerErrors() {
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    capturer_state.throw_on_start = true;
+    capturer_state.error_message = "camera access denied";
+
+    bool threw = false;
+    try {
+        txing::board::kvs_master::RunCameraProbe(TestRuntimeConfig(), HooksFrom(&kvs_state, &capturer_state));
+    } catch (const std::exception& error) {
+        threw = true;
+        Expect(
+            std::string(error.what()) == "camera access denied",
+            "camera probe should bubble up capturer errors"
+        );
+    }
+
+    Expect(threw, "camera probe should throw when the capturer fails to start");
+    Expect(capturer_state.stopped, "camera probe should stop the capturer after a start failure");
+}
+
+void TestRuntimeReportsStoppedToBridgeOnCleanExit() {
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    capturer_state.frames = {
+        EncodedVideoFrame {{0x00, 0x00, 0x01}, 1'000'000, true},
+    };
+    FakeBridgeState bridge_state;
+
+    auto hooks = HooksFrom(&kvs_state, &capturer_state);
+    hooks.create_bridge_client =
+        [&bridge_state](const std::string&) -> std::unique_ptr<txing::board::kvs_master::BoardVideoBridgeClient> {
+        return std::make_unique<FakeBridgeClient>(&bridge_state);
+    };
+
+    auto config = TestRuntimeConfig();
+    config.board_video_bridge_socket_path = "/tmp/txing_board_video_bridge.sock";
+    Run(config, hooks);
+
+    Expect(
+        bridge_state.reported_states.size() == 3,
+        "bridge runtime should report starting, ready, and stopped states"
+    );
+    Expect(
+        !bridge_state.reported_states.empty() &&
+            bridge_state.reported_states.front() == txing::board::kvs_master::BridgeVideoState::kStarting,
+        "bridge runtime should report STARTING before streaming"
+    );
+    Expect(
+        !bridge_state.reported_states.empty() &&
+            bridge_state.reported_states.back() == txing::board::kvs_master::BridgeVideoState::kStopped,
+        "a clean exit should report STOPPED so the daemon drops video readiness"
+    );
+}
+
 }  // namespace
 
 int main() {
@@ -522,6 +676,11 @@ int main() {
     TestRuntimePropagatesCapturerErrors();
     TestRuntimeDoesNotExportTlsCaEnvironment();
     TestMarkerFormatting();
+    TestCameraProbeCliDoesNotRequireStaticWorkerConfig();
+    TestCameraProbeCapturesFramesWithoutKvs();
+    TestCameraProbeFailsWithoutFrames();
+    TestCameraProbePropagatesCapturerErrors();
+    TestRuntimeReportsStoppedToBridgeOnCleanExit();
 
     if (g_failures != 0) {
         std::cerr << g_failures << " test(s) failed\n";

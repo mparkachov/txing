@@ -190,6 +190,37 @@ func TestVideoReadyRaisesCapabilityAndSwitchesTransport(t *testing.T) {
 	}
 }
 
+func TestVideoStoppedDropsCapabilityWithoutError(t *testing.T) {
+	publisher := &recordingPublisher{}
+	state := &sessionState{config: testConfig(), version: "0.0.0-dev", caps: &capabilityPublisher{capabilities: testConfig().Capabilities}}
+	if err := state.publishOnline(context.Background(), publisher, 1); err != nil {
+		t.Fatalf("publishOnline: %v", err)
+	}
+	if err := state.handleVideoEvent(context.Background(), publisher, VideoWorkerEvent{Kind: VideoWorkerReady}, 2); err != nil {
+		t.Fatalf("handleVideoEvent ready: %v", err)
+	}
+
+	publisher.messages = nil
+	if err := state.handleVideoEvent(context.Background(), publisher, VideoWorkerEvent{Kind: VideoWorkerStopped}, 3); err != nil {
+		t.Fatalf("handleVideoEvent stopped: %v", err)
+	}
+	caps := publisher.byTopic("txings/mac-rcg3rg/capability/v2/state")
+	if caps.Payload["capabilities"].(map[string]interface{})["video"] != false {
+		t.Fatalf("video capability must drop after a clean worker stop: %v", caps.Payload)
+	}
+	videoStatus := publisher.byTopic("txings/mac-rcg3rg/video/status")
+	if videoStatus.Payload["ready"] != false || videoStatus.Payload["status"] != VideoStatusStarting {
+		t.Fatalf("clean stop must return video to declared-not-ready: %v", videoStatus.Payload)
+	}
+	if lastError, present := videoStatus.Payload["lastError"]; present && lastError != nil {
+		t.Fatalf("clean stop must not record an error: %v", videoStatus.Payload)
+	}
+	descriptor := publisher.byTopic("txings/mac-rcg3rg/mcp/descriptor")
+	if descriptor == nil || descriptor.Payload["transport"] != "mqtt-jsonrpc" {
+		t.Fatalf("mcp transport must fall back to mqtt after worker stop: %+v", descriptor)
+	}
+}
+
 func TestMCPReadOnlyStub(t *testing.T) {
 	video := VideoRuntimeStarting(1)
 	initialize := HandleMCPJSONRPC(map[string]interface{}{"jsonrpc": "2.0", "id": float64(1), "method": "initialize"}, "0.0.0-dev", video)

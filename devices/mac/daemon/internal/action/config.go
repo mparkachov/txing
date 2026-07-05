@@ -63,6 +63,7 @@ type Config struct {
 	Heartbeat             time.Duration
 	VideoChannelName      string
 	BridgeSocketPath      string
+	KVSMasterCommand      string
 	KVSPreferIPv6         bool
 	KVSDisableIPv4TURN    bool
 }

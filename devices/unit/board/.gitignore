@@ -6,6 +6,7 @@
 
 # Native sender build artifacts
 kvs_master/build/
+kvs_master/build-macos/
 kvs_master/build-tests/
 hardware_worker/build/
 hardware_worker/build-tests/

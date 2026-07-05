@@ -10,6 +10,7 @@ package action
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,16 +24,20 @@ const (
 type Logf func(level string, message string)
 
 // Controller owns the action-layer lifecycle for the state machine:
-// targets 1 and 2 keep the runtime running, targets 3 and 4 stop it.
+// targets 1 and 2 keep the runtime running (target 1 additionally runs
+// the supervised KVS video worker), targets 3 and 4 stop everything.
 type Controller struct {
 	config  Config
 	enabled bool
 	version string
 	logf    Logf
 
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
+	mu           sync.Mutex
+	cancel       context.CancelFunc
+	done         chan struct{}
+	videoEvents  chan VideoWorkerEvent
+	worker       *WorkerSupervisor
+	workerWarned bool
 }
 
 func NewController(config Config, enabled bool, version string, logf Logf) *Controller {
@@ -40,11 +45,17 @@ func NewController(config Config, enabled bool, version string, logf Logf) *Cont
 }
 
 func (c *Controller) SetTarget(redcon uint8) {
-	if redcon <= 2 {
-		c.start()
+	if redcon > 2 {
+		c.stopWorker()
+		c.stop()
 		return
 	}
-	c.stop()
+	c.start()
+	if redcon == 1 {
+		c.startWorker()
+	} else {
+		c.stopWorker()
+	}
 }
 
 func (c *Controller) Running() bool {
@@ -54,6 +65,7 @@ func (c *Controller) Running() bool {
 }
 
 func (c *Controller) Shutdown() {
+	c.stopWorker()
 	c.stop()
 }
 
@@ -69,11 +81,13 @@ func (c *Controller) start() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	videoEvents := make(chan VideoWorkerEvent, 32)
 	c.cancel = cancel
 	c.done = done
+	c.videoEvents = videoEvents
 	go func() {
 		defer close(done)
-		run(ctx, c.config, c.version, c.logf)
+		run(ctx, c.config, c.version, videoEvents, c.logf)
 	}()
 	c.logf("info", "action layer starting")
 }
@@ -84,6 +98,7 @@ func (c *Controller) stop() {
 	done := c.done
 	c.cancel = nil
 	c.done = nil
+	c.videoEvents = nil
 	c.mu.Unlock()
 	if cancel == nil {
 		return
@@ -93,8 +108,40 @@ func (c *Controller) stop() {
 	c.logf("info", "action layer stopped")
 }
 
-func run(ctx context.Context, config Config, version string, logf Logf) {
-	videoEvents := make(chan VideoWorkerEvent, 32)
+func (c *Controller) startWorker() {
+	c.mu.Lock()
+	if c.cancel == nil || !c.config.VideoEnabled() {
+		c.mu.Unlock()
+		return
+	}
+	if strings.TrimSpace(c.config.KVSMasterCommand) == "" {
+		alreadyWarned := c.workerWarned
+		c.workerWarned = true
+		c.mu.Unlock()
+		if !alreadyWarned {
+			c.logf("warning", "TXING_KVS_MASTER_COMMAND is not set; video stays unavailable at REDCON 1")
+		}
+		return
+	}
+	if c.worker == nil {
+		c.worker = NewWorkerSupervisor(c.config, c.videoEvents, c.logf)
+	}
+	worker := c.worker
+	c.mu.Unlock()
+	worker.Start()
+}
+
+func (c *Controller) stopWorker() {
+	c.mu.Lock()
+	worker := c.worker
+	c.worker = nil
+	c.mu.Unlock()
+	if worker != nil {
+		worker.Stop()
+	}
+}
+
+func run(ctx context.Context, config Config, version string, videoEvents chan VideoWorkerEvent, logf Logf) {
 	mcpEvents := make(chan interface{}, 32)
 	if config.VideoEnabled() {
 		bridge, err := StartBoardVideoBridgeServer(config, videoEvents, mcpEvents)

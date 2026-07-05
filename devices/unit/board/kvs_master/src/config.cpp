@@ -97,7 +97,8 @@ bool ParseBool(
 std::unordered_map<std::string, std::string> ParseOptions(
     const std::vector<std::string>& arguments,
     bool& show_help,
-    bool& show_version
+    bool& show_version,
+    bool& camera_probe
 ) {
     std::unordered_map<std::string, std::string> options;
 
@@ -109,6 +110,10 @@ std::unordered_map<std::string, std::string> ParseOptions(
         }
         if (argument == "--version") {
             show_version = true;
+            continue;
+        }
+        if (argument == "--camera-probe") {
+            camera_probe = true;
             continue;
         }
         if (argument.rfind("--", 0) != 0) {
@@ -146,7 +151,8 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
     }
 
     ParsedCli parsed;
-    const auto options = ParseOptions(arguments, parsed.show_help, parsed.show_version);
+    const auto options =
+        ParseOptions(arguments, parsed.show_help, parsed.show_version, parsed.camera_probe);
     if (parsed.show_help || parsed.show_version) {
         return parsed;
     }
@@ -160,7 +166,7 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         socket_path && !socket_path->empty()) {
         parsed.config.board_video_bridge_socket_path = *socket_path;
     }
-    if (parsed.config.board_video_bridge_socket_path.has_value()) {
+    if (parsed.config.board_video_bridge_socket_path.has_value() || parsed.camera_probe) {
         parsed.config.region = LookupValue(
             options,
             "region",
@@ -250,6 +256,8 @@ std::string UsageText() {
         << "  --board-video-bridge-socket-path <path> or TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH\n"
         << "  --prefer-ipv6 <bool>                   default: true\n"
         << "  --disable-ipv4-turn <bool>             default: false\n"
+        << "  --camera-probe                         capture-only probe: no KVS session,\n"
+        << "                                         exercises camera access and encoding\n"
         << "  --camera <index>                       default: 0\n"
         << "  --width <pixels>                       default: 1920\n"
         << "  --height <pixels>                      default: 1080\n"

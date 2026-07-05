@@ -35,6 +35,7 @@ const (
 	VideoWorkerMCPDataChannelClosed VideoWorkerEventKind = "mcp-closed"
 	VideoWorkerMCPDataChannelError  VideoWorkerEventKind = "mcp-error"
 	VideoWorkerError                VideoWorkerEventKind = "error"
+	VideoWorkerStopped              VideoWorkerEventKind = "stopped"
 )
 
 type VideoWorkerEvent struct {
@@ -69,6 +70,11 @@ func (s *VideoRuntimeState) ApplyEvent(event VideoWorkerEvent, observedAtMS uint
 		s.Status = VideoStatusError
 		s.LastError = &detail
 		s.UpdatedAtMS = observedAtMS
+	case VideoWorkerStopped:
+		// Clean worker shutdown: back to the declared-but-not-ready
+		// posture the action layer starts with, so derived REDCON drops
+		// without waiting for worker supervision or a capability TTL.
+		*s = VideoRuntimeStarting(observedAtMS)
 	default:
 		s.UpdatedAtMS = observedAtMS
 	}
