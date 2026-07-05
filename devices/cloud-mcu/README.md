@@ -12,14 +12,14 @@ txing-cloud-rig-lambda
 txing-cloud-mcu-lambda
 ```
 
-The cloud rig runtime Lambda is invoked once per minute by EventBridge while the
-cloud rig is `NBIRTH redcon=1`. It publishes the cloud rig Sparkplug node as
+The cloud rig runtime Lambda is invoked once per minute by an EventBridge
+Scheduler schedule while the cloud rig is `NBIRTH redcon=1`. It publishes the cloud rig Sparkplug node as
 REDCON `1`, discovers registered `cloud-mcu` devices, and sends one SQS batch
 per device with ten watch-link ticks at offsets `0, 6, ..., 54` seconds.
 
 The same Lambda is also invoked by Sparkplug `NCMD.redcon` on
 `spBv1.0/<town>/NCMD/<cloud-rig>`. `NCMD.redcon=4` disables the recurring
-EventBridge schedule and publishes `NBIRTH redcon=4`, leaving the rig
+EventBridge Scheduler schedule and publishes `NBIRTH redcon=4`, leaving the rig
 reachable/commandable without recurring Fleet Indexing, SQS tick batching,
 shadow updates, or Sparkplug tick publications. `NCMD.redcon=1` enables the
 schedule and runs the scheduler body once immediately so ticks resume without

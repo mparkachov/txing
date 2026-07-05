@@ -16,9 +16,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
-	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iot"
 	"github.com/aws/aws-sdk-go-v2/service/iotdataplane"
+	"github.com/aws/aws-sdk-go-v2/service/scheduler"
+	schedulertypes "github.com/aws/aws-sdk-go-v2/service/scheduler/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
@@ -131,17 +132,17 @@ type AWSClientAPI interface {
 }
 
 type AWSClient struct {
-	iot               *iot.Client
-	iotData           *iotdataplane.Client
-	sqs               *sqs.Client
-	ecs               *ecs.Client
-	events            *eventbridge.Client
-	tickQueueURL      string
-	cloudRigRuleName  string
-	ecsCluster        string
-	ecsTaskDefinition string
-	ecsSubnets        []string
-	ecsSecurityGroups []string
+	iot                  *iot.Client
+	iotData              *iotdataplane.Client
+	sqs                  *sqs.Client
+	ecs                  *ecs.Client
+	scheduler            *scheduler.Client
+	tickQueueURL         string
+	cloudRigScheduleName string
+	ecsCluster           string
+	ecsTaskDefinition    string
+	ecsSubnets           []string
+	ecsSecurityGroups    []string
 }
 
 func NewAWSClient(ctx context.Context) (*AWSClient, error) {
@@ -161,17 +162,17 @@ func NewAWSClient(ctx context.Context) (*AWSClient, error) {
 		options.BaseEndpoint = aws.String("https://" + strings.TrimSpace(*endpoint.EndpointAddress))
 	})
 	return &AWSClient{
-		iot:               iotClient,
-		iotData:           iotData,
-		sqs:               sqs.NewFromConfig(cfg),
-		ecs:               ecs.NewFromConfig(cfg),
-		events:            eventbridge.NewFromConfig(cfg),
-		tickQueueURL:      envNonempty("CLOUD_MCU_TICK_QUEUE_URL"),
-		cloudRigRuleName:  envNonempty("CLOUD_RIG_SCHEDULE_RULE_NAME"),
-		ecsCluster:        envNonempty("CLOUD_MCU_ECS_CLUSTER"),
-		ecsTaskDefinition: envNonempty("CLOUD_MCU_ECS_TASK_DEFINITION"),
-		ecsSubnets:        envCSV("CLOUD_MCU_ECS_SUBNETS"),
-		ecsSecurityGroups: envCSV("CLOUD_MCU_ECS_SECURITY_GROUPS"),
+		iot:                  iotClient,
+		iotData:              iotData,
+		sqs:                  sqs.NewFromConfig(cfg),
+		ecs:                  ecs.NewFromConfig(cfg),
+		scheduler:            scheduler.NewFromConfig(cfg),
+		tickQueueURL:         envNonempty("CLOUD_MCU_TICK_QUEUE_URL"),
+		cloudRigScheduleName: envNonempty("CLOUD_RIG_SCHEDULE_NAME"),
+		ecsCluster:           envNonempty("CLOUD_MCU_ECS_CLUSTER"),
+		ecsTaskDefinition:    envNonempty("CLOUD_MCU_ECS_TASK_DEFINITION"),
+		ecsSubnets:           envCSV("CLOUD_MCU_ECS_SUBNETS"),
+		ecsSecurityGroups:    envCSV("CLOUD_MCU_ECS_SECURITY_GROUPS"),
 	}, nil
 }
 
@@ -182,11 +183,11 @@ func (c *AWSClient) requiredTickQueueURL() (string, error) {
 	return c.tickQueueURL, nil
 }
 
-func (c *AWSClient) requiredCloudRigRuleName() (string, error) {
-	if c.cloudRigRuleName == "" {
-		return "", errors.New("CLOUD_RIG_SCHEDULE_RULE_NAME is required")
+func (c *AWSClient) requiredCloudRigScheduleName() (string, error) {
+	if c.cloudRigScheduleName == "" {
+		return "", errors.New("CLOUD_RIG_SCHEDULE_NAME is required")
 	}
-	return c.cloudRigRuleName, nil
+	return c.cloudRigScheduleName, nil
 }
 
 func (c *AWSClient) requiredECSCluster() (string, error) {
@@ -279,20 +280,42 @@ func (c *AWSClient) SendTickBatch(ctx context.Context, ticks []CloudMcuTick) err
 }
 
 func (c *AWSClient) EnableCloudRigSchedule(ctx context.Context) error {
-	ruleName, err := c.requiredCloudRigRuleName()
-	if err != nil {
-		return err
-	}
-	_, err = c.events.EnableRule(ctx, &eventbridge.EnableRuleInput{Name: aws.String(ruleName)})
-	return err
+	return c.setCloudRigScheduleState(ctx, schedulertypes.ScheduleStateEnabled)
 }
 
 func (c *AWSClient) DisableCloudRigSchedule(ctx context.Context) error {
-	ruleName, err := c.requiredCloudRigRuleName()
+	return c.setCloudRigScheduleState(ctx, schedulertypes.ScheduleStateDisabled)
+}
+
+// EventBridge Scheduler has no enable/disable API and UpdateSchedule replaces
+// every field of the schedule, so the current definition must be read back and
+// resubmitted with only the state changed.
+func (c *AWSClient) setCloudRigScheduleState(ctx context.Context, state schedulertypes.ScheduleState) error {
+	scheduleName, err := c.requiredCloudRigScheduleName()
 	if err != nil {
 		return err
 	}
-	_, err = c.events.DisableRule(ctx, &eventbridge.DisableRuleInput{Name: aws.String(ruleName)})
+	current, err := c.scheduler.GetSchedule(ctx, &scheduler.GetScheduleInput{Name: aws.String(scheduleName)})
+	if err != nil {
+		return err
+	}
+	if current.State == state {
+		return nil
+	}
+	_, err = c.scheduler.UpdateSchedule(ctx, &scheduler.UpdateScheduleInput{
+		Name:                       current.Name,
+		GroupName:                  current.GroupName,
+		Description:                current.Description,
+		ScheduleExpression:         current.ScheduleExpression,
+		ScheduleExpressionTimezone: current.ScheduleExpressionTimezone,
+		StartDate:                  current.StartDate,
+		EndDate:                    current.EndDate,
+		FlexibleTimeWindow:         current.FlexibleTimeWindow,
+		KmsKeyArn:                  current.KmsKeyArn,
+		Target:                     current.Target,
+		ActionAfterCompletion:      current.ActionAfterCompletion,
+		State:                      state,
+	})
 	return err
 }
 
