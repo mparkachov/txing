@@ -229,6 +229,21 @@ func TestRunSessionBirthsFromRetainedInventoryAndHandlesCommand(t *testing.T) {
 	}
 
 	cancel()
+	// Shutdown must publish an offline state (sparkplug=false) so the
+	// rig projects DDEATH immediately instead of waiting for the TTL.
+	offlineFrame := broker.waitForFrame(t, func(frame rigadapter.Frame) bool {
+		if frame.Topic != stateTopic {
+			return false
+		}
+		var offline rigadapter.CapabilityState
+		if err := json.Unmarshal(frame.Payload, &offline); err != nil {
+			return false
+		}
+		return !offline.Capabilities[SparkplugCapability]
+	})
+	if offlineFrame.Type != "publish-retained" {
+		t.Fatalf("offline state must be retained, got %s", offlineFrame.Type)
+	}
 	select {
 	case err := <-done:
 		if err != nil {

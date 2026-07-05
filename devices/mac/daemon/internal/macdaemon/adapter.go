@@ -152,6 +152,37 @@ func (a *Adapter) PublishState() error {
 	return a.Publisher.PublishRetained(topic, payload)
 }
 
+// PublishOfflineState publishes a retained all-false capability state so
+// the rig projects DDEATH immediately on daemon shutdown instead of
+// waiting for the capability state TTL. Mirrors the Thread adapter's
+// offline state shape (rig/internal/thread/protocol.go).
+func (a *Adapter) PublishOfflineState() error {
+	if !a.Present() {
+		return nil
+	}
+	state := rigadapter.CapabilityState{
+		SchemaVersion: rigadapter.SchemaVersion,
+		AdapterID:     AdapterID,
+		ThingName:     a.ThingName,
+		Capabilities: map[string]bool{
+			SparkplugCapability: false,
+			PowerCapability:     false,
+		},
+		Metrics:      map[string]rigadapter.MetricValue{},
+		ObservedAtMS: a.nowMS(),
+		Seq:          a.nextSeq(),
+	}
+	payload, err := state.Marshal()
+	if err != nil {
+		return err
+	}
+	topic, err := rigadapter.BuildCapabilityStateTopic(a.ThingName, AdapterID)
+	if err != nil {
+		return err
+	}
+	return a.Publisher.PublishRetained(topic, payload)
+}
+
 func (a *Adapter) PublishHeartbeat() error {
 	var activeThingName *string
 	if a.Present() {

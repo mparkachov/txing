@@ -275,6 +275,35 @@ func TestHandleCommandIgnoresOtherThings(t *testing.T) {
 	}
 }
 
+func TestPublishOfflineStateMarksSparkplugUnavailable(t *testing.T) {
+	adapter, publisher := newTestAdapter(t, 3)
+
+	if err := adapter.PublishOfflineState(); err != nil {
+		t.Fatalf("PublishOfflineState: %v", err)
+	}
+	if len(publisher.messages) != 0 {
+		t.Fatalf("offline state must not publish before inventory presence: %v", publisher.messages)
+	}
+
+	if _, _, err := adapter.ReconcileInventory(macInventory(macDevice("mac-ab12cd"))); err != nil {
+		t.Fatalf("ReconcileInventory: %v", err)
+	}
+	publisher.messages = nil
+	if err := adapter.PublishOfflineState(); err != nil {
+		t.Fatalf("PublishOfflineState: %v", err)
+	}
+	if len(publisher.messages) != 1 || !publisher.messages[0].Retained {
+		t.Fatalf("offline state must be one retained message: %v", publisher.messages)
+	}
+	state := decodeState(t, publisher.messages[0].Payload)
+	if state.Capabilities[SparkplugCapability] || state.Capabilities[PowerCapability] {
+		t.Fatalf("offline state must report all capabilities false: %+v", state.Capabilities)
+	}
+	if len(state.Metrics) != 0 {
+		t.Fatalf("offline state must carry no metrics: %+v", state.Metrics)
+	}
+}
+
 type orderRecorder struct {
 	events []string
 }

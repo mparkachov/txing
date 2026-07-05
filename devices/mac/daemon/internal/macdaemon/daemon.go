@@ -85,6 +85,9 @@ func runSession(ctx context.Context, cfg macconfig.Config, machine *Machine, act
 	for {
 		select {
 		case <-ctx.Done():
+			if err := adapter.PublishOfflineState(); err != nil {
+				logf("warning", fmt.Sprintf("offline state publish failed error=%q", err))
+			}
 			logf("info", "mac watch layer stopped")
 			return nil
 		case err := <-receiveErrors:
