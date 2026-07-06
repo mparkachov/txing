@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iot"
+	iottypes "github.com/aws/aws-sdk-go-v2/service/iot/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/mparkachov/txing/rig/internal/catalog"
 	"github.com/mparkachov/txing/rig/internal/protocol"
@@ -16,6 +20,10 @@ import (
 const (
 	ThingIndexName  = "AWS_Things"
 	TypeCatalogRoot = "/txing/town"
+	// TypeCatalogCacheTTL bounds how long SSM type catalog records are reused
+	// across inventory refreshes. Catalog changes are deploy-time events; a
+	// rig restart is the manual force-refresh.
+	TypeCatalogCacheTTL = time.Hour
 )
 
 type ThingRegistration struct {
@@ -31,41 +39,76 @@ type Inventory struct {
 	Devices []protocol.InventoryDevice
 }
 
+type IoTAPI interface {
+	SearchIndex(ctx context.Context, input *iot.SearchIndexInput, optFns ...func(*iot.Options)) (*iot.SearchIndexOutput, error)
+	DescribeThing(ctx context.Context, input *iot.DescribeThingInput, optFns ...func(*iot.Options)) (*iot.DescribeThingOutput, error)
+	DescribeEndpoint(ctx context.Context, input *iot.DescribeEndpointInput, optFns ...func(*iot.Options)) (*iot.DescribeEndpointOutput, error)
+}
+
+type SSMAPI interface {
+	GetParametersByPath(ctx context.Context, input *ssm.GetParametersByPathInput, optFns ...func(*ssm.Options)) (*ssm.GetParametersByPathOutput, error)
+}
+
 type Client struct {
-	IoT *iot.Client
-	SSM *ssm.Client
+	IoT IoTAPI
+	SSM SSMAPI
+	// Now is the cache clock; nil means time.Now.
+	Now func() time.Time
+
+	mu          sync.Mutex
+	rigType     string
+	typeCatalog map[string]typeCatalogEntry
+
+	searchIndexCalls   atomic.Uint64
+	describeThingCalls atomic.Uint64
+	ssmReadCalls       atomic.Uint64
+}
+
+// CallCounts reports cumulative AWS API calls since process start, for
+// counted idle-cost soaks.
+type CallCounts struct {
+	SearchIndex   uint64
+	DescribeThing uint64
+	SSMReads      uint64
+}
+
+func (c *Client) Counts() CallCounts {
+	return CallCounts{
+		SearchIndex:   c.searchIndexCalls.Load(),
+		DescribeThing: c.describeThingCalls.Load(),
+		SSMReads:      c.ssmReadCalls.Load(),
+	}
+}
+
+type typeCatalogEntry struct {
+	record   catalog.TypeCatalogDevice
+	loadedAt time.Time
 }
 
 func New(awsConfig aws.Config) *Client {
 	return &Client{IoT: iot.NewFromConfig(awsConfig), SSM: ssm.NewFromConfig(awsConfig)}
 }
 
+// LoadInventory performs one fleet-indexing SearchIndex query per call. The
+// rig's own thing type and the SSM type catalog are cached across calls so an
+// idle rig makes no recurring per-device registry calls or SSM reads.
 func (c *Client) LoadInventory(ctx context.Context, rigID string) (Inventory, error) {
-	rig, err := c.DescribeThing(ctx, rigID)
+	rigType, err := c.rigThingType(ctx, rigID)
 	if err != nil {
 		return Inventory{}, err
 	}
-	thingNames, err := c.ListRigThingNames(ctx, rigID)
+	registrations, err := c.searchRigRegistrations(ctx, rigID)
 	if err != nil {
 		return Inventory{}, err
 	}
-	typeCache := map[string]catalog.TypeCatalogDevice{}
 	var devices []protocol.InventoryDevice
-	for _, thingName := range thingNames {
-		registration, err := c.DescribeThing(ctx, thingName)
-		if err != nil {
-			continue
-		}
+	for _, registration := range registrations {
 		if !isManagedDeviceRegistration(registration, rigID) {
 			continue
 		}
-		typeRecord, ok := typeCache[registration.ThingType]
-		if !ok {
-			typeRecord, err = c.LoadDeviceType(ctx, rig.ThingType, registration.ThingType)
-			if err != nil {
-				continue
-			}
-			typeCache[registration.ThingType] = typeRecord
+		typeRecord, err := c.deviceTypeRecord(ctx, rigType, registration.ThingType)
+		if err != nil {
+			continue
 		}
 		if len(typeRecord.RedconRules) == 0 {
 			continue
@@ -77,7 +120,52 @@ func (c *Client) LoadInventory(ctx context.Context, rigID string) (Inventory, er
 		devices = append(devices, typeRecord.ToInventoryDeviceWithCapabilities(registration.ThingName, capabilities))
 	}
 	sort.Slice(devices, func(i, j int) bool { return devices[i].ThingName < devices[j].ThingName })
-	return Inventory{RigType: rig.ThingType, Devices: devices}, nil
+	return Inventory{RigType: rigType, Devices: devices}, nil
+}
+
+func (c *Client) rigThingType(ctx context.Context, rigID string) (string, error) {
+	c.mu.Lock()
+	rigType := c.rigType
+	c.mu.Unlock()
+	if rigType != "" {
+		return rigType, nil
+	}
+	rig, err := c.DescribeThing(ctx, rigID)
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	c.rigType = rig.ThingType
+	c.mu.Unlock()
+	return rig.ThingType, nil
+}
+
+func (c *Client) deviceTypeRecord(ctx context.Context, rigType string, deviceType string) (catalog.TypeCatalogDevice, error) {
+	now := c.currentTime()
+	c.mu.Lock()
+	entry, ok := c.typeCatalog[deviceType]
+	c.mu.Unlock()
+	if ok && now.Sub(entry.loadedAt) < TypeCatalogCacheTTL {
+		return entry.record, nil
+	}
+	record, err := c.LoadDeviceType(ctx, rigType, deviceType)
+	if err != nil {
+		return catalog.TypeCatalogDevice{}, err
+	}
+	c.mu.Lock()
+	if c.typeCatalog == nil {
+		c.typeCatalog = map[string]typeCatalogEntry{}
+	}
+	c.typeCatalog[deviceType] = typeCatalogEntry{record: record, loadedAt: now}
+	c.mu.Unlock()
+	return record, nil
+}
+
+func (c *Client) currentTime() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
 }
 
 func (c *Client) DescribeEndpoint(ctx context.Context) (string, error) {
@@ -91,11 +179,15 @@ func (c *Client) DescribeEndpoint(ctx context.Context) (string, error) {
 	return strings.TrimSpace(*response.EndpointAddress), nil
 }
 
-func (c *Client) ListRigThingNames(ctx context.Context, rigID string) ([]string, error) {
+// searchRigRegistrations builds device registrations from the fleet-indexing
+// documents directly; the index carries thing name, thing type, and
+// attributes, so no per-device DescribeThing is needed.
+func (c *Client) searchRigRegistrations(ctx context.Context, rigID string) ([]ThingRegistration, error) {
 	query := fmt.Sprintf("attributes.rigId:%s AND attributes.townId:*", rigID)
-	names := map[string]struct{}{}
+	registrations := map[string]ThingRegistration{}
 	var nextToken *string
 	for {
+		c.searchIndexCalls.Add(1)
 		response, err := c.IoT.SearchIndex(ctx, &iot.SearchIndexInput{
 			IndexName:   aws.String(ThingIndexName),
 			QueryString: aws.String(query),
@@ -106,24 +198,57 @@ func (c *Client) ListRigThingNames(ctx context.Context, rigID string) ([]string,
 			return nil, err
 		}
 		for _, thing := range response.Things {
-			if thing.ThingName != nil && strings.TrimSpace(*thing.ThingName) != "" {
-				names[strings.TrimSpace(*thing.ThingName)] = struct{}{}
+			registration, err := registrationFromDocument(thing)
+			if err != nil {
+				continue
 			}
+			registrations[registration.ThingName] = registration
 		}
 		nextToken = response.NextToken
 		if nextToken == nil {
 			break
 		}
 	}
-	result := make([]string, 0, len(names))
-	for name := range names {
-		result = append(result, name)
+	names := make([]string, 0, len(registrations))
+	for name := range registrations {
+		names = append(names, name)
 	}
-	sort.Strings(result)
+	sort.Strings(names)
+	result := make([]ThingRegistration, 0, len(names))
+	for _, name := range names {
+		result = append(result, registrations[name])
+	}
 	return result, nil
 }
 
+func registrationFromDocument(document iottypes.ThingDocument) (ThingRegistration, error) {
+	if document.ThingName == nil || strings.TrimSpace(*document.ThingName) == "" {
+		return ThingRegistration{}, fmt.Errorf("search index document is missing thingName")
+	}
+	thingName := strings.TrimSpace(*document.ThingName)
+	if document.ThingTypeName == nil || strings.TrimSpace(*document.ThingTypeName) == "" {
+		return ThingRegistration{}, fmt.Errorf("thing %s is missing thingTypeName", thingName)
+	}
+	attributes := document.Attributes
+	var capabilities []string
+	if raw, ok := attributes["capabilities"]; ok && strings.TrimSpace(raw) != "" {
+		parsed, err := catalog.ParseStringList(raw)
+		if err != nil {
+			return ThingRegistration{}, err
+		}
+		capabilities = parsed
+	}
+	return ThingRegistration{
+		ThingName:    thingName,
+		ThingType:    strings.TrimSpace(*document.ThingTypeName),
+		RigID:        normalizeAttribute(attributes["rigId"]),
+		TownID:       normalizeAttribute(attributes["townId"]),
+		Capabilities: capabilities,
+	}, nil
+}
+
 func (c *Client) DescribeThing(ctx context.Context, thingName string) (ThingRegistration, error) {
+	c.describeThingCalls.Add(1)
 	response, err := c.IoT.DescribeThing(ctx, &iot.DescribeThingInput{ThingName: aws.String(thingName)})
 	if err != nil {
 		return ThingRegistration{}, err
@@ -154,6 +279,7 @@ func (c *Client) LoadDeviceType(ctx context.Context, rigType string, deviceType 
 	var parameters [][2]string
 	var nextToken *string
 	for {
+		c.ssmReadCalls.Add(1)
 		response, err := c.SSM.GetParametersByPath(ctx, &ssm.GetParametersByPathInput{
 			Path:           aws.String(path),
 			Recursive:      aws.Bool(true),

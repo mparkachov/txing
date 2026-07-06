@@ -75,7 +75,7 @@ func Load(configDirOverride string) (Config, error) {
 		CloudWatchLogLevel:      firstNonEmpty(lookup("TXING_CLOUDWATCH_LOG_LEVEL"), "info"),
 		CloudWatchRetentionDays: int32Env(lookup("TXING_CLOUDWATCH_LOG_RETENTION_DAYS"), 14),
 		IPCSocket:               firstNonEmpty(lookup("TXING_RIG_IPC_SOCKET"), defaultIPCSocket()),
-		InventoryInterval:       secondsEnv(lookup("TXING_INVENTORY_INTERVAL_SECONDS"), 30*time.Second),
+		InventoryInterval:       secondsEnv(lookup("TXING_INVENTORY_INTERVAL_SECONDS"), 300*time.Second),
 		CommandDeadline:         millisEnv(lookup("TXING_COMMAND_DEADLINE_MS"), 60*time.Second),
 		PresenceTimeout:         millisEnv(lookup("TXING_BLE_PRESENCE_TIMEOUT_MS"), 20*time.Second),
 		ReconnectDelay:          millisEnv(lookup("TXING_BLE_RECONNECT_DELAY_MS"), 2*time.Second),

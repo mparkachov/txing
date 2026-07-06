@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -39,14 +40,16 @@ const (
 type runtimeState struct {
 	cfg                     rigconfig.Config
 	logger                  *awsx.CloudWatchLogger
-	broker                  *ipc.Broker
+	broker                  ipcBroker
 	ipcClient               *ipc.Client
-	registry                *registry.Client
+	registry                inventoryLoader
 	nodeMQTT                nodeMQTTClient
 	devices                 map[string]*managedDevice
 	deviceMu                sync.RWMutex
 	boardStateMu            sync.Mutex
 	boardStateSubscriptions map[string]struct{}
+	inventoryMu             sync.Mutex
+	lastInventory           *registry.Inventory
 	inventorySeq            uint64
 	nodeSeq                 uint64
 	commandSeq              uint64
@@ -57,6 +60,14 @@ type managedDevice struct {
 	state *manager.DeviceRuntimeState
 	mqtt  managedMQTTClient
 	seq   uint64
+}
+
+type inventoryLoader interface {
+	LoadInventory(ctx context.Context, rigID string) (registry.Inventory, error)
+}
+
+type ipcBroker interface {
+	Publish(topic string, payload []byte, retain bool)
 }
 
 type nodeMQTTClient interface {
@@ -317,14 +328,24 @@ func (s *runtimeState) refreshInventory(ctx context.Context) error {
 			s.clearBoardStateSubscription(thingName)
 		}
 	}
+	s.inventoryMu.Lock()
+	unchanged := s.lastInventory != nil && reflect.DeepEqual(*s.lastInventory, loaded)
+	if unchanged {
+		s.inventoryMu.Unlock()
+		s.debugPrint(ctx, fmt.Sprintf("inventory refresh unchanged rigType=%s devices=%d%s", loaded.RigType, len(loaded.Devices), s.registryCallCounts()))
+		return nil
+	}
 	inventory := protocol.NewInventory(managerID, loaded.Devices, s.inventorySeq, uint64(time.Now().UnixMilli()))
 	s.inventorySeq++
 	payload, err := inventory.Marshal()
 	if err != nil {
+		s.inventoryMu.Unlock()
 		return err
 	}
 	s.broker.Publish(protocol.InventoryTopic, payload, true)
-	s.logger.Print(ctx, "info", fmt.Sprintf("inventory refreshed rigType=%s devices=%d", loaded.RigType, len(loaded.Devices)))
+	s.lastInventory = &loaded
+	s.inventoryMu.Unlock()
+	s.infoPrint(ctx, fmt.Sprintf("inventory refreshed rigType=%s devices=%d", loaded.RigType, len(loaded.Devices)))
 	return nil
 }
 
@@ -771,6 +792,24 @@ func (s *runtimeState) infoPrint(ctx context.Context, message string) {
 		return
 	}
 	s.logger.Print(ctx, "info", message)
+}
+
+func (s *runtimeState) debugPrint(ctx context.Context, message string) {
+	if !s.cfg.Debug || s.logger == nil {
+		return
+	}
+	s.logger.Print(ctx, "debug", message)
+}
+
+// registryCallCounts renders cumulative AWS registry call counters for
+// counted idle-cost soaks; empty when the loader does not expose counts.
+func (s *runtimeState) registryCallCounts() string {
+	counter, ok := s.registry.(interface{ Counts() registry.CallCounts })
+	if !ok {
+		return ""
+	}
+	counts := counter.Counts()
+	return fmt.Sprintf(" awsCalls searchIndex=%d describeThing=%d ssmReads=%d", counts.SearchIndex, counts.DescribeThing, counts.SSMReads)
 }
 
 func parseSparkplugDCMDTopic(groupID, edgeNodeID, topic string) (string, bool) {

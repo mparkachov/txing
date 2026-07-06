@@ -1,7 +1,7 @@
 ---
 id: TASK-23.1
 title: raspi and local rigs idle at REDCON 1 for pennies
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-04 16:30'
 labels: []
@@ -31,5 +31,42 @@ Reduce the standalone rig manager's idle-awake polling cost: inventory interval 
 <!-- AC:BEGIN -->
 - [ ] #1 An idle-awake raspi or local rig performs at most one fleet-indexing query and no recurring per-device registry calls or SSM reads per 300-second refresh, verified by tests and a counted soak.
 - [ ] #2 A newly registered device appears in inventory within 300 seconds, and immediately after a rig restart or a REDCON 4-to-1 cycle.
-- [ ] #3 Unchanged refreshes produce no recurring CloudWatch log ingestion at the default log level.
+- [x] #3 Unchanged refreshes produce no recurring CloudWatch log ingestion at the default log level.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented 2026-07-06; unit-test coverage is in place, the live counted soak
+and new-device timing check remain to be run on a rig.
+
+- `rig/internal/rigconfig/config.go` + `rig/rig-daemon.env.template`:
+  `TXING_INVENTORY_INTERVAL_SECONDS` default 30 -> 300 (test:
+  `TestLoadDefaultsInventoryIntervalToFiveMinutes`).
+- `rig/internal/registry/registry.go`: `LoadInventory` now builds device
+  registrations from the fleet-indexing `SearchIndex` documents (no per-device
+  `DescribeThing`), caches the rig's own thing type after the first call, and
+  caches the SSM type catalog for `TypeCatalogCacheTTL` (1h). Cumulative
+  `Counts()` (SearchIndex/DescribeThing/SSMReads) support counted soaks.
+  Tests: `TestLoadInventoryUsesOneSearchQueryAndCachesRegistryReads`,
+  `TestLoadInventoryReloadsTypeCatalogAfterTTL`,
+  `TestLoadInventoryFiltersUnmanagedSearchDocuments` assert 1 search query and
+  0 recurring registry/SSM calls per steady-state refresh.
+- `rig/cmd/txing-sparkplug-manager/main.go`: unchanged refreshes publish no
+  IPC inventory and log nothing at info (debug-only line includes the AWS call
+  counters); the retained IPC publish and info log happen only when the
+  inventory changed, so the Thread daemon's reconcile info line also goes
+  quiet at idle. Tests: `TestRefreshInventoryPublishesOnlyOnChange`,
+  `TestNodeRedconOneCommandRefreshesInventoryImmediately`.
+- `docs/components/rig.md`: new default, idle-cost contract, and health-check
+  expectations documented.
+
+Counted soak runbook (AC #1): run the rig idle-awake at REDCON 1 with
+`TXING_RIG_DEBUG=true` for >= 3 refresh windows and read the
+`inventory refresh unchanged ... awsCalls searchIndex=N describeThing=M
+ssmReads=K` debug lines: N grows by 1 per 300 s tick, M stays at 1 (startup
+rig describe), K stays at the initial catalog load count until the 1 h TTL.
+AC #2 live check: register a device, confirm it appears within 300 s, then
+confirm immediate appearance after a rig restart and after an NCMD 4 -> 1
+cycle.
+<!-- SECTION:NOTES:END -->

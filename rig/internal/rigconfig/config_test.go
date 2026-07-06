@@ -20,6 +20,19 @@ func TestLoadDefaultsThreadCoAPTimeoutForSleepyEndDevices(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsInventoryIntervalToFiveMinutes(t *testing.T) {
+	t.Setenv("TXING_INVENTORY_INTERVAL_SECONDS", "")
+	configDir := writeTestConfigDir(t)
+
+	cfg, err := Load(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.InventoryInterval != 300*time.Second {
+		t.Fatalf("InventoryInterval = %s, want 300s", cfg.InventoryInterval)
+	}
+}
+
 func writeTestConfigDir(t *testing.T) string {
 	t.Helper()
 	configDir := t.TempDir()

@@ -41,6 +41,16 @@ rig host. It uses the rig certificate and IoT role alias to:
 - forward BLE-owned named-shadow updates from IPC to AWS IoT MQTT
 - write CloudWatch logs to `txing/<town>/<rig>`
 
+Inventory refreshes are cost-aware so an idle-awake rig stays cheap at
+REDCON 1. Each refresh performs one fleet-indexing `SearchIndex` query and
+builds device registrations from the returned documents; there are no
+per-device `DescribeThing` calls. The rig's own thing type is read once at
+startup and the SSM type catalog is cached for one hour. The default refresh
+interval is 300 seconds, so a newly registered device appears within 5
+minutes; a rig restart or an `NCMD redcon=4 -> 1` cycle refreshes immediately
+and is the manual force-refresh. Unchanged refreshes publish nothing over IPC
+and log nothing at the default (info) log level.
+
 `txing-ble-connectivity` and `txing-thread-connectivity` have no direct AWS MQTT
 dependency. They consume rig inventory over IPC and publish:
 
@@ -114,7 +124,7 @@ from the loaded config directory.
 Important defaults:
 
 - `TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock`
-- `TXING_INVENTORY_INTERVAL_SECONDS=30`
+- `TXING_INVENTORY_INTERVAL_SECONDS=300`
 - `TXING_BLE_RECONNECT_DELAY_MS=2000`
 - `TXING_BLE_CONNECT_TIMEOUT_MS=8000`
 - `TXING_BLE_COMMAND_TIMEOUT_MS=8000`
@@ -356,10 +366,12 @@ test -S /run/txing-rig/rig-ipc.sock
 
 Expected behavior:
 
-- manager logs show inventory refreshes and Sparkplug MQTT connection
-- Thread logs show inventory reconciliation and `_txing-coap._udp` discovery
-  attempts once an external OTBR is available
-- BLE logs show inventory reconciliation and scanner activity
+- manager logs show the Sparkplug MQTT connection and an inventory refresh
+  line only when the inventory actually changed (first load, device added or
+  removed); unchanged 300 s refreshes are silent at the info level
+- Thread logs show inventory reconciliation on inventory changes and
+  `_txing-coap._udp` discovery attempts once an external OTBR is available
+- BLE logs show inventory reconciliation (debug level) and scanner activity
 - CloudWatch receives logs under `txing/<town>/<rig>`
 - `txing-sparkplug-manager` subscribes to `spBv1.0/<town>/NCMD/<rig>` for rig
   REDCON control
