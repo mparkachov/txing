@@ -4,6 +4,7 @@ title: rig daemons are enabled from daemon.env
 status: To Do
 assignee: []
 created_date: '2026-07-06 07:19'
+updated_date: '2026-07-06 07:35'
 labels: []
 milestone: m-2
 dependencies: []

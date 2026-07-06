@@ -1,9 +1,10 @@
 ---
 id: TASK-23.1
 title: raspi and local rigs idle at REDCON 1 for pennies
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-04 16:30'
+updated_date: '2026-07-06 07:51'
 labels: []
 milestone: m-2
 dependencies: []
@@ -29,7 +30,7 @@ Reduce the standalone rig manager's idle-awake polling cost: inventory interval 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An idle-awake raspi or local rig performs at most one fleet-indexing query and no recurring per-device registry calls or SSM reads per 300-second refresh, verified by tests and a counted soak.
+- [x] #1 An idle-awake raspi or local rig performs at most one fleet-indexing query and no recurring per-device registry calls or SSM reads per 300-second refresh, verified by tests and a counted soak.
 - [ ] #2 A newly registered device appears in inventory within 300 seconds, and immediately after a rig restart or a REDCON 4-to-1 cycle.
 - [x] #3 Unchanged refreshes produce no recurring CloudWatch log ingestion at the default log level.
 <!-- AC:END -->
@@ -69,4 +70,18 @@ rig describe), K stays at the initial catalog load count until the 1 h TTL.
 AC #2 live check: register a device, confirm it appears within 300 s, then
 confirm immediate appearance after a rig restart and after an NCMD 4 -> 1
 cycle.
+
+Live startup evidence from attached 2026-07-06 raspi journal: updated rig services start as version 0.15.5 with debug output enabled. txing-sparkplug-manager logs version for rig=raspi-6q6abe/town-jhgjjd, connects Sparkplug MQTT at 07:32:09Z, and publishes the initial inventory at 07:32:10Z with rigType=raspi devices=4. txing-ble-connectivity then reconciles devices=3 and publishes BLE capability-state debug samples. No sparkplug-manager warning/error appears in the captured window. This is useful startup/immediate-refresh evidence, but it is not the counted idle soak for AC #1: the capture ends before the first 300-second unchanged refresh and contains no 'inventory refresh unchanged ... awsCalls searchIndex=N describeThing=M ssmReads=K' line.
+
+AC #2 live validation is explicitly not required for this TASK-23.1 verification pass per user direction on 2026-07-06. Do not block the current AC #1 counted-soak confirmation on registering a new device or running a live REDCON 4 -> 1 cycle; those can be revisited separately if needed.
+
+AC #1 counted-soak evidence from 2026-07-06 raspi debug journal: unchanged refresh counters were searchIndex=2/3/4/5, describeThing=1 throughout, ssmReads=13 throughout, devices=4 throughout. User moved REDCON 1 -> 4 -> 1 around minute 41; the 07:41:55Z unchanged refresh added exactly one SearchIndex call with no additional DescribeThing or SSM reads, then the scheduled 07:42:10Z and 07:47:10Z refreshes also each added exactly one SearchIndex call. This confirms no recurring per-device registry calls or SSM reads during the counted soak window.
+
+Closure decision: AC #2 live validation will not be tested for TASK-23.1 per user direction on 2026-07-06. The task is closed with AC #2 intentionally unverified; startup and REDCON 4 -> 1 immediate-refresh behavior remain covered by unit tests and the live counted soak included a REDCON 1 -> 4 -> 1 transition, but no newly registered device timing test was run.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+TASK-23.1 reduced raspi/local rig idle inventory cost: default inventory interval is 300 seconds, inventory records are built from fleet-indexing SearchIndex documents without per-device DescribeThing, rig thing type and SSM catalog reads are cached, and unchanged refreshes do not publish IPC inventory or log at info level. Validation: focused Go tests, full rig test suite, race tests for registry/manager paths, and a live raspi counted soak. Soak evidence showed searchIndex=2/3/4/5 while describeThing stayed 1 and ssmReads stayed 13, including across a live REDCON 1 -> 4 -> 1 transition. AC #2 new-device timing was intentionally not live-tested by user decision for this closure.
+<!-- SECTION:FINAL_SUMMARY:END -->
