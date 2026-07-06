@@ -96,7 +96,13 @@ just mac::camera-probe    # foreground capture-only run; grants the camera TCC p
 `devices/unit/board/kvs_master/build-macos/txing-unit-kvs-master` with the
 AVFoundation + VideoToolbox capturer (Annex-B H.264, SPS/PPS on keyframes).
 It needs the Homebrew formulas `openssl@3 libwebsockets srtp libusrsctp
-log4cplus protobuf grpc`; the recipe lists anything missing. Run
+log4cplus protobuf grpc`; the recipe lists anything missing. TLS for the
+KVS signaling client is anchored to the same Starfield Services Root G2
+certificate the Linux lane uses, extracted from the macOS system root
+store into the build directory; if extraction fails the recipe falls back
+to the `/etc/ssl/cert.pem` bundle (which works but logs a harmless
+`d2i_X509` parse error at startup), and
+`TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH` overrides the anchor entirely. Run
 `camera-probe` once from a foreground terminal before any detached start:
 macOS attributes camera permission to the terminal application, and a
 detached worker whose prompt cannot be shown is denied silently. The probe

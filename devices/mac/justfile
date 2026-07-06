@@ -10,7 +10,6 @@ bin_dir := daemon_dir + "/target/local"
 kvs_master_dir := project_root + "/devices/unit/board/kvs_master"
 kvs_build_dir := kvs_master_dir + "/build-macos"
 built_kvs_master := kvs_build_dir + "/txing-unit-kvs-master"
-kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/cert.pem")
 run_dir := env_var_or_default("TXING_MAC_RUN_DIR", "/tmp/txing-mac")
 rig_run_dir := env_var_or_default("TXING_RIG_RUN_DIR", "/tmp/txing-rig")
 default_rig_ipc_socket := rig_run_dir + "/rig-ipc.sock"
@@ -122,6 +121,21 @@ kvs-build:
       echo "Install them with: brew install$missing" >&2
       exit 1
     fi
+    ca_cert_path="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-}"
+    if [ -z "$ca_cert_path" ]; then
+      # Anchor TLS to the same Starfield root the Linux lane uses: a
+      # single-certificate PEM avoids libwebsockets' failed DER parse of
+      # the multi-certificate /etc/ssl/cert.pem bundle at worker startup.
+      mkdir -p "{{kvs_build_dir}}"
+      ca_cert_path="{{kvs_build_dir}}/starfield-services-root-g2.pem"
+      if ! security find-certificate -c "Starfield Services Root Certificate Authority - G2" -p \
+          /System/Library/Keychains/SystemRootCertificates.keychain >"$ca_cert_path" 2>/dev/null \
+          || [ ! -s "$ca_cert_path" ]; then
+        rm -f "$ca_cert_path"
+        echo "Starfield root extraction failed; falling back to the system CA bundle." >&2
+        ca_cert_path=/etc/ssl/cert.pem
+      fi
+    fi
     cmake \
       -S "{{kvs_master_dir}}" \
       -B "{{kvs_build_dir}}" \
@@ -129,7 +143,7 @@ kvs-build:
       -DBUILD_TESTING=OFF \
       -DTXING_KVS_REAL_SDK=ON \
       -DTXING_KVS_GRPC_BRIDGE=ON \
-      -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{kvs_system_ca_cert_path}}"
+      -DTXING_KVS_SYSTEM_CA_CERT_PATH="$ca_cert_path"
     cmake --build "{{kvs_build_dir}}" --config Release
     test -x "{{built_kvs_master}}"
     echo "KVS worker built: {{built_kvs_master}}"

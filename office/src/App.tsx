@@ -38,6 +38,7 @@ import {
   type AppNotificationInput,
   type AppNotificationLogEntry,
 } from './app-notifications'
+import { shouldSuppressBoardVideoRuntimeError } from './device-adapter'
 import { getDeviceWebAdapter } from './device-registry'
 import {
   describeThingMetadata,
@@ -2177,13 +2178,12 @@ function App({ initialAuthError = '' }: AppProps) {
           videoChannelName: currentDeviceAdapter.buildVideoChannelName(selectedDeviceRoute.device),
           debugEnabled: isDebugEnabled,
           onRuntimeError: (message: string) => {
-            // A dead RTC transport reported after the device already left
-            // its video-capable posture is the trailing edge of an
-            // expected teardown (the ICE timeout races the clean data
-            // channel close), not a viewer failure worth a notification.
             if (
-              reportedRedcon !== null &&
-              !currentDeviceAdapter.canUseBoardVideo(reportedRedcon)
+              shouldSuppressBoardVideoRuntimeError({
+                canUseBoardVideo: currentDeviceAdapter.canUseBoardVideo,
+                pendingTargetRedcon,
+                reportedRedcon,
+              })
             ) {
               return
             }

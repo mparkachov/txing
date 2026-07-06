@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-05 15:44'
-updated_date: '2026-07-05 20:23'
+updated_date: '2026-07-06 04:39'
 labels: []
 dependencies: []
 references:
@@ -36,6 +36,10 @@ Drill round 1 found a daemon-side bug the office change exposed: commanding 2 fr
 Drill round 2: commanded 1->2 worked (label shown, REDCON dropped to 2 after the supervisor fix) but a 'Board RTC connection disconnected' feed entry appeared ~10s after the command: closure-shape classification alone is racy, because a SIGTERMed worker stops media before its SCTP close reliably reaches the browser, so the ICE timeout ('disconnected', classified failure) can win the race against the clean channel close ('ended'). Second fix, state-aware: the office video route's onRuntimeError now consults the live shadow-reported REDCON through the adapter's canUseBoardVideo gate and drops the feed entry when the device has already left its video-capable posture (the panel still shows the non-streaming state); closures while the device still reports REDCON 1 keep surfacing, which is AC 2's case. reportedRedcon==null (shadow not yet loaded) never suppresses. tsc clean, 169/169 office tests pass. AC2 drill needs a closure while the device still reports ready: freeze the worker with SIGSTOP (daemon keeps seeing it alive) rather than kill -9 (which degrades REDCON within seconds and correctly quiets the browser-side entry).
 
 User confirmed all functionality after the final drill round: the commanded 1->2 transition produces no notification feed entry (either the clean 'ended' close or the state-suppressed trailing ICE disconnect), reported REDCON drops to 2, and a transport failure while the device still reports REDCON 1 (worker frozen with SIGSTOP) still surfaces the feed error; the subsequent kill -9 recovery was caught by supervision (daemon log 20:21:41Z, restart within 1s) with video recovering automatically. Daemon-side companion fixes shipped along the way: supervision emits the stopped video event itself once the worker is confirmed gone (worker.go), covering SIGKILL-after-grace teardowns.
+
+User found a residual case after closing: commanding REDCON 4 from 1 produced 'Board RTC connection disconnected' 12s after the command (2026-07-06 04:31Z). The reported-state gate lost the race from the other side - a command out of REDCON 1 blocks in the daemon behind the worker teardown (SIGTERM grace + SIGKILL, up to ~13s) before the new capability state even publishes, so the browser's ICE timeout can fire while the shadow still reports REDCON 1. Fix: the suppression now also consults office's own in-flight command - shouldSuppressBoardVideoRuntimeError (device-adapter.ts, unit-tested) drops the feed entry when pendingTargetRedcon targets a non-video level (office commanded the teardown itself, mirroring the shouldSuppressRobotStateTeardownError precedent) or when the reported REDCON has already left the video-capable posture; unknown shadow state and commands into video never suppress. tsc clean, 170/170 office tests. Re-validation of the 1->4 path pending (browser refresh required).
+
+User confirmed the commanded 1->4 path live: feed stays clean with the pending-command gate in place. All expected-teardown shapes are now quiet (clean channel close, ICE timeout after convergence, ICE timeout during a blocked out-of-video command) while failures with the device still offering video keep surfacing.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -6,6 +6,7 @@ import {
   mapSignalingEndpoints,
   reduceViewerUiState,
 } from '../src/video-session'
+import { shouldSuppressBoardVideoRuntimeError } from '../src/device-adapter'
 import {
   buildKinesisVideoClientConfig,
   buildKinesisVideoSignalingClientConfig,
@@ -96,6 +97,51 @@ describe('video session helpers', () => {
 
     expect(ended.status).toBe('ended')
     expect(ended.error).toBe('')
+  })
+
+  test('suppresses board video runtime errors only for expected teardowns', () => {
+    const videoOnlyAtRedconOne = (reportedRedcon: number | null): boolean => reportedRedcon === 1
+
+    // Commanded out of video: suppressed even before the shadow converges.
+    expect(
+      shouldSuppressBoardVideoRuntimeError({
+        canUseBoardVideo: videoOnlyAtRedconOne,
+        pendingTargetRedcon: 4,
+        reportedRedcon: 1,
+      }),
+    ).toBe(true)
+    // Already converged out of video without an in-flight command.
+    expect(
+      shouldSuppressBoardVideoRuntimeError({
+        canUseBoardVideo: videoOnlyAtRedconOne,
+        pendingTargetRedcon: null,
+        reportedRedcon: 2,
+      }),
+    ).toBe(true)
+    // Device still offers video and nothing was commanded: real failure.
+    expect(
+      shouldSuppressBoardVideoRuntimeError({
+        canUseBoardVideo: videoOnlyAtRedconOne,
+        pendingTargetRedcon: null,
+        reportedRedcon: 1,
+      }),
+    ).toBe(false)
+    // Commanding INTO video must not mute failures.
+    expect(
+      shouldSuppressBoardVideoRuntimeError({
+        canUseBoardVideo: videoOnlyAtRedconOne,
+        pendingTargetRedcon: 1,
+        reportedRedcon: 1,
+      }),
+    ).toBe(false)
+    // Unknown shadow state never suppresses.
+    expect(
+      shouldSuppressBoardVideoRuntimeError({
+        canUseBoardVideo: videoOnlyAtRedconOne,
+        pendingTargetRedcon: null,
+        reportedRedcon: null,
+      }),
+    ).toBe(false)
   })
 
   test('deduplicates concurrent KVS signaling metadata loads and reuses the cached result', async () => {
