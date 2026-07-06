@@ -1,11 +1,11 @@
 ---
 id: TASK-20.4
 title: Video-capable devices support simultaneous viewers on the existing KVS path
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-06-17 07:12'
-updated_date: '2026-06-18 17:32'
+updated_date: '2026-07-06 11:10'
 labels: []
 milestone: multi-user device observation
 dependencies: []
@@ -42,7 +42,7 @@ ordinal: 43000
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Video-capable devices keep the existing single AWS KVS WebRTC channel and do not add a second media path.
-- [ ] #2 Two browser sessions can view the same live bot video feed during manual validation.
+- [x] #2 Two browser sessions can view the same live bot video feed during manual validation.
 - [x] #3 Any viewer-count status exposed by implementation is observability only and is not used for viewer admission control.
 - [x] #4 Documentation distinguishes multiple video viewers from multiple active MCP controllers.
 <!-- AC:END -->
@@ -124,4 +124,14 @@ Additional validation run after lease renewal/reacquire fix:
 - cd office && bun test test/mcp-active-control.test.ts test/shadow-api-runtime.test.ts test/app-source.test.ts
 - cd office && bun test
 - cd office && bun run build
+
+Manual validation completed on 2026-07-06:
+- Operator started two different browsers, Firefox and Chrome, connected to Office with two different users, drove the mac client to REDCON 1, and confirmed live video rendered in both browsers.
+- This satisfies AC #2 for two browser sessions viewing the same live bot video feed during manual validation.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+TASK-20.4 completed. The existing single AWS KVS video path supports simultaneous browser viewers, viewer-count state remains observability-only, documentation distinguishes video viewers from MCP active control, and manual validation on 2026-07-06 confirmed Firefox and Chrome sessions with different users both rendered live video at REDCON 1.
+<!-- SECTION:FINAL_SUMMARY:END -->
