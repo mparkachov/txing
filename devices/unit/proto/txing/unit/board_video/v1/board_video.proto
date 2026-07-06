@@ -52,6 +52,10 @@ message VideoState {
     STARTING = 1;
     READY = 2;
     ERROR = 3;
+    // Clean worker shutdown: video is no longer produced and no error
+    // occurred. Lets the daemon drop video readiness immediately even
+    // when it does not supervise the worker process.
+    STOPPED = 4;
   }
 
   State state = 1;

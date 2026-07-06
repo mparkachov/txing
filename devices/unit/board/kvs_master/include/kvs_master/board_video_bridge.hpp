@@ -16,6 +16,7 @@ enum class BridgeVideoState {
     kStarting,
     kReady,
     kError,
+    kStopped,
 };
 
 struct BridgeCredentials {

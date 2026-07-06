@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -26,11 +27,13 @@ type fakeAWS struct {
 	published       []publishedMessage
 	sentTickBatches [][]sentTick
 	shadows         map[string][]byte
+	shadowUpdates   map[string]int
 	tasks           map[string]EcsTaskState
 	taskDevices     map[string]string
 	searchErr       error
 	publishErr      error
 	shadowErr       error
+	describeCalls   int
 	runTaskCount    int
 	enableSchedule  int
 	disableSchedule int
@@ -57,9 +60,10 @@ func newFakeAWS() *fakeAWS {
 				},
 			},
 		},
-		shadows:     map[string][]byte{},
-		tasks:       map[string]EcsTaskState{},
-		taskDevices: map[string]string{},
+		shadows:       map[string][]byte{},
+		shadowUpdates: map[string]int{},
+		tasks:         map[string]EcsTaskState{},
+		taskDevices:   map[string]string{},
 	}
 }
 
@@ -80,6 +84,7 @@ func (f *fakeAWS) SearchCloudMcuDevices(context.Context, *string) (SearchPage, e
 }
 
 func (f *fakeAWS) DescribeThing(_ context.Context, thingName string) (ThingDescription, error) {
+	f.describeCalls++
 	description, ok := f.descriptions[thingName]
 	if !ok {
 		return ThingDescription{}, fmt.Errorf("missing thing %s", thingName)
@@ -123,7 +128,9 @@ func (f *fakeAWS) GetThingShadow(_ context.Context, thingName, shadowName string
 }
 
 func (f *fakeAWS) UpdateThingShadow(_ context.Context, thingName, shadowName string, payload []byte) error {
-	f.shadows[cloudShadowKey(thingName, shadowName)] = append([]byte(nil), payload...)
+	key := cloudShadowKey(thingName, shadowName)
+	f.shadowUpdates[key]++
+	f.shadows[key] = append([]byte(nil), payload...)
 	return nil
 }
 
@@ -192,17 +199,19 @@ func redconCommand(redcon uint8, seq uint64) []byte {
 	return payload
 }
 
-func TestSchedulerPublishesRigBirthAndOneTickBatchPerDevice(t *testing.T) {
+func TestSchedulerPublishesRigBirthAndUsesRedconAwareTickCadence(t *testing.T) {
 	aws := newFakeAWS()
 	aws.pages = append(aws.pages, SearchPage{Devices: []CloudMcuDevice{
 		{ThingName: "cloud-1", TownID: "town-1", RigID: "rig-1"},
 		{ThingName: "cloud-2", TownID: "town-1", RigID: "rig-1"},
 	}})
+	aws.descriptions["cloud-2"] = aws.descriptions["cloud-1"]
+	aws.shadows[cloudShadowKey("cloud-2", "power")] = mustJSON(map[string]any{"state": map[string]any{"reported": map[string]any{"desiredRedcon": 3}}})
 	result, err := NewRigScheduler(aws).HandleScheduleWithNow(context.Background(), 1714380000000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result["deviceCount"] != 2 || result["tickCount"] != 20 || result["batchCount"] != 2 {
+	if result["deviceCount"] != 2 || result["tickCount"] != 11 || result["batchCount"] != 2 {
 		t.Fatalf("bad schedule result: %#v", result)
 	}
 	if len(aws.published) != 1 || aws.published[0].topic != "spBv1.0/town-1/NBIRTH/rig-1" {
@@ -211,6 +220,7 @@ func TestSchedulerPublishesRigBirthAndOneTickBatchPerDevice(t *testing.T) {
 	if len(aws.sentTickBatches) != 2 {
 		t.Fatalf("batches = %d", len(aws.sentTickBatches))
 	}
+	wantDelays := [][]int32{SleepingTickOffsetsSeconds, TickOffsetsSeconds}
 	for index, thingName := range []string{"cloud-1", "cloud-2"} {
 		var delays []int32
 		for _, sent := range aws.sentTickBatches[index] {
@@ -219,8 +229,8 @@ func TestSchedulerPublishesRigBirthAndOneTickBatchPerDevice(t *testing.T) {
 				t.Fatalf("bad thing in batch: %#v", sent.tick)
 			}
 		}
-		if !reflect.DeepEqual(delays, TickOffsetsSeconds) {
-			t.Fatalf("delays = %#v", delays)
+		if !reflect.DeepEqual(delays, wantDelays[index]) {
+			t.Fatalf("delays for %s = %#v, want %#v", thingName, delays, wantDelays[index])
 		}
 	}
 }
@@ -303,7 +313,7 @@ func TestRigNCMDUnsupportedRedconPublishesFailureBirth(t *testing.T) {
 	}
 }
 
-func TestDCMDStoresDesiredRedconAndPendingCommand(t *testing.T) {
+func TestDCMDStoresDesiredRedconPendingCommandAndQueuesImmediateTick(t *testing.T) {
 	aws := newFakeAWS()
 	event := map[string]any{
 		"mqttTopic":     "spBv1.0/town-1/DCMD/rig-1/cloud-1",
@@ -316,6 +326,9 @@ func TestDCMDStoresDesiredRedconAndPendingCommand(t *testing.T) {
 	if result["status"] != "accepted" {
 		t.Fatalf("bad dcmd result: %#v", result)
 	}
+	if result["tickQueued"] != true {
+		t.Fatalf("dcmd did not queue immediate tick: %#v", result)
+	}
 	var shadow map[string]any
 	if err := json.Unmarshal(aws.shadows[cloudShadowKey("cloud-1", "power")], &shadow); err != nil {
 		t.Fatal(err)
@@ -323,6 +336,13 @@ func TestDCMDStoresDesiredRedconAndPendingCommand(t *testing.T) {
 	reported := shadow["state"].(map[string]any)["reported"].(map[string]any)
 	if reported["desiredRedcon"].(float64) != 3 || reported["pendingCommand"].(map[string]any)["seq"].(float64) != 7 {
 		t.Fatalf("bad power shadow: %#v", shadow)
+	}
+	if len(aws.sentTickBatches) != 1 || len(aws.sentTickBatches[0]) != 1 {
+		t.Fatalf("dcmd should enqueue one immediate tick: %#v", aws.sentTickBatches)
+	}
+	sent := aws.sentTickBatches[0][0]
+	if sent.delaySeconds != 0 || sent.tick.ThingName != "cloud-1" || sent.tick.TownID != "town-1" || sent.tick.RigID != "rig-1" {
+		t.Fatalf("bad immediate tick: %#v", sent)
 	}
 }
 
@@ -350,6 +370,15 @@ func TestFirstTickDefaultsToRedconFourBirth(t *testing.T) {
 	if len(aws.published) != 1 || aws.published[0].topic != "spBv1.0/town-1/DBIRTH/rig-1/cloud-1" || len(aws.published[0].payload) == 0 {
 		t.Fatalf("bad publish: %#v", aws.published)
 	}
+	metrics := decodePayloadMetrics(t, aws.published[0].payload)
+	requireMetric(t, metrics, "redcon", int32(RedconSleep))
+	requireMetric(t, metrics, "capability.sparkplug", true)
+	requireMetric(t, metrics, "capability.sqs", true)
+	requireMetric(t, metrics, "capability.power", false)
+	requireMetric(t, metrics, "capability.ecs", false)
+	if _, ok := metrics["redconCommandStatus"]; ok {
+		t.Fatalf("sleeping DBIRTH should not include command feedback: %#v", metrics)
+	}
 	var power map[string]any
 	if err := json.Unmarshal(aws.shadows[cloudShadowKey("cloud-1", "power")], &power); err != nil {
 		t.Fatal(err)
@@ -357,6 +386,106 @@ func TestFirstTickDefaultsToRedconFourBirth(t *testing.T) {
 	reported := power["state"].(map[string]any)["reported"].(map[string]any)
 	if reported["powered"] != false || reported["sparkplugBorn"] != true {
 		t.Fatalf("bad power shadow: %#v", power)
+	}
+	if aws.shadowUpdates[cloudShadowKey("cloud-1", "sqs")] != 0 {
+		t.Fatalf("first tick should not write sqs shadow, updates=%d", aws.shadowUpdates[cloudShadowKey("cloud-1", "sqs")])
+	}
+}
+
+func TestUnchangedSleepingTickSkipsShadowWritesAndSparkplugPublish(t *testing.T) {
+	aws := newFakeAWS()
+	aws.shadows[cloudShadowKey("cloud-1", "power")] = mustJSON(map[string]any{"state": map[string]any{"reported": map[string]any{
+		"desiredRedcon": 4,
+		"powered":       false,
+		"sparkplugBorn": true,
+	}}})
+
+	result, err := NewRuntime(aws).HandleTickWithNow(context.Background(), tick(), 1714380300000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["redcon"] != RedconSleep || result["published"] != false || result["messageType"] != "none" {
+		t.Fatalf("bad unchanged sleeping tick: %#v", result)
+	}
+	if len(aws.published) != 0 {
+		t.Fatalf("unchanged sleeping tick published %#v", aws.published)
+	}
+	if len(aws.shadowUpdates) != 0 {
+		t.Fatalf("unchanged sleeping tick wrote shadows: %#v", aws.shadowUpdates)
+	}
+}
+
+func TestSleepingDeviceIdleWindowsSendOneTickAndNoRecurringWritesOrPublishes(t *testing.T) {
+	aws := newFakeAWS()
+	device := CloudMcuDevice{ThingName: "cloud-1", TownID: "town-1", RigID: "rig-1"}
+	scheduler := NewRigScheduler(aws)
+	runtime := NewRuntime(aws)
+	ctx := context.Background()
+	startMs := int64(1714380000000)
+
+	for minute := 0; minute < 5; minute++ {
+		nowMs := startMs + int64(minute)*60000
+		aws.pages = []SearchPage{{Devices: []CloudMcuDevice{device}}}
+		beforeBatches := len(aws.sentTickBatches)
+		scheduleResult, err := scheduler.HandleScheduleWithNow(ctx, nowMs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scheduleResult["tickCount"] != 1 || scheduleResult["batchCount"] != 1 {
+			t.Fatalf("minute %d scheduled unexpected ticks: %#v", minute, scheduleResult)
+		}
+		if len(aws.sentTickBatches) != beforeBatches+1 {
+			t.Fatalf("minute %d did not enqueue one batch: %#v", minute, aws.sentTickBatches)
+		}
+		batch := aws.sentTickBatches[len(aws.sentTickBatches)-1]
+		if len(batch) != 1 || batch[0].delaySeconds != 0 {
+			t.Fatalf("minute %d sleeping device should get one immediate tick: %#v", minute, batch)
+		}
+
+		beforeDevicePublishes := deviceSparkplugPublishCount(aws.published)
+		beforePowerUpdates := aws.shadowUpdates[cloudShadowKey(device.ThingName, CapabilityPower)]
+		beforeSQSUpdates := aws.shadowUpdates[cloudShadowKey(device.ThingName, CapabilitySQS)]
+		result, err := runtime.HandleTickWithNow(ctx, batch[0].tick, nowMs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		devicePublishDelta := deviceSparkplugPublishCount(aws.published) - beforeDevicePublishes
+		powerUpdateDelta := aws.shadowUpdates[cloudShadowKey(device.ThingName, CapabilityPower)] - beforePowerUpdates
+		sqsUpdateDelta := aws.shadowUpdates[cloudShadowKey(device.ThingName, CapabilitySQS)] - beforeSQSUpdates
+		if minute == 0 {
+			if result["messageType"] != "DBIRTH" || devicePublishDelta != 1 || powerUpdateDelta != 1 {
+				t.Fatalf("initial sleeping tick should birth once and cache born state: result=%#v devicePublishDelta=%d powerUpdateDelta=%d", result, devicePublishDelta, powerUpdateDelta)
+			}
+			continue
+		}
+		if result["published"] != false || result["messageType"] != "none" {
+			t.Fatalf("minute %d stable sleeping tick should not publish: %#v", minute, result)
+		}
+		if devicePublishDelta != 0 || powerUpdateDelta != 0 || sqsUpdateDelta != 0 {
+			t.Fatalf("minute %d stable sleeping tick changed device state: devicePublishDelta=%d powerUpdateDelta=%d sqsUpdateDelta=%d", minute, devicePublishDelta, powerUpdateDelta, sqsUpdateDelta)
+		}
+	}
+	if deviceSparkplugPublishCount(aws.published) != 1 {
+		t.Fatalf("sleeping idle window should only publish initial device birth: %#v", aws.published)
+	}
+	if aws.shadowUpdates[cloudShadowKey(device.ThingName, CapabilitySQS)] != 0 {
+		t.Fatalf("sleeping idle window should not write sqs shadow: %#v", aws.shadowUpdates)
+	}
+}
+
+func TestUnchangedTickDoesNotDescribeThing(t *testing.T) {
+	aws := newFakeAWS()
+	aws.shadows[cloudShadowKey("cloud-1", "power")] = mustJSON(map[string]any{"state": map[string]any{"reported": map[string]any{
+		"desiredRedcon": 4,
+		"powered":       false,
+		"sparkplugBorn": true,
+	}}})
+
+	if _, err := NewRuntime(aws).HandleTickWithNow(context.Background(), tick(), 1714380300000); err != nil {
+		t.Fatal(err)
+	}
+	if aws.describeCalls != 0 {
+		t.Fatalf("tick describeThing calls = %d, want 0", aws.describeCalls)
 	}
 }
 
@@ -374,6 +503,22 @@ func TestRedconThreeTickStartsTaskAndCompletesCommand(t *testing.T) {
 	if result["redcon"] != RedconWakeup || aws.runTaskCount != 1 {
 		t.Fatalf("bad redcon 3 tick: result=%#v runs=%d", result, aws.runTaskCount)
 	}
+	if result["messageType"] != "DDATA" || result["published"] != true {
+		t.Fatalf("redcon 3 command convergence should publish DDATA: %#v", result)
+	}
+	if len(aws.published) != 1 || aws.published[0].topic != "spBv1.0/town-1/DDATA/rig-1/cloud-1" {
+		t.Fatalf("bad redcon 3 publication: %#v", aws.published)
+	}
+	metrics := decodePayloadMetrics(t, aws.published[0].payload)
+	requireMetric(t, metrics, "redcon", int32(RedconWakeup))
+	requireMetric(t, metrics, "capability.sparkplug", true)
+	requireMetric(t, metrics, "capability.sqs", true)
+	requireMetric(t, metrics, "capability.power", true)
+	requireMetric(t, metrics, "capability.ecs", false)
+	requireMetric(t, metrics, "redconCommandStatus", CommandSucceeded)
+	requireMetric(t, metrics, "redconCommandSeq", int32(8))
+	requireMetric(t, metrics, "redconCommandId", "dcmd-8")
+	requireMetric(t, metrics, "redconCommandTarget", int32(RedconWakeup))
 	var power map[string]any
 	_ = json.Unmarshal(aws.shadows[cloudShadowKey("cloud-1", "power")], &power)
 	reported := power["state"].(map[string]any)["reported"].(map[string]any)
@@ -397,6 +542,50 @@ func TestRedconThreeTickReusesExistingDeviceTaskWithoutShadowARN(t *testing.T) {
 	_ = json.Unmarshal(aws.shadows[cloudShadowKey("cloud-1", "power")], &power)
 	if power["state"].(map[string]any)["reported"].(map[string]any)["ecsTaskArn"] != "arn:aws:ecs:task/cloud-1-existing" {
 		t.Fatalf("bad power shadow: %#v", power)
+	}
+}
+
+func TestUnchangedRedconThreeTickKeepsECSReconciliationWithoutWrites(t *testing.T) {
+	aws := newFakeAWS()
+	addDeviceTask(aws, "cloud-1", "arn:aws:ecs:task/cloud-1-existing", "RUNNING")
+	aws.shadows[cloudShadowKey("cloud-1", "power")] = mustJSON(map[string]any{"state": map[string]any{"reported": map[string]any{
+		"desiredRedcon": 4,
+		"powered":       false,
+		"sparkplugBorn": true,
+	}}})
+	// Command acceptance remains a power shadow write; the next REDCON 3 tick
+	// must still reconcile ECS and publish command feedback.
+	event := map[string]any{
+		"mqttTopic":     "spBv1.0/town-1/DCMD/rig-1/cloud-1",
+		"payloadBase64": base64.StdEncoding.EncodeToString(redconCommand(RedconWakeup, 10)),
+	}
+	if _, err := NewRuntime(aws).HandleDCMDWithNow(context.Background(), event, 1714380000000); err != nil {
+		t.Fatal(err)
+	}
+	aws.shadowUpdates = map[string]int{}
+	aws.published = nil
+	result, err := NewRuntime(aws).HandleTickWithNow(context.Background(), tick(), 1714380006000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["redcon"] != RedconWakeup || result["published"] != true || len(aws.published) != 1 {
+		t.Fatalf("command convergence tick did not publish feedback: result=%#v published=%#v", result, aws.published)
+	}
+	aws.shadowUpdates = map[string]int{}
+	aws.published = nil
+
+	unchanged, err := NewRuntime(aws).HandleTickWithNow(context.Background(), tick(), 1714380012000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged["redcon"] != RedconWakeup || unchanged["published"] != false {
+		t.Fatalf("bad unchanged redcon 3 tick: %#v", unchanged)
+	}
+	if len(aws.published) != 0 {
+		t.Fatalf("unchanged redcon 3 tick published %#v", aws.published)
+	}
+	if len(aws.shadowUpdates) != 0 {
+		t.Fatalf("unchanged redcon 3 tick wrote shadows: %#v", aws.shadowUpdates)
 	}
 }
 
@@ -469,6 +658,126 @@ func mustJSON(value any) []byte {
 		panic(err)
 	}
 	return body
+}
+
+func decodePayloadMetrics(t *testing.T, payload []byte) map[string]any {
+	t.Helper()
+	metrics := map[string]any{}
+	offset := 0
+	for offset < len(payload) {
+		field, wire, next, err := readKey(payload, offset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		offset = next
+		if field == 2 && wire == 2 {
+			metricBytes, n, err := readLengthDelimited(payload, offset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			offset = n
+			name, value, ok, err := decodePayloadMetric(metricBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok {
+				metrics[name] = value
+			}
+			continue
+		}
+		n, err := skipField(payload, offset, wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		offset = n
+	}
+	return metrics
+}
+
+func decodePayloadMetric(data []byte) (string, any, bool, error) {
+	offset := 0
+	var name string
+	var value any
+	hasValue := false
+	for offset < len(data) {
+		field, wire, next, err := readKey(data, offset)
+		if err != nil {
+			return "", nil, false, err
+		}
+		offset = next
+		switch {
+		case field == 1 && wire == 2:
+			raw, n, err := readLengthDelimited(data, offset)
+			if err != nil {
+				return "", nil, false, err
+			}
+			name = string(raw)
+			offset = n
+		case field == 10 && wire == 0:
+			raw, n, err := readVarint(data, offset)
+			if err != nil {
+				return "", nil, false, err
+			}
+			value = int32(raw)
+			hasValue = true
+			offset = n
+		case field == 11 && wire == 0:
+			raw, n, err := readVarint(data, offset)
+			if err != nil {
+				return "", nil, false, err
+			}
+			value = raw
+			hasValue = true
+			offset = n
+		case field == 14 && wire == 0:
+			raw, n, err := readVarint(data, offset)
+			if err != nil {
+				return "", nil, false, err
+			}
+			value = raw != 0
+			hasValue = true
+			offset = n
+		case field == 15 && wire == 2:
+			raw, n, err := readLengthDelimited(data, offset)
+			if err != nil {
+				return "", nil, false, err
+			}
+			value = string(raw)
+			hasValue = true
+			offset = n
+		default:
+			n, err := skipField(data, offset, wire)
+			if err != nil {
+				return "", nil, false, err
+			}
+			offset = n
+		}
+	}
+	if name == "" || !hasValue {
+		return "", nil, false, nil
+	}
+	return name, value, true, nil
+}
+
+func requireMetric(t *testing.T, metrics map[string]any, name string, want any) {
+	t.Helper()
+	got, ok := metrics[name]
+	if !ok {
+		t.Fatalf("missing metric %s in %#v", name, metrics)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("metric %s = %#v, want %#v", name, got, want)
+	}
+}
+
+func deviceSparkplugPublishCount(published []publishedMessage) int {
+	count := 0
+	for _, message := range published {
+		if strings.Contains(message.topic, "/DBIRTH/") || strings.Contains(message.topic, "/DDATA/") || strings.Contains(message.topic, "/DDEATH/") {
+			count++
+		}
+	}
+	return count
 }
 
 func assertPublishedNodeRedcon(t *testing.T, published []publishedMessage, wantRedcon uint8, wantSeq uint64) {

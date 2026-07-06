@@ -316,6 +316,32 @@ Resources:
         searchableAttributes: name,townId
         hostServices: bluetooth.service
 
+  LocalTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
+    DependsOn:
+      - TownTypeCatalogV2
+    Properties:
+      ServiceToken: !Ref AwsCleanStackFunctionArn
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-local
+      ThingTypeName: local
+      ThingTypeDescription: txing local development rig type
+      SearchableAttributes:
+        - name
+        - townId
+      CatalogBasePath: /txing/town/local
+      CatalogParameters:
+        kind: rigType
+        schemaVersion: "1.0"
+        thingType: local
+        rigType: local
+        displayName: Local Rig
+        defaultName: dev
+        capabilities: sparkplug
+        redconCommandLevels: 1,4
+        requiredAttributes: name,shortId,townId
+        searchableAttributes: name,townId
+
   UnitTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     DependsOn:
@@ -489,6 +515,55 @@ Resources:
         shadows/power/default: aws/default-power-shadow.json
         shadows/power/defaultPayload: '{"state":{"reported":{}}}'
         web/adapter: web/power-si-adapter.tsx
+
+  MacTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
+    DependsOn:
+      - LocalTypeCatalogV2
+    Properties:
+      ServiceToken: !Ref AwsCleanStackFunctionArn
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-mac
+      ThingTypeName: mac
+      ThingTypeDescription: txing mac device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/local/mac
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: mac
+        deviceType: mac
+        rigType: local
+        displayName: Mac
+        defaultName: mac
+        capabilities: sparkplug,power,board,mcp,video
+        redconCommandLevels: 4,3,2,1
+        redconRules/4: sparkplug
+        redconRules/3: sparkplug,power
+        redconRules/2: sparkplug,power,board,mcp
+        redconRules/1: sparkplug,power,board,mcp,video
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"topic":{"namespace":"spBv1.0","groupId":"town","messageType":"DDEATH","edgeNodeId":"rig","deviceId":"mac-local"},"payload":{"metrics":{}}}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/board/schema: aws/board-shadow.schema.json
+        shadows/board/default: aws/default-board-shadow.json
+        shadows/board/defaultPayload: '{"state":{"reported":{"power":false,"wifi":{"online":false,"ipv4":null,"ipv6":null}}}}'
+        shadows/mcp/schema: aws/mcp-shadow.schema.json
+        shadows/mcp/default: aws/default-mcp-shadow.json
+        shadows/mcp/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"mcp","available":false,"updatedAtMs":0}}}}'
+        shadows/video/schema: aws/video-shadow.schema.json
+        shadows/video/default: aws/default-video-shadow.json
+        shadows/video/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"video","available":false,"ready":false,"status":"unavailable","viewerConnected":false,"lastError":null}}}}'
+        web/adapter: web/mac-adapter.tsx
+        resources/boardVideo/channelName: "{device_id}-board-video"
 
   CloudTypeCatalogV2:
     Type: Custom::TxingTypeCatalog

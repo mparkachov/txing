@@ -76,6 +76,8 @@ class TypeCatalogTests(unittest.TestCase):
                 "/txing/town/raspi/weather",
                 "/txing/town/raspi/power",
                 "/txing/town/raspi/power-si",
+                "/txing/town/local",
+                "/txing/town/local/mac",
                 "/txing/town/cloud",
                 "/txing/town/cloud/cloud-mcu",
             },
@@ -86,6 +88,9 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi/weather"]["defaultName"], "outside")
         self.assertEqual(records["/txing/town/raspi/power"]["defaultName"], "power")
         self.assertEqual(records["/txing/town/raspi/power-si"]["defaultName"], "power-si")
+        self.assertEqual(records["/txing/town/local"]["defaultName"], "dev")
+        self.assertEqual(records["/txing/town/local/mac"]["defaultName"], "mac")
+        self.assertEqual(records["/txing/town/local/mac"]["rigType"], "local")
         self.assertEqual(records["/txing/town/cloud/cloud-mcu"]["defaultName"], "cloud")
         self.assertEqual(records["/txing/town/raspi"]["thingType"], "raspi")
         self.assertEqual(records["/txing/town/cloud"]["thingType"], "cloud")
@@ -313,6 +318,13 @@ class TypeCatalogTests(unittest.TestCase):
                 "/txing/town/raspi/power-si",
                 "/txing/town/raspi/unit",
                 "/txing/town/raspi/weather",
+            ],
+        )
+        self.assertEqual(
+            [path for path, _record in catalog.list_records("/txing/town/local")],
+            [
+                "/txing/town/local",
+                "/txing/town/local/mac",
             ],
         )
 

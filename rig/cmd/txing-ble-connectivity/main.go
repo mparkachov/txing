@@ -57,11 +57,11 @@ func main() {
 	var configDir string
 	var dryRun bool
 	var showVersion bool
-	var noBLE bool
+	var noRadio bool
 	flag.StringVar(&configDir, "config-dir", "", "rig daemon config directory")
 	flag.BoolVar(&dryRun, "dry-run", false, "validate configuration and exit")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
-	flag.BoolVar(&noBLE, "no-ble", false, "disable BLE hardware access and publish offline state")
+	flag.BoolVar(&noRadio, "no-radio", false, "disable BLE radio access and publish offline state")
 	flag.Parse()
 
 	if showVersion {
@@ -73,11 +73,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 		os.Exit(2)
 	}
-	if noBLE {
-		cfg.NoBLE = true
+	if noRadio {
+		cfg.BLENoRadio = true
 	}
 	if dryRun {
-		fmt.Printf("txing-ble-connectivity version=%s rig=%s town=%s ipc=%s noBle=%t\n", version.Version, cfg.RigID, cfg.TownID, cfg.IPCSocket, cfg.NoBLE)
+		fmt.Printf("txing-ble-connectivity version=%s rig=%s town=%s ipc=%s noRadio=%t\n", version.Version, cfg.RigID, cfg.TownID, cfg.IPCSocket, cfg.BLENoRadio)
 		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -95,7 +95,7 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 	}
 	logger := awsx.NewCloudWatchLogger(cloudwatchlogs.NewFromConfig(awsConfig), cfg.CloudWatchLogGroup, "txing-ble-connectivity", cfg.CloudWatchRetentionDays)
 	logger.Ensure(ctx)
-	logger.Print(ctx, "info", fmt.Sprintf("version=%s rig=%s noBle=%t", version.Version, cfg.RigID, cfg.NoBLE))
+	logger.Print(ctx, "info", fmt.Sprintf("version=%s rig=%s noRadio=%t", version.Version, cfg.RigID, cfg.BLENoRadio))
 
 	client, err := ipc.Dial(ctx, cfg.IPCSocket)
 	if err != nil {
@@ -116,7 +116,7 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 		return err
 	}
 
-	if !cfg.NoBLE {
+	if !cfg.BLENoRadio {
 		if err := bluetooth.DefaultAdapter.Enable(); err != nil {
 			return err
 		}

@@ -35,6 +35,7 @@ struct RuntimeConfig {
 struct ParsedCli {
     bool show_help = false;
     bool show_version = false;
+    bool camera_probe = false;
     RuntimeConfig config;
 };
 

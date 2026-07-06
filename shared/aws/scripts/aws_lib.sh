@@ -214,7 +214,7 @@ txing_cert_write_rig_env() {
   chmod 600 "$env_file"
 }
 
-txing_cert_write_unit_env() {
+txing_cert_write_daemon_env() {
   output_dir="$1"
   env_template="$2"
   thing_id="$3"
@@ -225,7 +225,7 @@ txing_cert_write_unit_env() {
   cloudwatch_log_group="$8"
   env_file="$output_dir/daemon.env"
 
-  [ -r "$env_template" ] || { echo "Missing unit daemon env template: $env_template" >&2; return 1; }
+  [ -r "$env_template" ] || { echo "Missing device daemon env template: $env_template" >&2; return 1; }
   sed \
     -e "s|[{][{]TXING_THING_ID[}][}]|$thing_id|g" \
     -e "s|[{][{]AWS_REGION[}][}]|$TXING_AWS_REGION|g" \
@@ -356,13 +356,14 @@ txing_cert_generate_rig_bundle() {
     '{thingName: $thingName, thingType: $thingType, thingKind: $thingKind, bundleType: $bundleType, policyName: $policyName, certificateArn: $certificateArn, certificatePem: $certificatePem, publicKey: $publicKey, privateKey: $privateKey, certificateArnFile: $certificateArnFile, rootCaFile: $rootCaFile, envFile: $envFile, configTarball: $configTarball, iotDataEndpoint: $iotDataEndpoint, iotCredentialEndpoint: $iotCredentialEndpoint, iotRoleAlias: $iotRoleAlias, cloudWatchLogGroup: $cloudWatchLogGroup, daemonRoleName: $daemonRoleName, daemonRoleArn: $daemonRoleArn}'
 }
 
-txing_cert_generate_unit_bundle() {
+txing_cert_generate_device_daemon_bundle() {
   thing_id="$1"
   thing_type="$2"
   thing_kind="$3"
   output_dir="$4"
-  unit_env_template="$5"
+  daemon_env_template="$5"
   thing_json="$6"
+  bundle_type="$7"
   daemon_policy_name="$(stack_parameter DeviceDaemonIotPolicyName)"
   account_id="$(aws sts get-caller-identity --query Account --output text)"
   caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
@@ -405,13 +406,13 @@ txing_cert_generate_unit_bundle() {
   iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"
   iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
   cert_arn="$(txing_cert_create_iot_bundle "$thing_id" "$output_dir" "$daemon_policy_name")"
-  txing_cert_write_unit_env "$output_dir" "$unit_env_template" "$thing_id" "$iot_data_endpoint" "$iot_credential_endpoint" "$iot_role_alias" "$video_channel_name" "$cloudwatch_log_group"
+  txing_cert_write_daemon_env "$output_dir" "$daemon_env_template" "$thing_id" "$iot_data_endpoint" "$iot_credential_endpoint" "$iot_role_alias" "$video_channel_name" "$cloudwatch_log_group"
   txing_cert_write_runtime_tarball "$output_dir" "$tarball_path"
   jq -n \
     --arg thingName "$thing_id" \
     --arg thingType "$thing_type" \
     --arg thingKind "$thing_kind" \
-    --arg bundleType unit-daemon \
+    --arg bundleType "$bundle_type" \
     --arg policyName "$daemon_policy_name" \
     --arg certificateArn "$cert_arn" \
     --arg certificatePem "$output_dir/certificate.pem.crt" \
@@ -436,6 +437,7 @@ txing_generate_iot_certificate_bundle() {
   thing_id="$1"
   rig_env_template="$2"
   unit_env_template="$3"
+  mac_env_template="$4"
   txing_validate_iot_thing_id "$thing_id" "Use: just aws::cert <thing-id>"
   thing_json="$(aws iot describe-thing --thing-name "$thing_id" --output json)"
   thing_type="$(txing_json_string "$thing_json" '.thingTypeName')"
@@ -451,11 +453,14 @@ txing_generate_iot_certificate_bundle() {
   trap txing_cert_cleanup_temp_files EXIT
 
   case "$thing_kind:$thing_type" in
-    rigType:raspi)
+    rigType:raspi | rigType:local)
       txing_cert_generate_rig_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$base_policy_name" "$rig_env_template" "$thing_json"
       ;;
     deviceType:unit)
-      txing_cert_generate_unit_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$unit_env_template" "$thing_json"
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$unit_env_template" "$thing_json" unit-daemon
+      ;;
+    deviceType:mac)
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$mac_env_template" "$thing_json" mac-daemon
       ;;
     *)
       txing_cert_generate_generic_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$base_policy_name"

@@ -38,6 +38,7 @@ import {
   type AppNotificationInput,
   type AppNotificationLogEntry,
 } from './app-notifications'
+import { shouldSuppressBoardVideoRuntimeError } from './device-adapter'
 import { getDeviceWebAdapter } from './device-registry'
 import {
   describeThingMetadata,
@@ -2177,6 +2178,15 @@ function App({ initialAuthError = '' }: AppProps) {
           videoChannelName: currentDeviceAdapter.buildVideoChannelName(selectedDeviceRoute.device),
           debugEnabled: isDebugEnabled,
           onRuntimeError: (message: string) => {
+            if (
+              shouldSuppressBoardVideoRuntimeError({
+                canUseBoardVideo: currentDeviceAdapter.canUseBoardVideo,
+                pendingTargetRedcon,
+                reportedRedcon,
+              })
+            ) {
+              return
+            }
             enqueueRuntimeError(message, 'board-video-viewer')
           },
           resolveIdToken: resolveSessionIdToken,

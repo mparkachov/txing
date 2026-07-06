@@ -44,9 +44,12 @@ capabilities for each AWS IoT ThingType:
 - `town`: `sparkplug`
 - `raspi`: `sparkplug`
 - `cloud`: `sparkplug`
+- `local`: `sparkplug`
 - `unit`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
 - `cloud-mcu`: `sparkplug`, `sqs`, `power`, `ecs`
 - `weather`: `sparkplug`, `ble`, `power`, `weather`
 - `power`: `sparkplug`, `ble`, `power`
+- `power-si`: `sparkplug`, `thread`, `power`
+- `mac`: `sparkplug`, `power`, `board`, `mcp`, `video`
 
 There is no `device` named shadow in the current implementation.

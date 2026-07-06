@@ -17,7 +17,7 @@ import {
 } from './kvs-webrtc-browser'
 
 export type ViewerUiState = {
-  status: 'idle' | 'connecting' | 'streaming' | 'error'
+  status: 'idle' | 'connecting' | 'streaming' | 'ended' | 'error'
   error: string
 }
 
@@ -25,6 +25,7 @@ export type ViewerUiEvent =
   | { type: 'reset' }
   | { type: 'connecting' }
   | { type: 'streaming' }
+  | { type: 'ended'; message: string }
   | { type: 'error'; message: string }
 
 export type StartVideoViewerOptions = {
@@ -104,6 +105,8 @@ export const reduceViewerUiState = (
       return { status: 'connecting', error: '' }
     case 'streaming':
       return { status: 'streaming', error: '' }
+    case 'ended':
+      return { status: 'ended', error: '' }
     case 'error':
       return { status: 'error', error: event.message }
   }
@@ -426,7 +429,11 @@ const createSharedBoardRtcSession = async (
     }
   }
 
-  const closePeer = (notifyVideoError = false, errorMessage = 'Board RTC session closed'): void => {
+  const closePeer = (
+    notifyVideoError = false,
+    errorMessage = 'Board RTC session closed',
+    cause: 'failure' | 'ended' = 'failure',
+  ): void => {
     if (closed) {
       return
     }
@@ -443,11 +450,11 @@ const createSharedBoardRtcSession = async (
     peerConnection.close()
     if (notifyVideoError) {
       for (const consumer of videoConsumers) {
-        consumer.onUiEvent({ type: 'error', message: errorMessage })
+        consumer.onUiEvent({ type: cause === 'ended' ? 'ended' : 'error', message: errorMessage })
       }
     }
     videoConsumers.clear()
-    logDebug('shared RTC session closed', { clientId, errorMessage })
+    logDebug('shared RTC session closed', { clientId, errorMessage, cause })
   }
 
   const closeIfUnused = (): void => {
@@ -639,7 +646,10 @@ const createSharedBoardRtcSession = async (
     resolveMcpOpenOnce()
   })
   dataChannel.addEventListener('close', () => {
-    closePeer(true, 'MCP WebRTC data channel closed')
+    // A clean remote close is the expected shape of a commanded REDCON
+    // transition or a supervised worker stop, not a viewer failure;
+    // unclean transport loss surfaces via connectionstatechange instead.
+    closePeer(true, 'MCP WebRTC data channel closed', 'ended')
   })
   dataChannel.addEventListener('error', () => {
     closePeer(true, 'MCP WebRTC data channel error')

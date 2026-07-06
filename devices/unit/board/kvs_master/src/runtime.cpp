@@ -302,6 +302,84 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
         TryReportVideoState(bridge_client.get(), BridgeVideoState::kError, 0, *first_error);
         throw std::runtime_error(*first_error);
     }
+
+    // Clean shutdown: tell the bridge video ended so the daemon drops
+    // video readiness without having to supervise this process.
+    TryReportVideoState(bridge_client.get(), BridgeVideoState::kStopped, 0, "");
+}
+
+void RunCameraProbe(const RuntimeConfig& config) {
+    RunCameraProbe(config, DefaultRuntimeHooks());
+}
+
+void RunCameraProbe(const RuntimeConfig& config, const RuntimeHooks& hooks) {
+    if (!hooks.create_video_capturer) {
+        throw std::runtime_error("runtime hooks are incomplete");
+    }
+
+    g_stop_requested.store(false);
+    InstallSignalHandlers();
+
+    auto capturer = hooks.create_video_capturer();
+    if (capturer == nullptr) {
+        throw std::runtime_error("runtime dependencies are not initialized");
+    }
+
+    EmitMarker(
+        "TXING_KVS_CAMERA_PROBE_START",
+        {{"camera", std::to_string(config.camera.camera)}}
+    );
+
+    constexpr auto kProbeFrameDeadline = std::chrono::seconds(20);
+    constexpr std::size_t kProbeTargetFrames = 30;
+    std::optional<std::string> first_error;
+    std::size_t frames = 0;
+    bool saw_keyframe = false;
+
+    try {
+        capturer->Configure(config.camera);
+        // Start blocks on the camera permission prompt when access is not
+        // yet determined; the frame deadline starts after it returns.
+        capturer->Start();
+        const auto deadline = std::chrono::steady_clock::now() + kProbeFrameDeadline;
+        while (!g_stop_requested.load() && frames < kProbeTargetFrames &&
+               std::chrono::steady_clock::now() < deadline) {
+            auto maybe_frame = capturer->GetFrame(100);
+            if (!maybe_frame) {
+                if (capturer->GetStatus() == VideoCapturerStatus::kStopped) {
+                    break;
+                }
+                continue;
+            }
+            if (maybe_frame->bytes.empty()) {
+                continue;
+            }
+            ++frames;
+            saw_keyframe = saw_keyframe || maybe_frame->is_keyframe;
+        }
+    } catch (const std::exception& error) {
+        first_error = error.what();
+    }
+
+    capturer->Stop();
+
+    if (first_error) {
+        throw std::runtime_error(*first_error);
+    }
+    if (frames == 0) {
+        throw std::runtime_error(
+            "camera probe captured no encoded frames before the deadline; "
+            "check camera permission and camera availability"
+        );
+    }
+    if (!saw_keyframe) {
+        throw std::runtime_error("camera probe captured frames but no H.264 keyframe");
+    }
+
+    EmitMarker(
+        "TXING_KVS_CAMERA_PROBE_OK",
+        {{"frames", std::to_string(frames)}, {"keyframe", "true"}}
+    );
 }
 
 }  // namespace txing::board::kvs_master

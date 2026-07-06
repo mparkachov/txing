@@ -68,3 +68,26 @@ export type DeviceWebAdapter = {
   renderDetail: (props: DeviceDetailRenderProps) => ReactElement
   renderVideo: (props: DeviceVideoRenderProps) => ReactElement
 }
+
+type BoardVideoTeardownContext = {
+  canUseBoardVideo: (reportedRedcon: number | null) => boolean
+  pendingTargetRedcon: 1 | 2 | 3 | 4 | null
+  reportedRedcon: number | null
+}
+
+// A board RTC failure is the trailing edge of an expected teardown when
+// the device has already left its video-capable posture or office itself
+// has commanded it out of one. The browser's ICE timeout races both the
+// clean data channel close and the shadow update (a REDCON command can
+// block behind the worker teardown before new state publishes), so
+// neither signal alone is sufficient.
+export const shouldSuppressBoardVideoRuntimeError = ({
+  canUseBoardVideo,
+  pendingTargetRedcon,
+  reportedRedcon,
+}: BoardVideoTeardownContext): boolean => {
+  if (pendingTargetRedcon !== null && !canUseBoardVideo(pendingTargetRedcon)) {
+    return true
+  }
+  return reportedRedcon !== null && !canUseBoardVideo(reportedRedcon)
+}

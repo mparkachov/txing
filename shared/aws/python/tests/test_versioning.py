@@ -337,6 +337,12 @@ class VersionEnvironmentTests(unittest.TestCase):
 
     def test_rig_daemon_justfile_supports_local_control_and_cert(self) -> None:
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
+        mac_justfile = (REPO_ROOT / "devices" / "mac" / "justfile").read_text(
+            encoding="utf-8"
+        )
+        mac_readme = (REPO_ROOT / "devices" / "mac" / "README.md").read_text(
+            encoding="utf-8"
+        )
         aws_justfile = (REPO_ROOT / "shared" / "aws" / "justfile").read_text(
             encoding="utf-8"
         )
@@ -347,12 +353,23 @@ class VersionEnvironmentTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("start config_dir=config_dir no_ble='false':", rig_justfile)
+        self.assertIn("start config_dir=config_dir:", rig_justfile)
         self.assertIn("stop:", rig_justfile)
-        self.assertIn("restart config_dir=config_dir no_ble='false':", rig_justfile)
-        self.assertIn("txing-sparkplug-manager.pid", rig_justfile)
-        self.assertIn("txing-ble-connectivity.pid", rig_justfile)
-        self.assertIn("txing-thread-connectivity.pid", rig_justfile)
+        self.assertIn("restart config_dir=config_dir:", rig_justfile)
+        self.assertIn("status:", rig_justfile)
+        self.assertIn("printf '%s: running pid=%s'", rig_justfile)
+        self.assertIn("ipc: present path={{default_ipc_socket}}", rig_justfile)
+        self.assertIn("status:", mac_justfile)
+        self.assertIn("daemon_name=txing-mac-daemon", mac_justfile)
+        self.assertIn("printf '%s: running pid=%s'", mac_justfile)
+        self.assertIn("just mac::status", mac_readme)
+        self.assertIn("start_daemon txing-sparkplug-manager", rig_justfile)
+        self.assertIn("start_daemon txing-ble-connectivity", rig_justfile)
+        self.assertIn("start_daemon txing-thread-connectivity", rig_justfile)
+        self.assertIn("TXING_SPARKPLUG_MANAGER_ENABLED", rig_justfile)
+        self.assertIn("TXING_BLE_CONNECTIVITY_ENABLED", rig_justfile)
+        self.assertIn("TXING_THREAD_CONNECTIVITY_ENABLED", rig_justfile)
+        self.assertIn('echo "$!" >"{{run_dir}}/${daemon_name}.pid"', rig_justfile)
         self.assertIn("TXING_RIG_IPC_SOCKET", rig_justfile)
         self.assertIn("install-mise-tools:", rig_justfile)
         self.assertNotIn("TXING_RIG_ENV_FILE", rig_justfile)
@@ -367,7 +384,11 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("publish-rig release='latest'", aws_justfile)
         self.assertNotIn("python -m aws_admin.publish_release rig --release", aws_justfile)
         self.assertIn("TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock", env_template)
-        self.assertIn("TXING_BLE_NO_BLE=false", env_template)
+        self.assertIn("TXING_SPARKPLUG_MANAGER_ENABLED=true", env_template)
+        self.assertIn("TXING_BLE_CONNECTIVITY_ENABLED=false", env_template)
+        self.assertIn("TXING_THREAD_CONNECTIVITY_ENABLED=false", env_template)
+        self.assertIn("TXING_BLE_NO_RADIO=false", env_template)
+        self.assertNotIn("TXING_BLE_NO_BLE", env_template)
 
     def test_component_release_workflows_publish_only_component_assets(self) -> None:
         workflow_dir = REPO_ROOT / ".github" / "workflows"
@@ -767,6 +788,17 @@ class VersionEnvironmentTests(unittest.TestCase):
         rig_docs = (REPO_ROOT / "docs" / "components" / "rig.md").read_text(
             encoding="utf-8"
         )
+        sparkplug_lifecycle = (
+            REPO_ROOT / "docs" / "sparkplug-lifecycle.md"
+        ).read_text(encoding="utf-8")
+        milestone_docs = (
+            REPO_ROOT
+            / "backlog"
+            / "docs"
+            / "milestones"
+            / "rig-idle-cost-parity"
+            / "doc-26 - Milestone-rig-idle-cost-parity.md"
+        ).read_text(encoding="utf-8")
         installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
             encoding="utf-8"
         )
@@ -777,12 +809,20 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-sparkplug-manager", rig_docs)
         self.assertIn("txing-ble-connectivity", rig_docs)
         self.assertIn("txing-thread-connectivity", rig_docs)
+        self.assertIn("just rig::status", rig_docs)
+        self.assertIn("## Cost Posture", rig_docs)
+        self.assertIn("REDCON 1 is the normal affordable resting state", rig_docs)
+        self.assertIn("TXING_INVENTORY_INTERVAL_SECONDS=300", rig_docs)
+        self.assertIn("NCMD redcon=4 -> 1", rig_docs)
+        self.assertIn("AWS Budgets monthly cost alert", rig_docs)
         self.assertIn("rig-daemon.target", rig_docs)
         self.assertIn("/root/.config/txing/rig-daemon", rig_docs)
         self.assertIn("/run/txing-rig/rig-ipc.sock", rig_docs)
         self.assertIn("PartOf=rig-daemon.target", rig_docs)
         self.assertIn("sudo systemctl restart rig-daemon.target", rig_docs)
         self.assertIn("mise upgrade", rig_docs)
+        self.assertIn("rename `TXING_BLE_NO_BLE` to `TXING_BLE_NO_RADIO`", rig_docs)
+        self.assertIn("the old name is not\nread by current daemons", rig_docs)
         self.assertIn('version_prefix = "rig-v"', rig_docs)
         self.assertIn("model is forward-only", rig_docs)
         self.assertIn("bluetooth", rig_docs)
@@ -792,6 +832,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("just aws::publish-rig latest", rig_docs)
         self.assertNotIn("gg_component", rig_docs)
         self.assertIn("root-owned `mise`", rig_docs)
+        self.assertIn("expected affordable idle-awake posture", sparkplug_lifecycle)
+        self.assertIn("## Measurement evidence", milestone_docs)
+        self.assertIn("searchIndex=2/3/4/5", milestone_docs)
+        self.assertIn("8,640 refreshes/month", milestone_docs)
+        self.assertIn("43,200 ticks/device/month", milestone_docs)
+        self.assertIn("<= ~$0.50/month/device met", milestone_docs)
 
     def test_lambda_release_publish_uses_shared_python_only(self) -> None:
         aws_justfile = (REPO_ROOT / "shared" / "aws" / "justfile").read_text(

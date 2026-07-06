@@ -24,6 +24,11 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (parsed.camera_probe) {
+            txing::board::kvs_master::RunCameraProbe(parsed.config);
+            return 0;
+        }
+
         txing::board::kvs_master::Run(parsed.config);
         return 0;
     } catch (const std::exception& error) {

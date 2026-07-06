@@ -16,7 +16,9 @@ std::chrono::system_clock::time_point TimestampToTimePoint(
     const google::protobuf::Timestamp& timestamp
 ) {
     return std::chrono::system_clock::time_point{
-        std::chrono::seconds(timestamp.seconds()) + std::chrono::nanoseconds(timestamp.nanos())
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::seconds(timestamp.seconds()) + std::chrono::nanoseconds(timestamp.nanos())
+        )
     };
 }
 
@@ -51,6 +53,8 @@ pb::VideoState_State ToProtoVideoState(BridgeVideoState state) {
             return pb::VideoState_State_READY;
         case BridgeVideoState::kError:
             return pb::VideoState_State_ERROR;
+        case BridgeVideoState::kStopped:
+            return pb::VideoState_State_STOPPED;
     }
     return pb::VideoState_State_STATE_UNSPECIFIED;
 }

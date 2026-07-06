@@ -16,9 +16,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
-	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iot"
 	"github.com/aws/aws-sdk-go-v2/service/iotdataplane"
+	"github.com/aws/aws-sdk-go-v2/service/scheduler"
+	schedulertypes "github.com/aws/aws-sdk-go-v2/service/scheduler/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
@@ -44,7 +45,10 @@ const (
 	ECSStartedByPrefix     = "txing-cloud-mcu"
 )
 
-var TickOffsetsSeconds = []int32{0, 6, 12, 18, 24, 30, 36, 42, 48, 54}
+var (
+	TickOffsetsSeconds         = []int32{0, 6, 12, 18, 24, 30, 36, 42, 48, 54}
+	SleepingTickOffsetsSeconds = []int32{0}
+)
 
 type CloudMcuDevice struct {
 	ThingName string
@@ -131,17 +135,17 @@ type AWSClientAPI interface {
 }
 
 type AWSClient struct {
-	iot               *iot.Client
-	iotData           *iotdataplane.Client
-	sqs               *sqs.Client
-	ecs               *ecs.Client
-	events            *eventbridge.Client
-	tickQueueURL      string
-	cloudRigRuleName  string
-	ecsCluster        string
-	ecsTaskDefinition string
-	ecsSubnets        []string
-	ecsSecurityGroups []string
+	iot                  *iot.Client
+	iotData              *iotdataplane.Client
+	sqs                  *sqs.Client
+	ecs                  *ecs.Client
+	scheduler            *scheduler.Client
+	tickQueueURL         string
+	cloudRigScheduleName string
+	ecsCluster           string
+	ecsTaskDefinition    string
+	ecsSubnets           []string
+	ecsSecurityGroups    []string
 }
 
 func NewAWSClient(ctx context.Context) (*AWSClient, error) {
@@ -161,17 +165,17 @@ func NewAWSClient(ctx context.Context) (*AWSClient, error) {
 		options.BaseEndpoint = aws.String("https://" + strings.TrimSpace(*endpoint.EndpointAddress))
 	})
 	return &AWSClient{
-		iot:               iotClient,
-		iotData:           iotData,
-		sqs:               sqs.NewFromConfig(cfg),
-		ecs:               ecs.NewFromConfig(cfg),
-		events:            eventbridge.NewFromConfig(cfg),
-		tickQueueURL:      envNonempty("CLOUD_MCU_TICK_QUEUE_URL"),
-		cloudRigRuleName:  envNonempty("CLOUD_RIG_SCHEDULE_RULE_NAME"),
-		ecsCluster:        envNonempty("CLOUD_MCU_ECS_CLUSTER"),
-		ecsTaskDefinition: envNonempty("CLOUD_MCU_ECS_TASK_DEFINITION"),
-		ecsSubnets:        envCSV("CLOUD_MCU_ECS_SUBNETS"),
-		ecsSecurityGroups: envCSV("CLOUD_MCU_ECS_SECURITY_GROUPS"),
+		iot:                  iotClient,
+		iotData:              iotData,
+		sqs:                  sqs.NewFromConfig(cfg),
+		ecs:                  ecs.NewFromConfig(cfg),
+		scheduler:            scheduler.NewFromConfig(cfg),
+		tickQueueURL:         envNonempty("CLOUD_MCU_TICK_QUEUE_URL"),
+		cloudRigScheduleName: envNonempty("CLOUD_RIG_SCHEDULE_NAME"),
+		ecsCluster:           envNonempty("CLOUD_MCU_ECS_CLUSTER"),
+		ecsTaskDefinition:    envNonempty("CLOUD_MCU_ECS_TASK_DEFINITION"),
+		ecsSubnets:           envCSV("CLOUD_MCU_ECS_SUBNETS"),
+		ecsSecurityGroups:    envCSV("CLOUD_MCU_ECS_SECURITY_GROUPS"),
 	}, nil
 }
 
@@ -182,11 +186,11 @@ func (c *AWSClient) requiredTickQueueURL() (string, error) {
 	return c.tickQueueURL, nil
 }
 
-func (c *AWSClient) requiredCloudRigRuleName() (string, error) {
-	if c.cloudRigRuleName == "" {
-		return "", errors.New("CLOUD_RIG_SCHEDULE_RULE_NAME is required")
+func (c *AWSClient) requiredCloudRigScheduleName() (string, error) {
+	if c.cloudRigScheduleName == "" {
+		return "", errors.New("CLOUD_RIG_SCHEDULE_NAME is required")
 	}
-	return c.cloudRigRuleName, nil
+	return c.cloudRigScheduleName, nil
 }
 
 func (c *AWSClient) requiredECSCluster() (string, error) {
@@ -279,20 +283,42 @@ func (c *AWSClient) SendTickBatch(ctx context.Context, ticks []CloudMcuTick) err
 }
 
 func (c *AWSClient) EnableCloudRigSchedule(ctx context.Context) error {
-	ruleName, err := c.requiredCloudRigRuleName()
-	if err != nil {
-		return err
-	}
-	_, err = c.events.EnableRule(ctx, &eventbridge.EnableRuleInput{Name: aws.String(ruleName)})
-	return err
+	return c.setCloudRigScheduleState(ctx, schedulertypes.ScheduleStateEnabled)
 }
 
 func (c *AWSClient) DisableCloudRigSchedule(ctx context.Context) error {
-	ruleName, err := c.requiredCloudRigRuleName()
+	return c.setCloudRigScheduleState(ctx, schedulertypes.ScheduleStateDisabled)
+}
+
+// EventBridge Scheduler has no enable/disable API and UpdateSchedule replaces
+// every field of the schedule, so the current definition must be read back and
+// resubmitted with only the state changed.
+func (c *AWSClient) setCloudRigScheduleState(ctx context.Context, state schedulertypes.ScheduleState) error {
+	scheduleName, err := c.requiredCloudRigScheduleName()
 	if err != nil {
 		return err
 	}
-	_, err = c.events.DisableRule(ctx, &eventbridge.DisableRuleInput{Name: aws.String(ruleName)})
+	current, err := c.scheduler.GetSchedule(ctx, &scheduler.GetScheduleInput{Name: aws.String(scheduleName)})
+	if err != nil {
+		return err
+	}
+	if current.State == state {
+		return nil
+	}
+	_, err = c.scheduler.UpdateSchedule(ctx, &scheduler.UpdateScheduleInput{
+		Name:                       current.Name,
+		GroupName:                  current.GroupName,
+		Description:                current.Description,
+		ScheduleExpression:         current.ScheduleExpression,
+		ScheduleExpressionTimezone: current.ScheduleExpressionTimezone,
+		StartDate:                  current.StartDate,
+		EndDate:                    current.EndDate,
+		FlexibleTimeWindow:         current.FlexibleTimeWindow,
+		KmsKeyArn:                  current.KmsKeyArn,
+		Target:                     current.Target,
+		ActionAfterCompletion:      current.ActionAfterCompletion,
+		State:                      state,
+	})
 	return err
 }
 
@@ -917,8 +943,13 @@ func (s RigScheduler) HandleScheduleWithNow(ctx context.Context, nowMs int64) (m
 	sentTicks := 0
 	sentBatches := 0
 	for _, device := range devices {
-		ticks := make([]CloudMcuTick, 0, len(TickOffsetsSeconds))
-		for _, offset := range TickOffsetsSeconds {
+		power, err := scheduledDevicePowerState(ctx, s.aws, device.ThingName)
+		if err != nil {
+			return nil, err
+		}
+		offsets := tickOffsetsForPowerState(power)
+		ticks := make([]CloudMcuTick, 0, len(offsets))
+		for _, offset := range offsets {
 			ticks = append(ticks, NewTick(device, offset, nowMs))
 		}
 		if err := s.aws.SendTickBatch(ctx, ticks); err != nil {
@@ -928,6 +959,21 @@ func (s RigScheduler) HandleScheduleWithNow(ctx context.Context, nowMs int64) (m
 		sentTicks += len(ticks)
 	}
 	return map[string]any{"eventType": "schedule", "deviceCount": len(devices), "rigCount": len(rigKeys), "tickCount": sentTicks, "batchCount": sentBatches, "publishedRigs": publishedRigs}, nil
+}
+
+func scheduledDevicePowerState(ctx context.Context, awsClient AWSClientAPI, thingName string) (powerState, error) {
+	shadow, ok, err := awsClient.GetThingShadow(ctx, thingName, CapabilityPower)
+	if err != nil {
+		return powerState{}, err
+	}
+	return powerStateFromShadow(shadow, ok)
+}
+
+func tickOffsetsForPowerState(power powerState) []int32 {
+	if power.DesiredRedcon == RedconWakeup {
+		return append([]int32(nil), TickOffsetsSeconds...)
+	}
+	return append([]int32(nil), SleepingTickOffsetsSeconds...)
 }
 
 func discoverCloudMcuDevices(ctx context.Context, awsClient AWSClientAPI) ([]CloudMcuDevice, error) {
@@ -1054,9 +1100,8 @@ func (r Runtime) HandleTickWithNow(ctx context.Context, tick CloudMcuTick, nowMs
 	if err := tick.Validate(); err != nil {
 		return nil, err
 	}
-	if err := r.validateDeviceIdentity(ctx, tick.ThingName, tick.TownID, tick.RigID); err != nil {
-		return nil, err
-	}
+	// SQS ticks are emitted by the cloud rig scheduler from fleet-indexing
+	// documents moments earlier; DCMD remains explicitly registry-validated.
 	shadow, ok, err := r.aws.GetThingShadow(ctx, tick.ThingName, CapabilityPower)
 	if err != nil {
 		return nil, err
@@ -1065,6 +1110,7 @@ func (r Runtime) HandleTickWithNow(ctx context.Context, tick CloudMcuTick, nowMs
 	if err != nil {
 		return nil, err
 	}
+	previousPower := power
 	actualRedcon := RedconSleep
 	if power.DesiredRedcon == RedconWakeup {
 		if err := r.ensureTaskRunning(ctx, tick, &power); err != nil {
@@ -1076,9 +1122,6 @@ func (r Runtime) HandleTickWithNow(ctx context.Context, tick CloudMcuTick, nowMs
 	} else if err := r.ensureTaskStopped(ctx, tick, &power); err != nil {
 		return nil, err
 	}
-	if err := r.updateSQSShadow(ctx, tick); err != nil {
-		return nil, err
-	}
 	extraMetrics := buildCapabilityMetrics(actualRedcon == RedconWakeup)
 	var commandResult any
 	if power.Pending != nil && power.Pending.TargetRedcon == actualRedcon {
@@ -1087,26 +1130,68 @@ func (r Runtime) HandleTickWithNow(ctx context.Context, tick CloudMcuTick, nowMs
 		extraMetrics = append(extraMetrics, buildCommandResultMetrics(pending.Seq, pending.TargetRedcon, CommandSucceeded, "")...)
 		commandResult = map[string]any{"seq": pending.Seq, "targetRedcon": pending.TargetRedcon, "status": CommandSucceeded}
 	}
-	messageType := "DBIRTH"
-	if power.SparkplugBorn {
-		messageType = "DDATA"
+	published := false
+	messageType := ""
+	if shouldPublishDeviceReport(previousPower, actualRedcon, commandResult != nil) {
+		messageType = "DBIRTH"
+		if previousPower.SparkplugBorn {
+			messageType = "DDATA"
+		}
+		topic, err := BuildDeviceTopic(tick.TownID, messageType, tick.RigID, tick.ThingName)
+		if err != nil {
+			return nil, err
+		}
+		payload, err := buildDeviceReportPayload(actualRedcon, uint64(tick.TickOffsetSeconds), nowMs, extraMetrics)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.aws.Publish(ctx, topic, payload); err != nil {
+			return nil, err
+		}
+		power.SparkplugBorn = true
+		published = true
 	}
-	topic, err := BuildDeviceTopic(tick.TownID, messageType, tick.RigID, tick.ThingName)
-	if err != nil {
-		return nil, err
+	if !samePowerState(previousPower, power) {
+		if err := r.updatePowerShadow(ctx, tick.ThingName, power); err != nil {
+			return nil, err
+		}
 	}
-	payload, err := buildDeviceReportPayload(actualRedcon, uint64(tick.TickOffsetSeconds), nowMs, extraMetrics)
-	if err != nil {
-		return nil, err
+	if !published {
+		messageType = "none"
 	}
-	if err := r.aws.Publish(ctx, topic, payload); err != nil {
-		return nil, err
+	return map[string]any{"eventType": "sqsTick", "thingName": tick.ThingName, "redcon": actualRedcon, "messageType": messageType, "published": published, "powered": power.Powered, "ecsTaskArn": stringPtrValue(power.ECSTaskARN), "commandResult": commandResult}, nil
+}
+
+func shouldPublishDeviceReport(previous powerState, actualRedcon uint8, hasCommandResult bool) bool {
+	if !previous.SparkplugBorn || hasCommandResult {
+		return true
 	}
-	power.SparkplugBorn = true
-	if err := r.updatePowerShadow(ctx, tick.ThingName, power); err != nil {
-		return nil, err
+	return redconFromPowerState(previous) != actualRedcon
+}
+
+func redconFromPowerState(power powerState) uint8 {
+	if power.Powered {
+		return RedconWakeup
 	}
-	return map[string]any{"eventType": "sqsTick", "thingName": tick.ThingName, "redcon": actualRedcon, "messageType": messageType, "powered": power.Powered, "ecsTaskArn": stringPtrValue(power.ECSTaskARN), "commandResult": commandResult}, nil
+	return RedconSleep
+}
+
+func samePowerState(left, right powerState) bool {
+	if left.DesiredRedcon != right.DesiredRedcon ||
+		left.Powered != right.Powered ||
+		stringPtr(left.ECSTaskARN) != stringPtr(right.ECSTaskARN) ||
+		stringPtr(left.ECSTaskStatus) != stringPtr(right.ECSTaskStatus) ||
+		left.SparkplugBorn != right.SparkplugBorn {
+		return false
+	}
+	switch {
+	case left.Pending == nil && right.Pending == nil:
+		return true
+	case left.Pending == nil || right.Pending == nil:
+		return false
+	default:
+		return left.Pending.Seq == right.Pending.Seq && left.Pending.TargetRedcon == right.Pending.TargetRedcon
+	}
 }
 
 func (r Runtime) HandleDCMDWithNow(ctx context.Context, event map[string]any, nowMs int64) (map[string]any, error) {
@@ -1161,7 +1246,11 @@ func (r Runtime) HandleDCMDWithNow(ctx context.Context, event map[string]any, no
 	if err := r.updatePowerShadow(ctx, thingName, power); err != nil {
 		return nil, err
 	}
-	return map[string]any{"eventType": "dcmd", "thingName": thingName, "status": "accepted", "targetRedcon": redcon, "seq": seq}, nil
+	tick := NewTick(CloudMcuDevice{ThingName: thingName, TownID: townID, RigID: rigID}, 0, nowMs)
+	if err := r.aws.SendTickBatch(ctx, []CloudMcuTick{tick}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"eventType": "dcmd", "thingName": thingName, "status": "accepted", "targetRedcon": redcon, "seq": seq, "tickQueued": true}, nil
 }
 
 func (r Runtime) validateDeviceIdentity(ctx context.Context, thingName, townID, rigID string) error {
@@ -1305,14 +1394,6 @@ func (r Runtime) keepSingleActiveTask(ctx context.Context, trackedTaskARN string
 		}
 	}
 	return keep, true, nil
-}
-
-func (r Runtime) updateSQSShadow(ctx context.Context, tick CloudMcuTick) error {
-	body, err := json.Marshal(map[string]any{"state": map[string]any{"reported": map[string]any{"lastTickOffsetSeconds": tick.TickOffsetSeconds, "lastTickScheduledAtMs": tick.ScheduledAtMs}}})
-	if err != nil {
-		return err
-	}
-	return r.aws.UpdateThingShadow(ctx, tick.ThingName, CapabilitySQS, body)
 }
 
 func (r Runtime) updatePowerShadow(ctx context.Context, thingName string, power powerState) error {

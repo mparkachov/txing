@@ -496,6 +496,7 @@ const (
 	VideoWorkerMCPDataChannelClosed VideoWorkerEventKind = "mcp-closed"
 	VideoWorkerMCPDataChannelError  VideoWorkerEventKind = "mcp-error"
 	VideoWorkerError                VideoWorkerEventKind = "error"
+	VideoWorkerStopped              VideoWorkerEventKind = "stopped"
 )
 
 type VideoWorkerEvent struct {
@@ -530,6 +531,10 @@ func (s *VideoRuntimeState) ApplyEvent(event VideoWorkerEvent, observedAtMS uint
 		s.Status = VideoStatusError
 		s.LastError = &detail
 		s.UpdatedAtMS = observedAtMS
+	case VideoWorkerStopped:
+		// Clean worker shutdown announced over the bridge: back to the
+		// declared-but-not-ready posture without recording an error.
+		*s = VideoRuntimeStarting(observedAtMS)
 	default:
 		s.UpdatedAtMS = observedAtMS
 	}
@@ -1305,8 +1310,11 @@ func (s *BoardVideoBridgeService) ReportVideoState(_ context.Context, report *bo
 		}
 		s.sendVideoEvent(VideoWorkerEvent{Kind: VideoWorkerError, Detail: detail})
 		s.sendVideoEvent(VideoWorkerEvent{Kind: VideoWorkerViewerConnected, Connected: report.GetViewerCount() > 0})
+	case boardvideov1.VideoState_STOPPED:
+		s.sendVideoEvent(VideoWorkerEvent{Kind: VideoWorkerStopped})
+		s.sendVideoEvent(VideoWorkerEvent{Kind: VideoWorkerViewerConnected, Connected: false})
 	default:
-		return nil, status.Error(codes.InvalidArgument, "video state must be STARTING, READY, or ERROR")
+		return nil, status.Error(codes.InvalidArgument, "video state must be STARTING, READY, ERROR, or STOPPED")
 	}
 	return &boardvideov1.Ack{}, nil
 }

@@ -1,0 +1,185 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet := true
+
+mac_dir := source_directory()
+project_root := canonicalize(mac_dir + "/../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+daemon_dir := mac_dir + "/daemon"
+bin_dir := daemon_dir + "/target/local"
+kvs_master_dir := project_root + "/devices/unit/board/kvs_master"
+kvs_build_dir := kvs_master_dir + "/build-macos"
+built_kvs_master := kvs_build_dir + "/txing-unit-kvs-master"
+run_dir := env_var_or_default("TXING_MAC_RUN_DIR", "/tmp/txing-mac")
+rig_run_dir := env_var_or_default("TXING_RIG_RUN_DIR", "/tmp/txing-rig")
+default_rig_ipc_socket := rig_run_dir + "/rig-ipc.sock"
+dev_version := "0.0.0-dev"
+config_dir := ""
+
+test:
+    #!/bin/sh
+    set -eu
+    cd "{{daemon_dir}}"
+    go test ./...
+
+build:
+    #!/bin/sh
+    set -eu
+    cd "{{daemon_dir}}"
+    install -d -m 755 "{{bin_dir}}"
+    go build -ldflags "-X github.com/mparkachov/txing/devices/mac/daemon/internal/version.Version={{dev_version}}" \
+      -o "{{bin_dir}}/txing-mac-daemon" ./cmd/txing-mac-daemon
+
+start config_dir=config_dir:
+    #!/bin/sh
+    set -eu
+    requested_config_dir="{{config_dir}}"
+    case "$requested_config_dir" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
+    just --justfile "{{mac_dir}}/justfile" build
+    install -d -m 755 "{{run_dir}}"
+    export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_rig_ipc_socket}}}"
+    export TXING_KVS_MASTER_COMMAND="${TXING_KVS_MASTER_COMMAND:-{{built_kvs_master}}}"
+    if [ -f "{{run_dir}}/txing-mac-daemon.pid" ] &&
+      kill -0 "$(cat "{{run_dir}}/txing-mac-daemon.pid")" >/dev/null 2>&1; then
+      echo "txing-mac-daemon already running"
+    else
+      if [ -n "$requested_config_dir" ]; then
+        nohup "{{bin_dir}}/txing-mac-daemon" --config-dir "$requested_config_dir" \
+          >"{{run_dir}}/txing-mac-daemon.log" 2>&1 &
+      else
+        nohup "{{bin_dir}}/txing-mac-daemon" \
+          >"{{run_dir}}/txing-mac-daemon.log" 2>&1 &
+      fi
+      echo "$!" >"{{run_dir}}/txing-mac-daemon.pid"
+    fi
+    echo "mac daemon started"
+    echo "logs: {{run_dir}}/txing-mac-daemon.log"
+
+stop:
+    #!/bin/sh
+    set -eu
+    pid_file="{{run_dir}}/txing-mac-daemon.pid"
+    if [ -f "$pid_file" ]; then
+      pid="$(cat "$pid_file")"
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid"
+        wait_attempts=0
+        while [ "$wait_attempts" -lt 40 ]; do
+          if ! kill -0 "$pid" >/dev/null 2>&1; then
+            break
+          fi
+          wait_attempts=$((wait_attempts + 1))
+          sleep 0.25
+        done
+      fi
+      rm -f "$pid_file"
+    fi
+    echo "mac daemon stopped"
+
+restart config_dir=config_dir:
+    #!/bin/sh
+    set -eu
+    just --justfile "{{mac_dir}}/justfile" stop
+    just --justfile "{{mac_dir}}/justfile" start "{{config_dir}}"
+
+log:
+    #!/bin/sh
+    set -eu
+    if [ ! -f "{{run_dir}}/txing-mac-daemon.log" ]; then
+      echo "No mac daemon log under {{run_dir}}." >&2
+      exit 1
+    fi
+    tail -n 160 -f "{{run_dir}}/txing-mac-daemon.log"
+
+status:
+    #!/bin/sh
+    set -eu
+    daemon_name=txing-mac-daemon
+    pid_file="{{run_dir}}/${daemon_name}.pid"
+    log_file="{{run_dir}}/${daemon_name}.log"
+    echo "run_dir={{run_dir}}"
+    if [ -f "$pid_file" ]; then
+      pid="$(cat "$pid_file")"
+      if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+        printf '%s: running pid=%s' "$daemon_name" "$pid"
+      else
+        printf '%s: stale' "$daemon_name"
+        if [ -n "$pid" ]; then
+          printf ' pid=%s' "$pid"
+        fi
+      fi
+    else
+      printf '%s: stopped' "$daemon_name"
+    fi
+    if [ -f "$log_file" ]; then
+      printf ' log=%s' "$log_file"
+    fi
+    printf '\n'
+
+check config_dir=config_dir:
+    #!/bin/sh
+    set -eu
+    just --justfile "{{mac_dir}}/justfile" build
+    export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_rig_ipc_socket}}}"
+    export TXING_KVS_MASTER_COMMAND="${TXING_KVS_MASTER_COMMAND:-{{built_kvs_master}}}"
+    if [ -n "{{config_dir}}" ]; then
+      "{{bin_dir}}/txing-mac-daemon" --dry-run --config-dir "{{config_dir}}"
+    else
+      "{{bin_dir}}/txing-mac-daemon" --dry-run
+    fi
+
+kvs-build:
+    #!/bin/sh
+    set -eu
+    if [ "$(uname -s)" != "Darwin" ]; then
+      echo "mac::kvs-build only targets macOS; use unit::kvs-build-native elsewhere." >&2
+      exit 2
+    fi
+    missing=""
+    for formula in cmake openssl@3 libwebsockets srtp libusrsctp log4cplus protobuf grpc; do
+      if ! brew list --versions "$formula" >/dev/null 2>&1; then
+        missing="$missing $formula"
+      fi
+    done
+    if [ -n "$missing" ]; then
+      echo "Missing Homebrew KVS dependency/dependencies:$missing" >&2
+      echo "Install them with: brew install$missing" >&2
+      exit 1
+    fi
+    ca_cert_path="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-}"
+    if [ -z "$ca_cert_path" ]; then
+      # Anchor TLS to the same Starfield root the Linux lane uses: a
+      # single-certificate PEM avoids libwebsockets' failed DER parse of
+      # the multi-certificate /etc/ssl/cert.pem bundle at worker startup.
+      mkdir -p "{{kvs_build_dir}}"
+      ca_cert_path="{{kvs_build_dir}}/starfield-services-root-g2.pem"
+      if ! security find-certificate -c "Starfield Services Root Certificate Authority - G2" -p \
+          /System/Library/Keychains/SystemRootCertificates.keychain >"$ca_cert_path" 2>/dev/null \
+          || [ ! -s "$ca_cert_path" ]; then
+        rm -f "$ca_cert_path"
+        echo "Starfield root extraction failed; falling back to the system CA bundle." >&2
+        ca_cert_path=/etc/ssl/cert.pem
+      fi
+    fi
+    cmake \
+      -S "{{kvs_master_dir}}" \
+      -B "{{kvs_build_dir}}" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_TESTING=OFF \
+      -DTXING_KVS_REAL_SDK=ON \
+      -DTXING_KVS_GRPC_BRIDGE=ON \
+      -DTXING_KVS_SYSTEM_CA_CERT_PATH="$ca_cert_path"
+    cmake --build "{{kvs_build_dir}}" --config Release
+    test -x "{{built_kvs_master}}"
+    echo "KVS worker built: {{built_kvs_master}}"
+
+# Foreground capture-only run: triggers the macOS camera permission
+# prompt for this terminal application so later detached runs are not
+# silently denied. Expect the camera indicator to light briefly.
+camera-probe:
+    #!/bin/sh
+    set -eu
+    if [ ! -x "{{built_kvs_master}}" ]; then
+      just --justfile "{{mac_dir}}/justfile" kvs-build
+    fi
+    "{{built_kvs_master}}" --camera-probe

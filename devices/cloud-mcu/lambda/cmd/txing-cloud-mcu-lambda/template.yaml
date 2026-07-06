@@ -278,6 +278,7 @@ Resources:
               - Sid: CloudMcuRuntimeSqs
                 Effect: Allow
                 Action:
+                  - sqs:SendMessage
                   - sqs:ReceiveMessage
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
@@ -323,6 +324,7 @@ Resources:
       MemorySize: 128
       Environment:
         Variables:
+          CLOUD_MCU_TICK_QUEUE_URL: !Ref CloudMcuTickQueue
           CLOUD_MCU_ECS_CLUSTER: !Ref CloudMcuCluster
           CLOUD_MCU_ECS_TASK_DEFINITION: !Ref CloudMcuTaskDefinition
           CLOUD_MCU_ECS_SUBNETS: !Ref CloudMcuSubnet

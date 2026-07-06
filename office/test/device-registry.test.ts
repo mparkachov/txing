@@ -29,6 +29,13 @@ describe('device web adapter registry', () => {
     expect(powerSiAdapter?.displayName).toBe('Power SI')
     expect(powerSiAdapter?.canUseBoardVideo(1)).toBe(false)
     expect(powerSiAdapter?.canUseDriveControl(1)).toBe(false)
+    const macAdapter = getDeviceWebAdapter('mac')
+    expect(macAdapter?.type).toBe('mac')
+    expect(macAdapter?.buildVideoChannelName('mac-a1')).toBe('mac-a1-board-video')
+    expect(macAdapter?.canUseBoardVideo(1)).toBe(true)
+    expect(macAdapter?.canUseBoardVideo(2)).toBe(false)
+    expect(macAdapter?.canUseDriveControl(1)).toBe(false)
+    expect(macAdapter?.canUseDriveControl(2)).toBe(false)
     expect(getDeviceWebAdapter('sensor')).toBeNull()
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
       'cloud-mcu',
@@ -36,6 +43,7 @@ describe('device web adapter registry', () => {
       'weather',
       'power',
       'power-si',
+      'mac',
     ])
   })
 

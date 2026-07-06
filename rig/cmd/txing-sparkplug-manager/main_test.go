@@ -5,7 +5,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/mparkachov/txing/rig/internal/manager"
 	"github.com/mparkachov/txing/rig/internal/mqttx"
+	"github.com/mparkachov/txing/rig/internal/protocol"
+	"github.com/mparkachov/txing/rig/internal/registry"
 	"github.com/mparkachov/txing/rig/internal/rigconfig"
 	"github.com/mparkachov/txing/rig/internal/sparkplug"
 )
@@ -265,6 +268,39 @@ func TestNodeRedconOneCommandRestoresActiveSubscriptions(t *testing.T) {
 	assertMetric(t, payload.Metrics, sparkplug.NewInt32Metric("redconCommandTarget", 1))
 }
 
+func TestNodeRedconOneCommandRefreshesInventoryImmediately(t *testing.T) {
+	node := &fakeNodeMQTTClient{}
+	loader := &fakeInventoryLoader{inventory: registry.Inventory{RigType: "raspi"}}
+	broker := &fakeIPCBroker{}
+	state := &runtimeState{
+		cfg: rigconfig.Config{
+			TownID: "town-1",
+			RigID:  "rig-1",
+		},
+		broker:                  broker,
+		registry:                loader,
+		nodeMQTT:                node,
+		devices:                 map[string]*managedDevice{},
+		boardStateSubscriptions: map[string]struct{}{},
+	}
+	state.setNodeRedcon(nodeRedconCommandable)
+
+	state.handleMQTTMessage(context.Background(), mqttx.Message{
+		Topic:   sparkplug.BuildNodeCommandTopic("town-1", "rig-1"),
+		Payload: redconCommandPayload(t, 1, 9),
+	})
+
+	if loader.calls != 1 {
+		t.Fatalf("inventory refresh calls after redcon 4->1 = %d, want 1", loader.calls)
+	}
+	if len(broker.publishes) != 1 {
+		t.Fatalf("inventory publishes after redcon 4->1 = %d, want 1", len(broker.publishes))
+	}
+	if broker.publishes[0].topic != protocol.InventoryTopic || !broker.publishes[0].retained {
+		t.Fatalf("inventory publish = %#v, want retained %s", broker.publishes[0], protocol.InventoryTopic)
+	}
+}
+
 func TestEnsureBoardStateSubscriptionDeduplicatesExactTopic(t *testing.T) {
 	state := &runtimeState{boardStateSubscriptions: map[string]struct{}{}}
 	client := &fakeNodeMQTTClient{}
@@ -309,6 +345,103 @@ func TestSparkplugDevicePublicationsAreNotRetained(t *testing.T) {
 		if client.publishes[i].retained {
 			t.Fatalf("%s publish must not be retained", wantTopic)
 		}
+	}
+}
+
+type fakeInventoryLoader struct {
+	inventory registry.Inventory
+	calls     int
+}
+
+func (f *fakeInventoryLoader) LoadInventory(context.Context, string) (registry.Inventory, error) {
+	f.calls++
+	return f.inventory, nil
+}
+
+type fakeIPCBroker struct {
+	publishes []fakePublish
+}
+
+func (f *fakeIPCBroker) Publish(topic string, payload []byte, retain bool) {
+	f.publishes = append(f.publishes, fakePublish{
+		topic:    topic,
+		payload:  append([]byte(nil), payload...),
+		retained: retain,
+	})
+}
+
+func testInventoryDevice(thingName string) protocol.InventoryDevice {
+	return protocol.InventoryDevice{
+		ThingName:           thingName,
+		ThingType:           "unit",
+		Capabilities:        []string{"sparkplug"},
+		RedconCommandLevels: []uint8{1, 4},
+		RedconRules:         map[uint8][]string{1: {"sparkplug"}},
+	}
+}
+
+func TestRefreshInventoryPublishesOnlyOnChange(t *testing.T) {
+	deviceOne := testInventoryDevice("unit-1")
+	deviceTwo := testInventoryDevice("unit-2")
+	loader := &fakeInventoryLoader{inventory: registry.Inventory{
+		RigType: "raspi",
+		Devices: []protocol.InventoryDevice{deviceOne, deviceTwo},
+	}}
+	broker := &fakeIPCBroker{}
+	state := &runtimeState{
+		cfg:      rigconfig.Config{TownID: "town-1", RigID: "rig-1"},
+		broker:   broker,
+		registry: loader,
+		nodeMQTT: &fakeNodeMQTTClient{},
+		devices: map[string]*managedDevice{
+			"unit-1": {mqtt: &fakeNodeMQTTClient{}, state: manager.NewDeviceRuntimeState(deviceOne)},
+			"unit-2": {mqtt: &fakeNodeMQTTClient{}, state: manager.NewDeviceRuntimeState(deviceTwo)},
+		},
+		boardStateSubscriptions: map[string]struct{}{},
+	}
+
+	if err := state.refreshInventory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(broker.publishes) != 1 {
+		t.Fatalf("publish count after first refresh = %d, want 1", len(broker.publishes))
+	}
+	if broker.publishes[0].topic != protocol.InventoryTopic || !broker.publishes[0].retained {
+		t.Fatalf("publish = %#v, want retained %s", broker.publishes[0], protocol.InventoryTopic)
+	}
+
+	for range 3 {
+		if err := state.refreshInventory(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(broker.publishes) != 1 {
+		t.Fatalf("publish count after unchanged refreshes = %d, want 1", len(broker.publishes))
+	}
+
+	loader.inventory = registry.Inventory{
+		RigType: "raspi",
+		Devices: []protocol.InventoryDevice{deviceOne},
+	}
+	if err := state.refreshInventory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(broker.publishes) != 2 {
+		t.Fatalf("publish count after device removal = %d, want 2", len(broker.publishes))
+	}
+	if _, ok := state.devices["unit-2"]; ok {
+		t.Fatal("removed device should leave managed set")
+	}
+
+	decoded, err := protocol.DecodeInventory(broker.publishes[1].payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Devices) != 1 || decoded.Devices[0].ThingName != "unit-1" {
+		t.Fatalf("published inventory devices = %#v, want only unit-1", decoded.Devices)
+	}
+	if decoded.Seq != 1 {
+		t.Fatalf("published inventory seq = %d, want 1 (seq advances only on publish)", decoded.Seq)
 	}
 }
 

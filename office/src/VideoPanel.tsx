@@ -42,6 +42,8 @@ const getViewerStatusLabel = (state: ViewerUiState): string => {
       return 'Connecting to board video...'
     case 'streaming':
       return 'Board video live'
+    case 'ended':
+      return 'Board video ended by the device'
     case 'error':
       return 'Board video unavailable'
   }

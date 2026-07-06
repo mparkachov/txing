@@ -211,6 +211,9 @@ txing-ble-connectivity
 txing-thread-connectivity
 ```
 
+The release installs all three commands. `daemon.env` decides which standalone
+rig daemons are enabled at runtime; the generated default is manager-only.
+
 Rigs use root's persistent mise config and install tree:
 
 ```text
