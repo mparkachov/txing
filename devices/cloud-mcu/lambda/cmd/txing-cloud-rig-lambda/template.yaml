@@ -62,6 +62,10 @@ Resources:
                 Effect: Allow
                 Action: iot:DescribeThing
                 Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
+              - Sid: CloudRigRuntimeReadDeviceShadows
+                Effect: Allow
+                Action: iot:GetThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*
               - Sid: CloudRigRuntimeDescribeEndpoint
                 Effect: Allow
                 Action: iot:DescribeEndpoint

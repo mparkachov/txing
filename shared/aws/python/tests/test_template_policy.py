@@ -560,6 +560,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("WHERE startswith(topic(5), 'cloud-mcu-')", template)
         self.assertIn("CloudMcuDcmdTopicRule:", template)
         self.assertIn("CloudMcuDcmdRulePermission:", template)
+        self.assertIn("CLOUD_MCU_TICK_QUEUE_URL", cloud_mcu_template)
         self.assertIn("iot:GetThingShadow", template)
         self.assertIn("iot:UpdateThingShadow", template)
         self.assertIn("iot:SearchIndex", template)
