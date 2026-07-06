@@ -5,12 +5,10 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-04 16:30'
-updated_date: '2026-07-06 10:44'
+updated_date: '2026-07-06 10:59'
 labels: []
 milestone: m-2
-dependencies:
-  - TASK-23.1
-  - TASK-23.2
+dependencies: []
 references:
   - docs/components/rig.md
   - docs/sparkplug-lifecycle.md
