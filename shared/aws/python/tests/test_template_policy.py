@@ -997,6 +997,11 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("Certificate or daemon material already exists", aws_lib)
         self.assertIn("__TXING_IOT_ROLE_ALIAS__", rig_env_template)
         self.assertIn("TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock", rig_env_template)
+        self.assertIn("TXING_SPARKPLUG_MANAGER_ENABLED=true", rig_env_template)
+        self.assertIn("TXING_BLE_CONNECTIVITY_ENABLED=false", rig_env_template)
+        self.assertIn("TXING_THREAD_CONNECTIVITY_ENABLED=false", rig_env_template)
+        self.assertIn("TXING_BLE_NO_RADIO=false", rig_env_template)
+        self.assertNotIn("TXING_BLE_NO_BLE", rig_env_template)
         self.assertIn("TXING_CLOUDWATCH_LOG_GROUP=__TXING_CLOUDWATCH_LOG_GROUP__", rig_env_template)
         self.assertIn("/certs/", gitignore)
 

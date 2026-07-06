@@ -108,14 +108,14 @@ func (d *deviceSession) run(parent context.Context) {
 	defer close(d.done)
 	defer d.disconnect()
 
-	if d.runtime.cfg.NoBLE {
+	if d.runtime.cfg.BLENoRadio {
 		d.publishOffline(ctx)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case command := <-d.commands:
-				message := "BLE is disabled for this daemon instance"
+				message := "BLE radio access is disabled for this daemon instance"
 				d.runtime.publishCommandResult(ctx, command, protocol.CommandFailed, &message, &command.Target.Redcon)
 			}
 		}

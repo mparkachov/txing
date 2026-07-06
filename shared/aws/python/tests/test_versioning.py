@@ -347,12 +347,15 @@ class VersionEnvironmentTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("start config_dir=config_dir connectivity='none' no_ble='false':", rig_justfile)
+        self.assertIn("start config_dir=config_dir:", rig_justfile)
         self.assertIn("stop:", rig_justfile)
-        self.assertIn("restart config_dir=config_dir connectivity='none' no_ble='false':", rig_justfile)
+        self.assertIn("restart config_dir=config_dir:", rig_justfile)
         self.assertIn("start_daemon txing-sparkplug-manager", rig_justfile)
         self.assertIn("start_daemon txing-ble-connectivity", rig_justfile)
         self.assertIn("start_daemon txing-thread-connectivity", rig_justfile)
+        self.assertIn("TXING_SPARKPLUG_MANAGER_ENABLED", rig_justfile)
+        self.assertIn("TXING_BLE_CONNECTIVITY_ENABLED", rig_justfile)
+        self.assertIn("TXING_THREAD_CONNECTIVITY_ENABLED", rig_justfile)
         self.assertIn('echo "$!" >"{{run_dir}}/${daemon_name}.pid"', rig_justfile)
         self.assertIn("TXING_RIG_IPC_SOCKET", rig_justfile)
         self.assertIn("install-mise-tools:", rig_justfile)
@@ -368,7 +371,11 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("publish-rig release='latest'", aws_justfile)
         self.assertNotIn("python -m aws_admin.publish_release rig --release", aws_justfile)
         self.assertIn("TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock", env_template)
-        self.assertIn("TXING_BLE_NO_BLE=false", env_template)
+        self.assertIn("TXING_SPARKPLUG_MANAGER_ENABLED=true", env_template)
+        self.assertIn("TXING_BLE_CONNECTIVITY_ENABLED=false", env_template)
+        self.assertIn("TXING_THREAD_CONNECTIVITY_ENABLED=false", env_template)
+        self.assertIn("TXING_BLE_NO_RADIO=false", env_template)
+        self.assertNotIn("TXING_BLE_NO_BLE", env_template)
 
     def test_component_release_workflows_publish_only_component_assets(self) -> None:
         workflow_dir = REPO_ROOT / ".github" / "workflows"
@@ -784,6 +791,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("PartOf=rig-daemon.target", rig_docs)
         self.assertIn("sudo systemctl restart rig-daemon.target", rig_docs)
         self.assertIn("mise upgrade", rig_docs)
+        self.assertIn("rename `TXING_BLE_NO_BLE` to `TXING_BLE_NO_RADIO`", rig_docs)
+        self.assertIn("the old name is not\nread by current daemons", rig_docs)
         self.assertIn('version_prefix = "rig-v"', rig_docs)
         self.assertIn("model is forward-only", rig_docs)
         self.assertIn("bluetooth", rig_docs)

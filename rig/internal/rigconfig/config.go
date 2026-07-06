@@ -14,35 +14,38 @@ import (
 const DefaultConfigSubdir = ".config/txing/rig-daemon"
 
 type Config struct {
-	ConfigDir               string
-	RigID                   string
-	TownID                  string
-	AWSRegion               string
-	IoTEndpoint             string
-	IoTCredentialEndpoint   string
-	IoTRoleAlias            string
-	CertificateFile         string
-	PrivateKeyFile          string
-	RootCAFile              string
-	CloudWatchLogGroup      string
-	CloudWatchLogLevel      string
-	CloudWatchRetentionDays int32
-	IPCSocket               string
-	InventoryInterval       time.Duration
-	CommandDeadline         time.Duration
-	PresenceTimeout         time.Duration
-	ReconnectDelay          time.Duration
-	ConnectTimeout          time.Duration
-	CommandTimeout          time.Duration
-	HeartbeatInterval       time.Duration
-	MaxBLEConnections       int
-	NoBLE                   bool
-	ThreadServiceDomain     string
-	ThreadDiscoveryInterval time.Duration
-	ThreadPollInterval      time.Duration
-	ThreadCoAPTimeout       time.Duration
-	ThreadHeartbeatInterval time.Duration
-	Debug                   bool
+	ConfigDir                 string
+	RigID                     string
+	TownID                    string
+	AWSRegion                 string
+	IoTEndpoint               string
+	IoTCredentialEndpoint     string
+	IoTRoleAlias              string
+	CertificateFile           string
+	PrivateKeyFile            string
+	RootCAFile                string
+	CloudWatchLogGroup        string
+	CloudWatchLogLevel        string
+	CloudWatchRetentionDays   int32
+	IPCSocket                 string
+	SparkplugManagerEnabled   bool
+	BLEConnectivityEnabled    bool
+	ThreadConnectivityEnabled bool
+	InventoryInterval         time.Duration
+	CommandDeadline           time.Duration
+	PresenceTimeout           time.Duration
+	ReconnectDelay            time.Duration
+	ConnectTimeout            time.Duration
+	CommandTimeout            time.Duration
+	HeartbeatInterval         time.Duration
+	MaxBLEConnections         int
+	BLENoRadio                bool
+	ThreadServiceDomain       string
+	ThreadDiscoveryInterval   time.Duration
+	ThreadPollInterval        time.Duration
+	ThreadCoAPTimeout         time.Duration
+	ThreadHeartbeatInterval   time.Duration
+	Debug                     bool
 }
 
 func Load(configDirOverride string) (Config, error) {
@@ -61,35 +64,38 @@ func Load(configDirOverride string) (Config, error) {
 		return strings.TrimSpace(values[name])
 	}
 	cfg := Config{
-		ConfigDir:               configDir,
-		RigID:                   firstNonEmpty(lookup("TXING_RIG_ID"), lookup("RIG_NAME")),
-		TownID:                  firstNonEmpty(lookup("TXING_TOWN_ID"), lookup("SPARKPLUG_GROUP_ID")),
-		AWSRegion:               firstNonEmpty(lookup("AWS_REGION"), lookup("TXING_AWS_REGION")),
-		IoTEndpoint:             lookup("TXING_IOT_ENDPOINT"),
-		IoTCredentialEndpoint:   lookup("TXING_IOT_CREDENTIAL_ENDPOINT"),
-		IoTRoleAlias:            lookup("TXING_IOT_ROLE_ALIAS"),
-		CertificateFile:         firstNonEmpty(lookup("TXING_IOT_CERT_FILE"), filepath.Join(configDir, "certificate.pem.crt")),
-		PrivateKeyFile:          firstNonEmpty(lookup("TXING_IOT_PRIVATE_KEY_FILE"), filepath.Join(configDir, "private.pem.key")),
-		RootCAFile:              firstNonEmpty(lookup("TXING_IOT_ROOT_CA_FILE"), filepath.Join(configDir, "AmazonRootCA1.pem")),
-		CloudWatchLogGroup:      lookup("TXING_CLOUDWATCH_LOG_GROUP"),
-		CloudWatchLogLevel:      firstNonEmpty(lookup("TXING_CLOUDWATCH_LOG_LEVEL"), "info"),
-		CloudWatchRetentionDays: int32Env(lookup("TXING_CLOUDWATCH_LOG_RETENTION_DAYS"), 14),
-		IPCSocket:               firstNonEmpty(lookup("TXING_RIG_IPC_SOCKET"), defaultIPCSocket()),
-		InventoryInterval:       secondsEnv(lookup("TXING_INVENTORY_INTERVAL_SECONDS"), 300*time.Second),
-		CommandDeadline:         millisEnv(lookup("TXING_COMMAND_DEADLINE_MS"), 60*time.Second),
-		PresenceTimeout:         millisEnv(lookup("TXING_BLE_PRESENCE_TIMEOUT_MS"), 20*time.Second),
-		ReconnectDelay:          millisEnv(lookup("TXING_BLE_RECONNECT_DELAY_MS"), 2*time.Second),
-		ConnectTimeout:          millisEnv(lookup("TXING_BLE_CONNECT_TIMEOUT_MS"), 8*time.Second),
-		CommandTimeout:          millisEnv(lookup("TXING_BLE_COMMAND_TIMEOUT_MS"), 8*time.Second),
-		HeartbeatInterval:       millisEnv(lookup("TXING_BLE_HEARTBEAT_INTERVAL_MS"), 10*time.Second),
-		MaxBLEConnections:       intEnv(lookup("TXING_BLE_MAX_CONNECTIONS"), 0),
-		NoBLE:                   boolEnv(lookup("TXING_BLE_NO_BLE"), false),
-		ThreadServiceDomain:     firstNonEmpty(lookup("TXING_THREAD_SERVICE_DOMAIN"), "default.service.arpa"),
-		ThreadDiscoveryInterval: millisEnv(lookup("TXING_THREAD_DISCOVERY_INTERVAL_MS"), 10*time.Second),
-		ThreadPollInterval:      millisEnv(lookup("TXING_THREAD_POLL_INTERVAL_MS"), 10*time.Second),
-		ThreadCoAPTimeout:       millisEnv(lookup("TXING_THREAD_COAP_TIMEOUT_MS"), 12*time.Second),
-		ThreadHeartbeatInterval: millisEnv(lookup("TXING_THREAD_HEARTBEAT_INTERVAL_MS"), 10*time.Second),
-		Debug:                   boolEnv(lookup("TXING_RIG_DEBUG"), false),
+		ConfigDir:                 configDir,
+		RigID:                     firstNonEmpty(lookup("TXING_RIG_ID"), lookup("RIG_NAME")),
+		TownID:                    firstNonEmpty(lookup("TXING_TOWN_ID"), lookup("SPARKPLUG_GROUP_ID")),
+		AWSRegion:                 firstNonEmpty(lookup("AWS_REGION"), lookup("TXING_AWS_REGION")),
+		IoTEndpoint:               lookup("TXING_IOT_ENDPOINT"),
+		IoTCredentialEndpoint:     lookup("TXING_IOT_CREDENTIAL_ENDPOINT"),
+		IoTRoleAlias:              lookup("TXING_IOT_ROLE_ALIAS"),
+		CertificateFile:           firstNonEmpty(lookup("TXING_IOT_CERT_FILE"), filepath.Join(configDir, "certificate.pem.crt")),
+		PrivateKeyFile:            firstNonEmpty(lookup("TXING_IOT_PRIVATE_KEY_FILE"), filepath.Join(configDir, "private.pem.key")),
+		RootCAFile:                firstNonEmpty(lookup("TXING_IOT_ROOT_CA_FILE"), filepath.Join(configDir, "AmazonRootCA1.pem")),
+		CloudWatchLogGroup:        lookup("TXING_CLOUDWATCH_LOG_GROUP"),
+		CloudWatchLogLevel:        firstNonEmpty(lookup("TXING_CLOUDWATCH_LOG_LEVEL"), "info"),
+		CloudWatchRetentionDays:   int32Env(lookup("TXING_CLOUDWATCH_LOG_RETENTION_DAYS"), 14),
+		IPCSocket:                 firstNonEmpty(lookup("TXING_RIG_IPC_SOCKET"), defaultIPCSocket()),
+		SparkplugManagerEnabled:   boolEnv(lookup("TXING_SPARKPLUG_MANAGER_ENABLED"), true),
+		BLEConnectivityEnabled:    boolEnv(lookup("TXING_BLE_CONNECTIVITY_ENABLED"), false),
+		ThreadConnectivityEnabled: boolEnv(lookup("TXING_THREAD_CONNECTIVITY_ENABLED"), false),
+		InventoryInterval:         secondsEnv(lookup("TXING_INVENTORY_INTERVAL_SECONDS"), 300*time.Second),
+		CommandDeadline:           millisEnv(lookup("TXING_COMMAND_DEADLINE_MS"), 60*time.Second),
+		PresenceTimeout:           millisEnv(lookup("TXING_BLE_PRESENCE_TIMEOUT_MS"), 20*time.Second),
+		ReconnectDelay:            millisEnv(lookup("TXING_BLE_RECONNECT_DELAY_MS"), 2*time.Second),
+		ConnectTimeout:            millisEnv(lookup("TXING_BLE_CONNECT_TIMEOUT_MS"), 8*time.Second),
+		CommandTimeout:            millisEnv(lookup("TXING_BLE_COMMAND_TIMEOUT_MS"), 8*time.Second),
+		HeartbeatInterval:         millisEnv(lookup("TXING_BLE_HEARTBEAT_INTERVAL_MS"), 10*time.Second),
+		MaxBLEConnections:         intEnv(lookup("TXING_BLE_MAX_CONNECTIONS"), 0),
+		BLENoRadio:                boolEnv(lookup("TXING_BLE_NO_RADIO"), false),
+		ThreadServiceDomain:       firstNonEmpty(lookup("TXING_THREAD_SERVICE_DOMAIN"), "default.service.arpa"),
+		ThreadDiscoveryInterval:   millisEnv(lookup("TXING_THREAD_DISCOVERY_INTERVAL_MS"), 10*time.Second),
+		ThreadPollInterval:        millisEnv(lookup("TXING_THREAD_POLL_INTERVAL_MS"), 10*time.Second),
+		ThreadCoAPTimeout:         millisEnv(lookup("TXING_THREAD_COAP_TIMEOUT_MS"), 12*time.Second),
+		ThreadHeartbeatInterval:   millisEnv(lookup("TXING_THREAD_HEARTBEAT_INTERVAL_MS"), 10*time.Second),
+		Debug:                     boolEnv(lookup("TXING_RIG_DEBUG"), false),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err

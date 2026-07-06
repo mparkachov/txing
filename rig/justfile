@@ -42,22 +42,58 @@ build:
     go build -ldflags "-X github.com/mparkachov/txing/rig/internal/version.Version=$version" \
       -o "{{bin_dir}}/txing-thread-connectivity" ./cmd/txing-thread-connectivity
 
-start config_dir=config_dir connectivity='none' no_ble='false':
+start config_dir=config_dir:
     #!/bin/sh
     set -eu
     requested_config_dir="{{config_dir}}"
-    requested_connectivity="{{connectivity}}"
-    requested_no_ble="{{no_ble}}"
     case "$requested_config_dir" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
-    case "$requested_no_ble" in *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;; esac
-    case "$requested_connectivity" in
-      none|all) ;;
-      *=*) echo "Do not pass just recipe arguments as name=value. Use positional arguments." >&2; exit 2 ;;
-      *) echo "Unsupported connectivity '$requested_connectivity'. Supported: none (sparkplug manager only, local rig default), all (also start Thread and BLE daemons)." >&2; exit 2 ;;
-    esac
+    requested_ipc_socket="${TXING_RIG_IPC_SOCKET:-}"
+    if [ -n "$requested_config_dir" ]; then
+      daemon_config_dir="$requested_config_dir"
+    elif [ -n "${TXING_RIG_CONFIG_DIR:-}" ]; then
+      daemon_config_dir="$TXING_RIG_CONFIG_DIR"
+    else
+      daemon_config_dir="$HOME/.config/txing/rig-daemon"
+    fi
+    daemon_env_file="$daemon_config_dir/daemon.env"
+    if [ -f "$daemon_env_file" ]; then
+      set -a
+      . "$daemon_env_file"
+      set +a
+    fi
+    if [ -n "$requested_ipc_socket" ]; then
+      export TXING_RIG_IPC_SOCKET="$requested_ipc_socket"
+    else
+      export TXING_RIG_IPC_SOCKET="{{default_ipc_socket}}"
+    fi
+    config_bool() {
+      name="$1"
+      fallback="$2"
+      eval "value=\${$name:-}"
+      if [ -z "$value" ]; then
+        value="$fallback"
+      fi
+      value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+      case "$value" in
+        true|1|yes|on) return 0 ;;
+        false|0|no|off) return 1 ;;
+        *) echo "$name must be a boolean, got '$value'" >&2; exit 2 ;;
+      esac
+    }
+    sparkplug_enabled=false
+    ble_enabled=false
+    thread_enabled=false
+    if config_bool TXING_SPARKPLUG_MANAGER_ENABLED true; then sparkplug_enabled=true; fi
+    if config_bool TXING_BLE_CONNECTIVITY_ENABLED false; then ble_enabled=true; fi
+    if config_bool TXING_THREAD_CONNECTIVITY_ENABLED false; then thread_enabled=true; fi
+    if [ "$sparkplug_enabled" != "true" ]; then
+      if [ "$ble_enabled" = "true" ] || [ "$thread_enabled" = "true" ]; then
+        echo "TXING_SPARKPLUG_MANAGER_ENABLED must be true when BLE or Thread connectivity is enabled." >&2
+        exit 2
+      fi
+    fi
     just --justfile "{{rig_dir}}/justfile" build
     install -d -m 755 "{{run_dir}}"
-    export TXING_RIG_IPC_SOCKET="${TXING_RIG_IPC_SOCKET:-{{default_ipc_socket}}}"
     start_daemon() {
       daemon_name="$1"
       shift
@@ -74,21 +110,31 @@ start config_dir=config_dir connectivity='none' no_ble='false':
         >"{{run_dir}}/${daemon_name}.log" 2>&1 &
       echo "$!" >"{{run_dir}}/${daemon_name}.pid"
     }
-    start_daemon txing-sparkplug-manager
-    started_logs="{{run_dir}}/txing-sparkplug-manager.log"
-    if [ "$requested_connectivity" = "all" ]; then
+    started_logs=""
+    if [ "$sparkplug_enabled" = "true" ]; then
+      start_daemon txing-sparkplug-manager
+      started_logs="{{run_dir}}/txing-sparkplug-manager.log"
+    else
+      echo "txing-sparkplug-manager disabled by TXING_SPARKPLUG_MANAGER_ENABLED=false"
+    fi
+    if [ "$thread_enabled" = "true" ]; then
       sleep 1
       start_daemon txing-thread-connectivity
+      started_logs="$started_logs {{run_dir}}/txing-thread-connectivity.log"
+    else
+      echo "txing-thread-connectivity disabled by TXING_THREAD_CONNECTIVITY_ENABLED=false"
+    fi
+    if [ "$ble_enabled" = "true" ]; then
       sleep 1
-      if [ "$requested_no_ble" = "true" ]; then
-        start_daemon txing-ble-connectivity --no-ble
-      else
-        start_daemon txing-ble-connectivity
-      fi
-      started_logs="$started_logs {{run_dir}}/txing-thread-connectivity.log {{run_dir}}/txing-ble-connectivity.log"
+      start_daemon txing-ble-connectivity
+      started_logs="$started_logs {{run_dir}}/txing-ble-connectivity.log"
+    else
+      echo "txing-ble-connectivity disabled by TXING_BLE_CONNECTIVITY_ENABLED=false"
     fi
     echo "rig daemons started"
-    echo "logs: $started_logs"
+    if [ -n "$started_logs" ]; then
+      echo "logs: $started_logs"
+    fi
 
 stop:
     #!/bin/sh
@@ -115,11 +161,11 @@ stop:
     rm -f "{{default_ipc_socket}}"
     echo "rig daemons stopped"
 
-restart config_dir=config_dir connectivity='none' no_ble='false':
+restart config_dir=config_dir:
     #!/bin/sh
     set -eu
     just --justfile "{{rig_dir}}/justfile" stop
-    just --justfile "{{rig_dir}}/justfile" start "{{config_dir}}" "{{connectivity}}" "{{no_ble}}"
+    just --justfile "{{rig_dir}}/justfile" start "{{config_dir}}"
 
 log:
     #!/bin/sh
@@ -139,15 +185,79 @@ log:
 check config_dir=config_dir:
     #!/bin/sh
     set -eu
-    just --justfile "{{rig_dir}}/justfile" build
-    if [ -n "{{config_dir}}" ]; then
-      "{{bin_dir}}/txing-sparkplug-manager" --dry-run --config-dir "{{config_dir}}"
-      "{{bin_dir}}/txing-thread-connectivity" --dry-run --config-dir "{{config_dir}}"
-      "{{bin_dir}}/txing-ble-connectivity" --dry-run --config-dir "{{config_dir}}" --no-ble
+    requested_config_dir="{{config_dir}}"
+    requested_ipc_socket="${TXING_RIG_IPC_SOCKET:-}"
+    if [ -n "$requested_config_dir" ]; then
+      daemon_config_dir="$requested_config_dir"
+    elif [ -n "${TXING_RIG_CONFIG_DIR:-}" ]; then
+      daemon_config_dir="$TXING_RIG_CONFIG_DIR"
     else
-      "{{bin_dir}}/txing-sparkplug-manager" --dry-run
-      "{{bin_dir}}/txing-thread-connectivity" --dry-run
-      "{{bin_dir}}/txing-ble-connectivity" --dry-run --no-ble
+      daemon_config_dir="$HOME/.config/txing/rig-daemon"
+    fi
+    daemon_env_file="$daemon_config_dir/daemon.env"
+    if [ -f "$daemon_env_file" ]; then
+      set -a
+      . "$daemon_env_file"
+      set +a
+    fi
+    if [ -n "$requested_ipc_socket" ]; then
+      export TXING_RIG_IPC_SOCKET="$requested_ipc_socket"
+    else
+      export TXING_RIG_IPC_SOCKET="{{default_ipc_socket}}"
+    fi
+    config_bool() {
+      name="$1"
+      fallback="$2"
+      eval "value=\${$name:-}"
+      if [ -z "$value" ]; then
+        value="$fallback"
+      fi
+      value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+      case "$value" in
+        true|1|yes|on) return 0 ;;
+        false|0|no|off) return 1 ;;
+        *) echo "$name must be a boolean, got '$value'" >&2; exit 2 ;;
+      esac
+    }
+    sparkplug_enabled=false
+    ble_enabled=false
+    thread_enabled=false
+    if config_bool TXING_SPARKPLUG_MANAGER_ENABLED true; then sparkplug_enabled=true; fi
+    if config_bool TXING_BLE_CONNECTIVITY_ENABLED false; then ble_enabled=true; fi
+    if config_bool TXING_THREAD_CONNECTIVITY_ENABLED false; then thread_enabled=true; fi
+    if [ "$sparkplug_enabled" != "true" ]; then
+      if [ "$ble_enabled" = "true" ] || [ "$thread_enabled" = "true" ]; then
+        echo "TXING_SPARKPLUG_MANAGER_ENABLED must be true when BLE or Thread connectivity is enabled." >&2
+        exit 2
+      fi
+    fi
+    just --justfile "{{rig_dir}}/justfile" build
+    if [ "$sparkplug_enabled" = "true" ]; then
+      if [ -n "$requested_config_dir" ]; then
+        "{{bin_dir}}/txing-sparkplug-manager" --dry-run --config-dir "$requested_config_dir"
+      else
+        "{{bin_dir}}/txing-sparkplug-manager" --dry-run
+      fi
+    else
+      echo "txing-sparkplug-manager disabled by TXING_SPARKPLUG_MANAGER_ENABLED=false"
+    fi
+    if [ "$thread_enabled" = "true" ]; then
+      if [ -n "$requested_config_dir" ]; then
+        "{{bin_dir}}/txing-thread-connectivity" --dry-run --config-dir "$requested_config_dir"
+      else
+        "{{bin_dir}}/txing-thread-connectivity" --dry-run
+      fi
+    else
+      echo "txing-thread-connectivity disabled by TXING_THREAD_CONNECTIVITY_ENABLED=false"
+    fi
+    if [ "$ble_enabled" = "true" ]; then
+      if [ -n "$requested_config_dir" ]; then
+        "{{bin_dir}}/txing-ble-connectivity" --dry-run --config-dir "$requested_config_dir"
+      else
+        "{{bin_dir}}/txing-ble-connectivity" --dry-run
+      fi
+    else
+      echo "txing-ble-connectivity disabled by TXING_BLE_CONNECTIVITY_ENABLED=false"
     fi
 
 install-mise-tools:

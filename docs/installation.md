@@ -49,7 +49,9 @@ AWS bring-up and teardown live in [aws.md](./aws.md).
 The `raspi` rig is the always-on host coordinator that owns Sparkplug
 publication for local BLE and Thread-managed devices. Production `raspi` rig
 hosts run `txing-sparkplug-manager`, `txing-thread-connectivity`, and
-`txing-ble-connectivity` as standalone systemd services.
+`txing-ble-connectivity` as standalone systemd services. `daemon.env` controls
+which services are expected to run; the generated default enables only
+`txing-sparkplug-manager`.
 
 Canonical `raspi` rig installation, Bluetooth setup, root-owned `mise`,
 systemd units, health-check, and update instructions live in

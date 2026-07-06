@@ -36,10 +36,10 @@ manually on a development Mac.
   `payload.metrics.redcon=4` means the rig runtime is intentionally in the
   low-cost commandable state: the node MQTT session and `NCMD` subscription stay
   alive, but full tick/device work is stopped.
-- For `raspi`, if `rig-daemon.target` is running, all rig daemon services are
-  active, and `just rig::check` passes, the rig thing's Sparkplug projection
-  must be `NBIRTH` with either `redcon=1` or an intentionally commanded
-  `redcon=4`.
+- For `raspi`, if `rig-daemon.target` is running, the daemon services enabled
+  in `daemon.env` are active, and `just rig::check` passes, the rig thing's
+  Sparkplug projection must be `NBIRTH` with either `redcon=1` or an
+  intentionally commanded `redcon=4`.
 - For `cloud`, `NBIRTH redcon=1` is refreshed by the EventBridge minute
   schedule. `NCMD.redcon=4` disables that recurring schedule and publishes
   `NBIRTH redcon=4`; `NCMD.redcon=1` enables the schedule and runs the scheduler
