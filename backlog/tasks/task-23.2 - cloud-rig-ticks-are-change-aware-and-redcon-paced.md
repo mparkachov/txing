@@ -1,11 +1,11 @@
 ---
 id: TASK-23.2
 title: cloud rig ticks are change-aware and redcon-paced
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-04 16:30'
-updated_date: '2026-07-06 08:11'
+updated_date: '2026-07-06 09:55'
 labels: []
 milestone: m-2
 dependencies: []
@@ -29,7 +29,7 @@ Remove change-blind work from the cloud rig tick chain: sqs and power shadow wri
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A sleeping cloud-mcu device causes no shadow writes and at most one Sparkplug publish (with its witness invocation) per minute, verified by unit tests asserting no-write/no-publish on unchanged ticks and by a counted soak.
+- [x] #1 A sleeping cloud-mcu device causes no shadow writes and at most one Sparkplug publish (with its witness invocation) per minute, verified by unit tests asserting no-write/no-publish on unchanged ticks and by a counted soak.
 - [x] #2 Waking, sleeping, and DCMD command convergence behave exactly as before, including command feedback metrics and ECS task reconciliation at REDCON 3.
 - [x] #3 Witness projections and office views remain unchanged for both sleeping and awake devices.
 <!-- AC:END -->
@@ -61,4 +61,12 @@ Implemented 2026-07-06 local code/test pass for change-aware cloud rig ticks.
 Documented the TASK-23.2 idle counted-soak procedure in devices/cloud-mcu/README.md. The runbook keeps default Lambda logging unchanged and tells the operator to verify, after deploy, one cloud MCU SQS invocation per sleeping device per minute, no recurring cloud MCU UpdateThingShadow calls for the stable sleeping device, and no recurring device DBIRTH/DDATA or witness projection movement; cloud rig node NBIRTH minute liveness is explicitly excluded from the device publish count.
 
 Added unit evidence for the AC #1 steady-state shape: TestSleepingDeviceIdleWindowsSendOneTickAndNoRecurringWritesOrPublishes simulates five one-minute sleeping-device schedule windows through the scheduler and runtime together. It asserts one offset-0 tick per minute, exactly one initial device DBIRTH/power-shadow born-state write, no sqs shadow writes, and no recurring device Sparkplug publishes or power shadow writes during the stable sleeping windows. This strengthens the required unit-test portion of AC #1; the live counted soak remains pending.
+
+AC #1 live counted-soak evidence provided by user on 2026-07-06: cloud rig/cloud-mcu Lambda invocations appear once per minute at 2026-07-06T09:28:53Z, 09:29:53Z, and 09:30:53Z. For sleeping device cloud-mcu-ph4p98, AWS IoT shadow UI showed no recurring unchanged-device writes: power and sparkplug last update remained July 06, 2026 10:29:25 UTC+02, sqs last update remained July 05, 2026 06:58:18 UTC+02, and ecs had no selected/current update. This completes the counted-soak portion of AC #1 together with the unit tests asserting no-write/no-publish on unchanged ticks.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+TASK-23.2 makes cloud rig ticks change-aware and REDCON-paced. Sleeping/default cloud-mcu devices now receive one offset-0 tick per minute; desired REDCON 3 devices keep the 0,6,...,54 second cadence for ECS reconciliation. Runtime ticks skip per-tick DescribeThing, do not write the sqs shadow, update the power shadow only on rendered state changes, and publish device DBIRTH/DDATA only for first birth, REDCON/capability change, or command feedback. DCMD remains registry-validated and queues one immediate tick so command convergence does not wait for the minute schedule. CloudFormation adds the cloud rig shadow read permission plus cloud MCU queue URL and sqs:SendMessage for immediate DCMD ticks. Validation: cloud-mcu Go tests, witness Go tests, office bun tests, shared AWS template-policy unittest, git diff --check, and user-provided live counted-soak evidence showing minute ticks with no unchanged shadow updates.
+<!-- SECTION:FINAL_SUMMARY:END -->
