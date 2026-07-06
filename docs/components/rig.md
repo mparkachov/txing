@@ -70,6 +70,36 @@ dependency. They consume rig inventory over IPC and publish:
 REDCON commands remain synchronous, so the Thread CoAP timeout is longer than
 the BLE command timeout to allow one sleepy poll window plus network jitter.
 
+## Cost Posture
+
+REDCON 1 is the normal affordable resting state for every rig type when no
+managed device is awake. REDCON 4 remains the deep-sleep commandable state, but
+operators should not need to park rigs there just to control idle AWS cost.
+
+Idle-awake cost is driven by different work for each rig family:
+
+- `raspi` and `local` rigs pay for the Sparkplug manager MQTT session, the
+  inventory refresh loop, AWS IoT registry/fleet-indexing calls, SSM type
+  catalog reads, and CloudWatch log ingestion. The idle loop is intentionally
+  paced at `TXING_INVENTORY_INTERVAL_SECONDS=300`: one fleet-indexing
+  `SearchIndex` call per unchanged refresh, no recurring per-device
+  `DescribeThing`, cached type catalog reads, and no unchanged-refresh info
+  log line. A restart or an `NCMD redcon=4 -> 1` cycle is the manual
+  force-refresh when an operator does not want to wait up to 300 seconds for a
+  newly registered device.
+- `cloud` rigs pay for the EventBridge/Lambda/SQS tick chain, named-shadow
+  operations, Sparkplug publishes, IoT rules, and witness projections. A
+  sleeping `cloud-mcu` device receives one tick per minute, shadow writes happen
+  only when rendered state changes, and stable sleeping devices do not emit
+  recurring device Sparkplug publications. A device commanded awake to REDCON 3
+  keeps the 6 second tick cadence for ECS reconciliation; that spend is the
+  intended awake-device cost, not idle cost.
+
+Keep an AWS Budgets monthly cost alert for each deployed environment or town.
+Set the warning threshold near the expected steady-state idle spend with enough
+headroom for deliberate REDCON 3 work, and treat the alert as an operations
+guardrail rather than a runtime control.
+
 ## Local Development
 
 From the repository checkout on macOS or Linux:
@@ -77,6 +107,7 @@ From the repository checkout on macOS or Linux:
 ```bash
 just rig::test
 just rig::start
+just rig::status
 just rig::log
 just rig::restart
 just rig::stop

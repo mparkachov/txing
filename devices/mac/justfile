@@ -91,6 +91,31 @@ log:
     fi
     tail -n 160 -f "{{run_dir}}/txing-mac-daemon.log"
 
+status:
+    #!/bin/sh
+    set -eu
+    daemon_name=txing-mac-daemon
+    pid_file="{{run_dir}}/${daemon_name}.pid"
+    log_file="{{run_dir}}/${daemon_name}.log"
+    echo "run_dir={{run_dir}}"
+    if [ -f "$pid_file" ]; then
+      pid="$(cat "$pid_file")"
+      if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+        printf '%s: running pid=%s' "$daemon_name" "$pid"
+      else
+        printf '%s: stale' "$daemon_name"
+        if [ -n "$pid" ]; then
+          printf ' pid=%s' "$pid"
+        fi
+      fi
+    else
+      printf '%s: stopped' "$daemon_name"
+    fi
+    if [ -f "$log_file" ]; then
+      printf ' log=%s' "$log_file"
+    fi
+    printf '\n'
+
 check config_dir=config_dir:
     #!/bin/sh
     set -eu

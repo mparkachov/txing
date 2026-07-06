@@ -5,12 +5,10 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-03 07:45'
-updated_date: '2026-07-05 15:45'
+updated_date: '2026-07-06 10:55'
 labels: []
 milestone: m-1
-dependencies:
-  - TASK-22.3
-  - TASK-22.4
+dependencies: []
 references:
   - docs/sparkplug-lifecycle.md
   - devices/unit/docs/board-video.md

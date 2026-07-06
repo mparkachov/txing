@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-03 07:45'
-updated_date: '2026-07-05 05:54'
+updated_date: '2026-07-06 10:55'
 labels: []
 milestone: m-1
-dependencies:
-  - TASK-22.2
+dependencies: []
 references:
   - devices/unit/daemon/internal/daemon
   - devices/unit/proto/txing/unit/board_video/v1/board_video.proto

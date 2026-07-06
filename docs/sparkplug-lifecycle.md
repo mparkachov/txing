@@ -259,7 +259,9 @@ The root [README](../README.md) is the canonical lifecycle contract. In brief:
 - `NBIRTH` with `redcon=4` means the rig is reachable and commandable but not
   running full tick/device work.
 - `NBIRTH` with `redcon=1` means the rig is running the full active cloud or
-  raspi runtime.
+  raspi runtime. REDCON 1 is the expected affordable idle-awake posture for
+  rigs with no awake managed devices; REDCON 4 remains available for deep sleep
+  or maintenance, not as the normal cost-control state.
 
 The born-state REDCON ladder is:
 

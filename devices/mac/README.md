@@ -44,6 +44,7 @@ Run the daemon from the repository checkout:
 ```bash
 just mac::test
 just mac::start          # config from TXING_MAC_CONFIG_DIR or ~/.config/txing/mac-daemon
+just mac::status
 just mac::log
 just mac::restart
 just mac::stop
@@ -54,7 +55,8 @@ just mac::check          # build + config dry-run
 daemon needs at least `TXING_THING_ID` in `daemon.env` (the registered mac
 thing name); process environment values take precedence over `daemon.env`,
 so unset stray `TXING_THING_ID` exports before starting. Logs and the PID
-file live under `/tmp/txing-mac` (`TXING_MAC_RUN_DIR` overrides).
+file live under `/tmp/txing-mac` (`TXING_MAC_RUN_DIR` overrides);
+`just mac::status` reports whether that PID is running, stale, or stopped.
 
 The watch layer connects to the rig IPC socket (`TXING_RIG_IPC_SOCKET`,
 default `/tmp/txing-rig/rig-ipc.sock` on macOS), waits for the retained rig
