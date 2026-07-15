@@ -3,7 +3,7 @@ id: doc-27
 title: Cyberbrick device type architecture
 type: specification
 created_date: '2026-07-15 07:33'
-updated_date: '2026-07-15 07:35'
+updated_date: '2026-07-15 20:05'
 tags:
   - cyberbrick
   - device-type
@@ -58,6 +58,28 @@ Identical to unit (see `docs/components/board.md` and `docs/contracts/unit-hardw
 - `.github/workflows/release-cyberbrick.yml` mirrors `release-unit.yml`: manual dispatch, `ubuntu-24.04-arm` runners with Alpine containers, immutable `cyberbrick-v*` releases, single-root-entry tar assertion, musl interpreter + resolved-libraries + libcamera ldd assertions.
 - Release tooling: `release/versions/cyberbrick`, cyberbrick version surfaces (Go version.go + two C++ version.hpp), and a `cyberbrick` component in `release/src/txing_release/cli.py` and `release/justfile`.
 
+## Proven Alpine toolchain contract (TASK-22.1)
+
+The pre-copy spike proved the complete unit board stack on native aarch64 using the exact build image `docker.io/library/alpine:3.23.5` (observed digest `sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40`). Device apk repositories stay on Alpine `v3.23`; later Alpine branch changes require a coordinated rebuild and release.
+
+The top-level build package union is:
+
+```text
+build-base cmake pkgconf git perl ca-certificates
+curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev
+libwebsockets-dev zlib-dev libcamera-dev linux-headers
+protobuf-dev protobuf grpc-dev grpc-plugins
+go binutils file
+```
+
+Alpine provides both previously uncertain dependencies: `libusrsctp-dev` and `log4cplus-dev`. Its upstream `libcamera-dev` 0.6 links as `libcamera.so.0.6` and `libcamera-base.so.0.6`; these are the release ldd assertions.
+
+All three unit-source executables built and passed their tests. Each is a dynamic ARM aarch64 ELF with interpreter `/lib/ld-musl-aarch64.so.1`, and every ldd dependency resolved. The Go daemon must use `CGO_ENABLED=1` plus `-linkmode=external`; CGO alone does not force dynamic linkage when the source has no C import.
+
+Only one copied-source adjustment is required: the KVS master must resolve protobuf with `find_package(Protobuf CONFIG REQUIRED)` on Alpine because Alpine gRPC imports the protobuf config export. No musl patch, KVS SDK patch, or upstream-libcamera API patch was required.
+
+Kernel feasibility is positive. Alpine `linux-rpi` 6.12 contains `bcm2835-unicam`, `bcm2835-isp`, and `bcm2835-codec`; Alpine libcamera contains the Raspberry Pi VC4 IPA; and `raspberrypi-bootloader` contains `pwm-2chan.dtbo`. Phase-one on-device video is therefore expected to be functional, not degraded. The runbook still requires a physical-board smoke test for camera enumeration, the current `/dev/video11` encoder assumption, short H.264 capture, and both PWM channels.
+
 ## Board OS shape (Alpine)
 
 - Fresh install: Alpine aarch64 Raspberry Pi image, `setup-alpine`, `setup-disk -m sys`; default networking (ifupdown-ng + wpa_supplicant + udhcpc) and chronyd.
@@ -73,10 +95,9 @@ Once per stack: `just aws::deploy` (ships the cyberbrick thing type and SSM cata
 
 ## Risks
 
-1. Video stack on Alpine is the top functional risk: apk libcamera is upstream (different soname/API than the RPi fork) and the `bcm2835-codec` V4L2 H.264 encoder is a downstream RPi kernel driver that Alpine's `linux-rpi` may not ship. A toolchain/kernel spike runs first; acceptable phase outcome is build-verified video with a documented degraded state on hardware and a follow-up task.
-2. apk availability of usrsctp/log4cplus is unconfirmed; fallbacks are the KVS SDK's bundled usrsctp and a source-built log4cplus confined to the build container.
-3. musl compile breaks in the pinned KVS WebRTC SDK (glibc-isms); patches stay confined to cyberbrick's copy.
-4. Rename collateral from the unit copy: token-specific renames plus residual grep review; proto stubs are regenerated, never text-edited.
+1. Physical-board video integration remains the primary runtime risk: the packages and kernel features are present, but the current worker assumes the H.264 encoder is `/dev/video11`; the runbook smoke test must confirm enumeration and end-to-end frames on Raspberry Pi Zero 2 W.
+2. Dynamic musl linking couples releases to Alpine `v3.23` package ABIs. Alpine branch upgrades and libcamera soname changes require a coordinated build, release, and device maintenance window.
+3. Rename collateral from the unit copy: token-specific renames plus residual grep review; proto stubs are regenerated, never text-edited.
 
 ## Non-goals
 
