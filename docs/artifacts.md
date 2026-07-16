@@ -27,6 +27,7 @@ publish normal GitHub Releases with component-prefixed tags:
 - Lambda: `release/versions/lambda` publishes Go runtime Lambda artifacts as
   `lambda-vX.Y.Z`
 - unit: `release/versions/unit` publishes `unit-vX.Y.Z`
+- cyberbrick: `release/versions/cyberbrick` publishes `cyberbrick-vX.Y.Z`
 - office: `release/versions/office` tracks office version metadata only
 
 Each manual release workflow is dispatched from the selected branch, reads only
@@ -51,6 +52,14 @@ txing-unit-kvs-master-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
 ```
 
+Cyberbrick releases publish these Alpine Linux `aarch64` assets:
+
+```text
+txing-cyberbrick-daemon-linux-aarch64.tar.gz
+txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
+txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+```
+
 Lambda releases publish these Linux `aarch64` assets:
 
 ```text
@@ -64,6 +73,10 @@ name. Each runtime Lambda `.zip` contains one root-level Go executable named
 `bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
+Cyberbrick binaries are built in the pinned Alpine release and dynamically
+linked against musl. The workflow verifies the musl interpreter and every
+shared-library dependency after stripping the exact executable placed in each
+archive; the KVS master must resolve Alpine's expected libcamera sonames.
 
 Release rollout flow:
 
@@ -81,10 +94,10 @@ Release rollout flow:
    root-owned `mise upgrade`, then reboot.
 
 Host `latest` resolution is component-specific: rig mise configs use
-`version_prefix = "rig-v"` and board mise configs use
-`version_prefix = "unit-v"`. This is forward-only operator state; manually
-replace old host configs that do not include the prefix before relying on
-`latest`.
+`version_prefix = "rig-v"`, unit board configs use `version_prefix = "unit-v"`,
+and Cyberbrick board configs use `version_prefix = "cyberbrick-v"`. This is
+forward-only operator state; manually replace old host configs that do not
+include the appropriate prefix before relying on `latest`.
 
 ## Lambda Artifacts
 
@@ -113,7 +126,9 @@ runtime Lambda release stream.
 
 ## Board Assets
 
-Boards install these three release assets with root-owned `mise`:
+### Unit board
+
+Unit boards install these three release assets with root-owned `mise`:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
@@ -184,6 +199,24 @@ Boards that already ran the older board-named runtime need one manual cleanup
 during that writable-root maintenance window: disable and remove
 `txing-board.target` and `txing-board-kvs-master.service`, then run
 `systemctl daemon-reload` before rebooting into `txing-unit.target`.
+
+### Cyberbrick board
+
+Cyberbrick boards install these three release assets with root-owned `mise`:
+
+```text
+txing-cyberbrick-daemon-linux-aarch64.tar.gz
+txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
+txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+```
+
+Installed commands are `txing-cyberbrick-daemon`,
+`txing-cyberbrick-kvs-master`, and `txing-cyberbrick-hardware-worker`.
+Cyberbrick uses the `cyberbrick-v*` release stream and Alpine `v3.23`; the
+release image, installed apk branch, and runtime libraries must move together.
+Publishing a release never upgrades a Cyberbrick automatically. Installation,
+OpenRC service configuration, writable-root maintenance, and the return to a
+read-only root remain explicit operator steps in the Cyberbrick board runbook.
 
 ## Rig Artifacts
 
@@ -257,3 +290,7 @@ boards and standalone rig daemons:
 - MQTT MCP fallback at REDCON `2`
 - rig daemon install and upgrade from GitHub release assets through root-owned
   `mise`
+
+These observations cover the existing unit and rig release paths. Cyberbrick
+release artifacts are automatically build/link/package verified, but physical
+board installation and runtime parity remain separate milestone validation.

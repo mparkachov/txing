@@ -27,7 +27,7 @@ class ReleaseCliTests(unittest.TestCase):
         full_path.write_text(content, encoding="utf-8")
 
     def _write_minimal_repo(self, version: str = "1.2.3") -> None:
-        for component in ("rig", "lambda", "unit", "office"):
+        for component in ("rig", "lambda", "unit", "cyberbrick", "office"):
             self._write(f"release/versions/{component}", f"{version}\n")
         self._write(
             "shared/aws/python/pyproject.toml",
@@ -48,6 +48,18 @@ class ReleaseCliTests(unittest.TestCase):
         self._write(
             "devices/unit/board/hardware_worker/include/hardware_worker/version.hpp",
             f'#define TXING_UNIT_HARDWARE_WORKER_VERSION "{version}"\n',
+        )
+        self._write(
+            "devices/cyberbrick/daemon/internal/daemon/version.go",
+            f'package daemon\n\nconst packageVersion = "{version}"\n',
+        )
+        self._write(
+            "devices/cyberbrick/board/kvs_master/include/kvs_master/version.hpp",
+            f'#define TXING_CYBERBRICK_KVS_MASTER_VERSION "{version}"\n',
+        )
+        self._write(
+            "devices/cyberbrick/board/hardware_worker/include/hardware_worker/version.hpp",
+            f'#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "{version}"\n',
         )
         self._write(
             "office/package.json",
@@ -95,9 +107,51 @@ class ReleaseCliTests(unittest.TestCase):
             self.assertEqual((cli.ROOT / "release/versions/lambda").read_text(), "1.2.3\n")
             self.assertEqual((cli.ROOT / "release/versions/office").read_text(), "1.2.3\n")
             self.assertEqual(
+                (cli.ROOT / "release/versions/cyberbrick").read_text(), "1.2.3\n"
+            )
+            self.assertEqual(
                 json.loads((cli.ROOT / "office/package.json").read_text())["version"],
                 "1.2.3",
             )
+
+    def test_cyberbrick_bump_updates_all_three_owned_version_surfaces_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cli.ROOT = Path(temp_dir)
+            self._write_minimal_repo()
+
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                cli.bump("cyberbrick", "1.2.4")
+
+            self.assertEqual(
+                (cli.ROOT / "release/versions/cyberbrick").read_text(), "1.2.4\n"
+            )
+            self.assertIn(
+                'const packageVersion = "1.2.4"',
+                (
+                    cli.ROOT
+                    / "devices/cyberbrick/daemon/internal/daemon/version.go"
+                ).read_text(),
+            )
+            self.assertIn(
+                '#define TXING_CYBERBRICK_KVS_MASTER_VERSION "1.2.4"',
+                (
+                    cli.ROOT
+                    / "devices/cyberbrick/board/kvs_master/include/kvs_master/version.hpp"
+                ).read_text(),
+            )
+            self.assertIn(
+                '#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "1.2.4"',
+                (
+                    cli.ROOT
+                    / "devices/cyberbrick/board/hardware_worker/include/hardware_worker/version.hpp"
+                ).read_text(),
+            )
+            self.assertEqual((cli.ROOT / "release/versions/unit").read_text(), "1.2.3\n")
+            self.assertEqual((cli.ROOT / "release/versions/rig").read_text(), "1.2.3\n")
+            self.assertEqual((cli.ROOT / "release/versions/lambda").read_text(), "1.2.3\n")
+            self.assertEqual((cli.ROOT / "release/versions/office").read_text(), "1.2.3\n")
 
     def test_lambda_bump_updates_only_runtime_lambda_release_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -196,7 +250,7 @@ class ReleaseCliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(
                 stdout.getvalue(),
-                "rig: 1.2.3\nlambda: 1.2.3\nunit: 1.2.3\noffice: 4.5.6\n",
+                "rig: 1.2.3\nlambda: 1.2.3\nunit: 1.2.3\ncyberbrick: 1.2.3\noffice: 4.5.6\n",
             )
 
 

@@ -26,7 +26,7 @@ class TextVersion:
     count: int = 1
 
 
-TEXT_VERSIONS = (
+UNIT_TEXT_VERSIONS = (
     TextVersion(
         Path("devices/unit/daemon/internal/daemon/version.go"),
         "unit daemon Go version",
@@ -45,6 +45,32 @@ TEXT_VERSIONS = (
         re.compile(r'#define TXING_UNIT_HARDWARE_WORKER_VERSION "[^"]+"'),
         '#define TXING_UNIT_HARDWARE_WORKER_VERSION "{version}"',
     ),
+)
+
+CYBERBRICK_TEXT_VERSIONS = (
+    TextVersion(
+        Path("devices/cyberbrick/daemon/internal/daemon/version.go"),
+        "cyberbrick daemon Go version",
+        re.compile(r'const packageVersion = "[^"]+"'),
+        'const packageVersion = "{version}"',
+    ),
+    TextVersion(
+        Path("devices/cyberbrick/board/kvs_master/include/kvs_master/version.hpp"),
+        "cyberbrick native KVS master version",
+        re.compile(r'#define TXING_CYBERBRICK_KVS_MASTER_VERSION "[^"]+"'),
+        '#define TXING_CYBERBRICK_KVS_MASTER_VERSION "{version}"',
+    ),
+    TextVersion(
+        Path(
+            "devices/cyberbrick/board/hardware_worker/include/hardware_worker/version.hpp"
+        ),
+        "cyberbrick hardware worker version",
+        re.compile(r'#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "[^"]+"'),
+        '#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "{version}"',
+    ),
+)
+
+OFFICE_TEXT_VERSIONS = (
     TextVersion(
         Path("office/src/config.ts"),
         "office runtime fallback version",
@@ -74,13 +100,18 @@ COMPONENTS = {
     "unit": Component(
         name="unit",
         version_path=Path("release/versions/unit"),
-        text_versions=TEXT_VERSIONS[:3],
+        text_versions=UNIT_TEXT_VERSIONS,
+    ),
+    "cyberbrick": Component(
+        name="cyberbrick",
+        version_path=Path("release/versions/cyberbrick"),
+        text_versions=CYBERBRICK_TEXT_VERSIONS,
     ),
     "office": Component(
         name="office",
         version_path=Path("release/versions/office"),
         node_packages=NODE_PACKAGES,
-        text_versions=TEXT_VERSIONS[3:],
+        text_versions=OFFICE_TEXT_VERSIONS,
     ),
 }
 

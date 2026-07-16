@@ -83,6 +83,12 @@ set(
   CACHE STRING
   "Full path to the system CA certificate used by the native signaling client for AWS TLS verification"
 )
+set(
+  TXING_CYBERBRICK_KVS_MASTER_VERSION
+  ""
+  CACHE STRING
+  "Optional release version override for txing-cyberbrick-kvs-master"
+)
 
 add_library(
   txing_cyberbrick_kvs_master_lib
@@ -100,6 +106,13 @@ target_include_directories(
 )
 
 target_compile_features(txing_cyberbrick_kvs_master_lib PUBLIC cxx_std_17)
+if(NOT TXING_CYBERBRICK_KVS_MASTER_VERSION STREQUAL "")
+  target_compile_definitions(
+    txing_cyberbrick_kvs_master_lib
+    PUBLIC
+      TXING_CYBERBRICK_KVS_MASTER_VERSION="${TXING_CYBERBRICK_KVS_MASTER_VERSION}"
+  )
+endif()
 target_compile_options(
   txing_cyberbrick_kvs_master_lib
   PRIVATE

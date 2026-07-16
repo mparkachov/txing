@@ -8,7 +8,7 @@ export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
 aws_dir := project_root + "/shared/aws"
 aws_lib := aws_dir + "/scripts/aws_lib.sh"
-components := "rig lambda unit office"
+components := "rig lambda unit cyberbrick office"
 
 bump component='' target='':
     #!/bin/sh
@@ -24,9 +24,9 @@ bump component='' target='':
       exit 1
     fi
     case "{{component}}" in
-      rig|lambda|unit|office) ;;
+      rig|lambda|unit|cyberbrick|office) ;;
       *)
-        echo "unknown release component '{{component}}'; expected rig, lambda, unit, or office" >&2
+        echo "unknown release component '{{component}}'; expected rig, lambda, unit, cyberbrick, or office" >&2
         exit 1
         ;;
     esac
@@ -47,12 +47,13 @@ build component='' ref='':
       rig) workflow="release-rig.yml" ;;
       lambda) workflow="release-lambda.yml" ;;
       unit) workflow="release-unit.yml" ;;
+      cyberbrick) workflow="release-cyberbrick.yml" ;;
       office)
         echo "release build is not implemented for component: office" >&2
         exit 1
         ;;
       *)
-        echo "unknown release component '{{component}}'; expected rig, lambda, unit, or office" >&2
+        echo "unknown release component '{{component}}'; expected rig, lambda, unit, cyberbrick, or office" >&2
         exit 1
         ;;
     esac
@@ -78,12 +79,12 @@ publish component='' release='latest':
         ;;
       lambda) publish_component="lambda" ;;
       rig) publish_component="rig" ;;
-      unit|office)
+      unit|cyberbrick|office)
         echo "release publish is not implemented for component: {{component}}" >&2
         exit 1
         ;;
       *)
-        echo "unknown release component '{{component}}'; expected lambda, rig, unit, or office" >&2
+        echo "unknown release component '{{component}}'; expected lambda, rig, unit, cyberbrick, or office" >&2
         exit 1
         ;;
     esac

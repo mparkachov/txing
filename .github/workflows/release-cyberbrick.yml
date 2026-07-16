@@ -1,0 +1,340 @@
+name: Release cyberbrick
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: txing-release-cyberbrick-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_COMPONENT: cyberbrick
+  RELEASE_VERSION_FILE: release/versions/cyberbrick
+  RELEASE_TAG_PREFIX: cyberbrick-v
+  CYBERBRICK_DAEMON_ASSET: txing-cyberbrick-daemon-linux-aarch64.tar.gz
+  KVS_MASTER_ASSET: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
+  HARDWARE_WORKER_ASSET: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+
+jobs:
+  metadata:
+    name: Resolve release metadata
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      latest_release_version: ${{ steps.metadata.outputs.latest_release_version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      release_target: ${{ steps.metadata.outputs.release_target }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '[:space:]' < "$RELEASE_VERSION_FILE")"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "$RELEASE_VERSION_FILE must contain a semantic version like x.y.z, got: $version" >&2
+            exit 1
+          fi
+          version_major_num=$((10#${BASH_REMATCH[1]}))
+          version_minor_num=$((10#${BASH_REMATCH[2]}))
+          version_patch_num=$((10#${BASH_REMATCH[3]}))
+
+          if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
+            echo "$RELEASE_COMPONENT release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
+            exit 1
+          fi
+
+          git fetch --tags --force origin
+          latest_release_version=""
+          latest_major_num=0
+          latest_minor_num=0
+          latest_patch_num=0
+          while IFS= read -r tag; do
+            candidate="${tag#$RELEASE_TAG_PREFIX}"
+            if [[ ! "$candidate" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              continue
+            fi
+            candidate_major_num=$((10#${BASH_REMATCH[1]}))
+            candidate_minor_num=$((10#${BASH_REMATCH[2]}))
+            candidate_patch_num=$((10#${BASH_REMATCH[3]}))
+            if [ -z "$latest_release_version" ] ||
+              (( candidate_major_num > latest_major_num ||
+                (candidate_major_num == latest_major_num && candidate_minor_num > latest_minor_num) ||
+                (candidate_major_num == latest_major_num && candidate_minor_num == latest_minor_num && candidate_patch_num > latest_patch_num) )); then
+              latest_release_version="$candidate"
+              latest_major_num="$candidate_major_num"
+              latest_minor_num="$candidate_minor_num"
+              latest_patch_num="$candidate_patch_num"
+            fi
+          done < <(git tag --list "$RELEASE_TAG_PREFIX*")
+
+          if [ -n "$latest_release_version" ] &&
+            (( version_major_num < latest_major_num ||
+              (version_major_num == latest_major_num && version_minor_num < latest_minor_num) ||
+              (version_major_num == latest_major_num && version_minor_num == latest_minor_num && version_patch_num <= latest_patch_num) )); then
+            echo "$RELEASE_VERSION_FILE version $version must be greater than latest $RELEASE_COMPONENT release tag ${RELEASE_TAG_PREFIX}${latest_release_version}." >&2
+            exit 1
+          fi
+
+          tag="${RELEASE_TAG_PREFIX}${version}"
+          release_target="$(git rev-parse HEAD)"
+
+          {
+            echo "### Txing $RELEASE_COMPONENT release"
+            echo
+            echo "- Component: `$RELEASE_COMPONENT`"
+            echo "- Version file: `$RELEASE_VERSION_FILE`"
+            echo "- Version: `$version`"
+            if [ -n "$latest_release_version" ]; then
+              echo "- Latest $RELEASE_COMPONENT release tag: `${RELEASE_TAG_PREFIX}${latest_release_version}`"
+            else
+              echo "- Latest $RELEASE_COMPONENT release tag: none"
+            fi
+            echo "- Tag: `$tag`"
+            echo "- Commit: `$release_target`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "latest_release_version=$latest_release_version" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
+
+      - name: Reject existing immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; releases are immutable." >&2
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Release tag $TAG already exists; releases are immutable." >&2
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.binary }}
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+    container:
+      image: docker.io/library/alpine:3.23.5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: daemon
+            binary: txing-cyberbrick-daemon
+            asset: txing-cyberbrick-daemon-linux-aarch64.tar.gz
+            kind: daemon
+          - component: kvs-master
+            binary: txing-cyberbrick-kvs-master
+            asset: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
+            kind: kvs-master
+          - component: hardware-worker
+            binary: txing-cyberbrick-hardware-worker
+            asset: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+            kind: hardware-worker
+
+    steps:
+      - name: Install pinned Alpine build dependencies
+        shell: sh
+        run: |
+          set -eu
+          test "$(cat /etc/alpine-release)" = "3.23.5"
+          test "$(uname -m)" = "aarch64"
+          apk add --no-cache \
+            gcompat build-base cmake pkgconf git perl ca-certificates \
+            curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
+            libwebsockets-dev zlib-dev libcamera-dev linux-headers \
+            protobuf-dev protobuf grpc-dev grpc-plugins \
+            go binutils file tar gzip
+
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build and test ${{ matrix.binary }}
+        env:
+          COMPONENT: ${{ matrix.component }}
+          BINARY: ${{ matrix.binary }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          AWS_KVS_SDK_COMMIT: bb106510cf74edd2c24881c1ae94ceaa0083d15c
+        shell: sh
+        run: |
+          set -eu
+          output="$RUNNER_TEMP/$BINARY"
+
+          case "$COMPONENT" in
+            daemon)
+              (
+                cd devices/cyberbrick/daemon
+                go test ./...
+                CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
+                  go build -trimpath \
+                    -ldflags="-linkmode=external -s -w -X github.com/mparkachov/txing/devices/cyberbrick/daemon/internal/daemon.DaemonVersion=$VERSION" \
+                    -o "$output" \
+                    ./cmd/txing-cyberbrick-daemon
+              )
+              ;;
+            kvs-master)
+              source_dir="$GITHUB_WORKSPACE/devices/cyberbrick/board/kvs_master"
+              build_dir="$RUNNER_TEMP/build-txing-cyberbrick-kvs-master"
+              openssl_libdir="$(pkg-config --variable=libdir openssl)"
+              openssl_includedir="$(pkg-config --variable=includedir openssl)"
+              cmake \
+                -S "$source_dir" \
+                -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_TESTING=ON \
+                -DTXING_KVS_SYSTEM_CA_CERT_PATH=/etc/ssl/certs/ca-certificates.crt \
+                -DTXING_KVS_GRPC_BRIDGE=ON \
+                -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$AWS_KVS_SDK_COMMIT" \
+                -DTXING_CYBERBRICK_KVS_MASTER_VERSION="$VERSION" \
+                -DOPENSSL_USE_STATIC_LIBS=FALSE \
+                -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+                -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+                -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+              cmake --build "$build_dir" --config Release
+              ctest --test-dir "$build_dir" --output-on-failure
+              install -m 755 "$build_dir/$BINARY" "$output"
+              ;;
+            hardware-worker)
+              source_dir="$GITHUB_WORKSPACE/devices/cyberbrick/board/hardware_worker"
+              build_dir="$RUNNER_TEMP/build-txing-cyberbrick-hardware-worker"
+              cmake \
+                -S "$source_dir" \
+                -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_TESTING=ON \
+                -DTXING_HARDWARE_WORKER_GRPC=ON \
+                -DTXING_CYBERBRICK_HARDWARE_WORKER_VERSION="$VERSION"
+              cmake --build "$build_dir" --config Release
+              ctest --test-dir "$build_dir" --output-on-failure
+              install -m 755 "$build_dir/$BINARY" "$output"
+              ;;
+            *)
+              echo "Unsupported Cyberbrick release component: $COMPONENT" >&2
+              exit 2
+              ;;
+          esac
+
+          test -x "$output"
+          actual_version="$("$output" --version)"
+          expected_version="$BINARY $VERSION"
+          if [ "$actual_version" != "$expected_version" ]; then
+            echo "Expected '$expected_version', got '$actual_version'." >&2
+            exit 1
+          fi
+
+      - name: Package and verify ${{ matrix.asset }}
+        env:
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
+          BINARY_KIND: ${{ matrix.kind }}
+        shell: sh
+        run: |
+          set -eu
+          source="$RUNNER_TEMP/$BINARY"
+          package_dir="$RUNNER_TEMP/package-$BINARY"
+          asset_path="$RUNNER_TEMP/$ASSET"
+          rm -rf "$package_dir"
+          install -d "$package_dir"
+          install -m 755 "$source" "$package_dir/$BINARY"
+          strip "$package_dir/$BINARY"
+          sh release/scripts/assert-cyberbrick-musl.sh \
+            "$package_dir/$BINARY" "$BINARY_KIND"
+          tar -C "$package_dir" -czf "$asset_path" "$BINARY"
+          archive_listing="$(tar -tzf "$asset_path")"
+          if [ "$archive_listing" != "$BINARY" ]; then
+            echo "Expected $ASSET to contain only root-level $BINARY, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
+
+      - name: Upload ${{ matrix.asset }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ runner.temp }}/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    runs-on: ubuntu-24.04-arm
+    needs:
+      - metadata
+      - build
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_TARGET: ${{ needs.metadata.outputs.release_target }}
+          RELEASE_ASSETS_DIR: ${{ runner.temp }}/release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_assets=(
+            "$CYBERBRICK_DAEMON_ASSET"
+            "$KVS_MASTER_ASSET"
+            "$HARDWARE_WORKER_ASSET"
+          )
+
+          release_asset_paths=()
+          for asset in "${release_assets[@]}"; do
+            asset_path="$RELEASE_ASSETS_DIR/$asset"
+            if [ ! -s "$asset_path" ]; then
+              echo "Missing release asset from build jobs: $asset_path" >&2
+              find "$RELEASE_ASSETS_DIR" -maxdepth 2 -type f -print >&2 || true
+              exit 1
+            fi
+            release_asset_paths+=("$asset_path")
+          done
+
+          notes_file="$(mktemp)"
+          {
+            echo "Txing $RELEASE_COMPONENT release."
+            echo
+            echo "- Component: $RELEASE_COMPONENT"
+            echo "- Version: $VERSION"
+            echo "- Tag: $TAG"
+            echo "- Commit: $RELEASE_TARGET"
+            echo "- Build image: docker.io/library/alpine:3.23.5"
+            echo "- Assets:"
+            for asset in "${release_assets[@]}"; do
+              echo "  - $asset"
+            done
+          } >"$notes_file"
+
+          gh release create "$TAG" \
+            "${release_asset_paths[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_TARGET" \
+            --title "$TAG" \
+            --notes-file "$notes_file" \
+            --latest=false

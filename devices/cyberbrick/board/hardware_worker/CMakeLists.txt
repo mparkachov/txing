@@ -10,6 +10,12 @@ option(
   "Build txing-cyberbrick-hardware-worker gRPC server"
   ON
 )
+set(
+  TXING_CYBERBRICK_HARDWARE_WORKER_VERSION
+  ""
+  CACHE STRING
+  "Optional release version override for txing-cyberbrick-hardware-worker"
+)
 
 add_library(
   txing_cyberbrick_hardware_worker_core
@@ -24,6 +30,13 @@ target_include_directories(
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 target_compile_features(txing_cyberbrick_hardware_worker_core PUBLIC cxx_std_17)
+if(NOT TXING_CYBERBRICK_HARDWARE_WORKER_VERSION STREQUAL "")
+  target_compile_definitions(
+    txing_cyberbrick_hardware_worker_core
+    PUBLIC
+      TXING_CYBERBRICK_HARDWARE_WORKER_VERSION="${TXING_CYBERBRICK_HARDWARE_WORKER_VERSION}"
+  )
+endif()
 target_compile_options(
   txing_cyberbrick_hardware_worker_core
   PRIVATE

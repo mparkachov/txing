@@ -397,13 +397,25 @@ class VersionEnvironmentTests(unittest.TestCase):
         rig_workflow = (workflow_dir / "release-rig.yml").read_text(encoding="utf-8")
         lambda_workflow = (workflow_dir / "release-lambda.yml").read_text(encoding="utf-8")
         unit_workflow = (workflow_dir / "release-unit.yml").read_text(encoding="utf-8")
+        cyberbrick_workflow = (workflow_dir / "release-cyberbrick.yml").read_text(
+            encoding="utf-8"
+        )
+        cyberbrick_musl_assertion = (
+            REPO_ROOT / "release" / "scripts" / "assert-cyberbrick-musl.sh"
+        ).read_text(encoding="utf-8")
         release_cli = (
             REPO_ROOT / "release" / "src" / "txing_release" / "cli.py"
         ).read_text(encoding="utf-8")
+        release_justfile = (REPO_ROOT / "release" / "justfile").read_text(
+            encoding="utf-8"
+        )
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
         unit_daemon_justfile = (
             REPO_ROOT / "devices" / "unit" / "daemon" / "justfile"
+        ).read_text(encoding="utf-8")
+        cyberbrick_daemon_justfile = (
+            REPO_ROOT / "devices" / "cyberbrick" / "daemon" / "justfile"
         ).read_text(encoding="utf-8")
         artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
             encoding="utf-8"
@@ -413,6 +425,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
 
         workflows = {
+            "rig": rig_workflow,
+            "lambda": lambda_workflow,
+            "unit": unit_workflow,
+            "cyberbrick": cyberbrick_workflow,
+        }
+        existing_go_workflows = {
             "rig": rig_workflow,
             "lambda": lambda_workflow,
             "unit": unit_workflow,
@@ -534,7 +552,69 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("curl https://mise.run | sh", unit_workflow)
         self.assertNotIn("mise/shims", unit_workflow)
 
-        for workflow in workflows.values():
+        self.assertIn("build:", cyberbrick_workflow)
+        self.assertIn("matrix:", cyberbrick_workflow)
+        self.assertIn("component: daemon", cyberbrick_workflow)
+        self.assertIn("component: kvs-master", cyberbrick_workflow)
+        self.assertIn("component: hardware-worker", cyberbrick_workflow)
+        self.assertIn(
+            "CYBERBRICK_DAEMON_ASSET: txing-cyberbrick-daemon-linux-aarch64.tar.gz",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "KVS_MASTER_ASSET: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "HARDWARE_WORKER_ASSET: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz",
+            cyberbrick_workflow,
+        )
+        self.assertIn("image: docker.io/library/alpine:3.23.5", cyberbrick_workflow)
+        self.assertIn(
+            'test "$(cat /etc/alpine-release)" = "3.23.5"',
+            cyberbrick_workflow,
+        )
+        self.assertIn('test "$(uname -m)" = "aarch64"', cyberbrick_workflow)
+        self.assertIn("libusrsctp-dev", cyberbrick_workflow)
+        self.assertIn("libcamera-dev", cyberbrick_workflow)
+        self.assertIn("grpc-plugins", cyberbrick_workflow)
+        self.assertIn("CGO_ENABLED=1 GOOS=linux GOARCH=arm64", cyberbrick_workflow)
+        self.assertIn("-linkmode=external", cyberbrick_workflow)
+        self.assertIn(
+            "github.com/mparkachov/txing/devices/cyberbrick/daemon/internal/daemon.DaemonVersion=$VERSION",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "-DTXING_CYBERBRICK_KVS_MASTER_VERSION=\"$VERSION\"",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "-DTXING_CYBERBRICK_HARDWARE_WORKER_VERSION=\"$VERSION\"",
+            cyberbrick_workflow,
+        )
+        self.assertIn("-DBUILD_TESTING=ON", cyberbrick_workflow)
+        self.assertIn("ctest --test-dir", cyberbrick_workflow)
+        self.assertIn("strip \"$package_dir/$BINARY\"", cyberbrick_workflow)
+        self.assertIn("sh release/scripts/assert-cyberbrick-musl.sh", cyberbrick_workflow)
+        self.assertIn('archive_listing="$(tar -tzf "$asset_path")"', cyberbrick_workflow)
+        self.assertIn(
+            'release_asset_paths+=("$asset_path")', cyberbrick_workflow
+        )
+        self.assertIn('"$CYBERBRICK_DAEMON_ASSET"', cyberbrick_workflow)
+        self.assertIn('"$KVS_MASTER_ASSET"', cyberbrick_workflow)
+        self.assertIn('"$HARDWARE_WORKER_ASSET"', cyberbrick_workflow)
+        self.assertNotIn("image: debian:trixie", cyberbrick_workflow)
+        self.assertNotIn("apt-get", cyberbrick_workflow)
+        self.assertNotIn("archive.raspberrypi.com", cyberbrick_workflow)
+
+        self.assertIn("ELF 64-bit LSB.*ARM aarch64", cyberbrick_musl_assertion)
+        self.assertIn("/lib/ld-musl-aarch64.so.1", cyberbrick_musl_assertion)
+        self.assertIn("libc.musl-aarch64.so.1", cyberbrick_musl_assertion)
+        self.assertIn("grep -Fq 'not found'", cyberbrick_musl_assertion)
+        self.assertIn("libcamera.so.0.6", cyberbrick_musl_assertion)
+        self.assertIn("libcamera-base.so.0.6", cyberbrick_musl_assertion)
+
+        for workflow in existing_go_workflows.values():
             self.assertIn("for version in 1.26 1.25 1.24", workflow)
             self.assertIn('candidate="golang-${version}-go"', workflow)
             self.assertIn('echo "$go_root/bin" >>"$GITHUB_PATH"', workflow)
@@ -557,6 +637,17 @@ class VersionEnvironmentTests(unittest.TestCase):
             release_cli,
         )
         self.assertIn("kTxingUnitKvsMasterVersion", release_cli)
+        self.assertIn(
+            'Path("devices/cyberbrick/daemon/internal/daemon/version.go")',
+            release_cli,
+        )
+        self.assertIn("TXING_CYBERBRICK_KVS_MASTER_VERSION", release_cli)
+        self.assertIn("TXING_CYBERBRICK_HARDWARE_WORKER_VERSION", release_cli)
+        self.assertIn(
+            'components := "rig lambda unit cyberbrick office"', release_justfile
+        )
+        self.assertIn('cyberbrick) workflow="release-cyberbrick.yml"', release_justfile)
+        self.assertIn("unit|cyberbrick|office)", release_justfile)
         self.assertNotIn("kTxingBoardKvsMasterVersion", release_cli)
         self.assertNotIn("shared/aws/python/pyproject.toml", release_cli)
         self.assertNotIn("shared/aws/python/uv.lock", release_cli)
@@ -570,9 +661,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("/" + "VERSION", rig_justfile)
         self.assertIn("release/versions/unit", unit_daemon_justfile)
         self.assertNotIn("/" + "VERSION", unit_daemon_justfile)
+        self.assertIn(
+            'alpine_build_image := "docker.io/library/alpine:3.23.5"',
+            cyberbrick_daemon_justfile,
+        )
         self.assertIn("release/versions/rig", artifacts_docs)
         self.assertIn("release/versions/lambda", artifacts_docs)
         self.assertIn("release/versions/unit", artifacts_docs)
+        self.assertIn("release/versions/cyberbrick", artifacts_docs)
         self.assertIn("release/versions/office", artifacts_docs)
         self.assertIn("office version metadata only", artifacts_docs)
         self.assertIn("Cloudflare Pages", artifacts_docs)

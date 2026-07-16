@@ -57,13 +57,13 @@ artifacts:
   is uploaded to AWS Lambda from GitHub release assets; see
   [artifacts.md](./artifacts.md).
 - Board and rig binary updates are manual writable-root maintenance actions. The
-  installed systemd service starts offline from root-owned mise shims and does
+  installed init service starts offline from root-owned mise installs and does
   not call GitHub during normal service restart.
 - `latest` is component scoped: rig hosts use `rig-v*`, board hosts use
-  `unit-v*`, and Lambda publishing uses `lambda-v*`. Existing host mise configs
-  are forward-only manual state; replace old configs that do not set
-  `version_prefix = "rig-v"` or `version_prefix = "unit-v"` before relying on
-  `latest`.
+  `unit-v*` or `cyberbrick-v*` according to device type, and Lambda publishing
+  uses `lambda-v*`. Existing host mise configs are forward-only manual state;
+  replace old configs that do not set the matching `version_prefix` before
+  relying on `latest`.
 - The Lambda component version covers Go runtime Lambda artifacts only. Release
   builds inject that semver into the Go Lambda binaries, which emit a structured
   cold-start log with `version=<release-version>`. Python admin Lambdas are
