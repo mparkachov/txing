@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-sparkplug-shadow.schema.json",
+  "title": "Txing Sparkplug Named Shadow Contract v2",
+  "description": "Named shadow 'sparkplug' AWS-side materialized Sparkplug view for a txing entity.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["topic", "payload"],
+          "properties": {
+            "topic": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["namespace", "groupId", "messageType", "edgeNodeId", "deviceId"],
+              "properties": {
+                "namespace": {
+                  "const": "spBv1.0"
+                },
+                "groupId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "messageType": {
+                  "type": "string",
+                  "enum": ["NBIRTH", "NDATA", "NDEATH", "DBIRTH", "DDATA", "DDEATH"]
+                },
+                "edgeNodeId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "deviceId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["metrics"],
+              "properties": {
+                "timestamp": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "metrics": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "projection": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "observedAt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

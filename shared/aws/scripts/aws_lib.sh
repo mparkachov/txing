@@ -437,7 +437,8 @@ txing_generate_iot_certificate_bundle() {
   thing_id="$1"
   rig_env_template="$2"
   unit_env_template="$3"
-  mac_env_template="$4"
+  cyberbrick_env_template="$4"
+  mac_env_template="$5"
   txing_validate_iot_thing_id "$thing_id" "Use: just aws::cert <thing-id>"
   thing_json="$(aws iot describe-thing --thing-name "$thing_id" --output json)"
   thing_type="$(txing_json_string "$thing_json" '.thingTypeName')"
@@ -458,6 +459,9 @@ txing_generate_iot_certificate_bundle() {
       ;;
     deviceType:unit)
       txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$unit_env_template" "$thing_json" unit-daemon
+      ;;
+    deviceType:cyberbrick)
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$cyberbrick_env_template" "$thing_json" cyberbrick-daemon
       ;;
     deviceType:mac)
       txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$mac_env_template" "$thing_json" mac-daemon

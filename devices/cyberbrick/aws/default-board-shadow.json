@@ -1,0 +1,12 @@
+{
+  "state": {
+    "reported": {
+      "power": false,
+      "wifi": {
+        "online": false,
+        "ipv4": null,
+        "ipv6": null
+      }
+    }
+  }
+}

@@ -154,3 +154,38 @@ class ShellPortabilityTest(unittest.TestCase):
                 stderr=subprocess.PIPE,
             )
         self.assertIn("deploy-ok", result.stdout)
+
+    def test_aws_cert_dispatch_selects_cyberbrick_daemon_bundle(self) -> None:
+        script = textwrap.dedent(
+            """\
+            . shared/aws/scripts/aws_lib.sh
+            txing_validate_iot_thing_id() { :; }
+            aws() { printf '%s\n' '{"thingTypeName":"cyberbrick","attributes":{"kind":"deviceType"}}'; }
+            txing_json_string() {
+              case "$2" in
+                .thingTypeName) printf '%s\n' cyberbrick ;;
+                .attributes.kind) printf '%s\n' deviceType ;;
+              esac
+            }
+            txing_cert_output_dir() { printf '%s\n' /tmp/unused-cyberbrick-cert-output; }
+            stack_parameter() { printf '%s\n' test-policy; }
+            txing_cert_generate_device_daemon_bundle() {
+              printf '%s|%s|%s\n' "$1" "$5" "$7"
+            }
+            txing_generate_iot_certificate_bundle \
+              cyberbrick-a1 /rig-template /unit-template /cyberbrick-template /mac-template
+            """
+        )
+        result = subprocess.run(
+            ["sh", "-c", script],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(
+            result.stdout.strip(),
+            "cyberbrick-a1|/cyberbrick-template|cyberbrick-daemon",
+        )

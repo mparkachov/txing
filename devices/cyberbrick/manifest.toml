@@ -1,0 +1,42 @@
+type = "cyberbrick"
+device_name = "cyberbrick"
+display_name = "Cyberbrick"
+capabilities = ["sparkplug", "ble", "power", "board", "mcp", "video"]
+compatible_rig_types = ["raspi"]
+redcon_command_levels = [4, 3, 2, 1]
+
+[redcon_rules]
+4 = ["sparkplug", "ble"]
+3 = ["sparkplug", "ble", "power"]
+2 = ["sparkplug", "ble", "power", "board", "mcp"]
+1 = ["sparkplug", "ble", "power", "board", "mcp", "video"]
+
+[shadows.sparkplug]
+schema = "aws/sparkplug-shadow.schema.json"
+default = "aws/default-sparkplug-shadow.json"
+
+[shadows.ble]
+schema = "aws/ble-shadow.schema.json"
+default = "aws/default-ble-shadow.json"
+
+[shadows.power]
+schema = "aws/power-shadow.schema.json"
+default = "aws/default-power-shadow.json"
+
+[shadows.board]
+schema = "aws/board-shadow.schema.json"
+default = "aws/default-board-shadow.json"
+
+[shadows.mcp]
+schema = "aws/mcp-shadow.schema.json"
+default = "aws/default-mcp-shadow.json"
+
+[shadows.video]
+schema = "aws/video-shadow.schema.json"
+default = "aws/default-video-shadow.json"
+
+[web]
+adapter = "web/cyberbrick-adapter.tsx"
+
+[resources.board_video]
+channel_name = "{device_id}-board-video"

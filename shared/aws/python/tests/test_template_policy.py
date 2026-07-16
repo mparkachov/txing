@@ -374,6 +374,40 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("AWS_STACK_NAME", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
 
+    def test_aws_cert_recipe_uses_cyberbrick_daemon_bundle_and_video_policy(self) -> None:
+        aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
+        aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
+        daemon_env_template = (
+            REPO_ROOT / "devices" / "cyberbrick" / "daemon" / "daemon.env.template"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("cyberbrick_daemon_env_template", aws_justfile)
+        self.assertIn("deviceType:cyberbrick)", aws_lib)
+        self.assertIn('"$cyberbrick_env_template"', aws_lib)
+        self.assertIn("cyberbrick-daemon", aws_lib)
+        self.assertIn("DaemonBoardVideoMaster", aws_lib)
+        self.assertIn("kinesisvideo:ConnectAsMaster", aws_lib)
+        self.assertIn(
+            "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:"
+            "channel/${thing_id}-board-video/*",
+            aws_lib,
+        )
+        self.assertIn(
+            "TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}",
+            daemon_env_template,
+        )
+        self.assertIn(
+            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
+            "txing-cyberbrick-daemon/board-video-bridge.sock",
+            daemon_env_template,
+        )
+        self.assertIn(
+            "TXING_HARDWARE_WORKER_SOCKET_PATH=/run/"
+            "txing-cyberbrick-hardware-worker/cyberbrick-hardware.sock",
+            daemon_env_template,
+        )
+        self.assertNotIn("txing-unit", daemon_env_template)
+
     def test_template_defines_rig_daemon_credential_resources(self) -> None:
         template = _template_text()
 
@@ -470,6 +504,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "TownTypeCatalogV2",
             "RaspiTypeCatalogV2",
             "UnitTypeCatalogV2",
+            "CyberbrickTypeCatalogV2",
             "WeatherTypeCatalogV2",
             "PowerTypeCatalogV2",
             "CloudTypeCatalogV2",
@@ -499,6 +534,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("ThingTypeName: raspi", template)
         self.assertIn("ThingTypeName: cloud", template)
         self.assertIn("ThingTypeName: unit", template)
+        self.assertIn("ThingTypeName: cyberbrick", template)
         self.assertIn("ThingTypeName: power", template)
         self.assertIn("ThingTypeName: power-si", template)
         self.assertIn("ThingTypeName: local", template)
@@ -526,11 +562,33 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("S3Key: lambda/txing-cloud-mcu-lambda/current/bootstrap.zip", cloud_mcu_lambda_template)
         self.assertIn("CatalogBasePath: /txing/town/cloud/cloud-mcu", cloud_mcu_lambda_template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/unit", template)
+        self.assertIn("CatalogBasePath: /txing/town/raspi/cyberbrick", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/power", template)
         self.assertIn("CatalogBasePath: /txing/town/raspi/power-si", template)
         self.assertIn("CatalogBasePath: /txing/town/local", template)
         self.assertIn("CatalogBasePath: /txing/town/local/mac", template)
         self.assertIn("kind: deviceType", template)
+        cyberbrick_catalog = root_template.split(
+            "  CyberbrickTypeCatalogV2:",
+            1,
+        )[1].split("\n  WeatherTypeCatalogV2:", 1)[0]
+        for expected in (
+            "ThingTypeName: cyberbrick",
+            "CatalogBasePath: /txing/town/raspi/cyberbrick",
+            "deviceType: cyberbrick",
+            "rigType: raspi",
+            "capabilities: sparkplug,ble,power,board,mcp,video",
+            "redconCommandLevels: 4,3,2,1",
+            "redconRules/4: sparkplug,ble",
+            "redconRules/3: sparkplug,ble,power",
+            "redconRules/2: sparkplug,ble,power,board,mcp",
+            "redconRules/1: sparkplug,ble,power,board,mcp,video",
+            "web/adapter: web/cyberbrick-adapter.tsx",
+            'resources/boardVideo/channelName: "{device_id}-board-video"',
+        ):
+            self.assertIn(expected, cyberbrick_catalog)
+        self.assertIn('"deviceId":"cyberbrick-local"', cyberbrick_catalog)
+        self.assertNotIn("deviceType: unit", cyberbrick_catalog)
         self.assertNotIn("EnlistFunctionName:", root_template)
         self.assertNotIn("EnlistFunctionArn:", root_template)
         self.assertIn("RigTypeCatalogRead", template)
@@ -980,6 +1038,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("case \"$thing_kind:$thing_type\" in", aws_lib)
         self.assertIn("rigType:raspi | rigType:local)", aws_lib)
         self.assertIn("deviceType:unit)", aws_lib)
+        self.assertIn("deviceType:cyberbrick)", aws_lib)
         self.assertIn("deviceType:mac)", aws_lib)
         self.assertIn("txing_cert_generate_generic_bundle", aws_lib)
         self.assertIn("PolicyName", aws_lib)

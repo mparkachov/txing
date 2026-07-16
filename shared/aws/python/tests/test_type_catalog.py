@@ -73,6 +73,7 @@ class TypeCatalogTests(unittest.TestCase):
                 "/txing/town",
                 "/txing/town/raspi",
                 "/txing/town/raspi/unit",
+                "/txing/town/raspi/cyberbrick",
                 "/txing/town/raspi/weather",
                 "/txing/town/raspi/power",
                 "/txing/town/raspi/power-si",
@@ -85,6 +86,10 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi"]["defaultName"], "server")
         self.assertEqual(records["/txing/town/cloud"]["defaultName"], "aws")
         self.assertEqual(records["/txing/town/raspi/unit"]["defaultName"], "bot")
+        self.assertEqual(
+            records["/txing/town/raspi/cyberbrick"]["defaultName"],
+            "cyberbrick",
+        )
         self.assertEqual(records["/txing/town/raspi/weather"]["defaultName"], "outside")
         self.assertEqual(records["/txing/town/raspi/power"]["defaultName"], "power")
         self.assertEqual(records["/txing/town/raspi/power-si"]["defaultName"], "power-si")
@@ -100,6 +105,7 @@ class TypeCatalogTests(unittest.TestCase):
             ["name", "shortId", "townId", "rigId"],
         )
         self.assertEqual(records["/txing/town/raspi/unit"]["rigType"], "raspi")
+        self.assertEqual(records["/txing/town/raspi/cyberbrick"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/weather"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/power"]["rigType"], "raspi")
         self.assertEqual(records["/txing/town/raspi/power-si"]["rigType"], "raspi")
@@ -107,6 +113,10 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(records["/txing/town/raspi"]["redconCommandLevels"], ["1", "4"])
         self.assertEqual(records["/txing/town/cloud"]["redconCommandLevels"], ["1", "4"])
         self.assertEqual(records["/txing/town/raspi/unit"]["redconCommandLevels"], ["4", "3", "2", "1"])
+        self.assertEqual(
+            records["/txing/town/raspi/cyberbrick"]["redconCommandLevels"],
+            ["4", "3", "2", "1"],
+        )
         self.assertEqual(records["/txing/town/raspi/weather"]["redconCommandLevels"], ["4"])
         self.assertEqual(records["/txing/town/raspi/power"]["redconCommandLevels"], ["4", "3"])
         self.assertEqual(records["/txing/town/raspi/power-si"]["redconCommandLevels"], ["4", "3"])
@@ -119,6 +129,23 @@ class TypeCatalogTests(unittest.TestCase):
                 "3": ["sparkplug", "ble", "power"],
                 "4": ["sparkplug", "ble"],
             },
+        )
+        self.assertEqual(
+            records["/txing/town/raspi/cyberbrick"]["redconRules"],
+            records["/txing/town/raspi/unit"]["redconRules"],
+        )
+
+        cyberbrick_record = records["/txing/town/raspi/cyberbrick"]
+        unit_record = records["/txing/town/raspi/unit"]
+        self.assertEqual(cyberbrick_record["capabilities"], unit_record["capabilities"])
+        self.assertEqual(set(cyberbrick_record["shadows"]), set(unit_record["shadows"]))
+        self.assertEqual(
+            cyberbrick_record["resources"],
+            {"boardVideo": {"channelName": "{device_id}-board-video"}},
+        )
+        self.assertEqual(
+            cyberbrick_record["web"],
+            {"adapter": "web/cyberbrick-adapter.tsx"},
         )
         self.assertEqual(
             records["/txing/town/raspi/power"]["redconRules"],
@@ -168,6 +195,10 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(ssm.parameters["/txing/town/kind"], "townType")
         self.assertEqual(ssm.parameters["/txing/town/raspi/kind"], "rigType")
         self.assertEqual(ssm.parameters["/txing/town/raspi/unit/kind"], "deviceType")
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/cyberbrick/kind"],
+            "deviceType",
+        )
         self.assertEqual(ssm.parameters["/txing/town/cloud/kind"], "rigType")
         self.assertEqual(ssm.parameters["/txing/town/cloud/cloud-mcu/kind"], "deviceType")
         self.assertEqual(ssm.parameters["/txing/town/raspi/redconCommandLevels"], "1,4")
@@ -179,6 +210,22 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/unit/capabilities"],
             "sparkplug,ble,power,board,mcp,video",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/cyberbrick/capabilities"],
+            "sparkplug,ble,power,board,mcp,video",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/cyberbrick/redconCommandLevels"],
+            "4,3,2,1",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/cyberbrick/redconRules/1"],
+            "sparkplug,ble,power,board,mcp,video",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/cyberbrick/resources/boardVideo/channelName"],
+            "{device_id}-board-video",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/unit/redconCommandLevels"],
@@ -314,6 +361,7 @@ class TypeCatalogTests(unittest.TestCase):
             [path for path, _record in catalog.list_records("/txing/town/raspi")],
             [
                 "/txing/town/raspi",
+                "/txing/town/raspi/cyberbrick",
                 "/txing/town/raspi/power",
                 "/txing/town/raspi/power-si",
                 "/txing/town/raspi/unit",

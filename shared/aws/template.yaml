@@ -394,6 +394,58 @@ Resources:
         web/adapter: web/unit-adapter.tsx
         resources/boardVideo/channelName: "{device_id}-board-video"
 
+  CyberbrickTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
+    DependsOn:
+      - RaspiTypeCatalogV2
+    Properties:
+      ServiceToken: !Ref AwsCleanStackFunctionArn
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-cyberbrick
+      ThingTypeName: cyberbrick
+      ThingTypeDescription: txing cyberbrick device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/raspi/cyberbrick
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: cyberbrick
+        deviceType: cyberbrick
+        rigType: raspi
+        displayName: Cyberbrick
+        defaultName: cyberbrick
+        capabilities: sparkplug,ble,power,board,mcp,video
+        redconCommandLevels: 4,3,2,1
+        redconRules/4: sparkplug,ble
+        redconRules/3: sparkplug,ble,power
+        redconRules/2: sparkplug,ble,power,board,mcp
+        redconRules/1: sparkplug,ble,power,board,mcp,video
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"topic":{"namespace":"spBv1.0","groupId":"town","messageType":"DDEATH","edgeNodeId":"rig","deviceId":"cyberbrick-local"},"payload":{"metrics":{}}}}}'
+        shadows/ble/schema: aws/ble-shadow.schema.json
+        shadows/ble/default: aws/default-ble-shadow.json
+        shadows/ble/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/board/schema: aws/board-shadow.schema.json
+        shadows/board/default: aws/default-board-shadow.json
+        shadows/board/defaultPayload: '{"state":{"reported":{"power":false,"wifi":{"online":false,"ipv4":null,"ipv6":null}}}}'
+        shadows/mcp/schema: aws/mcp-shadow.schema.json
+        shadows/mcp/default: aws/default-mcp-shadow.json
+        shadows/mcp/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"mcp","available":false,"updatedAtMs":0}}}}'
+        shadows/video/schema: aws/video-shadow.schema.json
+        shadows/video/default: aws/default-video-shadow.json
+        shadows/video/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"video","available":false,"ready":false,"status":"unavailable","viewerConnected":false,"lastError":null}}}}'
+        web/adapter: web/cyberbrick-adapter.tsx
+        resources/boardVideo/channelName: "{device_id}-board-video"
+
   WeatherTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     DependsOn:

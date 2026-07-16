@@ -1,0 +1,487 @@
+import { getTrackIndicatorPresentation } from './app-model'
+import VideoPanel from '../../../office/src/VideoPanel'
+import type { McpTransportKind } from '../../../office/src/mcp-descriptor'
+import type { RobotControlState } from '../../../office/src/shadow-api'
+
+type CyberbrickPanelProps = {
+  isBoardVideoExpanded: boolean
+  isDebugEnabled: boolean
+  isShadowConnected: boolean
+  isTakeControlPending: boolean
+  mcpTransport: McpTransportKind | null
+  onTakeControl: () => void
+  reportedBatteryMv: number | null
+  reportedBoardLeftTrackSpeed: number | null
+  reportedBoardOnline: boolean | null
+  reportedBoardRightTrackSpeed: number | null
+  reportedRedcon: number | null
+  reportedMcuOnline: boolean | null
+  robotControl: RobotControlState | null
+  onToggleDebug: () => void
+  videoChannelName: string
+  resolveIdToken: () => Promise<string>
+  onBoardVideoRuntimeError: (message: string) => void
+}
+
+type TrackGaugeProps = {
+  side: 'Left' | 'Right'
+  speed: number | null
+}
+type ActiveControlOwnership = 'unknown' | 'none' | 'current' | 'other'
+type BatteryCurvePoint = readonly [mv: number, percent: number]
+
+const batterySocCurve: readonly BatteryCurvePoint[] = [
+  [3300, 0],
+  [3600, 10],
+  [3700, 20],
+  [3800, 40],
+  [3900, 60],
+  [4000, 80],
+  [4100, 92],
+  [4200, 100],
+]
+
+const getTrackGaugeAngle = (speed: number | null): number =>
+  speed === null ? 0 : Math.max(-78, Math.min(78, speed * 0.78))
+const formatTrackGaugeValue = (speed: number | null): string => {
+  if (speed === null) {
+    return '--'
+  }
+  if (speed === 0) {
+    return '0'
+  }
+  return `${speed > 0 ? '+' : ''}${speed}`
+}
+
+const getBoardWifiToneClass = (boardWifiOnline: boolean | null): string => {
+  if (boardWifiOnline === true) {
+    return 'status-wifi-online'
+  }
+  if (boardWifiOnline === false) {
+    return 'status-wifi-offline'
+  }
+  return 'status-wifi-unknown'
+}
+
+const getBleSignalToneClass = (bleStatusOnline: boolean | null): string =>
+  bleStatusOnline === true ? 'status-signal-online' : 'status-signal-offline'
+
+const getBatteryPercent = (batteryMv: number | null): number | null => {
+  if (batteryMv === null || Number.isNaN(batteryMv)) {
+    return null
+  }
+
+  const firstPoint = batterySocCurve[0]
+  const lastPoint = batterySocCurve[batterySocCurve.length - 1]
+  if (batteryMv <= firstPoint[0]) {
+    return firstPoint[1]
+  }
+  if (batteryMv >= lastPoint[0]) {
+    return lastPoint[1]
+  }
+
+  for (let index = 1; index < batterySocCurve.length; index += 1) {
+    const previousPoint = batterySocCurve[index - 1]
+    const nextPoint = batterySocCurve[index]
+    if (batteryMv > nextPoint[0]) {
+      continue
+    }
+
+    const pointSpan = nextPoint[0] - previousPoint[0]
+    const percentSpan = nextPoint[1] - previousPoint[1]
+    const mvOffset = batteryMv - previousPoint[0]
+    return previousPoint[1] + (mvOffset / pointSpan) * percentSpan
+  }
+
+  return null
+}
+
+const getBatteryToneClass = (batteryPercent: number | null): string => {
+  if (batteryPercent === null) {
+    return 'status-battery-unknown'
+  }
+  if (batteryPercent >= 55) {
+    return 'status-battery-good'
+  }
+  if (batteryPercent >= 20) {
+    return 'status-battery-warn'
+  }
+  return 'status-battery-low'
+}
+
+function TrackGauge({ side, speed }: TrackGaugeProps) {
+  const presentation = getTrackIndicatorPresentation(speed, side)
+  const angle = getTrackGaugeAngle(speed)
+  const valueLabel = formatTrackGaugeValue(speed)
+
+  return (
+    <div
+      className="status-track-gauge"
+      role="img"
+      aria-label={presentation.ariaLabel}
+      title={`${side} track ${valueLabel === '--' ? 'unavailable' : `${valueLabel}%`}`}
+      data-track-side={side.toLowerCase()}
+      data-track-speed={speed === null ? 'null' : String(speed)}
+    >
+      <span className="status-track-gauge-arc" aria-hidden="true" />
+      <span className="status-track-gauge-mark status-track-gauge-mark-minus" aria-hidden="true">
+        -
+      </span>
+      <span className="status-track-gauge-mark status-track-gauge-mark-plus" aria-hidden="true">
+        +
+      </span>
+      <span className="status-track-gauge-zero" aria-hidden="true" />
+      <span
+        className={`status-track-gauge-needle ${presentation.toneClass}`}
+        aria-hidden="true"
+        style={{ transform: `translateX(-50%) rotate(${angle}deg)` }}
+      />
+      <span className="status-track-gauge-pivot" aria-hidden="true" />
+      <span className="status-track-gauge-value" aria-hidden="true">
+        {valueLabel}
+      </span>
+    </div>
+  )
+}
+
+function BatteryMetric({ batteryMv }: { batteryMv: number | null }) {
+  const batteryPercent = getBatteryPercent(batteryMv)
+  const batteryToneClass = getBatteryToneClass(batteryPercent)
+  const title =
+    batteryMv === null || batteryPercent === null
+      ? 'Battery unavailable'
+      : `Battery ${Math.round(batteryPercent)} percent at ${batteryMv} millivolts`
+
+  return (
+    <div className="txing-panel-battery" role="img" aria-label={title} title={title}>
+      <div className={`status-battery ${batteryToneClass}`}>
+        <span className="status-battery-shell" aria-hidden="true">
+          <span
+            className="status-battery-fill"
+            style={{ width: `${Math.max(0, Math.min(100, batteryPercent ?? 0))}%` }}
+          />
+        </span>
+        <span className="status-battery-cap" aria-hidden="true" />
+      </div>
+    </div>
+  )
+}
+
+function DebugGlyph() {
+  return (
+    <svg
+      className="status-video-debug-glyph"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M9 8.5V7a3 3 0 0 1 6 0v1.5M8 10h8m-7 3h6m-5 3h4M7 8l-2-2m14 2 2-2M8 19l-2 2m10-2 2 2M8.5 8h7a1.5 1.5 0 0 1 1.5 1.5v5a5 5 0 0 1-10 0v-5A1.5 1.5 0 0 1 8.5 8Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  )
+}
+
+function TakeControlGlyph() {
+  return (
+    <svg
+      className="status-video-take-control-glyph"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M12 4.8v5.8M12 13.4v5.8M4.8 12h5.8M13.4 12h5.8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        r="6.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
+    </svg>
+  )
+}
+
+function ActiveControlGlyph({ ownership }: { ownership: ActiveControlOwnership }) {
+  return (
+    <svg
+      className="status-mcp-control-glyph"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {ownership === 'current' ? (
+        <path
+          d="M5 12.8 9.4 17 19 7"
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2.4"
+        />
+      ) : (
+        <>
+          <circle
+            cx="12"
+            cy="12"
+            r="7"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.9"
+          />
+          <path
+            d="M12 7.6v4.8M12 16.2h.01"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeWidth="2.2"
+          />
+        </>
+      )}
+    </svg>
+  )
+}
+
+const getActiveControlOwnership = (
+  robotControl: RobotControlState | null,
+): ActiveControlOwnership => {
+  if (!robotControl) {
+    return 'unknown'
+  }
+  if (robotControl.activeOwnerSessionId === null) {
+    return 'none'
+  }
+  return robotControl.activeHeldByCaller ? 'current' : 'other'
+}
+
+function McpTransportGlyph({ transport }: { transport: McpTransportKind | null }) {
+  const label =
+    transport === 'webrtc-datachannel'
+      ? 'MCP over WebRTC data channel'
+      : transport === 'mqtt-jsonrpc'
+        ? 'MCP over MQTT JSON-RPC'
+        : 'MCP transport pending'
+  const toneClass =
+    transport === 'webrtc-datachannel'
+      ? 'status-mcp-transport-webrtc'
+      : transport === 'mqtt-jsonrpc'
+        ? 'status-mcp-transport-mqtt'
+        : 'status-mcp-transport-pending'
+
+  return (
+    <span
+      className={`status-mcp-transport ${toneClass}`}
+      role="img"
+      aria-label={label}
+      title={label}
+      data-mcp-transport={transport ?? 'pending'}
+    >
+      <svg
+        className="status-mcp-transport-glyph"
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        focusable="false"
+      >
+        {transport === 'mqtt-jsonrpc' ? (
+          <>
+            <path
+              d="M7 9.2a7.5 7.5 0 0 1 10 0M9.7 12a3.8 3.8 0 0 1 4.6 0"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="2"
+            />
+            <path d="M12 16.4h.01" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="3" />
+          </>
+        ) : (
+          <>
+            <path
+              d="M8.2 8.4h7.6M8.2 15.6h7.6"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="2"
+            />
+            <circle cx="6" cy="8.4" r="1.8" fill="currentColor" />
+            <circle cx="18" cy="8.4" r="1.8" fill="currentColor" />
+            <circle cx="6" cy="15.6" r="1.8" fill="currentColor" />
+            <circle cx="18" cy="15.6" r="1.8" fill="currentColor" />
+          </>
+        )}
+      </svg>
+    </span>
+  )
+}
+
+function CyberbrickPanel({
+  isBoardVideoExpanded,
+  isDebugEnabled,
+  isShadowConnected,
+  isTakeControlPending,
+  mcpTransport,
+  onTakeControl,
+  reportedBatteryMv,
+  reportedBoardLeftTrackSpeed,
+  reportedBoardOnline,
+  reportedBoardRightTrackSpeed,
+  reportedRedcon,
+  reportedMcuOnline,
+  robotControl,
+  onToggleDebug,
+  videoChannelName,
+  resolveIdToken,
+  onBoardVideoRuntimeError,
+}: CyberbrickPanelProps) {
+  const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
+  const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
+  const shouldRenderBoardVideo = isBoardVideoExpanded && reportedRedcon === 1
+  const activeControlOwnership = getActiveControlOwnership(robotControl)
+  const activeControlActor = robotControl?.activeControl?.actor
+  const shouldRenderTakeControlButton =
+    activeControlOwnership === 'none' || activeControlOwnership === 'other'
+  const activeControlLabel =
+    activeControlOwnership === 'current'
+      ? 'You have active control'
+      : activeControlOwnership === 'other' && activeControlActor
+        ? `Active control held by ${activeControlActor}`
+        : activeControlOwnership === 'other'
+          ? 'Active control held by another session'
+          : 'MCP active-control status pending'
+  const takeControlTitle =
+    activeControlOwnership === 'other' && activeControlActor
+      ? `Take active control from ${activeControlActor}`
+      : 'Take active control'
+  const videoOverlay = (
+    <div className="status-video-overlay-bar">
+      <div className="status-video-overlay-side status-video-overlay-side-start">
+        {shouldRenderBoardVideo ? (
+          <button
+            type="button"
+            className={`status-video-debug-button ${
+              isDebugEnabled
+                ? 'status-video-debug-button-active'
+                : 'status-video-debug-button-idle'
+            }`}
+            aria-label={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
+            aria-pressed={isDebugEnabled}
+            title={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
+            onClick={onToggleDebug}
+          >
+            <DebugGlyph />
+          </button>
+        ) : null}
+        {shouldRenderTakeControlButton ? (
+          <button
+            type="button"
+            className="status-video-take-control-button"
+            aria-label="Take active control"
+            disabled={!isShadowConnected || isTakeControlPending}
+            title={takeControlTitle}
+            data-mcp-control-owner={activeControlOwnership}
+            onClick={onTakeControl}
+          >
+            <TakeControlGlyph />
+          </button>
+        ) : (
+          <span
+            className={`status-mcp-control status-mcp-control-${activeControlOwnership}`}
+            role="img"
+            aria-label={activeControlLabel}
+            title={activeControlLabel}
+            data-mcp-control-owner={activeControlOwnership}
+          >
+            <ActiveControlGlyph ownership={activeControlOwnership} />
+          </span>
+        )}
+        <McpTransportGlyph transport={mcpTransport} />
+      </div>
+      <div className="status-video-overlay-lockup">
+        <div className="status-txing-title-group" role="group" aria-label="Cyberbrick drive indicators">
+          <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />
+          <div className="status-name status-txing-name status-video-overlay-name" aria-hidden="true">
+            CYBERBRICK
+          </div>
+          <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
+        </div>
+      </div>
+      <div className="status-video-overlay-side status-video-overlay-side-end">
+        <div className="status-video-overlay-metrics" aria-label="Cyberbrick connectivity indicators">
+          <div
+            className={`status-signal ${bleSignalToneClass}`}
+            role="img"
+            aria-label={
+              reportedMcuOnline === true
+                ? 'BLE online'
+                : reportedMcuOnline === false
+                  ? 'BLE offline'
+                  : 'BLE status unavailable'
+            }
+          >
+            <span className="status-signal-bar status-signal-bar-1" aria-hidden="true" />
+            <span className="status-signal-bar status-signal-bar-2" aria-hidden="true" />
+            <span className="status-signal-bar status-signal-bar-3" aria-hidden="true" />
+            <span className="status-signal-bar status-signal-bar-4" aria-hidden="true" />
+          </div>
+          <div
+            className={`status-wifi ${boardWifiToneClass}`}
+            role="img"
+            aria-label={
+              reportedBoardOnline === true
+                ? 'Board Wi-Fi online'
+                : reportedBoardOnline === false
+                  ? 'Board Wi-Fi offline'
+                  : 'Board Wi-Fi status unavailable'
+            }
+          >
+            <span className="status-wifi-arc status-wifi-arc-large" aria-hidden="true" />
+            <span className="status-wifi-arc status-wifi-arc-medium" aria-hidden="true" />
+            <span className="status-wifi-arc status-wifi-arc-small" aria-hidden="true" />
+            <span className="status-wifi-dot" aria-hidden="true" />
+          </div>
+          <BatteryMetric batteryMv={reportedBatteryMv} />
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <section className="status-hero status-hero-dashboard" aria-label="Cyberbrick status">
+      <div className="shadow-diagram">
+        <div className={`status-node status-node-txing ${shouldRenderBoardVideo ? 'status-node-txing-expanded' : ''}`}>
+          {shouldRenderBoardVideo ? (
+            <VideoPanel
+              channelName={videoChannelName}
+              debugEnabled={isDebugEnabled}
+              onRuntimeError={onBoardVideoRuntimeError}
+              overlay={videoOverlay}
+              resolveIdToken={resolveIdToken}
+            />
+          ) : (
+            <div
+              className="status-video-offline-surface"
+              aria-label="Cyberbrick drive status"
+              data-drive-mode={mcpTransport ?? 'pending'}
+            >
+              {videoOverlay}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export default CyberbrickPanel
