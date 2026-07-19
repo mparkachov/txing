@@ -43,33 +43,11 @@ class PowerSiSedConfigTests(unittest.TestCase):
         self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", values)
         self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_DBM", values)
 
-    def test_current_measurement_build_initializes_uart_without_output(self) -> None:
-        values = read_conf(POWER_SI_MCU / "zephyr" / "current.conf")
-
-        self.assertEqual(values.get("CONFIG_PM"), "y")
-        self.assertEqual(values.get("CONFIG_TICKLESS_KERNEL"), "y")
-        self.assertEqual(values.get("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST"), "y")
-        self.assertEqual(values.get("CONFIG_LOG"), "n")
-        self.assertEqual(values.get("CONFIG_SERIAL"), "y")
-        self.assertEqual(values.get("CONFIG_CONSOLE"), "n")
-        self.assertEqual(values.get("CONFIG_UART_CONSOLE"), "n")
-        self.assertEqual(values.get("CONFIG_PRINTK"), "n")
-        self.assertEqual(values.get("CONFIG_BOOT_BANNER"), "n")
-        self.assertEqual(values.get("CONFIG_SHELL"), "n")
-        self.assertEqual(values.get("CONFIG_NET_SHELL"), "n")
-        self.assertEqual(values.get("CONFIG_OPENTHREAD_SHELL"), "n")
-        self.assertEqual(values.get("CONFIG_OPENTHREAD_DEBUG"), "n")
-        self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", values)
-
-    def test_sed_profiles_use_sed_only_recovery_policy(self) -> None:
+    def test_sed_debug_uses_sed_only_recovery_policy(self) -> None:
         debug_values = read_conf(POWER_SI_MCU / "zephyr" / "sed-debug.conf")
-        current_values = read_conf(POWER_SI_MCU / "zephyr" / "current.conf")
 
         self.assertEqual(
             debug_values.get("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST"), "y"
-        )
-        self.assertEqual(
-            current_values.get("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST"), "y"
         )
         self.assertNotIn(
             "CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST",
@@ -85,7 +63,7 @@ class PowerSiSedConfigTests(unittest.TestCase):
             sed_debug_values.get("CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS"),
             "y",
         )
-        for conf in ("prj.conf", "debug.conf", "current.conf"):
+        for conf in ("prj.conf", "debug.conf"):
             self.assertNotIn(
                 "CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS",
                 read_conf(POWER_SI_MCU / "zephyr" / conf),

@@ -68,34 +68,34 @@ over Thread, and no Matter/CHIP stack.
   `mRxOnWhenIdle=false` with full network data after SRP acceptance. Release
   and ordinary debug return to receiver-on bootstrap mode once per boot if that
   SED attachment fails, so the device remains discoverable while the upstream
-  hardware blocker remains open. The `sed-debug` and `sed-current` candidate
-  profiles instead enable a bounded SED-only recovery policy: they make at most
-  three SED retries after loss and never restore receiver-on mode.
-  TASK-21.5 SED validation uses explicit `sed-debug` and `sed-current` profiles.
-  Those profiles temporarily apply one isolated downstream candidate
-  to the owning Silabs HAL checkout for the build only: an encrypted empty CCM
-  message with a MIC derives its tag from B0 and formatted AAD with the existing
-  RadioAES ECB primitive instead of the empty-payload CCM DMA descriptor. The
-  candidate leaves the stock `IEEE802154_HW_TX_SEC` path, normal driver
-  behavior, post-processing of emitted MICs, and retry behavior unchanged. It
-  contains no logging and remains a downstream candidate until upstream accepts
-  an equivalent fix.
+  hardware blocker remains open. The `sed-debug` candidate profile instead
+  enables a bounded SED-only recovery policy: it makes at most three SED retries
+  after loss and never restores receiver-on mode. TASK-21.5 SED validation uses
+  this explicit profile. It temporarily applies one isolated downstream
+  candidate to the owning Silabs HAL checkout for the build only: an encrypted
+  empty CCM message with a MIC derives its tag from B0 and formatted AAD with the
+  existing RadioAES ECB primitive instead of the empty-payload CCM DMA
+  descriptor. The candidate leaves the stock `IEEE802154_HW_TX_SEC` path,
+  normal driver behavior, post-processing of emitted MICs, and retry behavior
+  unchanged. It contains no logging and remains a downstream candidate until
+  upstream accepts an equivalent fix.
   Hardware validation of the candidate shows accepted 5000 ms SED Data Polls,
   `RxErrSec: 0` after a fresh OTBR counter reset, active SRP, and successful
-  queued indirect ICMPv6 delivery. It permits use of `sed-current` for current
-  measurement, but does not make the unmodified release/debug images a
-  production SED path.
+  queued indirect ICMPv6 delivery. It does not make the unmodified release/debug
+  images a production SED path.
   Normal `build` and `build-debug` profiles keep unmodified Zephyr sources.
-  The `sed-current` profile enables Zephyr PM and initializes USART0 plus its
-  PA8/PA9 pinctrl as a focused current experiment matching `sed-debug`'s UART
-  electrical state. Console, shell, printk, boot output, OpenThread debug
-  output, and logging remain disabled; current evidence is valid only while
-  OTBR confirms the child remains `R=0`. Hardware measurement established that
-  USART0 initialization is required to drive the onboard SAMD11-facing UART
-  connection: with an empty parent queue the measured sleep floor is about
-  `0.04 mA`, versus about `0.3 mA` when the UART pins are uninitialized.
-  Sustained indirect traffic with `QMsgCnt>0` also measures about `0.3 mA`; wait
-  for `QMsgCnt=0` and the following data poll before recording idle current.
+  `sed-debug` enables Zephyr PM, initializes USART0 plus its PA8/PA9 pinctrl, and
+  retains the UART shell and diagnostics. Comparison with a separate
+  output-silent profile showed no material sleep-phase difference once both
+  images initialized those pins, so the redundant silent profile was removed.
+  Hardware measurement established that USART0 initialization is required to
+  drive the onboard SAMD11-facing UART connection: with an empty parent queue
+  the measured sleep floor is about `0.04 mA`, versus about `0.3 mA` when the
+  UART pins are uninitialized. Sustained indirect traffic with `QMsgCnt>0` also
+  measures about `0.3 mA`; wait for `QMsgCnt=0` and the following data poll
+  before recording idle current. Serial output can affect wake-phase activity,
+  so current evidence must still be correlated with OTBR and a child row with
+  `R=0`.
 - REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
   and the board LED following the same state.
 - Factory data: `TXT1` written by
@@ -108,8 +108,11 @@ over Thread, and no Matter/CHIP stack.
 - Battery: the current MCU state response returns `batteryMv: null`; the rig
   only publishes a `power` battery shadow when the device supplies a value.
 - Production firmware deliberately disables UART, console, shell, and log
-  backends. Validate production attachment through SRP/DNS-SD and the rig, not
-  serial output.
+  backends. Before production SED current acceptance, it must still initialize
+  the onboard SAMD11-facing PA8/PA9 connection through USART0 or equivalent
+  explicit pinctrl; the current unmodified release profile does not yet satisfy
+  that measured board electrical requirement. Validate production attachment
+  through SRP/DNS-SD and the rig, not serial output.
 
 See [devices/power-si/README.md](../../devices/power-si/README.md) for OTBR
 prerequisites, provisioning, manual flashing, and hardware acceptance steps.
@@ -126,7 +129,6 @@ just power::mcu::build
 just weather::mcu::build
 just power-si::mcu::build
 just power-si::mcu::build-sed-debug
-just power-si::mcu::build-sed-current
 ```
 
 Or from `devices/unit/mcu/`:
@@ -147,7 +149,6 @@ just weather::mcu::flash
 just power-si::mcu::flash
 just power-si::mcu::flash debug
 just power-si::mcu::flash sed-debug
-just power-si::mcu::flash sed-current
 just mcu::nve <thing-name>
 just mcu::nve <thing-name> <dataset-tlvs-file>
 ```

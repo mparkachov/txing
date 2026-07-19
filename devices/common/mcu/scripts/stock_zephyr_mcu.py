@@ -81,7 +81,6 @@ class BuildProfile:
     build_suffix: str = ""
     debug_conf: bool = False
     sed_debug_conf: bool = False
-    current_conf: bool = False
     use_silabs_ccm_candidate: bool = False
     force_pristine: bool = False
 
@@ -106,13 +105,6 @@ BUILD_PROFILES = {
             use_silabs_ccm_candidate=True,
             force_pristine=True,
         ),
-        BuildProfile(
-            "sed-current",
-            build_suffix="-sed-current",
-            current_conf=True,
-            use_silabs_ccm_candidate=True,
-            force_pristine=True,
-        ),
     )
 }
 ACTIVE_BUILD_PROFILES = tuple(BUILD_PROFILES)
@@ -126,7 +118,6 @@ class DeviceConfig:
     extra_conf: Path | None = None
     debug_conf: Path | None = None
     sed_debug_conf: Path | None = None
-    current_conf: Path | None = None
     flash_runner: str | None = None
 
 
@@ -158,12 +149,6 @@ DEVICE_CONFIGS = {
         / "mcu"
         / "zephyr"
         / "sed-debug.conf",
-        current_conf=PROJECT_ROOT
-        / "devices"
-        / "power-si"
-        / "mcu"
-        / "zephyr"
-        / "current.conf",
         flash_runner="west-pyocd",
     ),
 }
@@ -653,10 +638,6 @@ def build(device: str, *, debug: bool = False, profile: str = "release") -> None
         if config.sed_debug_conf is None:
             fail(f"{device} does not have an SED debug MCU build profile")
         extra_conf_files.append(config.sed_debug_conf)
-    if selected.current_conf:
-        if config.current_conf is None:
-            fail(f"{device} does not have a current-measurement MCU build profile")
-        extra_conf_files.append(config.current_conf)
     required_inputs.extend(extra_conf_files)
     for path in required_inputs:
         if not path.exists():
@@ -936,7 +917,6 @@ def main() -> None:
             "build",
             "build-debug",
             "build-sed-debug",
-            "build-sed-current",
             "clean",
             "flash",
             "nve",
@@ -970,10 +950,6 @@ def main() -> None:
         if args.profile != "release":
             fail("--profile is only supported with flash; use build-* commands for builds")
         build(require_device(args.command, args.device), profile="sed-debug")
-    elif args.command == "build-sed-current":
-        if args.profile != "release":
-            fail("--profile is only supported with flash; use build-* commands for builds")
-        build(require_device(args.command, args.device), profile="sed-current")
     elif args.command == "clean":
         clean(require_device(args.command, args.device))
     elif args.command == "flash":

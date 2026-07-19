@@ -25,13 +25,10 @@ def test_power_si_debug_build_dir_is_separate_from_release() -> None:
         mcu.build_dir("power-si", profile="sed-debug").name
         == "zephyr-xiao_mg24-sed-debug"
     )
-    assert (
-        mcu.build_dir("power-si", profile="sed-current").name
-        == "zephyr-xiao_mg24-sed-current"
-    )
+    assert mcu.ACTIVE_BUILD_PROFILES == ("release", "debug", "sed-debug")
 
 
-def test_power_si_sed_profiles_use_distinct_overlays() -> None:
+def test_power_si_sed_debug_profile_uses_debug_and_sed_overlays() -> None:
     mcu = load_stock_zephyr_mcu()
 
     debug_profile = mcu.build_profile("power-si", profile="sed-debug")
@@ -39,18 +36,9 @@ def test_power_si_sed_profiles_use_distinct_overlays() -> None:
 
     assert debug_profile.debug_conf
     assert debug_profile.sed_debug_conf
-    assert not debug_profile.current_conf
     assert debug_profile.use_silabs_ccm_candidate
     assert config.sed_debug_conf is not None
     assert config.sed_debug_conf.name == "sed-debug.conf"
-
-    current_profile = mcu.build_profile("power-si", profile="sed-current")
-    assert not current_profile.debug_conf
-    assert not current_profile.sed_debug_conf
-    assert current_profile.current_conf
-    assert current_profile.use_silabs_ccm_candidate
-    assert config.current_conf is not None
-    assert config.current_conf.name == "current.conf"
 
 
 def test_power_si_debug_flash_uses_debug_build_directory() -> None:
@@ -60,9 +48,6 @@ def test_power_si_debug_flash_uses_debug_build_directory() -> None:
     debug_command = [str(part) for part in mcu.west_flash_command("power-si", debug=True)]
     sed_debug_command = [
         str(part) for part in mcu.west_flash_command("power-si", profile="sed-debug")
-    ]
-    sed_current_command = [
-        str(part) for part in mcu.west_flash_command("power-si", profile="sed-current")
     ]
 
     assert release_command[release_command.index("-d") + 1].endswith(
@@ -74,9 +59,6 @@ def test_power_si_debug_flash_uses_debug_build_directory() -> None:
     assert sed_debug_command[sed_debug_command.index("-d") + 1].endswith(
         "devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug"
     )
-    assert sed_current_command[sed_current_command.index("-d") + 1].endswith(
-        "devices/power-si/mcu/build/zephyr-xiao_mg24-sed-current"
-    )
     assert "--pyocd" in debug_command
 
     sed_debug_hex = mcu.firmware_hex("power-si", profile="sed-debug")
@@ -87,6 +69,7 @@ def test_power_si_debug_flash_uses_debug_build_directory() -> None:
         )
     ]
     assert explicit_command[explicit_command.index("--hex-file") + 1] == str(sed_debug_hex)
+
 
 def test_power_si_sed_candidate_patch_is_opt_in() -> None:
     mcu = load_stock_zephyr_mcu()
@@ -103,10 +86,6 @@ def test_power_si_sed_candidate_patch_is_opt_in() -> None:
         assert [patch.patch.name for patch in profile_patches] == [
             "silabs-radioaes-zero-length-ccm.patch",
         ]
-        current_patches = mcu.isolated_patches_for_device(
-            "power-si", profile="sed-current"
-        )
-        assert current_patches == profile_patches
         os.environ[mcu.POWER_SI_SILABS_CCM_PATCH_ENV] = "1"
         patches = mcu.isolated_patches_for_device("power-si")
 

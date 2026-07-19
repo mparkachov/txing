@@ -46,10 +46,10 @@ Convert power-si from the temporary non-sleeping MTD profile to the intended sto
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Keep release and ordinary debug on their existing stock Zephyr fallback policy, while sed-debug and sed-current use the isolated Silabs CCM candidate only for their own builds.
-2. Keep the validated bounded SED-only recovery policy in both candidate profiles: after the post-SRP transition, retry a lost attachment in SED mode at most three times with backoff and never restore receiver-on mode.
-3. Keep sed-current output-silent and otherwise minimal, but initialize USART0 and its PA8/PA9 board pinctrl like sed-debug as a focused current experiment; keep console, shell, logging, OpenThread debug, printk, and boot output disabled.
-4. Validate profile configuration statically, build sed-current through the isolated candidate patch path, verify that the Silabs HAL checkout returns to clean stock state, and document manual current-measurement evidence.
+1. Keep release and ordinary debug on their existing stock Zephyr fallback policy, while `sed-debug` applies the isolated Silabs CCM candidate for SED hardware validation.
+2. Keep the validated bounded SED-only recovery policy in `sed-debug`: after the post-SRP transition, retry a lost attachment in SED mode at most three times with backoff and never restore receiver-on mode.
+3. Use the PM-enabled, UART-initialized `sed-debug` image for both functional validation and current characterization; correlate current evidence with OTBR child mode and queue state.
+4. Validate the single candidate profile statically and with a pristine build, verify that the Silabs HAL checkout returns to clean stock state, and document the complete hardware findings.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -619,7 +619,7 @@ SED-only recovery deterministic hardware validation (2026-07-18):
 - Final device shell evidence: `ot state=child`, `ot mode=n`, `ot pollperiod=5000`. Final OTBR evidence: child RLOC 0x2c06 with `R=0,D=0,N=1`, and `power-si._txing-coap._udp.default.service.arpa` remains `deleted:false` on port 5683. No receiver-on fallback log occurred.
 - This validates the sed-debug bounded SED-only recovery branch. The isolated RadioAES candidate remains a downstream dependency, so AC #1 stays open; production/release fallback policy is unchanged.
 
-sed-current implementation update (2026-07-18):
+Historical sed-current implementation update (2026-07-18):
 - `devices/power-si/mcu/zephyr/current.conf` now enables the same bounded SED-only recovery policy as `sed-debug`, while retaining Thread/SRP/CoAP, safe GPIO behavior, `CONFIG_PM=y`, and tickless idle. It disables `LOG`, serial, console, UART console, printk, boot banner, shell, net shell, OpenThread shell, and OpenThread debug output.
 - This makes sed-current intentionally silent and prevents a lost SED attachment from switching to receiver-on mode. It is intended for representative steady-state SED current after sed-debug has already proved attach, SRP, and indirect delivery.
 - Verified build: `CCACHE_DISABLE=1 just power-si::mcu::build-sed-current` completed successfully, emitted `devices/power-si/mcu/build/zephyr-xiao_mg24-sed-current/zephyr/zephyr.hex`, and applied then reversed `silabs-radioaes-zero-length-ccm.patch`; the `hal_silabs` checkout is clean afterward.
@@ -642,4 +642,13 @@ UART electrical-state experiment (2026-07-19):
 - Hardware validation confirms that leaving the onboard SAMD11-facing UART pins uninitialized caused the approximately tenfold idle-current difference. With the UART-initialized sed-current image and no queued traffic, the device reaches approximately `0.04 mA` in the sleep phase while remaining a sleepy child.
 - Continuous OTBR ping traffic reflects the configured 5 second bounded latency and keeps `QMsgCnt>0`; under that sustained indirect workload, between-response current is approximately `0.3 mA`. After traffic stops, `QMsgCnt` drains to zero and the next data-poll wake returns the device to approximately `0.04 mA`. Idle-current evidence must therefore be captured only after `QMsgCnt=0` and one subsequent poll.
 - Validation passed: focused SED configuration unittest (6 tests), stock-MCU pytest (4 tests), and pristine sed-current/sed-debug builds. The generated sed-current configuration contains `CONFIG_SERIAL=y`, `CONFIG_UART_SILABS_USART=y`, `CONFIG_PINCTRL=y`, `CONFIG_PM=y`, MTD SED, and 5000 ms polling; output producers remain disabled. Both builds now apply only the isolated RadioAES HAL candidate and leave the Silabs checkout clean.
+
+SED profile consolidation and final current findings (2026-07-19):
+- After the UART-initialized silent image reached the expected idle floor, the user rebuilt and measured `sed-debug` under the same setup. Its sleep-phase current was not materially different from the silent image despite the enabled UART shell and diagnostics. Debug output may still add wake-phase work, but it does not explain the earlier sleep-floor difference.
+- The approximately tenfold earlier profile difference was caused by UART electrical state: leaving the XIAO MG24 PA8/PA9 connection to the onboard SAMD11 uninitialized held the sleep floor near `0.3 mA`; initializing USART0 and its board pinctrl allows the tested hardware to reach about `0.04 mA` with no queued traffic.
+- This is a board electrical-state requirement, not evidence that a production image should retain the debug shell. A future production SED path must initialize USART0 or provide an equivalent explicit PA8/PA9 idle pin state with user-visible serial output disabled; the current unmodified release profile is not a low-current acceptance image.
+- A regular OTBR ping observes the expected bounded latency from the `5000 ms` SED poll period. Continuous ping keeps indirect traffic queued (`QMsgCnt>0`) and raises between-response current to about `0.3 mA`. After traffic stops, wait for `QMsgCnt=0` and one subsequent data poll before recording the approximately `0.04 mA` idle floor.
+- The separate output-silent `sed-current` profile did not provide a useful measurement distinction and has been removed. `sed-debug` is now the only candidate SED profile and is used for functional, recovery, indirect-delivery, PM, and current evidence. Release and ordinary debug remain unchanged stock-source profiles.
+- Removal deleted the `current.conf` overlay and retired the `build-sed-current` and `flash sed-current` command paths, profile metadata, tests, and supported-documentation references. The ignored local `zephyr-xiao_mg24-sed-current` artifact directory was also removed.
+- Final validation passed: focused SED configuration unittest (5 tests), stock-MCU pytest (4 tests), Python compilation of the shared build helper, `git diff --check`, and a pristine `CCACHE_DISABLE=1 just power-si::mcu::build-sed-debug`. The build produced `devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex`, reversed the isolated RadioAES patch, and left the Zephyr and Silabs HAL checkouts clean.
 <!-- SECTION:NOTES:END -->
