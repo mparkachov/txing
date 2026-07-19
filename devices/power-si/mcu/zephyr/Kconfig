@@ -21,14 +21,24 @@ config TXING_POWER_SI_SRP_PSA_DIAGNOSTICS
 	  This is intended for debug firmware only.
 
 config TXING_POWER_SI_SED_RECOVERY_TEST
-	bool "Retry a lost SED attachment without receiver-on fallback"
+	bool "Retry a lost sed-debug link attachment"
 	depends on OPENTHREAD_MTD_SED
 	default n
 	help
 	  Recovery policy for the candidate SED debug image. After the SRP bootstrap
-	  transitions the child to SED mode, retry a persistent lost attachment in
-	  SED mode only. It never restores receiver-on mode. The retry count and
-	  delays are intentionally bounded.
+	  transitions the child to SED mode, retry a persistent lost attachment with
+	  the requested link mode. Without the optional REDCON link-mode test this is
+	  SED only. The retry count and delays are intentionally bounded.
+
+config TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST
+	bool "Use REDCON to switch sed-debug link mode"
+	depends on TXING_POWER_SI_SED_RECOVERY_TEST
+	default n
+	help
+	  Test-only active-power policy for the SED debug image. REDCON 3 keeps the
+	  MTD receiver on when idle (`rn`) so follow-up commands are immediate.
+	  REDCON 4 returns to the normal sleepy (`n`) posture. The transition is a
+	  live link-mode update and retains the existing Thread child and SRP service.
 
 config TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS
 	bool "Log Silicon Labs EM1/EM2 sleep-mode changes"

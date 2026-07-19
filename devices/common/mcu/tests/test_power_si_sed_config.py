@@ -49,8 +49,16 @@ class PowerSiSedConfigTests(unittest.TestCase):
         self.assertEqual(
             debug_values.get("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST"), "y"
         )
+        self.assertEqual(
+            debug_values.get("CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST"),
+            "y",
+        )
         self.assertNotIn(
             "CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST",
+            read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
+        )
+        self.assertNotIn(
+            "CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST",
             read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
         )
 
@@ -89,6 +97,11 @@ class PowerSiSedConfigTests(unittest.TestCase):
             source,
         )
         self.assertIn("set_outputs_for_redcon(request.redcon)", source)
+
+        self.assertIn("apply_sed_debug_redcon_thread_mode(request.redcon)", source)
+        self.assertIn("SED debug REDCON %d switched Thread link mode to %s", source)
+        self.assertIn('static const uint8_t txt_profile[] = "sed-debug"', source)
+        self.assertIn('.mKey = "profile"', source)
         self.assertIn("gpio_pin_set_dt(&power_gpio", source)
         self.assertIn("gpio_pin_set_dt(&led_gpio", source)
         self.assertIn("start_thread(ot) != 0 || start_coap(ot) != 0 || start_srp(ot) != 0", source)
@@ -106,12 +119,13 @@ class PowerSiSedConfigTests(unittest.TestCase):
         )
         self.assertIn("Thread switched to SED mode after SRP registration", source)
         self.assertIn("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST", source)
-        self.assertIn("restart_thread_in_sed_mode_locked", source)
+        self.assertIn("restart_thread_in_requested_mode_locked", source)
         self.assertIn("Thread restarted in SED mode during SED recovery", source)
         self.assertIn("#define SED_RECOVERY_MAX_ATTEMPTS 3", source)
         self.assertIn("schedule_sed_recovery", source)
-        self.assertIn("leaving Thread in SED link mode", source)
-        self.assertIn("mRxOnWhenIdle = false", source)
+        self.assertIn("Thread requested link-mode recovery exhausted", source)
+        self.assertIn("link_mode.mRxOnWhenIdle = receiver_on_when_idle", source)
+        self.assertIn("configure_thread_mtd_mode_locked(ot, false)", source)
         self.assertIn("otLinkSetPollPeriod(ot, CONFIG_OPENTHREAD_POLL_PERIOD)", source)
         self.assertIn("atomic_set(&sed_mode_active, 1)", source)
         self.assertIn("#define SED_FALLBACK_GRACE_SECONDS 20", source)
@@ -121,6 +135,20 @@ class PowerSiSedConfigTests(unittest.TestCase):
         self.assertIn("atomic_set(&sed_transition_failed, 1)", source)
         self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", source)
         self.assertNotIn("Thread radio TX power override", source)
+
+    def test_sed_debug_redcon_transitions_are_gated_and_keep_srp_running(self) -> None:
+        source = (POWER_SI_MCU / "src" / "main.c").read_text(encoding="ascii")
+        kconfig = (POWER_SI_MCU / "zephyr" / "Kconfig").read_text(encoding="ascii")
+
+        self.assertIn("CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST", source)
+        self.assertIn("thread_receiver_on_requested", source)
+        self.assertIn("thread_sed_mode_requested", source)
+        self.assertIn("configure_thread_receiver_on_mode_locked", source)
+        self.assertIn("configure_thread_mtd_mode_locked(ot, false)", source)
+        self.assertIn("k_work_cancel_delayable(&sed_fallback_work)", source)
+        self.assertIn("requested link-mode recovery", source)
+        self.assertIn("Use REDCON to switch sed-debug link mode", kconfig)
+        self.assertIn("retains the existing Thread child and SRP service", kconfig)
 
 
 if __name__ == "__main__":

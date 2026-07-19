@@ -46,15 +46,25 @@ Convert power-si from the temporary non-sleeping MTD profile to the intended sto
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Keep release and ordinary debug on their existing stock Zephyr fallback policy, while `sed-debug` applies the isolated Silabs CCM candidate for SED hardware validation.
-2. Keep the validated bounded SED-only recovery policy in `sed-debug`: after the post-SRP transition, retry a lost attachment in SED mode at most three times with backoff and never restore receiver-on mode.
-3. Use the PM-enabled, UART-initialized `sed-debug` image for both functional validation and current characterization; correlate current evidence with OTBR child mode and queue state.
-4. Validate the single candidate profile statically and with a pristine build, verify that the Silabs HAL checkout returns to clean stock state, and document the complete hardware findings.
+1. In the `sed-debug`-only SED recovery profile, make confirmed REDCON 3 use receiver-on MTD (`rn`) and confirmed REDCON 4 return to SED (`n`) through a live OpenThread link-mode change; retain the existing Thread child, address, and SRP registration.
+2. Keep the physical output transition before the CoAP response, and make the response conditional on the requested Thread link mode having been applied.
+3. Make SED fallback/recovery evaluate the desired REDCON link policy so an intentional REDCON 3 receiver-on state is not misclassified as a failed SED attachment.
+4. Add Thread-daemon command-confirmation logging for the expected `n`/`rn` transition, then cover the firmware/static and Go runtime contracts and document the manual `sed-debug` hardware check.
+5. Keep release and ordinary debug on their existing stock Zephyr fallback policy, while `sed-debug` applies the isolated Silabs CCM candidate for SED hardware validation.
+6. Keep the validated bounded SED-only recovery policy in `sed-debug`: after the post-SRP transition, retry a lost attachment as SED when REDCON requires SED, at most three times with backoff and never restore receiver-on mode.
+7. Use the PM-enabled, UART-initialized `sed-debug` image for both functional validation and current characterization; correlate current evidence with OTBR child mode and queue state.
+8. Validate the single candidate profile statically and with a pristine build, verify that the Silabs HAL checkout returns to clean stock state, and document the complete hardware findings.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+SEDDebug REDCON link-policy implementation (2026-07-19):
+- `sed-debug` alone now advertises SRP TXT `profile=sed-debug`. A confirmed REDCON 3 applies the output first and changes the attached child to receiver-on MTD (`rn`); REDCON 4 returns it to sleepy MTD (`n`). Both use a live OpenThread link-mode update, so the existing child, addresses, and SRP registration remain intact.
+- The test-only recovery path now evaluates the requested `rn`/`n` policy, preventing an intentional REDCON 3 receiver-on state from being treated as a failed SED attachment. Release and ordinary debug firmware do not enable this Kconfig option or advertise the profile marker.
+- The Thread daemon recognizes the marker from direct OTBR SRP TXT discovery and logs `Thread sed-debug REDCON transition confirmed ... requestedLinkMode=rn|n` only after the CoAP response confirms the requested REDCON state.
+- Validation passed: `python3 -m unittest devices.common.mcu.tests.test_power_si_sed_config devices.common.mcu.xiao_mg24.tests.test_thread_factory` (14 tests); `GOCACHE="$PWD/tmp/go-build-cache" just rig::test`; and `just power-si::mcu::build-sed-debug`. The SED build emitted `devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex` and reversed the isolated Silabs candidate patch, leaving its HAL checkout clean. Hardware transition evidence is still required.
+
 Initial implementation update (2026-06-26):
 - `power-si` release/debug firmware enables `CONFIG_OPENTHREAD_MTD_SED=y` and `CONFIG_OPENTHREAD_POLL_PERIOD=5000`.
 - Rig Thread CoAP default timeout is 12000 ms in code and `rig/rig-daemon.env.template`; BLE timeout/default behavior is unchanged and Thread commands remain synchronous.

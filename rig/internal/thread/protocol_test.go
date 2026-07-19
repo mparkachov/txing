@@ -62,7 +62,7 @@ func TestParseOTCTLSRPServicesFiltersActivePowerSI(t *testing.T) {
 	output := `power-si-001._txing-coap._udp.default.service.arpa.
     deleted: false
     port: 5683
-    TXT: [type=706f7765722d7369, pv=31]
+    TXT: [type=706f7765722d7369, pv=31, profile=7365642d6465627567]
     host: power-si-001.default.service.arpa.
     addresses: [fdde:ad00:beef::1]
 unit-001._txing-coap._udp.default.service.arpa.
@@ -91,7 +91,8 @@ Done
 	if endpoint.ThingName != "power-si-001" || endpoint.Port != 5683 || endpoint.Address.String() != "fdde:ad00:beef::1" {
 		t.Fatalf("endpoint = %#v", endpoint)
 	}
-	if endpoint.TXT["type"] != "power-si" || endpoint.TXT["pv"] != "1" {
+	if endpoint.TXT["type"] != "power-si" || endpoint.TXT["pv"] != "1" ||
+		endpoint.TXT[DeviceProfileTXTKey] != SEDDebugProfile {
 		t.Fatalf("TXT = %#v", endpoint.TXT)
 	}
 }
@@ -237,6 +238,64 @@ func TestRuntimeCommandReportsSuccessAfterConfirmedState(t *testing.T) {
 	}
 	if results[len(results)-1].Status != protocol.CommandSucceeded {
 		t.Fatalf("last status = %s, want succeeded", results[len(results)-1].Status)
+	}
+}
+
+func TestRuntimeReportsConfirmedSEDDebugRedconTransition(t *testing.T) {
+	publisher := &recordingPublisher{}
+	endpoint := testEndpoint("power-si-001")
+	endpoint.TXT[DeviceProfileTXTKey] = SEDDebugProfile
+	client := &fakeDeviceClient{putState: DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 3}}
+	runtime := NewRuntime(&fakeDiscoverer{endpoints: []Endpoint{endpoint}}, client, publisher)
+	runtime.NowMS = func() uint64 { return 4500 }
+	runtime.ReconcileInventory(testInventory())
+	runtime.recordEndpoints([]Endpoint{endpoint})
+
+	var confirmed Endpoint
+	var redcon uint8
+	runtime.OnSEDDebugRedconConfirmed = func(received Endpoint, target uint8) {
+		confirmed = received
+		redcon = target
+	}
+	command, err := protocol.NewCapabilityCommand("cmd-sed", "power-si-001", 3, "test", 4500, 77, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.HandleCommand(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed.ThingName != "power-si-001" || redcon != 3 {
+		t.Fatalf("sed-debug confirmation = endpoint=%#v redcon=%d", confirmed, redcon)
+	}
+	if !IsSEDDebugEndpoint(confirmed) {
+		t.Fatalf("endpoint is not sed-debug: %#v", confirmed)
+	}
+	if mode := SEDDebugLinkModeForRedcon(redcon); mode != "rn" {
+		t.Fatalf("redcon %d mode = %q, want rn", redcon, mode)
+	}
+}
+
+func TestRuntimeDoesNotReportRedconTransitionForNormalProfile(t *testing.T) {
+	publisher := &recordingPublisher{}
+	endpoint := testEndpoint("power-si-001")
+	client := &fakeDeviceClient{putState: DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 4}}
+	runtime := NewRuntime(&fakeDiscoverer{endpoints: []Endpoint{endpoint}}, client, publisher)
+	runtime.NowMS = func() uint64 { return 4600 }
+	runtime.ReconcileInventory(testInventory())
+	runtime.recordEndpoints([]Endpoint{endpoint})
+	reported := false
+	runtime.OnSEDDebugRedconConfirmed = func(Endpoint, uint8) { reported = true }
+	command, err := protocol.NewCapabilityCommand("cmd-normal", "power-si-001", 4, "test", 4600, 78, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.HandleCommand(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	if reported {
+		t.Fatal("normal profile reported a sed-debug REDCON transition")
 	}
 }
 

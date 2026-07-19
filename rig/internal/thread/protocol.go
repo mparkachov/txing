@@ -27,6 +27,9 @@ const (
 
 	ThreadShadowName = "thread"
 	PowerShadowName  = "power"
+
+	DeviceProfileTXTKey = "profile"
+	SEDDebugProfile     = "sed-debug"
 )
 
 type DeviceSpec struct {
@@ -66,6 +69,17 @@ type RedconRequest struct {
 type ShadowUpdate struct {
 	Topic   string
 	Payload []byte
+}
+
+func IsSEDDebugEndpoint(endpoint Endpoint) bool {
+	return endpoint.TXT[DeviceProfileTXTKey] == SEDDebugProfile
+}
+
+func SEDDebugLinkModeForRedcon(redcon uint8) string {
+	if redcon == 3 {
+		return "rn"
+	}
+	return "n"
 }
 
 func DeviceSpecFromInventory(device protocol.InventoryDevice) *DeviceSpec {

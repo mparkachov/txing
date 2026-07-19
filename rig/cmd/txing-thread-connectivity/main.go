@@ -86,6 +86,10 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 		rigthread.CoAPClient{Timeout: cfg.ThreadCoAPTimeout, Attempts: 2},
 		client,
 	)
+	runtime.OnSEDDebugRedconConfirmed = func(endpoint rigthread.Endpoint, redcon uint8) {
+		logger.Print(ctx, "info", fmt.Sprintf("Thread sed-debug REDCON transition confirmed thing=%s redcon=%d requestedLinkMode=%s",
+			endpoint.ThingName, redcon, rigthread.SEDDebugLinkModeForRedcon(redcon)))
+	}
 
 	messages := make(chan ipc.Message, 256)
 	ipcErrors := make(chan error, 1)

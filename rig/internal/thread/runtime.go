@@ -24,10 +24,11 @@ type Publisher interface {
 }
 
 type Runtime struct {
-	Discoverer EndpointDiscoverer
-	Client     DeviceClient
-	Publisher  Publisher
-	NowMS      func() uint64
+	Discoverer                EndpointDiscoverer
+	Client                    DeviceClient
+	Publisher                 Publisher
+	NowMS                     func() uint64
+	OnSEDDebugRedconConfirmed func(Endpoint, uint8)
 
 	mu        sync.Mutex
 	specs     map[string]DeviceSpec
@@ -132,6 +133,9 @@ func (r *Runtime) HandleCommand(ctx context.Context, command protocol.Capability
 	if state.Redcon != target {
 		message := fmt.Sprintf("confirmed Thread state REDCON %d, want %d", state.Redcon, target)
 		return r.publishCommandResult(command, protocol.CommandFailed, &message, &command.Target.Redcon)
+	}
+	if r.OnSEDDebugRedconConfirmed != nil && IsSEDDebugEndpoint(endpoint) {
+		r.OnSEDDebugRedconConfirmed(endpoint, target)
 	}
 	return r.publishCommandResult(command, protocol.CommandSucceeded, nil, &command.Target.Redcon)
 }

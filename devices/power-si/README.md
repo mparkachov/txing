@@ -97,20 +97,34 @@ sudo journalctl -u txing-thread-connectivity.service -u txing-sparkplug-manager.
   -n 200 --no-pager
 ```
 
-The child row must remain `R=0`; the service must be `deleted:false` on port
-`5683`. The Thread daemon must have reconciled the enlisted device and must not
-report CoAP discovery or polling failures. Within one Thread poll/discovery
-cycle, open the Thing in Office: it is registered when the Sparkplug state is
-live, `thread` is shown active, and the REDCON ring reflects the CoAP state.
-At REDCON 4, `power` is inactive; a successful REDCON 3 command makes `power`
-active while `thread` remains active.
+At initial REDCON 4, the child row must remain `R=0`; the service must be
+`deleted:false` on port `5683` and include the test-only TXT value
+`profile=sed-debug` (shown by `ot-ctl` as
+`profile=7365642d6465627567`). The Thread daemon must have reconciled the
+enlisted device and must not report CoAP discovery or polling failures. Within
+one Thread poll/discovery cycle, open the Thing in Office: it is registered
+when the Sparkplug state is live, `thread` is shown active, and the REDCON ring
+reflects the CoAP state.
 
-Use the Office REDCON control to command `4`, then `3`, then `4`. Each command
-uses the existing synchronous Sparkplug DCMD to local IPC to Thread CoAP path;
-allow up to the configured `12000 ms` Thread CoAP timeout. Confirm the final
-state in Office, the `power-si` D1 output, the board LED, and the OTBR child
-row. A command timeout or loss of `thread` capability is a failed SED runtime
-test, not an Office-only problem.
+The `sed-debug` profile alone tests active-power link policy. Use the Office
+REDCON control to command `3`: the device applies D1/LED state, changes its
+attached Thread child to receiver-on MTD (`ot mode` reports `rn` and OTBR shows
+`R=1`), then returns the confirmed CoAP state. The Thread daemon logs:
+
+```text
+Thread sed-debug REDCON transition confirmed thing=<thing-name> redcon=3 requestedLinkMode=rn
+```
+
+Command `4` next. The device returns to sleepy MTD (`ot mode` reports `n` and
+OTBR shows `R=0`) and the daemon logs `requestedLinkMode=n`. SRP must remain
+active throughout both live link-mode updates; there must be no new child
+attach or SRP registration. Each command uses the existing synchronous
+Sparkplug DCMD to local IPC to Thread CoAP path; allow up to the configured
+`12000 ms` Thread CoAP timeout. Confirm the final state in Office, the
+`power-si` D1 output, the board LED, and the OTBR child row. A command timeout
+or loss of `thread` capability is a failed SED runtime test, not an Office-only
+problem. Release and ordinary `debug` profiles do not advertise
+`profile=sed-debug` and do not change Thread link mode in response to REDCON.
 
 ## Factory Data
 
@@ -239,7 +253,7 @@ the candidate can become the production path.
 | --- | --- | --- | --- |
 | Release | `just power-si::mcu::build` | Unmodified stock Zephyr; serial interfaces disabled; ordinary receiver-on recovery remains available. | Product-path build, but not yet low-current or SED-acceptance evidence. |
 | Debug | `just power-si::mcu::build-debug` | Unmodified stock Zephyr with UART, shell, and OpenThread diagnostics; ordinary receiver-on recovery remains available. | General firmware and Thread diagnosis. |
-| SED debug | `just power-si::mcu::build-sed-debug` | Isolated RadioAES candidate applied only for the build; UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, and bounded SED-only recovery. | SED functional, recovery, indirect-delivery, and current characterization. |
+| SED debug | `just power-si::mcu::build-sed-debug` | Isolated RadioAES candidate applied only for the build; UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, bounded requested-link recovery, and REDCON 3/4 `rn`/`n` link-policy testing. | SED functional, recovery, indirect-delivery, active-power link-policy, and current characterization. |
 
 `sed-debug` is the only current characterization profile. The build helper
 reverses the candidate patch before it exits, so the shared Zephyr and Silabs
@@ -407,8 +421,10 @@ the isolated RadioAES CCM candidate for this one build. It keeps
 `IEEE802154_HW_TX_SEC` enabled and uses RadioAES ECB only to create the tag for
 an empty encrypted CCM message. The candidate contains no logging, does not
 rewrite emitted frames, and does not change radio TX power. It additionally
-enables the debug-only SED recovery experiment: after the post-SRP transition,
-it retries a persistent lost attachment as SED only, never as receiver-on MTD.
+enables the debug-only SED recovery experiment. After the post-SRP transition,
+it retries a persistent lost attachment in the requested link posture: REDCON
+4 retries as SED, while the test-only receiver-on REDCON 3 posture retries as
+receiver-on MTD.
 
 If a candidate build is interrupted before cleanup and the Silabs HAL checkout
 is left dirty, reverse the patch before running normal stock builds:
@@ -473,20 +489,21 @@ blocker signal to record with the log excerpt, OTBR child table, and SRP service
 output.
 
 `sed-debug` intentionally does not use that fallback. After the post-SRP SED
-transition, it waits for the same guard window and then attempts SED-only
-recovery at most three times, with 5, 10, and 20 second delays. A normal
-transient detach can reattach before a recovery attempt; otherwise it logs:
+transition, it waits for the same guard window and then attempts recovery in
+the requested link posture at most three times, with 5, 10, and 20 second
+delays. A normal transient detach can reattach before a recovery attempt;
+otherwise it logs:
 
 ```text
-Thread SED attachment lost: role=detached rxOnWhenIdle=0; scheduling SED recovery 1/3 in 5 s
-Thread attempting SED recovery 1/3: role=detached rxOnWhenIdle=0
+Thread requested link mode lost: role=detached rxOnWhenIdle=0 requested=n; scheduling recovery 1/3 in 5 s
+Thread attempting requested link-mode recovery 1/3: role=detached rxOnWhenIdle=0 requested=n
 Thread restarted in SED mode during SED recovery
 ```
 
-The candidate image may not restore receiver-on mode after it has switched to
-SED. If all three attempts fail, it logs that recovery is exhausted and leaves
-the Thread link mode in SED posture; save that log and the OTBR evidence rather
-than treating it as a successful recovery.
+When REDCON is 3, the corresponding requested value is `rn`; when REDCON is 4,
+it is `n`. If all three attempts fail, the image logs that requested-link
+recovery is exhausted; save that log and the OTBR evidence rather than treating
+it as a successful recovery.
 
 Useful Zephyr shell checks on the XIAO MG24:
 
