@@ -31,6 +31,28 @@ def test_power_si_debug_build_dir_is_separate_from_release() -> None:
     )
 
 
+def test_power_si_sed_profiles_use_distinct_overlays() -> None:
+    mcu = load_stock_zephyr_mcu()
+
+    debug_profile = mcu.build_profile("power-si", profile="sed-debug")
+    config = mcu.device_config("power-si")
+
+    assert debug_profile.debug_conf
+    assert debug_profile.sed_debug_conf
+    assert not debug_profile.current_conf
+    assert debug_profile.use_silabs_ccm_candidate
+    assert config.sed_debug_conf is not None
+    assert config.sed_debug_conf.name == "sed-debug.conf"
+
+    current_profile = mcu.build_profile("power-si", profile="sed-current")
+    assert not current_profile.debug_conf
+    assert not current_profile.sed_debug_conf
+    assert current_profile.current_conf
+    assert current_profile.use_silabs_ccm_candidate
+    assert config.current_conf is not None
+    assert config.current_conf.name == "current.conf"
+
+
 def test_power_si_debug_flash_uses_debug_build_directory() -> None:
     mcu = load_stock_zephyr_mcu()
 
@@ -57,39 +79,60 @@ def test_power_si_debug_flash_uses_debug_build_directory() -> None:
     )
     assert "--pyocd" in debug_command
 
+    sed_debug_hex = mcu.firmware_hex("power-si", profile="sed-debug")
+    explicit_command = [
+        str(part)
+        for part in mcu.west_flash_command(
+            "power-si", sed_debug_hex, profile="sed-debug"
+        )
+    ]
+    assert explicit_command[explicit_command.index("--hex-file") + 1] == str(sed_debug_hex)
 
-def test_power_si_sed_test_patch_is_opt_in() -> None:
+def test_power_si_sed_candidate_patch_is_opt_in() -> None:
     mcu = load_stock_zephyr_mcu()
-    previous = os.environ.pop(mcu.POWER_SI_SED_TEST_PATCH_ENV, None)
+    previous = os.environ.pop(mcu.POWER_SI_SILABS_CCM_PATCH_ENV, None)
 
     try:
-        assert mcu.zephyr_test_patches_for_device("power-si") == ()
-        assert mcu.zephyr_test_patches_for_device("power-si", profile="debug") == ()
-        assert mcu.zephyr_test_patches_for_device("power") == ()
+        assert mcu.isolated_patches_for_device("power-si") == ()
+        assert mcu.isolated_patches_for_device("power-si", profile="debug") == ()
+        assert mcu.isolated_patches_for_device("power") == ()
 
-        profile_patches = mcu.zephyr_test_patches_for_device(
+        profile_patches = mcu.isolated_patches_for_device(
             "power-si", profile="sed-debug"
         )
         assert [patch.patch.name for patch in profile_patches] == [
-            "silabs-efr32-sed-data-poll-rx-test.patch",
+            "silabs-radioaes-zero-length-ccm.patch",
         ]
-        current_patches = mcu.zephyr_test_patches_for_device(
+        current_patches = mcu.isolated_patches_for_device(
             "power-si", profile="sed-current"
         )
         assert current_patches == profile_patches
-
-        os.environ[mcu.POWER_SI_SED_TEST_PATCH_ENV] = "1"
-        patches = mcu.zephyr_test_patches_for_device("power-si")
+        os.environ[mcu.POWER_SI_SILABS_CCM_PATCH_ENV] = "1"
+        patches = mcu.isolated_patches_for_device("power-si")
 
         assert [patch.patch.name for patch in patches] == [
-            "silabs-efr32-sed-data-poll-rx-test.patch",
+            "silabs-radioaes-zero-length-ccm.patch",
         ]
-        assert [patch.checkout.name for patch in patches] == ["zephyr"]
+        assert [patch.checkout.name for patch in patches] == ["silabs"]
         for patch in patches:
             assert patch.patch.exists()
-        assert mcu.zephyr_test_patches_for_device("power") == ()
+        patch_text = patches[0].patch.read_text()
+        assert "sli_protocol_crypto_radioaes.c" in patch_text
+        assert "aes_ccm_radio_encrypt_empty_payload" in patch_text
+        assert "sli_aes_crypt_ecb_radio" in patch_text
+        assert "encrypt && length == 0 && tag_length > 0" in patch_text
+        assert "ver_failed" in patch_text
+        assert "zero_payload" not in patch_text
+        assert "corrected zero-payload" not in patch_text
+        assert "IEEE802154_HW_TX_SEC" not in patch_text
+        assert "SED test:" not in patch_text
+        assert "ieee802154_silabs_efr32.c" not in patch_text
+        assert "LOG_" not in patch_text
+        assert "printk" not in patch_text
+        assert "printf" not in patch_text
+        assert mcu.isolated_patches_for_device("power") == ()
     finally:
         if previous is None:
-            os.environ.pop(mcu.POWER_SI_SED_TEST_PATCH_ENV, None)
+            os.environ.pop(mcu.POWER_SI_SILABS_CCM_PATCH_ENV, None)
         else:
-            os.environ[mcu.POWER_SI_SED_TEST_PATCH_ENV] = previous
+            os.environ[mcu.POWER_SI_SILABS_CCM_PATCH_ENV] = previous

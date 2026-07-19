@@ -65,17 +65,31 @@ over Thread, and no Matter/CHIP stack.
   CoAP commands have bounded sleepy-device latency. On XIAO MG24, startup uses
   a temporary receiver-on SRP bootstrap mode for reliable attach and service
   registration, then updates the attached child into steady-state
-  `mRxOnWhenIdle=false` with full network data after SRP acceptance. If the
-  current Zephyr/Silabs SED path drops attachment after that update, firmware
-  restarts Thread back into receiver-on bootstrap mode once per boot so the
-  device remains discoverable while the upstream SED hardware blocker remains
-  open. TASK-21.5 SED validation uses explicit `sed-debug` and `sed-current`
-  test profiles. Those profiles temporarily apply a local Zephyr Silabs test
-  patch for the build only: OpenThread software MAC TX security is enabled and
-  the Silabs `IEEE802154_HW_TX_SEC` capability is not advertised. Normal
-  `build` and `build-debug` profiles keep stock Zephyr sources and do not apply
-  that workaround. The `sed-current` profile also enables Zephyr PM and disables
-  UART/log output for sleep-current measurement.
+  `mRxOnWhenIdle=false` with full network data after SRP acceptance. Release
+  and ordinary debug return to receiver-on bootstrap mode once per boot if that
+  SED attachment fails, so the device remains discoverable while the upstream
+  hardware blocker remains open. The `sed-debug` and `sed-current` candidate
+  profiles instead enable a bounded SED-only recovery policy: they make at most
+  three SED retries after loss and never restore receiver-on mode.
+  TASK-21.5 SED validation uses explicit `sed-debug` and `sed-current` profiles.
+  Those profiles temporarily apply one isolated downstream candidate
+  to the owning Silabs HAL checkout for the build only: an encrypted empty CCM
+  message with a MIC derives its tag from B0 and formatted AAD with the existing
+  RadioAES ECB primitive instead of the empty-payload CCM DMA descriptor. The
+  candidate leaves the stock `IEEE802154_HW_TX_SEC` path, normal driver
+  behavior, post-processing of emitted MICs, and retry behavior unchanged. It
+  contains no logging and remains a downstream candidate until upstream accepts
+  an equivalent fix.
+  Hardware validation of the candidate shows accepted 5000 ms SED Data Polls,
+  `RxErrSec: 0` after a fresh OTBR counter reset, active SRP, and successful
+  queued indirect ICMPv6 delivery. It permits use of `sed-current` for current
+  measurement, but does not make the unmodified release/debug images a
+  production SED path.
+  Normal `build` and `build-debug` profiles keep unmodified Zephyr sources.
+  The `sed-current` profile also enables Zephyr PM and disables UART, console,
+  shell, printk, boot output, OpenThread debug output, and logging for
+  sleep-current measurement; current evidence is valid only while OTBR confirms
+  the child remains `R=0`.
 - REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
   and the board LED following the same state.
 - Factory data: `TXT1` written by

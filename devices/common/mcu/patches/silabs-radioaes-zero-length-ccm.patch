@@ -1,0 +1,76 @@
+diff --git a/simplicity_sdk/platform/security/sl_component/sl_protocol_crypto/src/sli_protocol_crypto_radioaes.c b/simplicity_sdk/platform/security/sl_component/sl_protocol_crypto/src/sli_protocol_crypto_radioaes.c
+--- a/simplicity_sdk/platform/security/sl_component/sl_protocol_crypto/src/sli_protocol_crypto_radioaes.c
++++ b/simplicity_sdk/platform/security/sl_component/sl_protocol_crypto/src/sli_protocol_crypto_radioaes.c
+@@ -187,7 +187,60 @@
+                                                | AES_MODEID_AES128
+                                                | AES_MODEID_DECRYPT;
+ static const uint32_t zeros = 0;
++
++// RadioAES CCM requires an AESPAYLOAD descriptor. For an empty message, build
++// the CCM tag directly from B0, formatted AAD, and S0 instead.
++SL_CODE_CLASSIFY(SL_CODE_COMPONENT_SLI_PROTOCOL_CRYPTO, SL_CODE_CLASS_TIME_CRITICAL)
++static sl_status_t aes_ccm_radio_encrypt_empty_payload(const unsigned char *add_data,
++                                                        size_t              add_length,
++                                                        const unsigned char *key,
++                                                        const unsigned char *header,
++                                                        size_t              header_length,
++                                                        unsigned char       *tag,
++                                                        size_t              tag_length)
++{
++  uint8_t mac[AES_BLOCK_BYTES] = { 0 };
++  uint8_t block[AES_BLOCK_BYTES];
++  uint8_t counter[AES_BLOCK_BYTES] = { 0 };
++  size_t offset = 0;
++  size_t total_length = header_length + add_length;
++  size_t counter_length = (header[0] & 0x07U) + 1U;
++  sl_status_t status;
++
++  while (offset < total_length) {
++    for (size_t i = 0; i < AES_BLOCK_BYTES; i++) {
++      uint8_t byte = 0;
++
++      if (offset < total_length) {
++        byte = offset < header_length ? header[offset] : add_data[offset - header_length];
++        offset++;
++      }
++      block[i] = mac[i] ^ byte;
++    }
++
++    status = sli_aes_crypt_ecb_radio(true, key, AES_128_KEY_BYTES * 8U, block, mac);
++    if (status != SL_STATUS_OK) {
++      return status;
++    }
++  }
++
++  counter[0] = header[0] & 0x07U;
++  for (size_t i = 0; i < AES_BLOCK_BYTES - 1U - counter_length; i++) {
++    counter[i + 1U] = header[i + 1U];
++  }
++
++  status = sli_aes_crypt_ecb_radio(true, key, AES_128_KEY_BYTES * 8U, counter, block);
++  if (status != SL_STATUS_OK) {
++    return status;
++  }
+ 
++  for (size_t i = 0; i < tag_length; i++) {
++    tag[i] = mac[i] ^ block[i];
++  }
++
++  return SL_STATUS_OK;
++}
++
+ SL_CODE_CLASSIFY(SL_CODE_COMPONENT_SLI_PROTOCOL_CRYPTO, SL_CODE_CLASS_TIME_CRITICAL)
+ static sl_status_t sli_radioaes_run_operation(sli_radioaes_dma_descr_t *first_fetch_descriptor,
+                                               sli_radioaes_dma_descr_t *first_push_descriptor)
+@@ -247,6 +300,11 @@
+   // * The header input is pre-calculated by the caller of this function
+   // * Data output may be NULL (in which case it is discarded)
+   // * Tag length may be 0 (CCM-star), in which case the tag pointer is also allowed to be NULL
++
++  if (encrypt && length == 0 && tag_length > 0) {
++    return aes_ccm_radio_encrypt_empty_payload(add_data, add_length, key, header,
++                                               header_length, tag, tag_length);
++  }
+ 
+   // Setup ver_failed output buffer and initialize it in case of decryption to an invalid value
+   volatile uint8_t ver_failed[AES_BLOCK_BYTES] = {[0 ... AES_BLOCK_BYTES - 1] = 0xFF };

@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,-search_paths_first -Wl,-headerpad_max_install_names "CMakeFiles/txing-cyberbrick-kvs-master-tests.dir/tests/test_main.cpp.o" -o txing-cyberbrick-kvs-master-tests  libtxing_cyberbrick_kvs_master_lib.a -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework VideoToolbox -framework Foundation

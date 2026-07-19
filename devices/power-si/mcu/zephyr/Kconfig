@@ -19,3 +19,14 @@ config TXING_POWER_SI_SRP_PSA_DIAGNOSTICS
 	help
 	  Log exact PSA status values for the OpenThread SRP ECDSA key path.
 	  This is intended for debug firmware only.
+
+config TXING_POWER_SI_SED_RECOVERY_TEST
+	bool "Retry a lost SED attachment without receiver-on fallback"
+	depends on OPENTHREAD_MTD_SED
+	default n
+	help
+	  Recovery policy for the candidate SED debug and current-measurement
+	  images. After the SRP bootstrap transitions the child to SED mode, retry a
+	  persistent lost attachment in SED mode only. It never restores receiver-on
+	  mode. The retry count and delays are intentionally bounded. The debug image
+	  logs failure evidence; the current-measurement image remains silent.

@@ -39,7 +39,8 @@ NRF_OPENOCD_SUPPORT_DIR = ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54l15" / "
 NRF_OPENOCD_CFG = NRF_OPENOCD_SUPPORT_DIR / "openocd.cfg"
 PYOCD_REQUIRED_TARGETS = ("EFR32MG24B220F1536IM48",)
 PYOCD_PACK_TARGETS = PYOCD_REQUIRED_TARGETS
-HAL_SILABS_BLOBS_DIR = WORKSPACE_DIR / "modules" / "hal" / "silabs" / "zephyr" / "blobs"
+HAL_SILABS_DIR = WORKSPACE_DIR / "modules" / "hal" / "silabs"
+HAL_SILABS_BLOBS_DIR = HAL_SILABS_DIR / "zephyr" / "blobs"
 POWER_SI_BLOB_REGEX = (
     r"simplicity_sdk/("
     r"protocol/openthread/.*/libsl_openthread\.a|"
@@ -69,7 +70,7 @@ POWER_SI_REQUIRED_BLOBS = (
     / "librail_efr32xg24_gcc_release.a",
 )
 @dataclass(frozen=True)
-class TestPatch:
+class IsolatedPatch:
     checkout: Path
     patch: Path
 
@@ -79,16 +80,17 @@ class BuildProfile:
     name: str
     build_suffix: str = ""
     debug_conf: bool = False
+    sed_debug_conf: bool = False
     current_conf: bool = False
-    use_sed_test_patches: bool = False
+    use_silabs_ccm_candidate: bool = False
     force_pristine: bool = False
 
 
-POWER_SI_SED_TEST_PATCH_ENV = "TXING_POWER_SI_ZEPHYR_SED_TEST_PATCH"
-POWER_SI_SED_TEST_PATCHES = (
-    TestPatch(
-        ZEPHYR_BASE,
-        COMMON_MCU_DIR / "patches" / "silabs-efr32-sed-data-poll-rx-test.patch",
+POWER_SI_SILABS_CCM_PATCH_ENV = "TXING_POWER_SI_SILABS_CCM_PATCH"
+POWER_SI_SILABS_CCM_PATCHES = (
+    IsolatedPatch(
+        HAL_SILABS_DIR,
+        COMMON_MCU_DIR / "patches" / "silabs-radioaes-zero-length-ccm.patch",
     ),
 )
 BUILD_PROFILES = {
@@ -100,14 +102,15 @@ BUILD_PROFILES = {
             "sed-debug",
             build_suffix="-sed-debug",
             debug_conf=True,
-            use_sed_test_patches=True,
+            sed_debug_conf=True,
+            use_silabs_ccm_candidate=True,
             force_pristine=True,
         ),
         BuildProfile(
             "sed-current",
             build_suffix="-sed-current",
             current_conf=True,
-            use_sed_test_patches=True,
+            use_silabs_ccm_candidate=True,
             force_pristine=True,
         ),
     )
@@ -122,6 +125,7 @@ class DeviceConfig:
     overlay_name: str
     extra_conf: Path | None = None
     debug_conf: Path | None = None
+    sed_debug_conf: Path | None = None
     current_conf: Path | None = None
     flash_runner: str | None = None
 
@@ -148,6 +152,12 @@ DEVICE_CONFIGS = {
         / "mcu"
         / "zephyr"
         / "debug.conf",
+        sed_debug_conf=PROJECT_ROOT
+        / "devices"
+        / "power-si"
+        / "mcu"
+        / "zephyr"
+        / "sed-debug.conf",
         current_conf=PROJECT_ROOT
         / "devices"
         / "power-si"
@@ -379,7 +389,7 @@ def build_profile(device: str, *, profile: str = "release", debug: bool = False)
             f"unsupported MCU build profile: {profile}. "
             f"Supported profiles: {', '.join(ACTIVE_BUILD_PROFILES)}"
         )
-    if selected.use_sed_test_patches and device != "power-si":
+    if selected.use_silabs_ccm_candidate and device != "power-si":
         fail(f"{selected.name} is only supported for power-si")
     return selected
 
@@ -393,28 +403,29 @@ def checkout_status(checkout: Path) -> str:
     ).stdout.strip()
 
 
-def zephyr_test_patches_for_device(
+def isolated_patches_for_device(
     device: str, *, profile: str = "release", debug: bool = False
-) -> tuple[TestPatch, ...]:
+) -> tuple[IsolatedPatch, ...]:
     selected = build_profile(device, profile=profile, debug=debug)
     if device == "power-si" and (
-        selected.use_sed_test_patches or env_flag(POWER_SI_SED_TEST_PATCH_ENV)
+        selected.use_silabs_ccm_candidate
+        or env_flag(POWER_SI_SILABS_CCM_PATCH_ENV)
     ):
-        return POWER_SI_SED_TEST_PATCHES
+        return POWER_SI_SILABS_CCM_PATCHES
     return ()
 
 
 @contextmanager
-def applied_zephyr_test_patches(patches: tuple[TestPatch, ...]):
+def applied_isolated_patches(patches: tuple[IsolatedPatch, ...]):
     if not patches:
         yield
         return
 
     for patch in patches:
         if not patch.checkout.is_dir():
-            fail(f"missing test patch checkout: {patch.checkout}")
+            fail(f"missing isolated patch checkout: {patch.checkout}")
         if not patch.patch.exists():
-            fail(f"missing test patch: {patch.patch}")
+            fail(f"missing isolated patch: {patch.patch}")
 
     checked_roots: set[Path] = set()
     for patch in patches:
@@ -424,21 +435,25 @@ def applied_zephyr_test_patches(patches: tuple[TestPatch, ...]):
         status = checkout_status(patch.checkout)
         if status:
             fail(
-                "refusing to apply test patch to dirty checkout: "
-                f"{patch.checkout}. Clean the checkout or reverse any interrupted test patch first."
+                "refusing to apply isolated patch to dirty checkout: "
+                f"{patch.checkout}. Clean the checkout or reverse any interrupted patch first."
             )
 
-    log("applying test-only Zephyr/OpenThread patch(es); stock sources remain the default build path")
-    for patch in patches:
-        run(["git", "apply", "--check", patch.patch], cwd=patch.checkout, env=local_env())
-    for patch in patches:
-        run(["git", "apply", patch.patch], cwd=patch.checkout, env=local_env())
-
+    log("applying isolated Silabs CCM candidate patch(es); stock sources remain the default build path")
+    applied: list[IsolatedPatch] = []
     try:
+        for patch in patches:
+            run(
+                ["git", "apply", "--check", patch.patch],
+                cwd=patch.checkout,
+                env=local_env(),
+            )
+            run(["git", "apply", patch.patch], cwd=patch.checkout, env=local_env())
+            applied.append(patch)
         yield
     finally:
-        log("reversing test-only Zephyr/OpenThread patch(es)")
-        for patch in reversed(patches):
+        log("reversing isolated Silabs CCM candidate patch(es)")
+        for patch in reversed(applied):
             reverse_check = subprocess.run(
                 ["git", "apply", "--reverse", "--check", str(patch.patch)],
                 cwd=patch.checkout,
@@ -450,12 +465,12 @@ def applied_zephyr_test_patches(patches: tuple[TestPatch, ...]):
             if reverse_check.returncode == 0:
                 run(["git", "apply", "--reverse", patch.patch], cwd=patch.checkout, env=local_env())
             else:
-                fail(f"could not reverse test patch automatically: {patch.patch}")
+                fail(f"could not reverse isolated patch automatically: {patch.patch}")
 
         for checkout in checked_roots:
             status = checkout_status(checkout)
             if status:
-                fail(f"checkout is dirty after reversing test patch: {checkout}")
+                fail(f"checkout is dirty after reversing isolated patch: {checkout}")
 
 
 def verify_workspace() -> None:
@@ -634,6 +649,10 @@ def build(device: str, *, debug: bool = False, profile: str = "release") -> None
         if config.debug_conf is None:
             fail(f"{device} does not have a debug MCU build profile")
         extra_conf_files.append(config.debug_conf)
+    if selected.sed_debug_conf:
+        if config.sed_debug_conf is None:
+            fail(f"{device} does not have an SED debug MCU build profile")
+        extra_conf_files.append(config.sed_debug_conf)
     if selected.current_conf:
         if config.current_conf is None:
             fail(f"{device} does not have a current-measurement MCU build profile")
@@ -651,8 +670,8 @@ def build(device: str, *, debug: bool = False, profile: str = "release") -> None
         cmake_args.append(
             "-DEXTRA_CONF_FILE=" + ";".join(str(path) for path in extra_conf_files)
         )
-    with applied_zephyr_test_patches(
-        zephyr_test_patches_for_device(device, profile=selected.name)
+    with applied_isolated_patches(
+        isolated_patches_for_device(device, profile=selected.name)
     ):
         run(
             west_command()
@@ -685,7 +704,7 @@ def build(device: str, *, debug: bool = False, profile: str = "release") -> None
 
 def clean(device: str) -> None:
     for profile in ACTIVE_BUILD_PROFILES:
-        if BUILD_PROFILES[profile].use_sed_test_patches and device != "power-si":
+        if BUILD_PROFILES[profile].use_silabs_ccm_candidate and device != "power-si":
             continue
         path = build_dir(device, profile=profile)
         if path.exists():
@@ -816,13 +835,13 @@ def run_west_flash(
 
 def flash(device: str, *, debug: bool = False, profile: str = "release") -> None:
     selected = build_profile(device, profile=profile, debug=debug)
-    require_firmware_hex(device, profile=selected.name)
+    hex_file = require_firmware_hex(device, profile=selected.name)
     runner = device_config(device).flash_runner
     if runner == "openocd-nrf54l15":
-        run_openocd(device, firmware_hex(device, profile=selected.name))
+        run_openocd(device, hex_file)
         return
     if runner == "west-pyocd":
-        run_west_flash(device, profile=selected.name)
+        run_west_flash(device, hex_file, profile=selected.name)
         return
     fail(f"{device} does not have an automated flash recipe")
 

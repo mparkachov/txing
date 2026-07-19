@@ -140,15 +140,29 @@ Rig Thread REDCON commands remain synchronous; the default rig CoAP timeout is
 `12000 ms` so a command can wait for one sleepy poll window plus network jitter.
 
 Normal release and debug builds use stock Zephyr sources. Current XIAO MG24 SED
-hardware evidence shows stock Zephyr/Silabs hardware MAC TX security breaks
-secured sleepy MAC Data Request frames: the OTBR rejects polls before data-poll
-handling, so the device cannot stay attached as an SED. Use the explicit SED
-test profiles below while the upstream issue is open. They apply only the
-minimal local Zephyr workaround needed for hardware validation: enable
-OpenThread software MAC TX security for Silabs S2 and stop advertising the
-Silabs `IEEE802154_HW_TX_SEC` capability. The build script applies the patch
-before the build and reverses it immediately afterward so the local Zephyr
-checkout returns to stock.
+hardware evidence shows stock Zephyr/Silabs hardware MAC TX security fails the
+secured zero-payload sleepy MAC Data Request path, so the child does not receive
+the indirect response it needs to remain attached. A hardware ACK with the
+frame-pending bit is not proof that the parent accepted the Thread MAC security:
+the radio can send that ACK before the parent evaluates the packet. Use the
+explicit SED candidate profiles below while the upstream issue is open. They
+apply one isolated patch to the owning Silabs HAL checkout only while building,
+then reverse it before the build exits. The candidate bypasses the RadioAES CCM
+dummy-payload descriptor only for encrypted empty messages with a MIC. It
+builds the empty-message CCM tag from B0 and formatted AAD with the existing
+RadioAES ECB primitive. It preserves hardware TX security and makes no change to
+the IEEE 802.15.4 driver, post-processing of emitted MICs, retry state, frame
+counters, decryption, CCM-star messages without a tag, or nonempty payloads.
+It is a focused downstream candidate for upstream review, not a production
+acceptance.
+
+Hardware validation of the candidate completed on XIAO MG24: after the SED
+transition, fresh OTBR counters recorded accepted five-second Data Polls with
+`RxErrSec: 0`; three queued ICMPv6 requests were delivered and replied to
+within the 10-second test timeout; and the device remained `child` in `ot mode
+n` with a `5000 ms` poll period. This validates the named candidate profiles,
+not the unmodified release or normal debug images. Upstream disposition remains
+required before the candidate can become the production path.
 
 Build a serial/shell functional SED test image:
 
@@ -174,11 +188,14 @@ The expected current-measurement HEX is:
 devices/power-si/mcu/build/zephyr-xiao_mg24-sed-current/zephyr/zephyr.hex
 ```
 
-The current-measurement profile keeps the same SED workaround and application
-behavior as `sed-debug`, but adds Zephyr PM (`CONFIG_PM=y`) and disables UART,
-console, printk, boot banner, and logging. Use `sed-debug` first to prove
-Thread/SRP/CoAP behavior, then flash `sed-current` for sleep-current
-measurement. A silent serial port is expected for `sed-current`.
+The current-measurement profile keeps the same isolated candidate and SED-only
+recovery behavior as `sed-debug`: after it has transitioned to SED, it never
+returns to receiver-on mode if attachment is lost. It retains the minimum
+device contract needed for representative network current (Thread, SRP, CoAP,
+and safe GPIO output state), but enables Zephyr PM (`CONFIG_PM=y`) and disables
+UART, console, shell, OpenThread debug output, printk, boot banner, and logging.
+Use `sed-debug` first to prove Thread/SRP/CoAP behavior, then flash
+`sed-current` for sleep-current measurement. A silent serial port is expected.
 
 ## Manual Flashing
 
@@ -210,8 +227,11 @@ just power-si::mcu::flash sed-debug
 just power-si::mcu::flash sed-current
 ```
 
-The flash recipe does not rebuild. Re-run the matching `build*` command after
-source or configuration changes before flashing a profile.
+The flash recipe does not rebuild. It passes the selected profile's HEX path
+explicitly to pyOCD; verify that the command prints the requested profile path,
+such as `zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex`, before flashing.
+Re-run the matching `build*` command after source or configuration changes
+before flashing a profile.
 
 If this board previously received an older `power-si` factory image at
 `0x0817c000`, erase the new settings range once before testing this firmware.
@@ -297,15 +317,19 @@ devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex
 ```
 
 The `sed-debug` profile enables the UART shell and OpenThread logs, and applies
-the minimal Silabs SED workaround for this one build. It does not change radio
-TX power.
+the isolated RadioAES CCM candidate for this one build. It keeps
+`IEEE802154_HW_TX_SEC` enabled and uses RadioAES ECB only to create the tag for
+an empty encrypted CCM message. The candidate contains no logging, does not
+rewrite emitted frames, and does not change radio TX power. It additionally
+enables the debug-only SED recovery experiment: after the post-SRP transition,
+it retries a persistent lost attachment as SED only, never as receiver-on MTD.
 
-If a SED test build is interrupted before cleanup and the Zephyr checkout is
-left dirty, reverse the test patch before running normal stock builds:
+If a candidate build is interrupted before cleanup and the Silabs HAL checkout
+is left dirty, reverse the patch before running normal stock builds:
 
 ```bash
-git -C devices/common/mcu/zephyr/zephyr apply --reverse \
-  ../../patches/silabs-efr32-sed-data-poll-rx-test.patch
+git -C devices/common/mcu/zephyr/modules/hal/silabs apply --reverse \
+  ../../../../patches/silabs-radioaes-zero-length-ccm.patch
 ```
 
 To test that image on hardware, flash the SED debug build through the device-owned
@@ -349,10 +373,8 @@ radio/network state. If the device reaches `child` in the bootstrap posture but
 never logs `SRP update accepted`, debug SRP server discovery, reachability, and
 client state before looking at rig discovery.
 
-If the current Zephyr/Silabs SED path cannot keep the device attached, the debug
-log can show the SED transition followed by `role=detached` and data poll
-timeouts. After a short guard window, the firmware then restarts Thread in
-receiver-on SRP bootstrap mode once per boot to keep SRP/CoAP usable:
+In release and ordinary `debug` images, a failed SED attachment uses the normal
+receiver-on fallback once per boot to keep SRP/CoAP usable:
 
 ```text
 Thread SED mode did not remain attached: role=detached rxOnWhenIdle=0; reverting to SRP bootstrap mode
@@ -363,6 +385,25 @@ Thread restarted in SRP bootstrap mode after SED fallback
 That fallback is not TASK-21.5 acceptance evidence. It is a hardware/software
 blocker signal to record with the log excerpt, OTBR child table, and SRP service
 output.
+
+`sed-debug` and `sed-current` intentionally do not use that fallback. After
+the post-SRP SED transition, they wait for the same guard window and then
+attempt SED-only recovery at most three times, with 5, 10, and 20 second
+delays. A normal transient detach can reattach before a recovery attempt;
+otherwise the debug image logs:
+
+```text
+Thread SED attachment lost: role=detached rxOnWhenIdle=0; scheduling SED recovery 1/3 in 5 s
+Thread attempting SED recovery 1/3: role=detached rxOnWhenIdle=0
+Thread restarted in SED mode during SED recovery
+```
+
+Neither SED candidate image may restore receiver-on mode after it has switched
+to SED. The silent current image provides no serial failure log, so use the
+debug image to validate recovery first. If all three attempts fail, the debug
+image logs that recovery is exhausted and leaves the Thread link mode in SED
+posture; save that log and the OTBR evidence rather than treating it as a
+successful recovery.
 
 Useful Zephyr shell checks on the XIAO MG24:
 
@@ -419,11 +460,67 @@ The `child table` row for the XIAO MG24 extended MAC must show `R=0`, and the
 `power-si._txing-coap._udp.default.service.arpa.` service must show
 `deleted: false`, port `5683`, and TXT values for `type=power-si` and `pv=1`.
 
+`sed-debug` and `sed-current` temporarily apply one isolated downstream HAL
+candidate while building, then reverse it before the build exits. It changes
+only the Silabs RadioAES CCM encryption implementation in `hal_silabs`: an
+empty message with a MIC derives its CCM tag from B0 and formatted AAD with the
+existing RadioAES ECB primitive instead of using the empty-payload CCM DMA
+descriptor. The candidate has no logging and neither rewrites a MIC, alters
+retries, nor disables hardware TX security. Normal `build` and `build-debug`
+images use unmodified stock sources.
+
+Use the candidate image to copy the device address from the SRP service output,
+reset the parent MAC counters, and send traffic from the OTBR to the sleeping
+child. The `10` second ping timeout covers two 5000 ms poll periods:
+
+Before flashing, unregister the service from the currently running debug image
+so an old SRP lease cannot produce a false positive. First use `ot srp client
+service` on the device to read its exact instance and service names, then set
+the instance variable and run:
+
+```bash
+SERVICE_INSTANCE='power-si'
+ot srp client service remove "$SERVICE_INSTANCE" _txing-coap._udp
+```
+
+Confirm `sudo ot-ctl srp server service` reports that service as
+`deleted: true`, then flash and reset the test `sed-debug` image. Its
+subsequent `deleted: false` entry is fresh registration evidence.
+
+After the device registers again, run the indirect-delivery test:
+
+```bash
+DEVICE_ADDRESS='fd00:0000:0000:0000:0000:0000:0000:0001'
+# Replace the example above with the address in `addresses: [...]` for this service.
+sudo ot-ctl counters mac reset
+sudo ot-ctl ping "$DEVICE_ADDRESS" 8 3 1 64 10
+sudo ot-ctl counters mac
+sudo ot-ctl child table
+sudo ot-ctl srp server service
+```
+
+Do not paste an angle-bracket placeholder into a shell command: Bash interprets
+`<...>` as input redirection and sends no ping.
+
+The ping must receive replies, proving that the parent queued an indirect
+request and the child received and answered it. The parent counters must show
+`RxDataPoll` increasing and `RxErrSec: 0`. After at least one minute, re-run the
+device `ot state` and `ot mode` commands and the OTBR child/SRP checks. The
+device must remain `child` in mode `n`, the parent row must remain `R=0`, and
+the SRP service must remain `deleted: false`. A fallback to mode `rn` in a
+normal profile, a SED-recovery exhaustion log in `sed-debug`, a missing child,
+an increasing `RxErrSec`, or failed indirect pings means this candidate does not
+fix the SED path. The OTBR counters and indirect-delivery result are the
+acceptance signal. A successful run remains a downstream candidate until the
+owning upstream accepts an equivalent fix.
+
 ## SED Current Measurement
 
-Use current measurement only after the `sed-debug` image proves the device can
-attach, register SRP, and settle as `ot mode=n`. Build the silent PM-enabled
-image:
+Use current measurement only after the candidate-enabled SED image proves the
+device can attach, register SRP, and settle as `ot mode=n`. The candidate has
+passed the Thread/SRP/indirect-delivery hardware test above; rebuild the silent
+PM-enabled image before flashing if the firmware, Zephyr workspace, or candidate
+patch changes:
 
 ```bash
 just power-si::mcu::build-sed-current
@@ -449,7 +546,9 @@ The child table must show the device with `R=0`, and SRP must remain
 `deleted:false` on port `5683`. For current measurement, power the board from
 the measurement setup rather than relying on USB-powered serial debugging, and
 measure after the SRP registration has completed and the child has settled into
-the steady SED polling state.
+the steady SED polling state. Do not treat a `sed-current` run with `R=1` as an
+SED current baseline: it indicates an unexpected regression because this image
+never intentionally restores receiver-on mode after its SED transition.
 
 ## Hardware Acceptance
 

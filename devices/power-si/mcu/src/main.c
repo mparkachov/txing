@@ -41,6 +41,13 @@ LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 #define REQUEST_JSON_SIZE 96
 #define SED_FALLBACK_GRACE_SECONDS 20
 
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+#define SED_RECOVERY_MAX_ATTEMPTS 3
+#define SED_RECOVERY_INITIAL_DELAY_SECONDS 5
+#define SED_RECOVERY_SECOND_DELAY_SECONDS 10
+#define SED_RECOVERY_MAX_DELAY_SECONDS 20
+#endif
+
 BUILD_ASSERT(IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED),
 	     "power-si must build as a Thread Sleepy End Device");
 BUILD_ASSERT(CONFIG_OPENTHREAD_POLL_PERIOD == 5000,
@@ -95,6 +102,10 @@ static otCoapResource redcon_resource;
 static atomic_t srp_registration_accepted;
 static atomic_t sed_mode_active;
 static atomic_t sed_transition_failed;
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static atomic_t sed_recovery_pending;
+static atomic_t sed_recovery_attempts;
+#endif
 static void thread_state_changed(uint32_t flags, void *context);
 static void srp_client_callback(otError error, const otSrpClientHostInfo *host_info,
 				const otSrpClientService *services,
@@ -102,8 +113,14 @@ static void srp_client_callback(otError error, const otSrpClientHostInfo *host_i
 static void srp_autostart_callback(const otSockAddr *server, void *context);
 static void sed_transition_work_handler(struct k_work *work);
 static void sed_fallback_work_handler(struct k_work *work);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static void sed_recovery_work_handler(struct k_work *work);
+#endif
 static K_WORK_DELAYABLE_DEFINE(sed_transition_work, sed_transition_work_handler);
 static K_WORK_DELAYABLE_DEFINE(sed_fallback_work, sed_fallback_work_handler);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static K_WORK_DELAYABLE_DEFINE(sed_recovery_work, sed_recovery_work_handler);
+#endif
 static struct openthread_state_changed_callback thread_state_cb = {
 	.otCallback = thread_state_changed,
 };
@@ -589,6 +606,7 @@ static int switch_thread_to_sed_mode_locked(otInstance *ot)
 	return 0;
 }
 
+#if !IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
 static int restart_thread_in_bootstrap_mode_locked(otInstance *ot)
 {
 	int rc = restart_thread_with_config_locked(ot, configure_thread_bootstrap_mode_locked,
@@ -601,6 +619,108 @@ static int restart_thread_in_bootstrap_mode_locked(otInstance *ot)
 	LOG_INF("Thread restarted in SRP bootstrap mode after SED fallback");
 	return 0;
 }
+#endif
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static int restart_thread_in_sed_mode_locked(otInstance *ot)
+{
+	int rc = restart_thread_with_config_locked(ot, configure_thread_sed_mode_locked, "SED");
+
+	if (rc != 0) {
+		return rc;
+	}
+
+	LOG_INF("Thread restarted in SED mode during SED recovery");
+	return 0;
+}
+
+static uint32_t sed_recovery_delay_seconds(int completed_attempts)
+{
+	if (completed_attempts <= 0) {
+		return SED_RECOVERY_INITIAL_DELAY_SECONDS;
+	}
+	if (completed_attempts == 1) {
+		return SED_RECOVERY_SECOND_DELAY_SECONDS;
+	}
+	return SED_RECOVERY_MAX_DELAY_SECONDS;
+}
+
+static void abandon_sed_recovery(void)
+{
+	LOG_ERR("Thread SED recovery exhausted after %d attempts; leaving Thread in SED link mode",
+		SED_RECOVERY_MAX_ATTEMPTS);
+	atomic_set(&sed_transition_failed, 1);
+	atomic_set(&sed_recovery_pending, 0);
+}
+
+static void schedule_sed_recovery(otDeviceRole role, bool rx_on_when_idle)
+{
+	int completed_attempts = atomic_get(&sed_recovery_attempts);
+	uint32_t delay_seconds;
+
+	if (completed_attempts >= SED_RECOVERY_MAX_ATTEMPTS) {
+		abandon_sed_recovery();
+		return;
+	}
+	if (!atomic_cas(&sed_recovery_pending, 0, 1)) {
+		return;
+	}
+
+	delay_seconds = sed_recovery_delay_seconds(completed_attempts);
+	LOG_WRN("Thread SED attachment lost: role=%s rxOnWhenIdle=%u; scheduling SED recovery %d/%d in %u s",
+		otThreadDeviceRoleToString(role), rx_on_when_idle,
+		completed_attempts + 1, SED_RECOVERY_MAX_ATTEMPTS,
+		(unsigned int)delay_seconds);
+	(void)k_work_schedule(&sed_recovery_work, K_SECONDS(delay_seconds));
+}
+
+static void sed_recovery_work_handler(struct k_work *work)
+{
+	otInstance *ot;
+	otDeviceRole role;
+	otLinkModeConfig link_mode;
+	int attempt;
+	int rc;
+
+	ARG_UNUSED(work);
+	atomic_set(&sed_recovery_pending, 0);
+
+	if (atomic_get(&sed_mode_active) == 0 ||
+	    atomic_get(&sed_transition_failed) != 0) {
+		return;
+	}
+
+	ot = openthread_get_default_instance();
+	if (ot == NULL) {
+		LOG_WRN("Thread SED recovery deferred: OpenThread instance unavailable");
+		schedule_sed_recovery(OT_DEVICE_ROLE_DISABLED, false);
+		return;
+	}
+
+	openthread_mutex_lock();
+	role = otThreadGetDeviceRole(ot);
+	link_mode = otThreadGetLinkMode(ot);
+	if (role == OT_DEVICE_ROLE_CHILD && !link_mode.mRxOnWhenIdle) {
+		openthread_mutex_unlock();
+		atomic_set(&sed_recovery_attempts, 0);
+		return;
+	}
+
+	attempt = atomic_inc(&sed_recovery_attempts) + 1;
+	LOG_WRN("Thread attempting SED recovery %d/%d: role=%s rxOnWhenIdle=%u",
+		attempt, SED_RECOVERY_MAX_ATTEMPTS,
+		otThreadDeviceRoleToString(role), link_mode.mRxOnWhenIdle);
+	rc = restart_thread_in_sed_mode_locked(ot);
+	openthread_mutex_unlock();
+	if (rc == 0) {
+		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+		return;
+	}
+
+	LOG_WRN("Thread SED recovery restart failed: %d", rc);
+	schedule_sed_recovery(role, link_mode.mRxOnWhenIdle);
+}
+#endif
 
 static void schedule_sed_transition_if_ready(otDeviceRole role)
 {
@@ -646,6 +766,10 @@ static void sed_transition_work_handler(struct k_work *work)
 	openthread_mutex_unlock();
 	if (rc == 0) {
 		atomic_set(&sed_mode_active, 1);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+		atomic_set(&sed_recovery_pending, 0);
+		atomic_set(&sed_recovery_attempts, 0);
+#endif
 		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
 		return;
 	}
@@ -658,7 +782,9 @@ static void sed_fallback_work_handler(struct k_work *work)
 	otInstance *ot;
 	otDeviceRole role;
 	otLinkModeConfig link_mode;
+#if !IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
 	int rc;
+#endif
 
 	ARG_UNUSED(work);
 
@@ -679,9 +805,18 @@ static void sed_fallback_work_handler(struct k_work *work)
 	link_mode = otThreadGetLinkMode(ot);
 	if (role == OT_DEVICE_ROLE_CHILD && !link_mode.mRxOnWhenIdle) {
 		openthread_mutex_unlock();
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+		atomic_set(&sed_recovery_pending, 0);
+		atomic_set(&sed_recovery_attempts, 0);
+#endif
 		return;
 	}
 
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+	openthread_mutex_unlock();
+	schedule_sed_recovery(role, link_mode.mRxOnWhenIdle);
+	return;
+#else
 	LOG_WRN("Thread SED mode did not remain attached: role=%s rxOnWhenIdle=%u; reverting to SRP bootstrap mode",
 		otThreadDeviceRoleToString(role), link_mode.mRxOnWhenIdle);
 	atomic_set(&sed_mode_active, 0);
@@ -695,6 +830,7 @@ static void sed_fallback_work_handler(struct k_work *work)
 	atomic_set(&sed_mode_active, 1);
 	atomic_set(&sed_transition_failed, 0);
 	(void)k_work_schedule(&sed_fallback_work, K_SECONDS(5));
+#endif
 }
 
 static int start_thread(otInstance *ot)
@@ -720,6 +856,10 @@ static int start_thread(otInstance *ot)
 	atomic_set(&srp_registration_accepted, 0);
 	atomic_set(&sed_mode_active, 0);
 	atomic_set(&sed_transition_failed, 0);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+	atomic_set(&sed_recovery_pending, 0);
+	atomic_set(&sed_recovery_attempts, 0);
+#endif
 	if (configure_thread_bootstrap_mode_locked(ot) != 0) {
 		openthread_mutex_unlock();
 		return -EIO;

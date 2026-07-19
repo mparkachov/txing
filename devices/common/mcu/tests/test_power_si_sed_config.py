@@ -48,13 +48,33 @@ class PowerSiSedConfigTests(unittest.TestCase):
 
         self.assertEqual(values.get("CONFIG_PM"), "y")
         self.assertEqual(values.get("CONFIG_TICKLESS_KERNEL"), "y")
+        self.assertEqual(values.get("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST"), "y")
         self.assertEqual(values.get("CONFIG_LOG"), "n")
         self.assertEqual(values.get("CONFIG_SERIAL"), "n")
         self.assertEqual(values.get("CONFIG_CONSOLE"), "n")
         self.assertEqual(values.get("CONFIG_UART_CONSOLE"), "n")
         self.assertEqual(values.get("CONFIG_PRINTK"), "n")
         self.assertEqual(values.get("CONFIG_BOOT_BANNER"), "n")
+        self.assertEqual(values.get("CONFIG_SHELL"), "n")
+        self.assertEqual(values.get("CONFIG_NET_SHELL"), "n")
+        self.assertEqual(values.get("CONFIG_OPENTHREAD_SHELL"), "n")
+        self.assertEqual(values.get("CONFIG_OPENTHREAD_DEBUG"), "n")
         self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", values)
+
+    def test_sed_profiles_use_sed_only_recovery_policy(self) -> None:
+        debug_values = read_conf(POWER_SI_MCU / "zephyr" / "sed-debug.conf")
+        current_values = read_conf(POWER_SI_MCU / "zephyr" / "current.conf")
+
+        self.assertEqual(
+            debug_values.get("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST"), "y"
+        )
+        self.assertEqual(
+            current_values.get("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST"), "y"
+        )
+        self.assertNotIn(
+            "CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST",
+            read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
+        )
 
     def test_power_si_app_transitions_to_sed_after_srp_registration(self) -> None:
         source = (POWER_SI_MCU / "src" / "main.c").read_text(encoding="ascii")
@@ -68,7 +88,12 @@ class PowerSiSedConfigTests(unittest.TestCase):
             source,
         )
         self.assertIn("Thread switched to SED mode after SRP registration", source)
-        self.assertNotIn("restart_thread_in_sed_mode_locked", source)
+        self.assertIn("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST", source)
+        self.assertIn("restart_thread_in_sed_mode_locked", source)
+        self.assertIn("Thread restarted in SED mode during SED recovery", source)
+        self.assertIn("#define SED_RECOVERY_MAX_ATTEMPTS 3", source)
+        self.assertIn("schedule_sed_recovery", source)
+        self.assertIn("leaving Thread in SED link mode", source)
         self.assertIn("mRxOnWhenIdle = false", source)
         self.assertIn("otLinkSetPollPeriod(ot, CONFIG_OPENTHREAD_POLL_PERIOD)", source)
         self.assertIn("atomic_set(&sed_mode_active, 1)", source)
