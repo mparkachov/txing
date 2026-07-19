@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/mparkachov/txing/rig/internal/ipc"
 	"github.com/mparkachov/txing/rig/internal/manager"
 	"github.com/mparkachov/txing/rig/internal/mqttx"
 	"github.com/mparkachov/txing/rig/internal/protocol"
@@ -65,6 +66,28 @@ func TestIsThingShadowUpdateTopic(t *testing.T) {
 		if isThingShadowUpdateTopic(topic) {
 			t.Fatalf("expected %s not to match", topic)
 		}
+	}
+}
+
+func TestHandleIPCMessageSuppressesIdenticalShadowUpdates(t *testing.T) {
+	node := &fakeNodeMQTTClient{}
+	state := &runtimeState{nodeMQTT: node, shadowPayloads: map[string][]byte{}}
+	topic := "$aws/things/unit-1/shadow/name/power/update"
+	first := []byte(`{"state":{"reported":{"batteryMv":3011}}}`)
+	sameValueWithWhitespace := []byte("{\n  \"state\": {\"reported\": {\"batteryMv\": 3011}}\n}")
+	changed := []byte(`{"state":{"reported":{"batteryMv":3012}}}`)
+
+	state.handleIPCMessage(context.Background(), ipc.Message{Topic: topic, Payload: first})
+	state.handleIPCMessage(context.Background(), ipc.Message{Topic: topic, Payload: sameValueWithWhitespace})
+	if len(node.publishes) != 1 {
+		t.Fatalf("identical shadow publishes = %#v, want one", node.publishes)
+	}
+	state.handleIPCMessage(context.Background(), ipc.Message{Topic: topic, Payload: changed})
+	if len(node.publishes) != 2 {
+		t.Fatalf("changed shadow publishes = %#v, want two", node.publishes)
+	}
+	if string(node.publishes[0].payload) != string(first) {
+		t.Fatalf("first payload = %s, want compact payload %s", node.publishes[0].payload, first)
 	}
 }
 

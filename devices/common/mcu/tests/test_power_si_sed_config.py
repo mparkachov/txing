@@ -77,6 +77,22 @@ class PowerSiSedConfigTests(unittest.TestCase):
         self.assertIn("Silicon Labs PM sleep mode changed: %s -> %s", source)
         self.assertNotIn("SL_POWER_MANAGER_EVENT_TRANSITION_ENTERING_EM0 |", source)
 
+    def test_sed_debug_retains_the_common_coap_redcon_service(self) -> None:
+        source = (POWER_SI_MCU / "src" / "main.c").read_text(encoding="ascii")
+
+        self.assertIn('redcon_resource.mUriPath = "txing/v1/redcon"', source)
+        self.assertIn("redcon_resource.mHandler = redcon_handler", source)
+        self.assertIn("otCoapAddResource(ot, &redcon_resource)", source)
+        self.assertIn("otCoapMessageGetCode(message) != OT_COAP_CODE_PUT", source)
+        self.assertIn(
+            "request.redcon != TXING_REDCON_ON && request.redcon != TXING_REDCON_OFF",
+            source,
+        )
+        self.assertIn("set_outputs_for_redcon(request.redcon)", source)
+        self.assertIn("gpio_pin_set_dt(&power_gpio", source)
+        self.assertIn("gpio_pin_set_dt(&led_gpio", source)
+        self.assertIn("start_thread(ot) != 0 || start_coap(ot) != 0 || start_srp(ot) != 0", source)
+
     def test_power_si_app_transitions_to_sed_after_srp_registration(self) -> None:
         source = (POWER_SI_MCU / "src" / "main.c").read_text(encoding="ascii")
 

@@ -25,11 +25,10 @@ config TXING_POWER_SI_SED_RECOVERY_TEST
 	depends on OPENTHREAD_MTD_SED
 	default n
 	help
-	  Recovery policy for the candidate SED debug and current-measurement
-	  images. After the SRP bootstrap transitions the child to SED mode, retry a
-	  persistent lost attachment in SED mode only. It never restores receiver-on
-	  mode. The retry count and delays are intentionally bounded. The debug image
-	  logs failure evidence; the current-measurement image remains silent.
+	  Recovery policy for the candidate SED debug image. After the SRP bootstrap
+	  transitions the child to SED mode, retry a persistent lost attachment in
+	  SED mode only. It never restores receiver-on mode. The retry count and
+	  delays are intentionally bounded.
 
 config TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS
 	bool "Log Silicon Labs EM1/EM2 sleep-mode changes"
@@ -40,4 +39,4 @@ config TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS
 	  initial EM1/EM2 sleep-mode selection plus changes between those modes.
 	  Routine wake transitions through EM0 are intentionally omitted. This is a
 	  focused sed-debug diagnostic and should not be enabled in release or
-	  current-measurement firmware.
+	  ordinary debug firmware.

@@ -83,11 +83,14 @@ over Thread, and no Matter/CHIP stack.
   `RxErrSec: 0` after a fresh OTBR counter reset, active SRP, and successful
   queued indirect ICMPv6 delivery. It does not make the unmodified release/debug
   images a production SED path.
-  Normal `build` and `build-debug` profiles keep unmodified Zephyr sources.
-  `sed-debug` enables Zephyr PM, initializes USART0 plus its PA8/PA9 pinctrl, and
-  retains the UART shell and diagnostics. Comparison with a separate
-  output-silent profile showed no material sleep-phase difference once both
-  images initialized those pins, so the redundant silent profile was removed.
+  Normal `build` and `build-debug` profiles keep unmodified Zephyr sources;
+  release disables serial interfaces, while ordinary debug enables UART, shell,
+  and OpenThread diagnostics. `sed-debug` is the only candidate SED profile. It
+  enables Zephyr PM, initializes USART0 plus its PA8/PA9 pinctrl, retains the
+  UART shell and diagnostics, and uses bounded SED-only recovery. Comparison
+  with a separate output-silent profile showed no material sleep-phase
+  difference once both images initialized those pins, so the redundant silent
+  profile was removed.
   Hardware measurement established that USART0 initialization is required to
   drive the onboard SAMD11-facing UART connection: with an empty parent queue
   the measured sleep floor is about `0.04 mA`, versus about `0.3 mA` when the

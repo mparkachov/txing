@@ -24,24 +24,87 @@ out of scope for this milestone.
 - `txing-thread-connectivity`
 - `txing-ble-connectivity`
 
-The Thread daemon does not install or configure OTBR. Before provisioning a
-device, the operator must have an external OTBR already joined to the target
-Thread network and reachable from the rig network. The default discovery domain
-is `default.service.arpa`; override it with `TXING_THREAD_SERVICE_DOMAIN` only
-when the OTBR network uses a different SRP/DNS-SD domain.
+The Thread daemon does not install or configure OTBR. It reads the OTBR's local
+SRP registry through `ot-ctl`; the OTBR and Thread daemon must therefore run on
+the same rig host. The default SRP domain is `default.service.arpa`; override
+`TXING_THREAD_SERVICE_DOMAIN` only when the OTBR network uses a different
+domain.
 
-Run these checks from the rig or from a machine on the same IPv6 network before
-expecting `txing-thread-connectivity` to discover a device:
+Run these checks on the rig before expecting `txing-thread-connectivity` to
+discover a device:
 
 ```bash
-systemctl status --no-pager -l txing-thread-connectivity.service
-journalctl -u txing-thread-connectivity.service -n 160 --no-pager
-avahi-browse -rt -d default.service.arpa _txing-coap._udp
+systemctl status --no-pager -l txing-thread-connectivity.service otbr-agent.service
+ot-ctl srp server service
 ```
 
-`avahi-browse` may return no services before a provisioned `power-si` has
-joined and registered SRP. That is acceptable; DNS-SD lookup failures in the
-Thread daemon should be bounded log events, not service crashes.
+The host DNS resolver and mDNS publication are not part of discovery. The
+active `power-si._txing-coap._udp.default.service.arpa.` record from `ot-ctl`
+is the direct source of truth. An unavailable OTBR control socket is a bounded
+Thread daemon failure, not a service crash.
+
+## SED Debug Rig And Office Acceptance
+
+Use `sed-debug` for the first end-to-end REDCON test. Before starting, the
+`power-si` Thing must already be enlisted to the target `raspi` rig, and the
+rig must have installed a `rig-v*` release that contains
+`txing-thread-connectivity`. An OTBR SRP registration and an enabled
+environment variable alone cannot update Office: the installed Thread daemon
+and updated Sparkplug manager publish the capability state and Sparkplug birth
+data that Office reads.
+
+Verify the installed release and service before enabling it:
+
+```bash
+/root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity --version
+sudo systemctl cat txing-thread-connectivity.service
+sudo grep -E '^export TXING_(SPARKPLUG_MANAGER|THREAD_CONNECTIVITY)_ENABLED=' \
+  /root/.config/txing/rig-daemon/daemon.env
+```
+
+If the binary or systemd unit is absent, publish and install the current rig
+release first, following the [Rig release instructions](../../docs/components/rig.md#upgrade).
+Then enable the daemon in the rig configuration:
+
+```bash
+sudo sed -i.bak 's/^export TXING_THREAD_CONNECTIVITY_ENABLED=.*/export TXING_THREAD_CONNECTIVITY_ENABLED=true/' \
+  /root/.config/txing/rig-daemon/daemon.env
+sudo systemctl restart txing-sparkplug-manager.service txing-thread-connectivity.service
+sudo systemctl status --no-pager -l txing-sparkplug-manager.service txing-thread-connectivity.service
+```
+
+Build and manually flash the already provisioned SED test firmware. Do not
+reprogram `TXT1` unless the Thing name or Thread dataset changed:
+
+```bash
+just power-si::mcu::build-sed-debug
+just power-si::mcu::flash sed-debug
+```
+
+After the device has attached in SED mode and SRP is active, verify both the
+device/OTBR evidence and the rig path:
+
+```bash
+sudo ot-ctl child table
+sudo ot-ctl srp server service
+sudo journalctl -u txing-thread-connectivity.service -u txing-sparkplug-manager.service \
+  -n 200 --no-pager
+```
+
+The child row must remain `R=0`; the service must be `deleted:false` on port
+`5683`. The Thread daemon must have reconciled the enlisted device and must not
+report CoAP discovery or polling failures. Within one Thread poll/discovery
+cycle, open the Thing in Office: it is registered when the Sparkplug state is
+live, `thread` is shown active, and the REDCON ring reflects the CoAP state.
+At REDCON 4, `power` is inactive; a successful REDCON 3 command makes `power`
+active while `thread` remains active.
+
+Use the Office REDCON control to command `4`, then `3`, then `4`. Each command
+uses the existing synchronous Sparkplug DCMD to local IPC to Thread CoAP path;
+allow up to the configured `12000 ms` Thread CoAP timeout. Confirm the final
+state in Office, the `power-si` D1 output, the board LED, and the OTBR child
+row. A command timeout or loss of `thread` capability is a failed SED runtime
+test, not an Office-only problem.
 
 ## Factory Data
 
@@ -163,6 +226,18 @@ within the 10-second test timeout; and the device remained `child` in `ot mode
 n` with a `5000 ms` poll period. This validates `sed-debug`, not the unmodified
 release or normal debug images. Upstream disposition remains required before
 the candidate can become the production path.
+
+### Firmware Profiles
+
+| Profile | Command | Source and runtime policy | Intended use |
+| --- | --- | --- | --- |
+| Release | `just power-si::mcu::build` | Unmodified stock Zephyr; serial interfaces disabled; ordinary receiver-on recovery remains available. | Product-path build, but not yet low-current or SED-acceptance evidence. |
+| Debug | `just power-si::mcu::build-debug` | Unmodified stock Zephyr with UART, shell, and OpenThread diagnostics; ordinary receiver-on recovery remains available. | General firmware and Thread diagnosis. |
+| SED debug | `just power-si::mcu::build-sed-debug` | Isolated RadioAES candidate applied only for the build; UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, and bounded SED-only recovery. | SED functional, recovery, indirect-delivery, and current characterization. |
+
+`sed-debug` is the only current characterization profile. The build helper
+reverses the candidate patch before it exits, so the shared Zephyr and Silabs
+HAL checkouts remain stock after every build.
 
 Build a serial/shell functional SED test image:
 

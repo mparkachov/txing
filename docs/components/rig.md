@@ -11,8 +11,9 @@ ships three standalone Go daemons:
   updates.
 - `txing-thread-connectivity`: owns Thread SRP/DNS-SD discovery and CoAP
   communication for `power-si` devices, and publishes local capability state,
-  command results, and Thread/power shadow updates. It assumes an external OTBR
-  is already configured on the rig network.
+  command results, and Thread/power shadow updates. It reads SRP records from
+  a colocated, already-configured OTBR through `ot-ctl`; it does not install or
+  configure OTBR.
 
 The daemons communicate only through local IPC. The default Linux IPC socket is
 `/run/txing-rig/rig-ipc.sock`; the macOS development default is under
@@ -59,16 +60,28 @@ and log nothing at the default (info) log level.
 `txing-ble-connectivity` and `txing-thread-connectivity` have no direct AWS MQTT
 dependency. They consume rig inventory over IPC and publish:
 
-- retained local capability state under `dev/txing/rig/v2/state/...`
-- local command results under `dev/txing/rig/v2/command-result/...`
+- retained local capability state under
+  `dev/txing/rig/v2/capability/state/<thing>/<adapter>`
+- local command results under
+  `dev/txing/rig/v2/capability/command-result/<thing>/<adapter>`
 - BLE-owned `$aws/things/<device>/shadow/name/<shadow>/update` messages for the
   manager to forward
 - Thread-owned `$aws/things/<device>/shadow/name/thread/update` messages and
   `power` battery updates for the manager to forward
 
+Before forwarding a named-shadow update to AWS IoT, the manager suppresses an
+identical payload previously accepted for the same topic during its current
+process lifetime. This prevents periodic BLE measurement notifications from
+creating shadow writes when their reported values did not change. A changed
+payload, a new manager process, or a re-enlisted device publishes normally.
+
 `power-si` is a Thread Sleepy End Device with a 5 second poll period. Thread
 REDCON commands remain synchronous, so the Thread CoAP timeout is longer than
 the BLE command timeout to allow one sleepy poll window plus network jitter.
+The Thread daemon reads the active SRP registry through the configured
+`TXING_THREAD_OT_CTL` command (`ot-ctl` by default). It does not require mDNS
+publication or DNS records in `/etc/resolv.conf`; a rig using `power-si` must
+run OTBR on the same host as the Thread daemon.
 
 ## Cost Posture
 
@@ -178,6 +191,7 @@ Important defaults:
 - `TXING_BLE_NO_RADIO=false`
 - `TXING_CLOUDWATCH_LOG_GROUP=txing/<town>/<rig>`
 - `TXING_THREAD_SERVICE_DOMAIN=default.service.arpa`
+- `TXING_THREAD_OT_CTL=ot-ctl`
 - `TXING_THREAD_DISCOVERY_INTERVAL_MS=10000`
 - `TXING_THREAD_POLL_INTERVAL_MS=10000`
 - `TXING_THREAD_COAP_TIMEOUT_MS=12000`
@@ -314,6 +328,7 @@ Environment=TXING_RIG_CONFIG_DIR=/root/.config/txing/rig-daemon
 Environment=TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock
 ExecStartPre=/usr/bin/test -x /root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity
 ExecStartPre=-/root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity --version
+ExecStartPre=/bin/sh -c '. /root/.config/txing/rig-daemon/daemon.env; command -v "${TXING_THREAD_OT_CTL:-ot-ctl}" >/dev/null'
 ExecCondition=/bin/sh -c '. /root/.config/txing/rig-daemon/daemon.env; [ "${TXING_SPARKPLUG_MANAGER_ENABLED:-true}" = "true" ] && [ "${TXING_THREAD_CONNECTIVITY_ENABLED:-false}" = "true" ]'
 ExecStart=/root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity
 Restart=on-failure
@@ -437,8 +452,8 @@ Expected behavior:
 - disabled connectivity services are skipped by their systemd `ExecCondition`
   and may show as inactive without failing `rig-daemon.target`
 - Thread logs are expected only when `TXING_THREAD_CONNECTIVITY_ENABLED=true`;
-  then they show inventory reconciliation on inventory changes and
-  `_txing-coap._udp` discovery attempts once an external OTBR is available
+  then they show inventory reconciliation on inventory changes and direct
+  `_txing-coap._udp` SRP discovery attempts through local `ot-ctl`
 - BLE logs are expected only when `TXING_BLE_CONNECTIVITY_ENABLED=true`; then
   they show inventory reconciliation (debug level) and scanner activity, or
   offline/no-radio state when `TXING_BLE_NO_RADIO=true`

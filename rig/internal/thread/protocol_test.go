@@ -58,6 +58,56 @@ func TestDiscovererFiltersPowerSIEndpoints(t *testing.T) {
 	}
 }
 
+func TestParseOTCTLSRPServicesFiltersActivePowerSI(t *testing.T) {
+	output := `power-si-001._txing-coap._udp.default.service.arpa.
+    deleted: false
+    port: 5683
+    TXT: [type=706f7765722d7369, pv=31]
+    host: power-si-001.default.service.arpa.
+    addresses: [fdde:ad00:beef::1]
+unit-001._txing-coap._udp.default.service.arpa.
+    deleted: false
+    port: 5683
+    TXT: [type=756e6974, pv=31]
+    host: unit-001.default.service.arpa.
+    addresses: [fdde:ad00:beef::2]
+removed._txing-coap._udp.default.service.arpa.
+    deleted: true
+    port: 5683
+    TXT: [type=706f7765722d7369, pv=31]
+    host: removed.default.service.arpa.
+    addresses: [fdde:ad00:beef::3]
+Done
+`
+
+	endpoints, err := ParseOTCTLSRPServices(output, DefaultDomain, func() uint64 { return 1000 }, func() uint64 { return 7 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("endpoints = %#v, want one active power-si endpoint", endpoints)
+	}
+	endpoint := endpoints[0]
+	if endpoint.ThingName != "power-si-001" || endpoint.Port != 5683 || endpoint.Address.String() != "fdde:ad00:beef::1" {
+		t.Fatalf("endpoint = %#v", endpoint)
+	}
+	if endpoint.TXT["type"] != "power-si" || endpoint.TXT["pv"] != "1" {
+		t.Fatalf("TXT = %#v", endpoint.TXT)
+	}
+}
+
+func TestOTCTLSRPDiscovererReportsCommandFailure(t *testing.T) {
+	discoverer := OTCTLSRPDiscoverer{
+		Path:   "/usr/sbin/ot-ctl",
+		Domain: DefaultDomain,
+		Runner: fakeOTCTLRunner{err: context.DeadlineExceeded, output: []byte("connection failed")},
+	}
+	_, err := discoverer.Discover(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ot-ctl srp server service") || !strings.Contains(err.Error(), "connection failed") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRuntimePublishesStateAndShadows(t *testing.T) {
 	publisher := &recordingPublisher{}
 	runtime := NewRuntime(
@@ -143,6 +193,17 @@ func TestRuntimeCommandReportsSuccessAfterConfirmedState(t *testing.T) {
 	}
 	if client.putTarget != 4 {
 		t.Fatalf("put target = %d, want 4", client.putTarget)
+	}
+	stateTopic, err := protocol.BuildCapabilityStateTopic("power-si-001", AdapterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := protocol.DecodeCapabilityState(publisher.retained[stateTopic])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Capabilities[ThreadCapability] || state.Capabilities[PowerCapability] {
+		t.Fatalf("confirmed REDCON 4 capability state = %#v", state.Capabilities)
 	}
 	results := publisher.commandResults(t)
 	if len(results) < 2 {
@@ -272,6 +333,15 @@ func (f *fakeResolver) LookupAAAA(_ context.Context, name string) ([]net.IP, err
 type fakeDiscoverer struct {
 	endpoints []Endpoint
 	err       error
+}
+
+type fakeOTCTLRunner struct {
+	output []byte
+	err    error
+}
+
+func (f fakeOTCTLRunner) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
+	return f.output, f.err
 }
 
 func (f *fakeDiscoverer) Discover(_ context.Context) ([]Endpoint, error) {

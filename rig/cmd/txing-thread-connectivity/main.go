@@ -37,7 +37,7 @@ func main() {
 		os.Exit(2)
 	}
 	if dryRun {
-		fmt.Printf("txing-thread-connectivity version=%s rig=%s town=%s ipc=%s domain=%s\n", version.Version, cfg.RigID, cfg.TownID, cfg.IPCSocket, cfg.ThreadServiceDomain)
+		fmt.Printf("txing-thread-connectivity version=%s rig=%s town=%s ipc=%s domain=%s otctl=%s\n", version.Version, cfg.RigID, cfg.TownID, cfg.IPCSocket, cfg.ThreadServiceDomain, cfg.ThreadOTCTL)
 		return
 	}
 
@@ -61,7 +61,7 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 		cfg.CloudWatchRetentionDays,
 	)
 	logger.Ensure(ctx)
-	logger.Print(ctx, "info", fmt.Sprintf("version=%s rig=%s domain=%s", version.Version, cfg.RigID, cfg.ThreadServiceDomain))
+	logger.Print(ctx, "info", fmt.Sprintf("version=%s rig=%s domain=%s otctl=%s", version.Version, cfg.RigID, cfg.ThreadServiceDomain, cfg.ThreadOTCTL))
 
 	client, err := ipc.Dial(ctx, cfg.IPCSocket)
 	if err != nil {
@@ -78,9 +78,10 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 	}
 
 	runtime := rigthread.NewRuntime(
-		rigthread.Discoverer{
-			Resolver: rigthread.NewSystemDNSResolver(cfg.ThreadCoAPTimeout),
-			Domain:   cfg.ThreadServiceDomain,
+		rigthread.OTCTLSRPDiscoverer{
+			Path:    cfg.ThreadOTCTL,
+			Domain:  cfg.ThreadServiceDomain,
+			Timeout: 2 * time.Second,
 		},
 		rigthread.CoAPClient{Timeout: cfg.ThreadCoAPTimeout, Attempts: 2},
 		client,

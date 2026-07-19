@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -48,6 +49,8 @@ type runtimeState struct {
 	deviceMu                sync.RWMutex
 	boardStateMu            sync.Mutex
 	boardStateSubscriptions map[string]struct{}
+	shadowPayloadMu         sync.Mutex
+	shadowPayloads          map[string][]byte
 	inventoryMu             sync.Mutex
 	lastInventory           *registry.Inventory
 	inventorySeq            uint64
@@ -156,6 +159,7 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 		registry:                registry.New(awsConfig),
 		devices:                 map[string]*managedDevice{},
 		boardStateSubscriptions: map[string]struct{}{},
+		shadowPayloads:          map[string][]byte{},
 	}
 	if err := state.connectNodeMQTT(ctx); err != nil {
 		return err
@@ -326,6 +330,7 @@ func (s *runtimeState) refreshInventory(ctx context.Context) error {
 			delete(s.devices, thingName)
 			s.deviceMu.Unlock()
 			s.clearBoardStateSubscription(thingName)
+			s.clearShadowPayloads(thingName)
 		}
 	}
 	s.inventoryMu.Lock()
@@ -439,13 +444,7 @@ func (s *runtimeState) handleIPCMessage(ctx context.Context, message ipc.Message
 		return
 	}
 	if isThingShadowUpdateTopic(message.Topic) {
-		if s.nodeMQTT == nil {
-			s.logger.Print(ctx, "warning", fmt.Sprintf("shadow update dropped before MQTT connection topic=%s", message.Topic))
-			return
-		}
-		if err := s.nodeMQTT.Publish(message.Topic, message.Payload, false); err != nil {
-			s.logger.Print(ctx, "warning", fmt.Sprintf("shadow update publish failed topic=%s error=%q", message.Topic, err))
-		}
+		s.publishShadowUpdate(ctx, message.Topic, message.Payload)
 		return
 	}
 	if thingName, _, ok := protocol.ParseCapabilityStateTopic(message.Topic); ok {
@@ -489,6 +488,56 @@ func (s *runtimeState) handleIPCMessage(ctx context.Context, message ipc.Message
 		}
 		if err := managed.mqtt.Publish(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DDATA", s.cfg.RigID, thingName), payload, false); err != nil {
 			s.logger.Print(ctx, "warning", fmt.Sprintf("publish command result DDATA failed thing=%s error=%q", thingName, err))
+		}
+	}
+}
+
+func (s *runtimeState) publishShadowUpdate(ctx context.Context, topic string, payload []byte) {
+	payload = compactJSON(payload)
+	if s.shadowPayloadMatches(topic, payload) {
+		return
+	}
+	if s.nodeMQTT == nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("shadow update dropped before MQTT connection topic=%s", topic))
+		return
+	}
+	if err := s.nodeMQTT.Publish(topic, payload, false); err != nil {
+		s.logger.Print(ctx, "warning", fmt.Sprintf("shadow update publish failed topic=%s error=%q", topic, err))
+		return
+	}
+	s.rememberShadowPayload(topic, payload)
+}
+
+func compactJSON(payload []byte) []byte {
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, payload); err != nil {
+		return append([]byte(nil), payload...)
+	}
+	return compact.Bytes()
+}
+
+func (s *runtimeState) shadowPayloadMatches(topic string, payload []byte) bool {
+	s.shadowPayloadMu.Lock()
+	defer s.shadowPayloadMu.Unlock()
+	return bytes.Equal(s.shadowPayloads[topic], payload)
+}
+
+func (s *runtimeState) rememberShadowPayload(topic string, payload []byte) {
+	s.shadowPayloadMu.Lock()
+	defer s.shadowPayloadMu.Unlock()
+	if s.shadowPayloads == nil {
+		s.shadowPayloads = map[string][]byte{}
+	}
+	s.shadowPayloads[topic] = append([]byte(nil), payload...)
+}
+
+func (s *runtimeState) clearShadowPayloads(thingName string) {
+	prefix := "$aws/things/" + thingName + "/shadow/name/"
+	s.shadowPayloadMu.Lock()
+	defer s.shadowPayloadMu.Unlock()
+	for topic := range s.shadowPayloads {
+		if strings.HasPrefix(topic, prefix) {
+			delete(s.shadowPayloads, topic)
 		}
 	}
 }
