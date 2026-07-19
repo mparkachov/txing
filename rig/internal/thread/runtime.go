@@ -1,6 +1,7 @@
 package thread
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -32,15 +33,19 @@ type Runtime struct {
 	specs     map[string]DeviceSpec
 	endpoints map[string]Endpoint
 	seq       uint64
+
+	shadowMu       sync.Mutex
+	shadowPayloads map[string][]byte
 }
 
 func NewRuntime(discoverer EndpointDiscoverer, client DeviceClient, publisher Publisher) *Runtime {
 	return &Runtime{
-		Discoverer: discoverer,
-		Client:     client,
-		Publisher:  publisher,
-		specs:      map[string]DeviceSpec{},
-		endpoints:  map[string]Endpoint{},
+		Discoverer:     discoverer,
+		Client:         client,
+		Publisher:      publisher,
+		specs:          map[string]DeviceSpec{},
+		endpoints:      map[string]Endpoint{},
+		shadowPayloads: map[string][]byte{},
 	}
 }
 
@@ -156,12 +161,7 @@ func (r *Runtime) publishState(_ context.Context, state DeviceState) error {
 	if err != nil {
 		return err
 	}
-	for _, update := range updates {
-		if err := r.Publisher.Publish(update.Topic, update.Payload); err != nil {
-			return err
-		}
-	}
-	return nil
+	return r.publishShadowUpdates(updates)
 }
 
 func (r *Runtime) publishOffline(_ context.Context, thingName string) error {
@@ -181,7 +181,23 @@ func (r *Runtime) publishOffline(_ context.Context, thingName string) error {
 	if err != nil {
 		return err
 	}
-	return r.Publisher.Publish(update.Topic, update.Payload)
+	return r.publishShadowUpdates([]ShadowUpdate{update})
+}
+
+func (r *Runtime) publishShadowUpdates(updates []ShadowUpdate) error {
+	r.shadowMu.Lock()
+	defer r.shadowMu.Unlock()
+
+	for _, update := range updates {
+		if bytes.Equal(r.shadowPayloads[update.Topic], update.Payload) {
+			continue
+		}
+		if err := r.Publisher.Publish(update.Topic, update.Payload); err != nil {
+			return err
+		}
+		r.shadowPayloads[update.Topic] = append([]byte(nil), update.Payload...)
+	}
+	return nil
 }
 
 func (r *Runtime) publishAllOffline(ctx context.Context) {

@@ -15,6 +15,12 @@ out of scope for this milestone.
 - REDCON `3` requires `sparkplug`, `thread`, and `power`
 - Named shadows: `sparkplug`, `thread`, `power`
 
+The Thread CoAP service uses protocol version `1`. `GET /txing/v1/state`
+returns `version`, `thingName`, `redcon`, and `batteryMv`. `PUT
+/txing/v1/redcon` requires JSON content with both a numeric version and target
+level, for example `{"version":1,"redcon":3}` or
+`{"version":1,"redcon":4}`.
+
 ## Rig Prerequisites
 
 `power-si` requires a `raspi` rig running the three rig daemons documented in

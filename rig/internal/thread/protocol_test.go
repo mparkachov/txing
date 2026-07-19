@@ -144,6 +144,29 @@ func TestRuntimePublishesStateAndShadows(t *testing.T) {
 	assertPublishedTopic(t, publisher, "$aws/things/power-si-001/shadow/name/power/update")
 }
 
+func TestRuntimeDoesNotRepublishUnchangedShadows(t *testing.T) {
+	publisher := &recordingPublisher{}
+	runtime := NewRuntime(
+		&fakeDiscoverer{endpoints: []Endpoint{testEndpoint("power-si-001")}},
+		&fakeDeviceClient{state: DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 4}},
+		publisher,
+	)
+	runtime.NowMS = func() uint64 { return 2000 }
+	runtime.ReconcileInventory(testInventory())
+
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	topic := "$aws/things/power-si-001/shadow/name/thread/update"
+	if got := publisher.publishedTopicCount(topic); got != 1 {
+		t.Fatalf("Thread shadow updates = %d, want 1", got)
+	}
+}
+
 func TestRuntimeUnavailableDevicePublishesOffline(t *testing.T) {
 	publisher := &recordingPublisher{}
 	runtime := NewRuntime(
@@ -407,6 +430,16 @@ func (p *recordingPublisher) commandResults(t *testing.T) []protocol.CapabilityC
 		results = append(results, result)
 	}
 	return results
+}
+
+func (p *recordingPublisher) publishedTopicCount(topic string) int {
+	count := 0
+	for _, message := range p.published {
+		if message.topic == topic {
+			count++
+		}
+	}
+	return count
 }
 
 func assertPublishedTopic(t *testing.T, publisher *recordingPublisher, topic string) {

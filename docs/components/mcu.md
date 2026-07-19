@@ -106,8 +106,9 @@ over Thread, and no Matter/CHIP stack.
   16 KiB of flash (`0x0817c000..0x0817ffff`) is reserved for Zephyr/OpenThread
   settings and must not contain factory data.
 - State protocol: `GET /txing/v1/state` and `PUT /txing/v1/redcon` are served
-  over Thread CoAP on port `5683`; SRP registers `_txing-coap._udp` with TXT
-  records `type=power-si` and `pv=1`.
+  over Thread CoAP on port `5683`. The version-1 PUT body is
+  `{"version":1,"redcon":3}` or `{"version":1,"redcon":4}`. SRP registers
+  `_txing-coap._udp` with TXT records `type=power-si` and `pv=1`.
 - Battery: the current MCU state response returns `batteryMv: null`; the rig
   only publishes a `power` battery shadow when the device supplies a value.
 - Production firmware deliberately disables UART, console, shell, and log
