@@ -30,3 +30,14 @@ config TXING_POWER_SI_SED_RECOVERY_TEST
 	  persistent lost attachment in SED mode only. It never restores receiver-on
 	  mode. The retry count and delays are intentionally bounded. The debug image
 	  logs failure evidence; the current-measurement image remains silent.
+
+config TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS
+	bool "Log Silicon Labs EM1/EM2 sleep-mode changes"
+	depends on PM && SOC_FAMILY_SILABS_S2
+	default n
+	help
+	  Subscribe to Silicon Labs power-manager transition events and log the
+	  initial EM1/EM2 sleep-mode selection plus changes between those modes.
+	  Routine wake transitions through EM0 are intentionally omitted. This is a
+	  focused sed-debug diagnostic and should not be enabled in release or
+	  current-measurement firmware.

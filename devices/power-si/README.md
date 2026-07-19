@@ -176,7 +176,23 @@ The expected debug SED test HEX is:
 devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex
 ```
 
-Build a silent SED current-measurement image:
+`sed-debug` enables the same Zephyr PM and tickless path used by the silent
+current-measurement profile. Its focused Silicon Labs PM diagnostic prints the
+first selected sleep mode and subsequent changes between EM1 and EM2:
+
+```text
+Silicon Labs PM sleep mode selected: EM2
+Silicon Labs PM sleep mode changed: EM2 -> EM1
+Silicon Labs PM sleep mode changed: EM1 -> EM2
+```
+
+Normal wakeups through EM0 are intentionally not printed because they occur on
+every interrupt and would make the UART output self-sustaining. The serial
+shell and logging can still perturb sleep timing, so use this profile to
+correlate EM1/EM2 selection changes with observed current, not to establish the
+final current value. Use `sed-current` for the current measurement itself.
+
+Build the UART-initialized, output-silent SED current experiment image:
 
 ```bash
 just power-si::mcu::build-sed-current
@@ -192,10 +208,12 @@ The current-measurement profile keeps the same isolated candidate and SED-only
 recovery behavior as `sed-debug`: after it has transitioned to SED, it never
 returns to receiver-on mode if attachment is lost. It retains the minimum
 device contract needed for representative network current (Thread, SRP, CoAP,
-and safe GPIO output state), but enables Zephyr PM (`CONFIG_PM=y`) and disables
-UART, console, shell, OpenThread debug output, printk, boot banner, and logging.
-Use `sed-debug` first to prove Thread/SRP/CoAP behavior, then flash
-`sed-current` for sleep-current measurement. A silent serial port is expected.
+and safe GPIO output state), and enables Zephyr PM (`CONFIG_PM=y`). It enables
+the UART driver so USART0 and its PA8/PA9 board pinctrl are initialized like
+`sed-debug`, while console, shell, OpenThread debug output, printk, boot banner,
+and logging remain disabled. Use `sed-debug` first to prove Thread/SRP/CoAP
+behavior, then flash `sed-current` for sleep-current measurement. A silent
+serial port is expected because no UART output producer is enabled.
 
 ## Manual Flashing
 
@@ -532,10 +550,12 @@ Flash the already-built current image manually:
 just power-si::mcu::flash sed-current
 ```
 
-The `sed-current` image has UART, shell, printk, boot banner, and logging
-disabled, and enables Zephyr PM so the SoC can sleep between the 5000 ms Thread
-polls. Do not use the USB serial log as the validation signal for this image; a
-silent port is expected. Validate from OTBR and rig-side evidence:
+The `sed-current` image enables the UART driver only to initialize USART0 and
+its PA8/PA9 board pinctrl like `sed-debug`. Console, shell, printk, boot banner,
+OpenThread debug, and logging remain disabled, and Zephyr PM remains enabled so
+the SoC can sleep between the 5000 ms Thread polls. Do not use the USB serial
+log as the validation signal for this image; a silent port is expected.
+Validate from OTBR and rig-side evidence:
 
 ```bash
 sudo ot-ctl child table
@@ -549,6 +569,14 @@ measure after the SRP registration has completed and the child has settled into
 the steady SED polling state. Do not treat a `sed-current` run with `R=1` as an
 SED current baseline: it indicates an unexpected regression because this image
 never intentionally restores receiver-on mode after its SED transition.
+
+Use an empty parent queue for the idle-current baseline. On the tested XIAO
+MG24, `QMsgCnt=0` followed by the next 5000 ms data poll produces an
+approximately `0.04 mA` sleep floor. Continuous OTBR ping traffic keeps
+indirect messages queued (`QMsgCnt>0`) and raises the between-response current
+to approximately `0.3 mA`; this is an active queued-traffic condition, not the
+idle SED baseline. After stopping traffic, wait for `QMsgCnt` to return to zero
+and for one subsequent poll before recording idle current.
 
 ## Hardware Acceptance
 

@@ -86,10 +86,16 @@ over Thread, and no Matter/CHIP stack.
   measurement, but does not make the unmodified release/debug images a
   production SED path.
   Normal `build` and `build-debug` profiles keep unmodified Zephyr sources.
-  The `sed-current` profile also enables Zephyr PM and disables UART, console,
-  shell, printk, boot output, OpenThread debug output, and logging for
-  sleep-current measurement; current evidence is valid only while OTBR confirms
-  the child remains `R=0`.
+  The `sed-current` profile enables Zephyr PM and initializes USART0 plus its
+  PA8/PA9 pinctrl as a focused current experiment matching `sed-debug`'s UART
+  electrical state. Console, shell, printk, boot output, OpenThread debug
+  output, and logging remain disabled; current evidence is valid only while
+  OTBR confirms the child remains `R=0`. Hardware measurement established that
+  USART0 initialization is required to drive the onboard SAMD11-facing UART
+  connection: with an empty parent queue the measured sleep floor is about
+  `0.04 mA`, versus about `0.3 mA` when the UART pins are uninitialized.
+  Sustained indirect traffic with `QMsgCnt>0` also measures about `0.3 mA`; wait
+  for `QMsgCnt=0` and the following data poll before recording idle current.
 - REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
   and the board LED following the same state.
 - Factory data: `TXT1` written by

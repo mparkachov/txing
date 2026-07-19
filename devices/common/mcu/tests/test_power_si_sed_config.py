@@ -43,14 +43,14 @@ class PowerSiSedConfigTests(unittest.TestCase):
         self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_OVERRIDE", values)
         self.assertNotIn("CONFIG_TXING_POWER_SI_TEST_TX_POWER_DBM", values)
 
-    def test_current_measurement_build_enables_pm_and_stays_silent(self) -> None:
+    def test_current_measurement_build_initializes_uart_without_output(self) -> None:
         values = read_conf(POWER_SI_MCU / "zephyr" / "current.conf")
 
         self.assertEqual(values.get("CONFIG_PM"), "y")
         self.assertEqual(values.get("CONFIG_TICKLESS_KERNEL"), "y")
         self.assertEqual(values.get("CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST"), "y")
         self.assertEqual(values.get("CONFIG_LOG"), "n")
-        self.assertEqual(values.get("CONFIG_SERIAL"), "n")
+        self.assertEqual(values.get("CONFIG_SERIAL"), "y")
         self.assertEqual(values.get("CONFIG_CONSOLE"), "n")
         self.assertEqual(values.get("CONFIG_UART_CONSOLE"), "n")
         self.assertEqual(values.get("CONFIG_PRINTK"), "n")
@@ -75,6 +75,29 @@ class PowerSiSedConfigTests(unittest.TestCase):
             "CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST",
             read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
         )
+
+    def test_sed_debug_alone_logs_silabs_sleep_mode_changes(self) -> None:
+        sed_debug_values = read_conf(POWER_SI_MCU / "zephyr" / "sed-debug.conf")
+
+        self.assertEqual(sed_debug_values.get("CONFIG_PM"), "y")
+        self.assertEqual(sed_debug_values.get("CONFIG_TICKLESS_KERNEL"), "y")
+        self.assertEqual(
+            sed_debug_values.get("CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS"),
+            "y",
+        )
+        for conf in ("prj.conf", "debug.conf", "current.conf"):
+            self.assertNotIn(
+                "CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS",
+                read_conf(POWER_SI_MCU / "zephyr" / conf),
+            )
+
+        source = (POWER_SI_MCU / "src" / "main.c").read_text(encoding="ascii")
+        self.assertIn("sl_power_manager_subscribe_em_transition_event", source)
+        self.assertIn("SL_POWER_MANAGER_EVENT_TRANSITION_ENTERING_EM1", source)
+        self.assertIn("SL_POWER_MANAGER_EVENT_TRANSITION_ENTERING_EM2", source)
+        self.assertIn("Silicon Labs PM sleep mode selected: %s", source)
+        self.assertIn("Silicon Labs PM sleep mode changed: %s -> %s", source)
+        self.assertNotIn("SL_POWER_MANAGER_EVENT_TRANSITION_ENTERING_EM0 |", source)
 
     def test_power_si_app_transitions_to_sed_after_srp_registration(self) -> None:
         source = (POWER_SI_MCU / "src" / "main.c").read_text(encoding="ascii")

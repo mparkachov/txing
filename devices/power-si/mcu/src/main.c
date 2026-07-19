@@ -26,6 +26,10 @@
 #include <openthread/thread.h>
 #include <psa/crypto.h>
 
+#if defined(CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS)
+#include <sl_power_manager.h>
+#endif
+
 LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 
 #define TXING_PROTOCOL_VERSION 1
@@ -106,6 +110,21 @@ static atomic_t sed_transition_failed;
 static atomic_t sed_recovery_pending;
 static atomic_t sed_recovery_attempts;
 #endif
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS)
+struct pm_sleep_mode_change {
+	int8_t previous;
+	int8_t current;
+};
+
+#define PM_SLEEP_MODE_UNKNOWN (-1)
+#define PM_SLEEP_MODE_CHANGE_QUEUE_DEPTH 8
+
+static int8_t pm_last_sleep_mode = PM_SLEEP_MODE_UNKNOWN;
+static void pm_transition_log_work_handler(struct k_work *work);
+K_MSGQ_DEFINE(pm_sleep_mode_changes, sizeof(struct pm_sleep_mode_change),
+	      PM_SLEEP_MODE_CHANGE_QUEUE_DEPTH, 1);
+static K_WORK_DEFINE(pm_transition_log_work, pm_transition_log_work_handler);
+#endif
 static void thread_state_changed(uint32_t flags, void *context);
 static void srp_client_callback(otError error, const otSrpClientHostInfo *host_info,
 				const otSrpClientService *services,
@@ -124,6 +143,80 @@ static K_WORK_DELAYABLE_DEFINE(sed_recovery_work, sed_recovery_work_handler);
 static struct openthread_state_changed_callback thread_state_cb = {
 	.otCallback = thread_state_changed,
 };
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS)
+static const char *pm_sleep_mode_name(int8_t mode)
+{
+	switch (mode) {
+	case SL_POWER_MANAGER_EM1:
+		return "EM1";
+	case SL_POWER_MANAGER_EM2:
+		return "EM2";
+	default:
+		return "unknown";
+	}
+}
+
+static void pm_transition_log_work_handler(struct k_work *work)
+{
+	struct pm_sleep_mode_change change;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&pm_sleep_mode_changes, &change, K_NO_WAIT) == 0) {
+		if (change.previous == PM_SLEEP_MODE_UNKNOWN) {
+			LOG_INF("Silicon Labs PM sleep mode selected: %s",
+				pm_sleep_mode_name(change.current));
+		} else {
+			LOG_INF("Silicon Labs PM sleep mode changed: %s -> %s",
+				pm_sleep_mode_name(change.previous),
+				pm_sleep_mode_name(change.current));
+		}
+	}
+}
+
+static void pm_transition_event(sl_power_manager_em_t from,
+				sl_power_manager_em_t to)
+{
+	struct pm_sleep_mode_change change;
+
+	ARG_UNUSED(from);
+
+	if (to != SL_POWER_MANAGER_EM1 && to != SL_POWER_MANAGER_EM2) {
+		return;
+	}
+	if (pm_last_sleep_mode == (int8_t)to) {
+		return;
+	}
+
+	change.previous = pm_last_sleep_mode;
+	change.current = (int8_t)to;
+	pm_last_sleep_mode = change.current;
+	if (k_msgq_put(&pm_sleep_mode_changes, &change, K_NO_WAIT) == 0) {
+		(void)k_work_submit(&pm_transition_log_work);
+	}
+}
+
+static sl_power_manager_em_transition_event_handle_t pm_transition_event_handle;
+static const sl_power_manager_em_transition_event_info_t pm_transition_event_info = {
+	.event_mask = SL_POWER_MANAGER_EVENT_TRANSITION_ENTERING_EM1 |
+		      SL_POWER_MANAGER_EVENT_TRANSITION_ENTERING_EM2,
+	.on_event = pm_transition_event,
+};
+
+static void register_pm_transition_diagnostics(void)
+{
+	pm_last_sleep_mode = PM_SLEEP_MODE_UNKNOWN;
+	sl_power_manager_subscribe_em_transition_event(&pm_transition_event_handle,
+						&pm_transition_event_info);
+	LOG_INF("Silicon Labs PM transition diagnostics enabled; "
+		"reporting EM1/EM2 sleep-mode changes");
+}
+#else
+static void register_pm_transition_diagnostics(void)
+{
+}
+#endif
 
 #if DT_NODE_EXISTS(DT_NODELABEL(txing_factory_partition))
 static uint16_t u16_le(const uint8_t *value)
@@ -1046,6 +1139,7 @@ int main(void)
 	if (start_thread(ot) != 0 || start_coap(ot) != 0 || start_srp(ot) != 0) {
 		LOG_ERR("power-si Thread services did not start");
 	}
+	register_pm_transition_diagnostics();
 
 	while (true) {
 		k_sleep(K_SECONDS(60));
