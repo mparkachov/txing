@@ -4,6 +4,7 @@ title: Thread REDCON commands are not blocked by SED maintenance polling
 status: To Do
 assignee: []
 created_date: '2026-07-20 20:08'
+updated_date: '2026-07-20 20:18'
 labels: []
 dependencies:
   - TASK-21.3
@@ -35,3 +36,12 @@ Bound end-to-end power-si REDCON command latency by preventing synchronous Threa
 - [ ] #4 The change preserves the 12000 ms CoAP attempt timeout, two-attempt failure behavior, confirmed-state command result contract, existing SRP discovery, and BLE behavior.
 - [ ] #5 Rig tests reproduce a command arriving behind an in-flight SED maintenance poll and verify command priority, per-device ordering, maintenance recovery, and clean daemon shutdown; manual hardware evidence records command received and transition-confirmed timestamps.
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-20 20:18
+---
+Hardware observation (2026-07-20): with the board in REDCON 4 / ot mode n and a 5000 ms poll period, the first Office REDCON 3 request sometimes completes after roughly 10 seconds rather than one poll period. REDCON 3 to 4 completes almost immediately while the device is receiver-on (ot mode rn). This confirms the command can arrive behind an in-flight periodic state GET, miss the current poll, and wait for the following poll. Firmware transition behavior itself is correct; the outstanding work is rig scheduling and command priority.
+---
+<!-- COMMENTS:END -->
