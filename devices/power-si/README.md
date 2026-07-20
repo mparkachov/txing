@@ -19,7 +19,12 @@ The Thread CoAP service uses protocol version `1`. `GET /txing/v1/state`
 returns `version`, `thingName`, `redcon`, and `batteryMv`. `PUT
 /txing/v1/redcon` requires JSON content with both a numeric version and target
 level, for example `{"version":1,"redcon":3}` or
-`{"version":1,"redcon":4}`.
+`{"version":1,"redcon":4}`. The `sed-current` profile samples the XIAO MG24
+battery divider on demand for both responses: PD3 enables the divider, the
+firmware waits 30 ms for it to settle, and PD4 is sampled using the calibrated
+1.21 V internal IADC reference at 0.5x gain. The divider voltage is multiplied
+by two. Other profiles continue to return `batteryMv: null` until this path has
+completed hardware validation.
 
 ## Rig Prerequisites
 
@@ -254,7 +259,7 @@ the candidate can become the production path.
 | Release | `just power-si::mcu::build` | Unmodified stock Zephyr; serial interfaces disabled; ordinary receiver-on recovery remains available. | Product-path build, but not yet low-current or SED-acceptance evidence. |
 | Debug | `just power-si::mcu::build-debug` | Unmodified stock Zephyr with UART, shell, and OpenThread diagnostics; ordinary receiver-on recovery remains available. | General firmware and Thread diagnosis. |
 | SED debug | `just power-si::mcu::build-sed-debug` | Isolated RadioAES candidate applied only for the build; UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, bounded requested-link recovery, and REDCON 3/4 `rn`/`n` link-policy testing. | SED functional, recovery, indirect-delivery, and active-power link-policy diagnosis. |
-| SED current | `just power-si::mcu::build-sed-current` | Loads the same `sed-debug.conf` functional overlay and isolated RadioAES candidate as SED debug, then disables console, shell, logging, and application diagnostics. | Current characterization after functional SED validation. |
+| SED current | `just power-si::mcu::build-sed-current` | Loads the same `sed-debug.conf` functional overlay and isolated RadioAES candidate as SED debug, disables console, shell, logging, and application diagnostics, and samples the PD3/PD4 battery divider on demand. | Current characterization and battery-reporting validation after functional SED validation. |
 
 All candidate SED profiles reverse the candidate patch before the build helper exits, so
 the shared Zephyr and Silabs HAL checkouts remain stock after every build.
@@ -632,9 +637,13 @@ just power-si::mcu::flash sed-current
 same receiver-on SRP bootstrap, SED recovery, REDCON 3/4 link-mode policy, and
 RadioAES candidate as `sed-debug`. It keeps the serial driver baseline but does
 not enable a console, shell, UART logging, OpenThread diagnostics, or PM
-transition logging. This does not establish a causal claim about current
-consumption. Use OTBR state to distinguish idle SED polling from active queued
-traffic:
+transition logging. Its only additional functional path is on-demand battery
+sampling. PD3 is inactive between requests; a CoAP state or REDCON response
+briefly enables PD3, waits 30 ms for the divider to settle, samples PD4 using
+the calibrated 1.21 V internal IADC reference at 0.5x gain, converts the result
+to millivolts, and applies the board's 2:1 divider ratio. This does not establish
+a causal claim about current consumption. Use OTBR state to distinguish idle
+SED polling from active queued traffic:
 
 ```bash
 sudo ot-ctl child table
@@ -654,6 +663,20 @@ wait for `QMsgCnt=0` and one subsequent 5000 ms poll. Then repeat the
 measurement while known indirect traffic is queued. Do not assign a current
 floor or a causal explanation until the DC readings have been recorded under
 both conditions.
+
+For battery validation, request `GET /txing/v1/state` with the same CoAP test
+client used for protocol acceptance. The response must contain an integer near
+the independently measured battery voltage rather than `null`, for example:
+
+```json
+{"version":1,"thingName":"power-si-example","redcon":4,"batteryMv":3980}
+```
+
+Repeat the request after REDCON 3 and REDCON 4 commands because their response
+payloads use the same sample path. With `txing-thread-connectivity` running,
+confirm that the non-null value reaches the named `power` shadow. A missing ADC
+sample deliberately remains `batteryMv: null`; it must not publish a fabricated
+zero-voltage reading.
 
 ## Hardware Acceptance
 

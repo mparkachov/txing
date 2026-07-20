@@ -50,3 +50,15 @@ config TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS
 	  Routine wake transitions through EM0 are intentionally omitted. This is a
 	  focused sed-debug diagnostic and should not be enabled in release or
 	  ordinary debug firmware.
+
+config TXING_POWER_SI_BATTERY_REPORTING
+	bool "Report XIAO MG24 battery voltage"
+	depends on ADC && PM_DEVICE
+	default n
+	help
+	  Sample the XIAO MG24 battery divider on demand for CoAP state responses.
+	  The board's active-high PD3 divider enable is asserted only while PD4 is
+	  settling and sampled. The IADC uses its calibrated internal reference at
+	  half gain, and the measured divider voltage is multiplied by two. This is
+	  enabled only by the sed-current profile until hardware validation is
+	  complete.

@@ -5,10 +5,12 @@
 
 #include <zephyr/data/json.h>
 #include <zephyr/device.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/openthread.h>
+#include <zephyr/pm/device.h>
 #include <zephyr/psa/key_ids.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/atomic.h>
@@ -44,6 +46,8 @@ LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 #define STATE_JSON_SIZE 160
 #define REQUEST_JSON_SIZE 96
 #define SED_FALLBACK_GRACE_SECONDS 20
+#define BATTERY_DIVIDER_SETTLE_MS 30
+#define BATTERY_DIVIDER_RATIO 2
 
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
 #define SED_RECOVERY_MAX_ATTEMPTS 3
@@ -59,6 +63,13 @@ BUILD_ASSERT(CONFIG_OPENTHREAD_POLL_PERIOD == 5000,
 
 static const struct gpio_dt_spec power_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(power), gpios);
 static const struct gpio_dt_spec led_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_BATTERY_REPORTING)
+#define BATTERY_NODE DT_NODELABEL(txing_battery)
+static const struct adc_dt_spec battery_adc = ADC_DT_SPEC_GET(BATTERY_NODE);
+static const struct gpio_dt_spec battery_enable =
+	GPIO_DT_SPEC_GET(BATTERY_NODE, enable_gpios);
+static bool battery_available;
+#endif
 
 struct factory_data {
 	char thing_name[TXT1_THING_NAME_SIZE + 1];
@@ -352,6 +363,86 @@ static int init_outputs(void)
 	return set_outputs_for_redcon(TXING_REDCON_OFF);
 }
 
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_BATTERY_REPORTING)
+static int init_battery(void)
+{
+	int rc;
+
+	if (!adc_is_ready_dt(&battery_adc) || !gpio_is_ready_dt(&battery_enable)) {
+		return -ENODEV;
+	}
+
+	rc = gpio_pin_configure_dt(&battery_enable, GPIO_OUTPUT_INACTIVE);
+	if (rc != 0) {
+		return rc;
+	}
+	rc = adc_channel_setup_dt(&battery_adc);
+	if (rc != 0) {
+		return rc;
+	}
+	rc = pm_device_action_run(battery_adc.dev, PM_DEVICE_ACTION_SUSPEND);
+	if (rc != 0 && rc != -EALREADY) {
+		return rc;
+	}
+
+	battery_available = true;
+	return 0;
+}
+
+static bool sample_battery_mv(uint16_t *battery_mv)
+{
+	uint16_t raw;
+	int32_t millivolts;
+	struct adc_sequence sequence = {
+		.buffer = &raw,
+		.buffer_size = sizeof(raw),
+	};
+	bool sampled = false;
+	int rc;
+
+	if (!battery_available) {
+		return false;
+	}
+
+	rc = pm_device_action_run(battery_adc.dev, PM_DEVICE_ACTION_RESUME);
+	if (rc != 0 && rc != -EALREADY) {
+		return false;
+	}
+	rc = gpio_pin_set_dt(&battery_enable, 1);
+	if (rc != 0) {
+		goto out;
+	}
+
+	k_msleep(BATTERY_DIVIDER_SETTLE_MS);
+	(void)adc_sequence_init_dt(&battery_adc, &sequence);
+	rc = adc_read_dt(&battery_adc, &sequence);
+	if (rc != 0) {
+		goto out;
+	}
+
+	millivolts = battery_adc.channel_cfg.differential ?
+		(int32_t)(int16_t)raw : (int32_t)raw;
+	rc = adc_raw_to_millivolts_dt(&battery_adc, &millivolts);
+	if (rc != 0 || millivolts < 0) {
+		goto out;
+	}
+
+	millivolts *= BATTERY_DIVIDER_RATIO;
+	*battery_mv = (uint16_t)MIN(millivolts, UINT16_MAX);
+	sampled = true;
+
+out:
+	(void)gpio_pin_set_dt(&battery_enable, 0);
+	(void)pm_device_action_run(battery_adc.dev, PM_DEVICE_ACTION_SUSPEND);
+	return sampled;
+}
+#else
+static int init_battery(void)
+{
+	return 0;
+}
+#endif
+
 static bool thread_receiver_on_requested(void)
 {
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
@@ -368,6 +459,16 @@ static bool thread_sed_mode_requested(void)
 
 static int format_state(char *buffer, size_t size)
 {
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_BATTERY_REPORTING)
+	uint16_t battery_mv;
+
+	if (sample_battery_mv(&battery_mv)) {
+		return snprintk(buffer, size,
+				"{\"version\":%d,\"thingName\":\"%s\",\"redcon\":%d,\"batteryMv\":%u}",
+				TXING_PROTOCOL_VERSION, factory.thing_name, redcon_level,
+				battery_mv);
+	}
+#endif
 	return snprintk(buffer, size,
 			"{\"version\":%d,\"thingName\":\"%s\",\"redcon\":%d,\"batteryMv\":null}",
 			TXING_PROTOCOL_VERSION, factory.thing_name, redcon_level);
@@ -1244,6 +1345,10 @@ int main(void)
 	if (rc != 0) {
 		LOG_ERR("GPIO init failed: %d", rc);
 		return rc;
+	}
+	rc = init_battery();
+	if (rc != 0) {
+		LOG_WRN("battery measurement init failed: %d", rc);
 	}
 	ot = openthread_get_default_instance();
 	if (ot == NULL) {

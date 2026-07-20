@@ -69,6 +69,12 @@ class PowerSiSedConfigTests(unittest.TestCase):
         ):
             self.assertNotIn(key, values, key)
         self.assertEqual(values.get("CONFIG_SERIAL"), "y")
+        self.assertEqual(values.get("CONFIG_ADC"), "y")
+        self.assertEqual(values.get("CONFIG_PM_DEVICE"), "y")
+        self.assertEqual(values.get("CONFIG_PM_DEVICE_SYSTEM_MANAGED"), "n")
+        self.assertEqual(
+            values.get("CONFIG_TXING_POWER_SI_BATTERY_REPORTING"), "y"
+        )
         for key in (
             "CONFIG_CONSOLE",
             "CONFIG_UART_CONSOLE",
@@ -90,6 +96,33 @@ class PowerSiSedConfigTests(unittest.TestCase):
             "CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST",
             read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
         )
+
+    def test_sed_current_alone_reports_xiao_mg24_battery_voltage(self) -> None:
+        for conf in ("prj.conf", "debug.conf", "sed-debug.conf"):
+            self.assertNotIn(
+                "CONFIG_TXING_POWER_SI_BATTERY_REPORTING",
+                read_conf(POWER_SI_MCU / "zephyr" / conf),
+            )
+
+        overlay = (
+            POWER_SI_MCU / "zephyr" / "boards" / "xiao_mg24.overlay"
+        ).read_text(encoding="ascii")
+        self.assertIn('compatible = "txing-battery-divider"', overlay)
+        self.assertIn("io-channels = <&adc0 7>", overlay)
+        self.assertIn("enable-gpios = <&gpiod 3 GPIO_ACTIVE_HIGH>", overlay)
+        self.assertIn('zephyr,gain = "ADC_GAIN_1_2"', overlay)
+        self.assertIn("zephyr,input-positive = <IADC_INPUT_PD4>", overlay)
+        self.assertIn('zephyr,reference = "ADC_REF_INTERNAL"', overlay)
+        self.assertIn("zephyr,vref-mv = <1210>", overlay)
+
+        source = (POWER_SI_MCU / "src" / "main.c").read_text(encoding="ascii")
+        self.assertIn("CONFIG_TXING_POWER_SI_BATTERY_REPORTING", source)
+        self.assertIn("pm_device_action_run(battery_adc.dev", source)
+        self.assertIn("gpio_pin_set_dt(&battery_enable, 1)", source)
+        self.assertIn("BATTERY_DIVIDER_SETTLE_MS 30", source)
+        self.assertIn("millivolts *= BATTERY_DIVIDER_RATIO", source)
+        self.assertIn('\\"batteryMv\\":%u', source)
+        self.assertIn('\\"batteryMv\\":null', source)
 
     def test_sed_debug_alone_logs_silabs_sleep_mode_changes(self) -> None:
         sed_debug_values = read_conf(POWER_SI_MCU / "zephyr" / "sed-debug.conf")

@@ -1,3 +1,6 @@
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/silabs-adc.h>
+
 / {
 	aliases {
 		power = &power_out;
@@ -12,8 +15,27 @@
 		};
 	};
 
+	txing_battery: txing-battery {
+		compatible = "txing-battery-divider";
+		io-channels = <&adc0 7>;
+		enable-gpios = <&gpiod 3 GPIO_ACTIVE_HIGH>;
+	};
+
 	chosen {
 		zephyr,settings-partition = &storage_partition;
+	};
+};
+
+&adc0 {
+	/* Gain 1/2 keeps the divider's 2.1 V maximum within the 1.21 V reference range. */
+	channel@7 {
+		reg = <7>;
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,gain = "ADC_GAIN_1_2";
+		zephyr,input-positive = <IADC_INPUT_PD4>;
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,resolution = <12>;
+		zephyr,vref-mv = <1210>;
 	};
 };
 

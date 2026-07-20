@@ -107,8 +107,13 @@ over Thread, and no Matter/CHIP stack.
   over Thread CoAP on port `5683`. The version-1 PUT body is
   `{"version":1,"redcon":3}` or `{"version":1,"redcon":4}`. SRP registers
   `_txing-coap._udp` with TXT records `type=power-si` and `pv=1`.
-- Battery: the current MCU state response returns `batteryMv: null`; the rig
-  only publishes a `power` battery shadow when the device supplies a value.
+- Battery: `sed-current` samples the XIAO MG24 battery divider on demand using
+  active-high PD3 enable, a 30 ms settling interval, and the PD4 IADC input with
+  the calibrated internal 1.21 V reference at 0.5x gain, then reports twice the
+  divider voltage as `batteryMv`. Release, ordinary debug, and `sed-debug`
+  continue to return `batteryMv: null`. The rig only publishes a `power` battery
+  shadow when the device supplies a value; sampling failure remains `null`
+  rather than a fabricated zero.
 - Production firmware deliberately disables UART, console, shell, and log
   backends. The prior claim that its USART0/PA8/PA9 initialization determined
   SED current was based on invalid AC-current readings and is withdrawn. Keep

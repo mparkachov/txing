@@ -1,11 +1,11 @@
 ---
 id: TASK-21.8
 title: power-si sed-current reuses the sed-debug functional overlay
-status: In Progress
+status: Done
 assignee:
   - '@Codex'
 created_date: '2026-07-20 01:26'
-updated_date: '2026-07-20 19:02'
+updated_date: '2026-07-20 19:21'
 labels: []
 dependencies:
   - TASK-21.7
@@ -37,7 +37,7 @@ Make sed-current consume the same sed-debug.conf functional overlay as sed-debug
 - [x] #1 sed-current loads sed-debug.conf and preserves its receiver-on SRP bootstrap, SED recovery, REDCON rn/n policy, PM/tickless settings, and isolated radio candidate.
 - [x] #2 The sed-current final overlay disables console, shell, UART logging, OpenThread diagnostics, and application diagnostics without duplicating functional SED settings.
 - [x] #3 A pristine sed-current build produces the expected XIAO MG24 artifact and static checks verify the overlay order.
-- [ ] #4 After an operator flashes the fresh sed-current artifact, the device registers a non-deleted SRP service and settles with child R=0 when REDCON is 4.
+- [x] #4 After an operator flashes the fresh sed-current artifact, the device registers a non-deleted SRP service and settles with child R=0 when REDCON is 4.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,4 +61,12 @@ Diagnostic outcome (2026-07-20): temporary PM/RAIL/ACK instrumentation verified 
 Power outcome: all earlier current numbers were invalid because the meter was in AC-current mode. Valid DC observations are approximately 16-20 mA in both SED n and receiver-on rn. No low-current acceptance claim or electrical root cause is recorded.
 
 Hardware acceptance remains open: a freshly flashed sed-current image must register a non-deleted SRP service and settle with child R=0 at REDCON 4.
+
+Final hardware acceptance (2026-07-20): the operator flashed the committed sed-current artifact and confirmed the provisioned device registered its SRP service as deleted:false on port 5683, attached at REDCON 4 as a sleepy child with R=0, switched successfully to REDCON 3/receiver-on mode, and returned successfully to REDCON 4/SED mode.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+sed-current is validated as the silent derivative of sed-debug. Static and build checks passed, and operator hardware evidence confirmed active SRP registration, R=0 at REDCON 4, and working REDCON 4 -> 3 -> 4 link-mode transitions.
+<!-- SECTION:FINAL_SUMMARY:END -->
