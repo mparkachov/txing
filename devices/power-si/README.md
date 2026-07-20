@@ -253,11 +253,11 @@ the candidate can become the production path.
 | --- | --- | --- | --- |
 | Release | `just power-si::mcu::build` | Unmodified stock Zephyr; serial interfaces disabled; ordinary receiver-on recovery remains available. | Product-path build, but not yet low-current or SED-acceptance evidence. |
 | Debug | `just power-si::mcu::build-debug` | Unmodified stock Zephyr with UART, shell, and OpenThread diagnostics; ordinary receiver-on recovery remains available. | General firmware and Thread diagnosis. |
-| SED debug | `just power-si::mcu::build-sed-debug` | Isolated RadioAES candidate applied only for the build; UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, bounded requested-link recovery, and REDCON 3/4 `rn`/`n` link-policy testing. | SED functional, recovery, indirect-delivery, active-power link-policy, and current characterization. |
+| SED debug | `just power-si::mcu::build-sed-debug` | Isolated RadioAES candidate applied only for the build; UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, bounded requested-link recovery, and REDCON 3/4 `rn`/`n` link-policy testing. | SED functional, recovery, indirect-delivery, and active-power link-policy diagnosis. |
+| SED current | `just power-si::mcu::build-sed-current` | Loads the same `sed-debug.conf` functional overlay and isolated RadioAES candidate as SED debug, then disables console, shell, logging, and application diagnostics. | Current characterization after functional SED validation. |
 
-`sed-debug` is the only current characterization profile. The build helper
-reverses the candidate patch before it exits, so the shared Zephyr and Silabs
-HAL checkouts remain stock after every build.
+All candidate SED profiles reverse the candidate patch before the build helper exits, so
+the shared Zephyr and Silabs HAL checkouts remain stock after every build.
 
 Build a serial/shell functional SED test image:
 
@@ -272,31 +272,28 @@ devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex
 ```
 
 `sed-debug` enables Zephyr PM and tickless operation while retaining the UART
-shell and diagnostics. Its focused Silicon Labs PM diagnostic prints the first
-selected sleep mode and subsequent changes between EM1 and EM2:
+shell and diagnostics. Use it for functional SED diagnosis. Use the silent
+`sed-current` profile for DC-current characterization; it preserves the same
+SED and REDCON test behavior without serial output.
 
-```text
-Silicon Labs PM sleep mode selected: EM2
-Silicon Labs PM sleep mode changed: EM2 -> EM1
-Silicon Labs PM sleep mode changed: EM1 -> EM2
-```
+### Measurement Correction (2026-07-20)
 
-Normal wakeups through EM0 are intentionally not printed because they occur on
-every interrupt and would make the UART output self-sustaining. Serial output
-can increase wake-phase activity, but repeated hardware measurements found no
-material difference in the sleep-phase current floor between `sed-debug` and a
-separate output-silent image once both initialized USART0 and the PA8/PA9 board
-pinctrl. The earlier approximately tenfold difference came from leaving the
-onboard SAMD11-facing UART connection uninitialized, not from debug logging.
-The separate `sed-current` profile was therefore removed. Use `sed-debug` for
-functional SED validation and current characterization, and correlate current
-measurements with the OTBR child queue as described below.
+All current figures recorded before this correction are invalid. The Brymen
+BM235 was set to AC-current mode, so readings such as `0.04 mA` and `0.3 mA`
+were not DC supply-current measurements and must not be used as acceptance or
+design evidence. Those observations are retained in TASK-21.5 history for
+traceability only. No conclusion about UART pins, queued Thread traffic, or
+idle SED current may be drawn from them.
 
-This result establishes a board electrical requirement, not a requirement to
-ship a debug shell. Any future production SED path must initialize USART0 or
-apply an equivalent explicit PA8/PA9 idle pin state while keeping user-visible
-serial output disabled. The current unmodified release profile does neither and
-is not a low-current acceptance image.
+The subsequent DC-current investigation remains inconclusive. The functional
+SED profile registered SRP, remained an OTBR child with `R=0`, and delivered
+queued traffic at the expected bounded latency. The temporary PM/RAIL/ACK
+diagnostics confirmed multi-second EM2 residency, but also observed transient
+HF-clock-preservation requests and radio activity without identifying a causal
+or safe corrective change. Those isolated diagnostic patches and the
+`sed-pm-debug` profile were removed on 2026-07-20. The latest DC multimeter
+observations were approximately `16-20 mA` in both SED `n` and receiver-on
+`rn` states, so no low-current acceptance claim is made.
 
 ## Manual Flashing
 
@@ -617,27 +614,27 @@ owning upstream accepts an equivalent fix.
 ## SED Current Measurement
 
 Use current measurement only after the candidate-enabled SED image proves the
-device can attach, register SRP, and settle as `ot mode=n`. Rebuild the
-PM-enabled `sed-debug` image before flashing if the firmware, Zephyr workspace,
-or candidate patch changes:
+device can attach, register SRP, and settle as `ot mode=n`. Build the silent
+`sed-current` image if the firmware, Zephyr workspace, or candidate patch
+changes:
 
 ```bash
-just power-si::mcu::build-sed-debug
+just power-si::mcu::build-sed-current
 ```
 
 Flash the already-built candidate image manually:
 
 ```bash
-just power-si::mcu::flash sed-debug
+just power-si::mcu::flash sed-current
 ```
 
-`sed-debug` enables USART0 and its PA8/PA9 board pinctrl, Zephyr PM, the serial
-shell, and diagnostic logging. Hardware comparison against an otherwise
-equivalent output-silent image found no material difference in the sleep-phase
-floor after both images initialized the UART pins. The separate silent profile
-provided no useful measurement distinction and has been removed. Debug output
-can still add wake-phase work, so use OTBR state to distinguish idle sleep from
-active queued traffic:
+`sed-current` loads `sed-debug.conf` before its silent overlay, so it shares the
+same receiver-on SRP bootstrap, SED recovery, REDCON 3/4 link-mode policy, and
+RadioAES candidate as `sed-debug`. It keeps the serial driver baseline but does
+not enable a console, shell, UART logging, OpenThread diagnostics, or PM
+transition logging. This does not establish a causal claim about current
+consumption. Use OTBR state to distinguish idle SED polling from active queued
+traffic:
 
 ```bash
 sudo ot-ctl child table
@@ -645,20 +642,18 @@ sudo ot-ctl srp server service
 ```
 
 The child table must show the device with `R=0`, and SRP must remain
-`deleted:false` on port `5683`. For current measurement, power the board from
-the measurement setup rather than relying on USB-powered serial debugging, and
-measure after the SRP registration has completed and the child has settled into
-the steady SED polling state. Do not treat a run with `R=1` as an SED current
-baseline: it indicates an unexpected regression because this image never
-intentionally restores receiver-on mode after its SED transition.
+`deleted:false` on port `5683`. Power the board only from the measurement setup
+with USB disconnected. Set the meter to DC-current mode before connecting it in
+series with the battery. Measure after SRP registration completes and the child
+settles into SED polling. Do not use a run with `R=1` as an SED current baseline
+because REDCON 3 intentionally requests receiver-on mode in this test profile.
 
-Use an empty parent queue for the idle-current baseline. On the tested XIAO
-MG24, `QMsgCnt=0` followed by the next 5000 ms data poll produces an
-approximately `0.04 mA` sleep floor. Continuous OTBR ping traffic keeps
-indirect messages queued (`QMsgCnt>0`) and raises the between-response current
-to approximately `0.3 mA`; this is an active queued-traffic condition, not the
-idle SED baseline. After stopping traffic, wait for `QMsgCnt` to return to zero
-and for one subsequent poll before recording idle current.
+Record the meter range, DC-current setting, supply voltage, sampling/averaging
+mode, parent `QMsgCnt`, and whether traffic is being sent. For an idle baseline,
+wait for `QMsgCnt=0` and one subsequent 5000 ms poll. Then repeat the
+measurement while known indirect traffic is queued. Do not assign a current
+floor or a causal explanation until the DC readings have been recorded under
+both conditions.
 
 ## Hardware Acceptance
 

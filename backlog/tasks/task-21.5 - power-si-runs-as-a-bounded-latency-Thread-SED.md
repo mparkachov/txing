@@ -1,11 +1,11 @@
 ---
 id: TASK-21.5
 title: power-si runs as a bounded-latency Thread SED
-status: In Progress
+status: Complete
 assignee:
   - '@Codex'
 created_date: '2026-06-26 16:46'
-updated_date: '2026-07-19 07:16'
+updated_date: '2026-07-20 01:05'
 labels: []
 milestone: m-0
 dependencies:
@@ -36,7 +36,7 @@ Convert power-si from the temporary non-sleeping MTD profile to the intended sto
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Firmware builds as stock Zephyr/OpenThread MTD SED with a 5000 ms poll period and no steady-state application path leaving the device receiver-on after SRP bootstrap.
+- [x] #1 Firmware builds as stock Zephyr/OpenThread MTD SED with a 5000 ms poll period. Release and ordinary debug remain SED after SRP bootstrap; the test-only `sed-debug` profile intentionally uses receiver-on MTD only at REDCON 3 and returns to SED at REDCON 4.
 - [x] #2 Debug hardware evidence shows ot mode reports n, ot pollperiod reports 5000, OTBR child table shows receiver-on flag false, and SRP service power-si._txing-coap._udp.default.service.arpa remains deleted:false on port 5683.
 - [x] #3 Rig Thread defaults support bounded synchronous control of a 5 second SED with a 12 second CoAP timeout, without changing BLE behavior or adding async command semantics.
 - [x] #4 Tests or static checks cover the SED build/config contract and updated rig Thread timeout default; existing Thread CoAP and REDCON tests still pass.
@@ -51,7 +51,7 @@ Convert power-si from the temporary non-sleeping MTD profile to the intended sto
 3. Make SED fallback/recovery evaluate the desired REDCON link policy so an intentional REDCON 3 receiver-on state is not misclassified as a failed SED attachment.
 4. Add Thread-daemon command-confirmation logging for the expected `n`/`rn` transition, then cover the firmware/static and Go runtime contracts and document the manual `sed-debug` hardware check.
 5. Keep release and ordinary debug on their existing stock Zephyr fallback policy, while `sed-debug` applies the isolated Silabs CCM candidate for SED hardware validation.
-6. Keep the validated bounded SED-only recovery policy in `sed-debug`: after the post-SRP transition, retry a lost attachment as SED when REDCON requires SED, at most three times with backoff and never restore receiver-on mode.
+6. Keep the validated bounded requested-link recovery policy in `sed-debug`: after the post-SRP transition, retry a lost attachment as SED when REDCON requires SED or receiver-on MTD when the test-only REDCON 3 posture is active, at most three times with backoff.
 7. Use the PM-enabled, UART-initialized `sed-debug` image for both functional validation and current characterization; correlate current evidence with OTBR child mode and queue state.
 8. Validate the single candidate profile statically and with a pristine build, verify that the Silabs HAL checkout returns to clean stock state, and document the complete hardware findings.
 <!-- SECTION:PLAN:END -->
@@ -63,7 +63,12 @@ SEDDebug REDCON link-policy implementation (2026-07-19):
 - `sed-debug` alone now advertises SRP TXT `profile=sed-debug`. A confirmed REDCON 3 applies the output first and changes the attached child to receiver-on MTD (`rn`); REDCON 4 returns it to sleepy MTD (`n`). Both use a live OpenThread link-mode update, so the existing child, addresses, and SRP registration remain intact.
 - The test-only recovery path now evaluates the requested `rn`/`n` policy, preventing an intentional REDCON 3 receiver-on state from being treated as a failed SED attachment. Release and ordinary debug firmware do not enable this Kconfig option or advertise the profile marker.
 - The Thread daemon recognizes the marker from direct OTBR SRP TXT discovery and logs `Thread sed-debug REDCON transition confirmed ... requestedLinkMode=rn|n` only after the CoAP response confirms the requested REDCON state.
-- Validation passed: `python3 -m unittest devices.common.mcu.tests.test_power_si_sed_config devices.common.mcu.xiao_mg24.tests.test_thread_factory` (14 tests); `GOCACHE="$PWD/tmp/go-build-cache" just rig::test`; and `just power-si::mcu::build-sed-debug`. The SED build emitted `devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex` and reversed the isolated Silabs candidate patch, leaving its HAL checkout clean. Hardware transition evidence is still required.
+- Validation passed: `python3 -m unittest devices.common.mcu.tests.test_power_si_sed_config devices.common.mcu.xiao_mg24.tests.test_thread_factory` (14 tests); `GOCACHE="$PWD/tmp/go-build-cache" just rig::test`; and `just power-si::mcu::build-sed-debug`. The SED build emitted `devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex` and reversed the isolated Silabs candidate patch, leaving its HAL checkout clean.
+
+SEDDebug REDCON hardware evidence (2026-07-19):
+- User deployed rig `0.16.0` and tested the provisioned `power-si-g5i08j` device through the complete Sparkplug DCMD, local IPC, Thread CoAP path.
+- `txing-thread-connectivity` logged `Thread sed-debug REDCON transition confirmed thing=power-si-g5i08j redcon=3 requestedLinkMode=rn` at `15:39:40` and the corresponding REDCON 4 `requestedLinkMode=n` transition at `15:40:12`.
+- The log is emitted only after the device confirms the requested REDCON state. Because the firmware applies the requested live link mode before sending that response, this confirms the test-only `rn`/`n` policy and daemon marker gating in hardware.
 
 Initial implementation update (2026-06-26):
 - `power-si` release/debug firmware enables `CONFIG_OPENTHREAD_MTD_SED=y` and `CONFIG_OPENTHREAD_POLL_PERIOD=5000`.
@@ -662,3 +667,13 @@ SED profile consolidation and final current findings (2026-07-19):
 - Removal deleted the `current.conf` overlay and retired the `build-sed-current` and `flash sed-current` command paths, profile metadata, tests, and supported-documentation references. The ignored local `zephyr-xiao_mg24-sed-current` artifact directory was also removed.
 - Final validation passed: focused SED configuration unittest (5 tests), stock-MCU pytest (4 tests), Python compilation of the shared build helper, `git diff --check`, and a pristine `CCACHE_DISABLE=1 just power-si::mcu::build-sed-debug`. The build produced `devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex`, reversed the isolated RadioAES patch, and left the Zephyr and Silabs HAL checkouts clean.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @Codex
+created: 2026-07-20 01:05
+---
+Measurement correction (2026-07-20): all earlier current figures, including the 0.04 mA and 0.3 mA observations, were read while the Brymen BM235 was in AC-current mode. They are invalid as DC supply-current evidence. Retain them only as historical observations; do not infer UART, Thread queue, or sleep-current behavior from them. TASK-21.7 introduces a silent sed-current profile for a new DC-current characterization run.
+---
+<!-- COMMENTS:END -->

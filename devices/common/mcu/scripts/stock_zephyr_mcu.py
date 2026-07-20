@@ -81,6 +81,7 @@ class BuildProfile:
     build_suffix: str = ""
     debug_conf: bool = False
     sed_debug_conf: bool = False
+    sed_current_conf: bool = False
     use_silabs_ccm_candidate: bool = False
     force_pristine: bool = False
 
@@ -105,6 +106,14 @@ BUILD_PROFILES = {
             use_silabs_ccm_candidate=True,
             force_pristine=True,
         ),
+        BuildProfile(
+            "sed-current",
+            build_suffix="-sed-current",
+            sed_debug_conf=True,
+            sed_current_conf=True,
+            use_silabs_ccm_candidate=True,
+            force_pristine=True,
+        ),
     )
 }
 ACTIVE_BUILD_PROFILES = tuple(BUILD_PROFILES)
@@ -118,6 +127,7 @@ class DeviceConfig:
     extra_conf: Path | None = None
     debug_conf: Path | None = None
     sed_debug_conf: Path | None = None
+    sed_current_conf: Path | None = None
     flash_runner: str | None = None
 
 
@@ -149,6 +159,12 @@ DEVICE_CONFIGS = {
         / "mcu"
         / "zephyr"
         / "sed-debug.conf",
+        sed_current_conf=PROJECT_ROOT
+        / "devices"
+        / "power-si"
+        / "mcu"
+        / "zephyr"
+        / "sed-current.conf",
         flash_runner="west-pyocd",
     ),
 }
@@ -392,12 +408,13 @@ def isolated_patches_for_device(
     device: str, *, profile: str = "release", debug: bool = False
 ) -> tuple[IsolatedPatch, ...]:
     selected = build_profile(device, profile=profile, debug=debug)
+    patches: list[IsolatedPatch] = []
     if device == "power-si" and (
         selected.use_silabs_ccm_candidate
         or env_flag(POWER_SI_SILABS_CCM_PATCH_ENV)
     ):
-        return POWER_SI_SILABS_CCM_PATCHES
-    return ()
+        patches.extend(POWER_SI_SILABS_CCM_PATCHES)
+    return tuple(patches)
 
 
 @contextmanager
@@ -424,7 +441,7 @@ def applied_isolated_patches(patches: tuple[IsolatedPatch, ...]):
                 f"{patch.checkout}. Clean the checkout or reverse any interrupted patch first."
             )
 
-    log("applying isolated Silabs CCM candidate patch(es); stock sources remain the default build path")
+    log("applying isolated build patch(es); stock sources remain unchanged after the build")
     applied: list[IsolatedPatch] = []
     try:
         for patch in patches:
@@ -437,7 +454,7 @@ def applied_isolated_patches(patches: tuple[IsolatedPatch, ...]):
             applied.append(patch)
         yield
     finally:
-        log("reversing isolated Silabs CCM candidate patch(es)")
+        log("reversing isolated build patch(es)")
         for patch in reversed(applied):
             reverse_check = subprocess.run(
                 ["git", "apply", "--reverse", "--check", str(patch.patch)],
@@ -638,6 +655,10 @@ def build(device: str, *, debug: bool = False, profile: str = "release") -> None
         if config.sed_debug_conf is None:
             fail(f"{device} does not have an SED debug MCU build profile")
         extra_conf_files.append(config.sed_debug_conf)
+    if selected.sed_current_conf:
+        if config.sed_current_conf is None:
+            fail(f"{device} does not have an SED current MCU build profile")
+        extra_conf_files.append(config.sed_current_conf)
     required_inputs.extend(extra_conf_files)
     for path in required_inputs:
         if not path.exists():
@@ -917,6 +938,7 @@ def main() -> None:
             "build",
             "build-debug",
             "build-sed-debug",
+            "build-sed-current",
             "clean",
             "flash",
             "nve",
@@ -950,6 +972,10 @@ def main() -> None:
         if args.profile != "release":
             fail("--profile is only supported with flash; use build-* commands for builds")
         build(require_device(args.command, args.device), profile="sed-debug")
+    elif args.command == "build-sed-current":
+        if args.profile != "release":
+            fail("--profile is only supported with flash; use build-* commands for builds")
+        build(require_device(args.command, args.device), profile="sed-current")
     elif args.command == "clean":
         clean(require_device(args.command, args.device))
     elif args.command == "flash":

@@ -85,20 +85,18 @@ over Thread, and no Matter/CHIP stack.
   images a production SED path.
   Normal `build` and `build-debug` profiles keep unmodified Zephyr sources;
   release disables serial interfaces, while ordinary debug enables UART, shell,
-  and OpenThread diagnostics. `sed-debug` is the only candidate SED profile. It
-  enables Zephyr PM, initializes USART0 plus its PA8/PA9 pinctrl, retains the
-  UART shell and diagnostics, and uses bounded SED-only recovery. Comparison
-  with a separate output-silent profile showed no material sleep-phase
-  difference once both images initialized those pins, so the redundant silent
-  profile was removed.
-  Hardware measurement established that USART0 initialization is required to
-  drive the onboard SAMD11-facing UART connection: with an empty parent queue
-  the measured sleep floor is about `0.04 mA`, versus about `0.3 mA` when the
-  UART pins are uninitialized. Sustained indirect traffic with `QMsgCnt>0` also
-  measures about `0.3 mA`; wait for `QMsgCnt=0` and the following data poll
-  before recording idle current. Serial output can affect wake-phase activity,
-  so current evidence must still be correlated with OTBR and a child row with
-  `R=0`.
+  and OpenThread diagnostics. `sed-debug` is the candidate SED diagnostic
+  profile. The silent `sed-current` candidate profile loads the same
+  `sed-debug.conf` functional overlay, then disables console, shell, logging,
+  and application diagnostics for current characterization. A temporary PM,
+  RAIL, and ACK diagnostic experiment confirmed EM2 residency but did not
+  identify a causal or safe corrective change; its isolated patches and profile
+  were removed on 2026-07-20.
+  All power figures recorded before 2026-07-20 are invalid because the meter
+  was in AC-current mode. Use only DC-current measurements with USB
+  disconnected, and record the OTBR child `R` flag and `QMsgCnt` alongside each
+  result. Latest DC observations were approximately `16-20 mA` in both SED
+  `n` and receiver-on `rn` states, so no low-current conclusion is accepted.
 - REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
   and the board LED following the same state.
 - Factory data: `TXT1` written by
@@ -112,11 +110,11 @@ over Thread, and no Matter/CHIP stack.
 - Battery: the current MCU state response returns `batteryMv: null`; the rig
   only publishes a `power` battery shadow when the device supplies a value.
 - Production firmware deliberately disables UART, console, shell, and log
-  backends. Before production SED current acceptance, it must still initialize
-  the onboard SAMD11-facing PA8/PA9 connection through USART0 or equivalent
-  explicit pinctrl; the current unmodified release profile does not yet satisfy
-  that measured board electrical requirement. Validate production attachment
-  through SRP/DNS-SD and the rig, not serial output.
+  backends. The prior claim that its USART0/PA8/PA9 initialization determined
+  SED current was based on invalid AC-current readings and is withdrawn. Keep
+  the current unmodified release profile separate from SED current acceptance;
+  validate production attachment through SRP/DNS-SD and the rig, not serial
+  output.
 
 See [devices/power-si/README.md](../../devices/power-si/README.md) for OTBR
 prerequisites, provisioning, manual flashing, and hardware acceptance steps.
@@ -133,6 +131,7 @@ just power::mcu::build
 just weather::mcu::build
 just power-si::mcu::build
 just power-si::mcu::build-sed-debug
+just power-si::mcu::build-sed-current
 ```
 
 Or from `devices/unit/mcu/`:
@@ -153,6 +152,7 @@ just weather::mcu::flash
 just power-si::mcu::flash
 just power-si::mcu::flash debug
 just power-si::mcu::flash sed-debug
+just power-si::mcu::flash sed-current
 just mcu::nve <thing-name>
 just mcu::nve <thing-name> <dataset-tlvs-file>
 ```

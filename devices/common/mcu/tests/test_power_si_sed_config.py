@@ -57,6 +57,35 @@ class PowerSiSedConfigTests(unittest.TestCase):
             "CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST",
             read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
         )
+
+    def test_sed_current_only_overrides_sed_debug_observability(self) -> None:
+        values = read_conf(POWER_SI_MCU / "zephyr" / "sed-current.conf")
+
+        for key in (
+            "CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST",
+            "CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST",
+            "CONFIG_PM",
+            "CONFIG_TICKLESS_KERNEL",
+        ):
+            self.assertNotIn(key, values, key)
+        self.assertEqual(values.get("CONFIG_SERIAL"), "y")
+        for key in (
+            "CONFIG_CONSOLE",
+            "CONFIG_UART_CONSOLE",
+            "CONFIG_PRINTK",
+            "CONFIG_BOOT_BANNER",
+            "CONFIG_LOG",
+            "CONFIG_LOG_BACKEND_UART",
+            "CONFIG_LOG_MODE_IMMEDIATE",
+            "CONFIG_SHELL",
+            "CONFIG_SHELL_BACKEND_SERIAL",
+            "CONFIG_NET_SHELL",
+            "CONFIG_OPENTHREAD_SHELL",
+            "CONFIG_OPENTHREAD_DEBUG",
+            "CONFIG_TXING_POWER_SI_SRP_PSA_DIAGNOSTICS",
+            "CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS",
+        ):
+            self.assertEqual(values.get(key), "n", key)
         self.assertNotIn(
             "CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST",
             read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
