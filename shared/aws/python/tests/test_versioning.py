@@ -578,8 +578,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("libusrsctp-dev", cyberbrick_workflow)
         self.assertIn("libcamera-dev", cyberbrick_workflow)
         self.assertIn("grpc-plugins", cyberbrick_workflow)
-        self.assertIn("CGO_ENABLED=1 GOOS=linux GOARCH=arm64", cyberbrick_workflow)
-        self.assertIn("-linkmode=external", cyberbrick_workflow)
+        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0", cyberbrick_workflow)
+        self.assertNotIn("-linkmode=external", cyberbrick_workflow)
+        self.assertIn(
+            "release/scripts/build-board-static-toolchain.sh", cyberbrick_workflow
+        )
+        self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", cyberbrick_workflow)
         self.assertIn(
             "github.com/mparkachov/txing/devices/cyberbrick/daemon/internal/daemon.DaemonVersion=$VERSION",
             cyberbrick_workflow,
@@ -613,6 +617,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("grep -Fq 'not found'", cyberbrick_musl_assertion)
         self.assertIn("libcamera.so.0.6", cyberbrick_musl_assertion)
         self.assertIn("libcamera-base.so.0.6", cyberbrick_musl_assertion)
+        self.assertIn("statically linked|static-pie linked", cyberbrick_musl_assertion)
+        self.assertIn("grep -Fq 'INTERP'", cyberbrick_musl_assertion)
 
         for workflow in existing_go_workflows.values():
             self.assertIn("for version in 1.26 1.25 1.24", workflow)
@@ -665,6 +671,15 @@ class VersionEnvironmentTests(unittest.TestCase):
             'alpine_build_image := "docker.io/library/alpine:3.23.5"',
             cyberbrick_daemon_justfile,
         )
+        self.assertIn(
+            "GOOS=linux GOARCH=arm64 CGO_ENABLED=0", cyberbrick_daemon_justfile
+        )
+        self.assertNotIn("-linkmode=external", cyberbrick_daemon_justfile)
+        self.assertIn(
+            "release/scripts/build-board-static-toolchain.sh",
+            cyberbrick_daemon_justfile,
+        )
+        self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", cyberbrick_daemon_justfile)
         self.assertIn("release/versions/rig", artifacts_docs)
         self.assertIn("release/versions/lambda", artifacts_docs)
         self.assertIn("release/versions/unit", artifacts_docs)

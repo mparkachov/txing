@@ -158,10 +158,10 @@ jobs:
           test "$(cat /etc/alpine-release)" = "3.23.5"
           test "$(uname -m)" = "aarch64"
           apk add --no-cache \
-            gcompat build-base cmake pkgconf git perl ca-certificates \
-            curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
-            libwebsockets-dev zlib-dev libcamera-dev linux-headers \
-            protobuf-dev protobuf grpc-dev grpc-plugins \
+            gcompat build-base cmake pkgconf git perl ca-certificates curl \
+            curl-dev openssl-dev openssl-libs-static log4cplus-dev libsrtp-dev \
+            libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
+            linux-headers protobuf-dev protobuf grpc-dev grpc-plugins \
             go binutils file tar gzip
 
       - name: Check out repository
@@ -184,10 +184,10 @@ jobs:
             daemon)
               (
                 cd devices/cyberbrick/daemon
-                go test ./...
-                CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
+                GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
+                GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
                   go build -trimpath \
-                    -ldflags="-linkmode=external -s -w -X github.com/mparkachov/txing/devices/cyberbrick/daemon/internal/daemon.DaemonVersion=$VERSION" \
+                    -ldflags="-s -w -X github.com/mparkachov/txing/devices/cyberbrick/daemon/internal/daemon.DaemonVersion=$VERSION" \
                     -o "$output" \
                     ./cmd/txing-cyberbrick-daemon
               )
@@ -217,14 +217,20 @@ jobs:
             hardware-worker)
               source_dir="$GITHUB_WORKSPACE/devices/cyberbrick/board/hardware_worker"
               build_dir="$RUNNER_TEMP/build-txing-cyberbrick-hardware-worker"
-              cmake \
+              toolchain_prefix="$RUNNER_TEMP/static-toolchain"
+              sh release/scripts/build-board-static-toolchain.sh "$toolchain_prefix"
+              PATH="$toolchain_prefix/bin:$PATH" cmake \
                 -S "$source_dir" \
                 -B "$build_dir" \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DBUILD_TESTING=ON \
                 -DTXING_HARDWARE_WORKER_GRPC=ON \
-                -DTXING_CYBERBRICK_HARDWARE_WORKER_VERSION="$VERSION"
-              cmake --build "$build_dir" --config Release
+                -DTXING_CYBERBRICK_HARDWARE_WORKER_VERSION="$VERSION" \
+                -DCMAKE_PREFIX_PATH="$toolchain_prefix" \
+                -DCMAKE_EXE_LINKER_FLAGS=-static \
+                -DOPENSSL_USE_STATIC_LIBS=TRUE \
+                -DZLIB_USE_STATIC_LIBS=ON
+              PATH="$toolchain_prefix/bin:$PATH" cmake --build "$build_dir" --config Release
               ctest --test-dir "$build_dir" --output-on-failure
               install -m 755 "$build_dir/$BINARY" "$output"
               ;;

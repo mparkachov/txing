@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  echo "usage: assert-cyberbrick-musl.sh <binary> [kvs-master]" >&2
+  echo "usage: assert-cyberbrick-musl.sh <binary> [daemon|hardware-worker|kvs-master]" >&2
   exit 2
 fi
 
@@ -21,27 +21,35 @@ if ! printf '%s\n' "$file_output" | grep -E -q 'ELF 64-bit LSB.*ARM aarch64'; th
   exit 1
 fi
 
-if ! readelf -l "$binary" | grep -Fq \
-  '[Requesting program interpreter: /lib/ld-musl-aarch64.so.1]'; then
-  echo "Cyberbrick release binary does not request /lib/ld-musl-aarch64.so.1: $binary" >&2
-  exit 1
-fi
-
-ldd_output="$(ldd "$binary")"
-printf '%s\n' "$ldd_output"
-if printf '%s\n' "$ldd_output" | grep -Fq 'not found'; then
-  echo "Cyberbrick release binary has unresolved shared libraries: $binary" >&2
-  exit 1
-fi
-if ! printf '%s\n' "$ldd_output" | grep -Fq 'libc.musl-aarch64.so.1'; then
-  echo "Cyberbrick release binary does not resolve musl libc: $binary" >&2
-  exit 1
-fi
-
 case "$kind" in
   daemon|hardware-worker)
+    # Alpine gcc defaults to PIE, so -static produces a static-PIE: file says
+    # 'static-pie linked' and the hard invariant is the absent PT_INTERP header.
+    if ! printf '%s\n' "$file_output" | grep -E -q 'statically linked|static-pie linked'; then
+      echo "Cyberbrick release binary is not statically linked: $binary" >&2
+      exit 1
+    fi
+    if readelf -l "$binary" | grep -Fq 'INTERP'; then
+      echo "Cyberbrick release binary unexpectedly has an ELF interpreter: $binary" >&2
+      exit 1
+    fi
     ;;
   kvs-master)
+    if ! readelf -l "$binary" | grep -Fq \
+      '[Requesting program interpreter: /lib/ld-musl-aarch64.so.1]'; then
+      echo "Cyberbrick release binary does not request /lib/ld-musl-aarch64.so.1: $binary" >&2
+      exit 1
+    fi
+    ldd_output="$(ldd "$binary")"
+    printf '%s\n' "$ldd_output"
+    if printf '%s\n' "$ldd_output" | grep -Fq 'not found'; then
+      echo "Cyberbrick release binary has unresolved shared libraries: $binary" >&2
+      exit 1
+    fi
+    if ! printf '%s\n' "$ldd_output" | grep -Fq 'libc.musl-aarch64.so.1'; then
+      echo "Cyberbrick release binary does not resolve musl libc: $binary" >&2
+      exit 1
+    fi
     printf '%s\n' "$ldd_output" | grep -F 'libcamera.so.0.6'
     printf '%s\n' "$ldd_output" | grep -F 'libcamera-base.so.0.6'
     ;;

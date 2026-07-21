@@ -25,6 +25,11 @@ alpine_build_platform := "linux/arm64"
 docker_build_dir := daemon_dir + "/target/docker-build"
 docker_build_metadata := docker_build_dir + "/metadata.json"
 
+# Alpine apk ships no static archives for the gRPC stack (doc-30); the
+# hardware worker's static protobuf/gRPC dependencies are source-built by
+# release/scripts/build-board-static-toolchain.sh into this cached prefix.
+static_toolchain_dir := daemon_dir + "/target/alpine-static-toolchain"
+
 role-policy thing_id='':
     #!/bin/sh
     set -eu
@@ -169,6 +174,7 @@ docker-build:
     project_root="{{project_root}}"
     output_root="{{docker_build_dir}}"
     output_stage="$output_root/alpine-out"
+    toolchain_dir="{{static_toolchain_dir}}"
     image="{{alpine_build_image}}"
     platform="{{alpine_build_platform}}"
 
@@ -194,12 +200,13 @@ docker-build:
       rm -rf "$output_root"
     fi
     rm -rf "$output_stage"
-    install -d "$output_stage" "$output_root/bin"
+    install -d "$output_stage" "$output_root/bin" "$toolchain_dir"
 
     docker run --rm -i \
       --platform "$platform" \
       --mount "type=bind,source=$project_root,target=$project_root,readonly" \
       --mount "type=bind,source=$output_stage,target=/out" \
+      --mount "type=bind,source=$toolchain_dir,target=/toolchain" \
       -w "$project_root" \
       -e TXING_ALPINE_COMPONENT="$component" \
       -e TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
@@ -220,11 +227,25 @@ docker-build:
     fi
 
     apk add --no-cache \
-      build-base cmake pkgconf git perl ca-certificates \
-      curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
-      libwebsockets-dev zlib-dev libcamera-dev linux-headers \
-      protobuf-dev protobuf grpc-dev grpc-plugins \
+      build-base cmake pkgconf git perl ca-certificates curl \
+      curl-dev openssl-dev openssl-libs-static log4cplus-dev libsrtp-dev \
+      libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
+      linux-headers protobuf-dev protobuf grpc-dev grpc-plugins \
       go binutils file
+
+    # Alpine gcc defaults to PIE, so -static produces a static-PIE: file says
+    # 'static-pie linked' and the hard invariant is the absent PT_INTERP header.
+    assert_static() {
+      asserted_binary="$1"
+      asserted_name="$2"
+      test -x "$asserted_binary"
+      file "$asserted_binary" | grep -E 'ELF 64-bit LSB.*ARM aarch64'
+      file "$asserted_binary" | grep -E 'statically linked|static-pie linked'
+      if readelf -l "$asserted_binary" | grep -Fq 'INTERP'; then
+        echo "$asserted_name unexpectedly has an ELF interpreter (not static)" >&2
+        exit 1
+      fi
+    }
 
     assert_musl_dynamic() {
       asserted_binary="$1"
@@ -246,30 +267,35 @@ docker-build:
       daemon_build="$(mktemp -d /tmp/txing-cyberbrick-daemon.XXXXXX)"
       (
         cd "$daemon_source"
-        go test ./...
-        CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
-          go build -trimpath \
-            -ldflags='-linkmode=external -s -w' \
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+          go build -trimpath -buildvcs=false \
+            -ldflags='-s -w' \
             -o "$daemon_build/txing-cyberbrick-daemon" \
             ./cmd/txing-cyberbrick-daemon
       )
-      assert_musl_dynamic "$daemon_build/txing-cyberbrick-daemon" "txing-cyberbrick-daemon"
+      assert_static "$daemon_build/txing-cyberbrick-daemon" "txing-cyberbrick-daemon"
       "$daemon_build/txing-cyberbrick-daemon" --version
       install -m 755 "$daemon_build/txing-cyberbrick-daemon" /out/txing-cyberbrick-daemon
     }
 
     build_hardware_worker() {
+      sh release/scripts/build-board-static-toolchain.sh /toolchain
       hardware_source="$PWD/devices/cyberbrick/board/hardware_worker"
       hardware_build="$(mktemp -d /tmp/txing-cyberbrick-hardware-worker.XXXXXX)"
-      cmake \
+      PATH="/toolchain/bin:$PATH" cmake \
         -S "$hardware_source" \
         -B "$hardware_build" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_TESTING=ON \
-        -DTXING_HARDWARE_WORKER_GRPC=ON
-      cmake --build "$hardware_build" --config Release
+        -DTXING_HARDWARE_WORKER_GRPC=ON \
+        -DCMAKE_PREFIX_PATH=/toolchain \
+        -DCMAKE_EXE_LINKER_FLAGS=-static \
+        -DOPENSSL_USE_STATIC_LIBS=TRUE \
+        -DZLIB_USE_STATIC_LIBS=ON
+      PATH="/toolchain/bin:$PATH" cmake --build "$hardware_build" --config Release
       ctest --test-dir "$hardware_build" --output-on-failure
-      assert_musl_dynamic "$hardware_build/txing-cyberbrick-hardware-worker" "txing-cyberbrick-hardware-worker"
+      assert_static "$hardware_build/txing-cyberbrick-hardware-worker" "txing-cyberbrick-hardware-worker"
       "$hardware_build/txing-cyberbrick-hardware-worker" --version
       install -m 755 "$hardware_build/txing-cyberbrick-hardware-worker" /out/txing-cyberbrick-hardware-worker
     }
@@ -338,4 +364,4 @@ docker-build:
     rm -rf "$output_stage"
 
 @clean:
-    rm -rf "{{native_kvs_master_test_build_dir}}" "{{native_hardware_worker_test_build_dir}}" "{{docker_build_dir}}"
+    rm -rf "{{native_kvs_master_test_build_dir}}" "{{native_hardware_worker_test_build_dir}}" "{{docker_build_dir}}" "{{static_toolchain_dir}}"

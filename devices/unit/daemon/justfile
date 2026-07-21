@@ -34,15 +34,10 @@ docker_build_metadata := docker_build_dir + "/metadata.json"
 alpine_build_image := "docker.io/library/alpine:3.23.5"
 alpine_build_platform := "linux/arm64"
 
-# Alpine apk ships no static archives for the gRPC stack (doc-30), so the
-# hardware worker's static protobuf/gRPC dependencies are source-built once
-# into a cached toolchain prefix; tags are pinned to the apk package versions.
+# Alpine apk ships no static archives for the gRPC stack (doc-30); the
+# hardware worker's static protobuf/gRPC dependencies are source-built by
+# release/scripts/build-board-static-toolchain.sh into this cached prefix.
 static_toolchain_dir := daemon_dir + "/target/alpine-static-toolchain"
-static_absl_version := "20250814.1"
-static_protobuf_version := "31.1"
-static_re2_version := "2025-11-05"
-static_cares_version := "1.34.8"
-static_grpc_version := "1.76.0"
 
 role-policy thing_id='':
     #!/bin/sh
@@ -254,11 +249,6 @@ run:
       -e TXING_ALPINE_COMPONENT="$component" \
       -e TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
       -e TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
-      -e TXING_STATIC_ABSL_VERSION="{{static_absl_version}}" \
-      -e TXING_STATIC_PROTOBUF_VERSION="{{static_protobuf_version}}" \
-      -e TXING_STATIC_RE2_VERSION="{{static_re2_version}}" \
-      -e TXING_STATIC_CARES_VERSION="{{static_cares_version}}" \
-      -e TXING_STATIC_GRPC_VERSION="{{static_grpc_version}}" \
       "$image" \
       sh -se <<'ALPINE_BUILD'
     set -eu
@@ -310,67 +300,6 @@ run:
       printf '%s\n' "$ldd_output" | grep -F 'libc.musl-aarch64.so.1'
     }
 
-    ensure_static_toolchain() {
-      toolchain_marker="/toolchain/.txing-static-toolchain"
-      toolchain_spec="alpine=$(cat /etc/alpine-release) absl=$TXING_STATIC_ABSL_VERSION protobuf=$TXING_STATIC_PROTOBUF_VERSION re2=$TXING_STATIC_RE2_VERSION cares=$TXING_STATIC_CARES_VERSION grpc=$TXING_STATIC_GRPC_VERSION"
-      if [ -f "$toolchain_marker" ] && [ "$(cat "$toolchain_marker")" = "$toolchain_spec" ]; then
-        printf 'reusing cached static toolchain (%s)\n' "$toolchain_spec"
-        return 0
-      fi
-
-      printf 'building static toolchain (%s)\n' "$toolchain_spec"
-      find /toolchain -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-      static_src="$(mktemp -d /tmp/txing-static-toolchain.XXXXXX)"
-      jobs="$(nproc)"
-      static_flags="-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX=/toolchain -DCMAKE_PREFIX_PATH=/toolchain -DCMAKE_CXX_STANDARD=17"
-
-      curl -fsSL "https://github.com/abseil/abseil-cpp/archive/refs/tags/$TXING_STATIC_ABSL_VERSION.tar.gz" | tar -xz -C "$static_src"
-      cmake -S "$static_src/abseil-cpp-$TXING_STATIC_ABSL_VERSION" -B "$static_src/build-absl" $static_flags \
-        -DABSL_PROPAGATE_CXX_STD=ON -DABSL_BUILD_TESTING=OFF -DABSL_ENABLE_INSTALL=ON
-      cmake --build "$static_src/build-absl" -j "$jobs"
-      cmake --install "$static_src/build-absl" >/dev/null
-
-      curl -fsSL "https://github.com/protocolbuffers/protobuf/archive/refs/tags/v$TXING_STATIC_PROTOBUF_VERSION.tar.gz" | tar -xz -C "$static_src"
-      cmake -S "$static_src/protobuf-$TXING_STATIC_PROTOBUF_VERSION" -B "$static_src/build-protobuf" $static_flags \
-        -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF -Dprotobuf_ABSL_PROVIDER=package
-      cmake --build "$static_src/build-protobuf" -j "$jobs"
-      cmake --install "$static_src/build-protobuf" >/dev/null
-
-      curl -fsSL "https://github.com/google/re2/archive/refs/tags/$TXING_STATIC_RE2_VERSION.tar.gz" | tar -xz -C "$static_src"
-      cmake -S "$static_src/re2-$TXING_STATIC_RE2_VERSION" -B "$static_src/build-re2" $static_flags \
-        -DRE2_BUILD_TESTING=OFF
-      cmake --build "$static_src/build-re2" -j "$jobs"
-      cmake --install "$static_src/build-re2" >/dev/null
-
-      curl -fsSL "https://github.com/c-ares/c-ares/archive/refs/tags/v$TXING_STATIC_CARES_VERSION.tar.gz" | tar -xz -C "$static_src"
-      cmake -S "$static_src/c-ares-$TXING_STATIC_CARES_VERSION" -B "$static_src/build-cares" $static_flags \
-        -DCARES_STATIC=ON -DCARES_SHARED=OFF -DCARES_BUILD_TOOLS=OFF
-      cmake --build "$static_src/build-cares" -j "$jobs"
-      cmake --install "$static_src/build-cares" >/dev/null
-
-      git clone --depth 1 --branch "v$TXING_STATIC_GRPC_VERSION" https://github.com/grpc/grpc "$static_src/grpc"
-      (
-        cd "$static_src/grpc"
-        git submodule update --init --depth 1 \
-          third_party/xds third_party/envoy-api third_party/googleapis \
-          third_party/opencensus-proto third_party/protoc-gen-validate
-      )
-      cmake -S "$static_src/grpc" -B "$static_src/build-grpc" $static_flags \
-        -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF \
-        -DgRPC_ABSL_PROVIDER=package -DgRPC_PROTOBUF_PROVIDER=package \
-        -DgRPC_RE2_PROVIDER=package -DgRPC_CARES_PROVIDER=package \
-        -DgRPC_SSL_PROVIDER=package -DgRPC_ZLIB_PROVIDER=package \
-        -DOPENSSL_USE_STATIC_LIBS=TRUE -DZLIB_USE_STATIC_LIBS=ON \
-        -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF -DgRPC_BUILD_GRPC_NODE_PLUGIN=OFF \
-        -DgRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN=OFF -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF \
-        -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF
-      cmake --build "$static_src/build-grpc" -j "$jobs"
-      cmake --install "$static_src/build-grpc" >/dev/null
-
-      rm -rf "$static_src"
-      printf '%s' "$toolchain_spec" >"$toolchain_marker"
-    }
-
     build_daemon() {
       daemon_source="$PWD/devices/unit/daemon"
       version_file="$PWD/release/versions/unit"
@@ -395,7 +324,7 @@ run:
     }
 
     build_hardware_worker() {
-      ensure_static_toolchain
+      sh release/scripts/build-board-static-toolchain.sh /toolchain
       hardware_source="$PWD/devices/unit/board/hardware_worker"
       hardware_build="$(mktemp -d /tmp/txing-unit-hardware-worker.XXXXXX)"
       PATH="/toolchain/bin:$PATH" cmake \
