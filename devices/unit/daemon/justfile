@@ -31,7 +31,18 @@ default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA
 config_dir := ""
 docker_build_dir := daemon_dir + "/target/docker-build"
 docker_build_metadata := docker_build_dir + "/metadata.json"
-docker_kvs_master_build_image := "debian:trixie"
+alpine_build_image := "docker.io/library/alpine:3.23.5"
+alpine_build_platform := "linux/arm64"
+
+# Alpine apk ships no static archives for the gRPC stack (doc-30), so the
+# hardware worker's static protobuf/gRPC dependencies are source-built once
+# into a cached toolchain prefix; tags are pinned to the apk package versions.
+static_toolchain_dir := daemon_dir + "/target/alpine-static-toolchain"
+static_absl_version := "20250814.1"
+static_protobuf_version := "31.1"
+static_re2_version := "2025-11-05"
+static_cares_version := "1.34.8"
+static_grpc_version := "1.76.0"
 
 role-policy thing_id='':
     #!/bin/sh
@@ -188,192 +199,305 @@ run:
     cmake --build "{{native_hardware_worker_test_build_dir}}" --config Debug --target txing-unit-hardware-worker-tests
     ctest --test-dir "{{native_hardware_worker_test_build_dir}}" --output-on-failure
 
-@kvs-build-trixie:
-    just --quiet --justfile "{{daemon_justfile}}" _cpp-build-trixie kvs-master
+@daemon-build-alpine:
+    just --quiet --justfile "{{daemon_justfile}}" _alpine-build daemon
 
-@hardware-build-trixie:
-    just --quiet --justfile "{{daemon_justfile}}" _cpp-build-trixie hardware-worker
+@kvs-build-alpine:
+    just --quiet --justfile "{{daemon_justfile}}" _alpine-build kvs-master
+
+@hardware-build-alpine:
+    just --quiet --justfile "{{daemon_justfile}}" _alpine-build hardware-worker
 
 [private]
-@_cpp-build-trixie project:
+@_alpine-build component:
     #!/bin/sh
     set -eu
 
-    project="{{project}}"
+    component="{{component}}"
     project_root="{{project_root}}"
-    image="{{docker_kvs_master_build_image}}"
+    output_root="{{docker_build_dir}}"
+    output_stage="$output_root/alpine-out"
+    toolchain_dir="{{static_toolchain_dir}}"
+    image="{{alpine_build_image}}"
+    platform="{{alpine_build_platform}}"
 
-    case "$project" in
-      kvs-master|hardware-worker) ;;
+    case "$component" in
+      daemon|kvs-master|hardware-worker|all) ;;
       *)
-        echo "Unsupported C++ Trixie project: $project" >&2
+        echo "Unsupported unit Alpine component: $component" >&2
         exit 2
         ;;
     esac
 
-    command -v docker >/dev/null || {
-      echo "docker is required to build C++ board projects in Debian Trixie." >&2
+    command -v docker >/dev/null 2>&1 || {
+      echo "docker is required to build unit board projects in Alpine." >&2
       exit 1
     }
-
-    docker run --rm -i \
-      --platform linux/arm64 \
-      --mount "type=bind,source=$project_root,target=$project_root,readonly" \
-      -w "$project_root" \
-      -e DEBIAN_FRONTEND=noninteractive \
-      -e TXING_CPP_TRIXIE_PROJECT="$project" \
-      -e TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
-      -e TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
-      "$image" \
-      sh -se <<'CPP_TRIXIE_BUILD'
-    set -eu
-
-    case "$TXING_CPP_TRIXIE_PROJECT" in
-      kvs-master)
-        project_name="txing-unit-kvs-master"
-        source_dir="$PWD/devices/unit/board/kvs_master"
-        binary_name="txing-unit-kvs-master"
-        ;;
-      hardware-worker)
-        project_name="txing-unit-hardware-worker"
-        source_dir="$PWD/devices/unit/board/hardware_worker"
-        binary_name="txing-unit-hardware-worker"
-        ;;
-      *)
-        echo "Unsupported C++ Trixie project: $TXING_CPP_TRIXIE_PROJECT" >&2
-        exit 2
-        ;;
-    esac
-
-    apt-get update
-    apt-get install -y --no-install-recommends ca-certificates curl
-
-    if [ "$TXING_CPP_TRIXIE_PROJECT" = "kvs-master" ]; then
-      cat >/etc/apt/sources.list.d/raspi.sources <<'APT_SOURCE'
-    Types: deb
-    URIs: https://archive.raspberrypi.com/debian/
-    Suites: trixie
-    Components: main
-    Architectures: arm64
-    Trusted: yes
-    APT_SOURCE
-      cat >/etc/apt/preferences.d/raspi-libcamera <<'APT_PREFERENCES'
-    Package: libcamera* python3-libcamera gstreamer1.0-libcamera libpisp* libtensorflow-lite*
-    Pin: origin archive.raspberrypi.com
-    Pin-Priority: 1001
-
-    Package: *
-    Pin: origin archive.raspberrypi.com
-    Pin-Priority: 100
-    APT_PREFERENCES
-      apt-get update
-    fi
-
-    apt-get install -y --no-install-recommends \
-      build-essential pkg-config cmake file git \
-      libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
-
-    if [ "$TXING_CPP_TRIXIE_PROJECT" = "kvs-master" ]; then
-      apt-get install -y --no-install-recommends \
-        perl libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
-        libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev
-      apt-cache policy libcamera-dev libcamera0.7 libpisp1 libc6
-      libc_version="$(dpkg-query -W -f='${Version}' libc6)"
-      case "$libc_version" in
-        *rpt*)
-          echo "Unexpected Raspberry Pi libc6 selected in Debian Trixie build: $libc_version" >&2
-          exit 1
-          ;;
-      esac
-    fi
-
-    protoc --version
-    grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
-    test -x "$grpc_cpp_plugin_path"
-    file "$grpc_cpp_plugin_path"
-    ldd "$grpc_cpp_plugin_path"
-
-    build_dir="$(mktemp -d "/tmp/${project_name}-build.XXXXXX")"
-    case "$TXING_CPP_TRIXIE_PROJECT" in
-      kvs-master)
-        openssl_libdir="$(pkg-config --variable=libdir openssl)"
-        openssl_includedir="$(pkg-config --variable=includedir openssl)"
-        cmake \
-          -S "$source_dir" \
-          -B "$build_dir" \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_TESTING=ON \
-          -DTXING_KVS_SYSTEM_CA_CERT_PATH="$TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH" \
-          -DTXING_KVS_GRPC_BRIDGE=ON \
-          -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG" \
-          -DOPENSSL_USE_STATIC_LIBS=FALSE \
-          -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
-          -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
-          -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
-        ;;
-      hardware-worker)
-        cmake \
-          -S "$source_dir" \
-          -B "$build_dir" \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_TESTING=ON \
-          -DTXING_HARDWARE_WORKER_GRPC=ON
-        ;;
-    esac
-
-    cmake --build "$build_dir" --config Release
-    ctest --test-dir "$build_dir" --output-on-failure
-
-    built_binary="$build_dir/$binary_name"
-    test -x "$built_binary"
-    ldd "$built_binary"
-    if ldd "$built_binary" | grep -Fq "not found"; then
-      echo "$binary_name has unresolved shared libraries" >&2
+    server_platform="$(docker version --format '{{"{{"}}.Server.Os{{"}}"}}/{{"{{"}}.Server.Arch{{"}}"}}')"
+    if [ "$server_platform" != "linux/arm64" ]; then
+      echo "unit Alpine builds require a native linux/arm64 Docker daemon, got: $server_platform" >&2
       exit 1
     fi
 
-    if [ "$TXING_CPP_TRIXIE_PROJECT" = "kvs-master" ]; then
-      ldd "$built_binary" | grep -F "libcamera.so.0.7"
-      ldd "$built_binary" | grep -F "libcamera-base.so.0.7"
+    if [ "$component" = "all" ]; then
+      rm -rf "$output_root"
+    fi
+    rm -rf "$output_stage"
+    install -d "$output_stage" "$output_root/bin" "$toolchain_dir"
+
+    docker run --rm -i \
+      --platform "$platform" \
+      --mount "type=bind,source=$project_root,target=$project_root,readonly" \
+      --mount "type=bind,source=$output_stage,target=/out" \
+      --mount "type=bind,source=$toolchain_dir,target=/toolchain" \
+      -w "$project_root" \
+      -e TXING_ALPINE_COMPONENT="$component" \
+      -e TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
+      -e TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
+      -e TXING_STATIC_ABSL_VERSION="{{static_absl_version}}" \
+      -e TXING_STATIC_PROTOBUF_VERSION="{{static_protobuf_version}}" \
+      -e TXING_STATIC_RE2_VERSION="{{static_re2_version}}" \
+      -e TXING_STATIC_CARES_VERSION="{{static_cares_version}}" \
+      -e TXING_STATIC_GRPC_VERSION="{{static_grpc_version}}" \
+      "$image" \
+      sh -se <<'ALPINE_BUILD'
+    set -eu
+
+    expected_release="3.23.5"
+    actual_release="$(cat /etc/alpine-release)"
+    if [ "$actual_release" != "$expected_release" ]; then
+      echo "Expected Alpine $expected_release, got $actual_release" >&2
+      exit 1
+    fi
+    if [ "$(uname -m)" != "aarch64" ]; then
+      echo "Expected native aarch64 Alpine container, got $(uname -m)" >&2
+      exit 1
     fi
 
-    file "$built_binary"
-    "$built_binary" --version
-    CPP_TRIXIE_BUILD
+    apk add --no-cache \
+      build-base cmake pkgconf git perl ca-certificates curl \
+      curl-dev openssl-dev openssl-libs-static log4cplus-dev libsrtp-dev \
+      libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
+      linux-headers protobuf-dev protobuf grpc-dev grpc-plugins \
+      go binutils file
+
+    # Alpine gcc defaults to PIE, so -static produces a static-PIE: file says
+    # 'static-pie linked' and the hard invariant is the absent PT_INTERP header.
+    assert_static() {
+      asserted_binary="$1"
+      asserted_name="$2"
+      test -x "$asserted_binary"
+      file "$asserted_binary" | grep -E 'ELF 64-bit LSB.*ARM aarch64'
+      file "$asserted_binary" | grep -E 'statically linked|static-pie linked'
+      if readelf -l "$asserted_binary" | grep -Fq 'INTERP'; then
+        echo "$asserted_name unexpectedly has an ELF interpreter (not static)" >&2
+        exit 1
+      fi
+    }
+
+    assert_musl_dynamic() {
+      asserted_binary="$1"
+      asserted_name="$2"
+      test -x "$asserted_binary"
+      file "$asserted_binary" | grep -E 'ELF 64-bit LSB.*ARM aarch64'
+      readelf -l "$asserted_binary" | grep -F '[Requesting program interpreter: /lib/ld-musl-aarch64.so.1]'
+      ldd_output="$(ldd "$asserted_binary")"
+      printf '%s\n' "$ldd_output"
+      if printf '%s\n' "$ldd_output" | grep -Fq 'not found'; then
+        echo "$asserted_name has unresolved shared libraries" >&2
+        exit 1
+      fi
+      printf '%s\n' "$ldd_output" | grep -F 'libc.musl-aarch64.so.1'
+    }
+
+    ensure_static_toolchain() {
+      toolchain_marker="/toolchain/.txing-static-toolchain"
+      toolchain_spec="alpine=$(cat /etc/alpine-release) absl=$TXING_STATIC_ABSL_VERSION protobuf=$TXING_STATIC_PROTOBUF_VERSION re2=$TXING_STATIC_RE2_VERSION cares=$TXING_STATIC_CARES_VERSION grpc=$TXING_STATIC_GRPC_VERSION"
+      if [ -f "$toolchain_marker" ] && [ "$(cat "$toolchain_marker")" = "$toolchain_spec" ]; then
+        printf 'reusing cached static toolchain (%s)\n' "$toolchain_spec"
+        return 0
+      fi
+
+      printf 'building static toolchain (%s)\n' "$toolchain_spec"
+      find /toolchain -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      static_src="$(mktemp -d /tmp/txing-static-toolchain.XXXXXX)"
+      jobs="$(nproc)"
+      static_flags="-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX=/toolchain -DCMAKE_PREFIX_PATH=/toolchain -DCMAKE_CXX_STANDARD=17"
+
+      curl -fsSL "https://github.com/abseil/abseil-cpp/archive/refs/tags/$TXING_STATIC_ABSL_VERSION.tar.gz" | tar -xz -C "$static_src"
+      cmake -S "$static_src/abseil-cpp-$TXING_STATIC_ABSL_VERSION" -B "$static_src/build-absl" $static_flags \
+        -DABSL_PROPAGATE_CXX_STD=ON -DABSL_BUILD_TESTING=OFF -DABSL_ENABLE_INSTALL=ON
+      cmake --build "$static_src/build-absl" -j "$jobs"
+      cmake --install "$static_src/build-absl" >/dev/null
+
+      curl -fsSL "https://github.com/protocolbuffers/protobuf/archive/refs/tags/v$TXING_STATIC_PROTOBUF_VERSION.tar.gz" | tar -xz -C "$static_src"
+      cmake -S "$static_src/protobuf-$TXING_STATIC_PROTOBUF_VERSION" -B "$static_src/build-protobuf" $static_flags \
+        -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF -Dprotobuf_ABSL_PROVIDER=package
+      cmake --build "$static_src/build-protobuf" -j "$jobs"
+      cmake --install "$static_src/build-protobuf" >/dev/null
+
+      curl -fsSL "https://github.com/google/re2/archive/refs/tags/$TXING_STATIC_RE2_VERSION.tar.gz" | tar -xz -C "$static_src"
+      cmake -S "$static_src/re2-$TXING_STATIC_RE2_VERSION" -B "$static_src/build-re2" $static_flags \
+        -DRE2_BUILD_TESTING=OFF
+      cmake --build "$static_src/build-re2" -j "$jobs"
+      cmake --install "$static_src/build-re2" >/dev/null
+
+      curl -fsSL "https://github.com/c-ares/c-ares/archive/refs/tags/v$TXING_STATIC_CARES_VERSION.tar.gz" | tar -xz -C "$static_src"
+      cmake -S "$static_src/c-ares-$TXING_STATIC_CARES_VERSION" -B "$static_src/build-cares" $static_flags \
+        -DCARES_STATIC=ON -DCARES_SHARED=OFF -DCARES_BUILD_TOOLS=OFF
+      cmake --build "$static_src/build-cares" -j "$jobs"
+      cmake --install "$static_src/build-cares" >/dev/null
+
+      git clone --depth 1 --branch "v$TXING_STATIC_GRPC_VERSION" https://github.com/grpc/grpc "$static_src/grpc"
+      (
+        cd "$static_src/grpc"
+        git submodule update --init --depth 1 \
+          third_party/xds third_party/envoy-api third_party/googleapis \
+          third_party/opencensus-proto third_party/protoc-gen-validate
+      )
+      cmake -S "$static_src/grpc" -B "$static_src/build-grpc" $static_flags \
+        -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF \
+        -DgRPC_ABSL_PROVIDER=package -DgRPC_PROTOBUF_PROVIDER=package \
+        -DgRPC_RE2_PROVIDER=package -DgRPC_CARES_PROVIDER=package \
+        -DgRPC_SSL_PROVIDER=package -DgRPC_ZLIB_PROVIDER=package \
+        -DOPENSSL_USE_STATIC_LIBS=TRUE -DZLIB_USE_STATIC_LIBS=ON \
+        -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF -DgRPC_BUILD_GRPC_NODE_PLUGIN=OFF \
+        -DgRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN=OFF -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF \
+        -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF
+      cmake --build "$static_src/build-grpc" -j "$jobs"
+      cmake --install "$static_src/build-grpc" >/dev/null
+
+      rm -rf "$static_src"
+      printf '%s' "$toolchain_spec" >"$toolchain_marker"
+    }
+
+    build_daemon() {
+      daemon_source="$PWD/devices/unit/daemon"
+      version_file="$PWD/release/versions/unit"
+      version="$(tr -d '[:space:]' < "$version_file")"
+      if ! printf '%s\n' "$version" | grep -E -q '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+        echo "release/versions/unit must contain a semantic version like x.y.z." >&2
+        exit 1
+      fi
+      daemon_build="$(mktemp -d /tmp/txing-unit-daemon.XXXXXX)"
+      (
+        cd "$daemon_source"
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+          go build -trimpath -buildvcs=false \
+            -ldflags="-s -w -X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=$version" \
+            -o "$daemon_build/txing-unit-daemon" \
+            ./cmd/txing-unit-daemon
+      )
+      assert_static "$daemon_build/txing-unit-daemon" "txing-unit-daemon"
+      "$daemon_build/txing-unit-daemon" --version
+      install -m 755 "$daemon_build/txing-unit-daemon" /out/txing-unit-daemon
+    }
+
+    build_hardware_worker() {
+      ensure_static_toolchain
+      hardware_source="$PWD/devices/unit/board/hardware_worker"
+      hardware_build="$(mktemp -d /tmp/txing-unit-hardware-worker.XXXXXX)"
+      PATH="/toolchain/bin:$PATH" cmake \
+        -S "$hardware_source" \
+        -B "$hardware_build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=ON \
+        -DTXING_HARDWARE_WORKER_GRPC=ON \
+        -DCMAKE_PREFIX_PATH=/toolchain \
+        -DCMAKE_EXE_LINKER_FLAGS=-static \
+        -DOPENSSL_USE_STATIC_LIBS=TRUE \
+        -DZLIB_USE_STATIC_LIBS=ON
+      PATH="/toolchain/bin:$PATH" cmake --build "$hardware_build" --config Release
+      ctest --test-dir "$hardware_build" --output-on-failure
+      assert_static "$hardware_build/txing-unit-hardware-worker" "txing-unit-hardware-worker"
+      "$hardware_build/txing-unit-hardware-worker" --version
+      install -m 755 "$hardware_build/txing-unit-hardware-worker" /out/txing-unit-hardware-worker
+    }
+
+    build_kvs_master() {
+      kvs_source="$PWD/devices/unit/board/kvs_master"
+      kvs_build="$(mktemp -d /tmp/txing-unit-kvs-master.XXXXXX)"
+      openssl_libdir="$(pkg-config --variable=libdir openssl)"
+      openssl_includedir="$(pkg-config --variable=includedir openssl)"
+      cmake \
+        -S "$kvs_source" \
+        -B "$kvs_build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=ON \
+        -DTXING_KVS_SYSTEM_CA_CERT_PATH="$TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH" \
+        -DTXING_KVS_GRPC_BRIDGE=ON \
+        -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG" \
+        -DOPENSSL_USE_STATIC_LIBS=FALSE \
+        -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+        -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+        -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+      cmake --build "$kvs_build" --config Release
+      ctest --test-dir "$kvs_build" --output-on-failure
+      assert_musl_dynamic "$kvs_build/txing-unit-kvs-master" "txing-unit-kvs-master"
+      kvs_ldd="$(ldd "$kvs_build/txing-unit-kvs-master")"
+      printf '%s\n' "$kvs_ldd" | grep -F 'libcamera.so.0.6'
+      printf '%s\n' "$kvs_ldd" | grep -F 'libcamera-base.so.0.6'
+      "$kvs_build/txing-unit-kvs-master" --version
+      install -m 755 "$kvs_build/txing-unit-kvs-master" /out/txing-unit-kvs-master
+    }
+
+    case "$TXING_ALPINE_COMPONENT" in
+      daemon)
+        build_daemon
+        ;;
+      kvs-master)
+        build_kvs_master
+        ;;
+      hardware-worker)
+        build_hardware_worker
+        ;;
+      all)
+        build_daemon
+        build_kvs_master
+        build_hardware_worker
+        ;;
+    esac
+    ALPINE_BUILD
+
+    case "$component" in
+      daemon)
+        install -m 755 "$output_stage/txing-unit-daemon" "$output_root/bin/txing-unit-daemon"
+        ;;
+      kvs-master)
+        install -m 755 "$output_stage/txing-unit-kvs-master" "$output_root/bin/txing-unit-kvs-master"
+        ;;
+      hardware-worker)
+        install -m 755 "$output_stage/txing-unit-hardware-worker" "$output_root/bin/txing-unit-hardware-worker"
+        ;;
+      all)
+        install -m 755 "$output_stage/txing-unit-daemon" "$output_root/bin/txing-unit-daemon"
+        install -m 755 "$output_stage/txing-unit-kvs-master" "$output_root/bin/txing-unit-kvs-master"
+        install -m 755 "$output_stage/txing-unit-hardware-worker" "$output_root/bin/txing-unit-hardware-worker"
+        ;;
+    esac
+    rm -rf "$output_stage"
+
 
 @kvs-clean:
-    rm -rf "{{native_kvs_master_build_dir}}" "{{native_kvs_master_test_build_dir}}" "{{native_hardware_worker_build_dir}}" "{{native_hardware_worker_test_build_dir}}" "{{legacy_aws_kvs_sdk_build_dir}}" "{{legacy_aws_kvs_sdk_install_dir}}" "{{legacy_aws_kvs_sdk_system_deps_dir}}"
+    rm -rf "{{native_kvs_master_build_dir}}" "{{native_kvs_master_test_build_dir}}" "{{native_hardware_worker_build_dir}}" "{{native_hardware_worker_test_build_dir}}" "{{legacy_aws_kvs_sdk_build_dir}}" "{{legacy_aws_kvs_sdk_install_dir}}" "{{legacy_aws_kvs_sdk_system_deps_dir}}" "{{docker_build_dir}}" "{{static_toolchain_dir}}"
 
 docker-build:
     #!/bin/sh
     set -eu
 
-    project_root="{{project_root}}"
-    daemon_dir="{{daemon_dir}}"
-    docker_build_dir="{{docker_build_dir}}"
-    metadata_path="{{docker_build_metadata}}"
-    kvs_master_build_image="{{docker_kvs_master_build_image}}"
-    docker_out_dir="$docker_build_dir/docker-out"
-    bin_dir="$docker_build_dir/bin"
-    daemon_binary_name="txing-unit-daemon"
-    kvs_master_binary_name="txing-unit-kvs-master"
-    hardware_worker_binary_name="txing-unit-hardware-worker"
-    daemon_binary_path="$bin_dir/$daemon_binary_name"
-    kvs_master_binary_path="$bin_dir/$kvs_master_binary_name"
-    hardware_worker_binary_path="$bin_dir/$hardware_worker_binary_name"
-
-    for command in docker git go jq file; do
+    for command in git jq; do
       if ! command -v "$command" >/dev/null 2>&1; then
         echo "unit daemon docker-build requires '$command'." >&2
         exit 1
       fi
     done
-    server_platform="$(docker version | awk '/^  OS\/Arch:/ {print $2; exit}')"
-    if [ "$server_platform" != "linux/arm64" ]; then
-      echo "unit daemon docker-build requires a native linux/arm64 Docker daemon, got: $server_platform" >&2
-      exit 1
-    fi
 
+    just --quiet --justfile "{{daemon_justfile}}" _alpine-build all
+
+    project_root="{{project_root}}"
+    metadata_path="{{docker_build_metadata}}"
+    bin_dir="{{docker_build_dir}}/bin"
     version_file="$project_root/release/versions/unit"
     version="$(tr -d '[:space:]' < "$version_file")"
     if ! printf '%s\n' "$version" | grep -E -q '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
@@ -383,158 +507,19 @@ docker-build:
     commit="$(git -C "$project_root" rev-parse HEAD)"
     timestamp="$(date -u +%s)"
 
-    rm -rf "$docker_build_dir"
-    install -d "$docker_build_dir" "$bin_dir"
-    rm -rf "$docker_out_dir"
-    install -d "$docker_out_dir"
-
-    build_host="$(hostname)"
-    build_kernel="$(uname -a)"
-    printf '%s\n' "$build_host" > "$docker_out_dir/daemon-build-host"
-    printf '%s\n' "$build_kernel" > "$docker_out_dir/daemon-build-kernel"
-    (
-      cd "$daemon_dir"
-      GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
-      GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-        go build -trimpath \
-          -ldflags="-s -w -X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=$version" \
-          -o "$docker_out_dir/$daemon_binary_name" \
-          ./cmd/txing-unit-daemon
-    )
-    file "$docker_out_dir/$daemon_binary_name"
-
-    docker run --rm -i \
-      -v "$project_root:$project_root" \
-      -v "$docker_out_dir:/out" \
-      -w "$project_root" \
-      -e DEBIAN_FRONTEND=noninteractive \
-      -e KVS_MASTER_BINARY="$kvs_master_binary_name" \
-      -e HARDWARE_WORKER_BINARY="$hardware_worker_binary_name" \
-      "$kvs_master_build_image" \
-      sh -se <<'KVS_MASTER_BUILD'
-    set -eu
-    build_host="$(hostname)"
-    build_kernel="$(uname -a)"
-    printf '%s\n' "$build_host" > /out/kvs-master-build-host
-    printf '%s\n' "$build_kernel" > /out/kvs-master-build-kernel
-    apt-get update
-    apt-get install -y --no-install-recommends ca-certificates curl
-    cat >/etc/apt/sources.list.d/raspi.sources <<'APT_SOURCE'
-    Types: deb
-    URIs: https://archive.raspberrypi.com/debian/
-    Suites: trixie
-    Components: main
-    Architectures: arm64
-    Trusted: yes
-    APT_SOURCE
-    cat >/etc/apt/preferences.d/raspi-libcamera <<'APT_PREFERENCES'
-    Package: libcamera* python3-libcamera gstreamer1.0-libcamera libpisp* libtensorflow-lite*
-    Pin: origin archive.raspberrypi.com
-    Pin-Priority: 1001
-
-    Package: *
-    Pin: origin archive.raspberrypi.com
-    Pin-Priority: 100
-    APT_PREFERENCES
-    apt-get update
-    apt-get install -y --no-install-recommends \
-      build-essential pkg-config cmake perl file curl git ca-certificates \
-      libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
-      libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
-      libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
-    apt-cache policy libcamera-dev libcamera0.7 libpisp1 libc6
-    libc_version="$(dpkg-query -W -f='${Version}' libc6)"
-    case "$libc_version" in
-      *rpt*)
-        echo "Unexpected Raspberry Pi libc6 selected in Debian Trixie build: $libc_version" >&2
-        exit 1
-        ;;
-    esac
-    protoc --version
-    grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
-    test -x "$grpc_cpp_plugin_path"
-    file "$grpc_cpp_plugin_path"
-    ldd "$grpc_cpp_plugin_path"
-
-    native_kvs_master_dir="$PWD/devices/unit/board/kvs_master"
-    native_kvs_master_build_dir="$native_kvs_master_dir/build"
-    default_kvs_system_ca_cert_path="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}"
-    openssl_libdir="$(pkg-config --variable=libdir openssl)"
-    openssl_includedir="$(pkg-config --variable=includedir openssl)"
-    if [ -f "$native_kvs_master_build_dir/CMakeCache.txt" ] && grep -Fq "TXING_KVS_WEBRTC_SDK_" "$native_kvs_master_build_dir/CMakeCache.txt"; then
-      rm -rf "$native_kvs_master_build_dir"
-    fi
-
-    cmake \
-      -S "$native_kvs_master_dir" \
-      -B "$native_kvs_master_build_dir" \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_TESTING=OFF \
-      -DTXING_KVS_SYSTEM_CA_CERT_PATH="$default_kvs_system_ca_cert_path" \
-      -DTXING_KVS_GRPC_BRIDGE=ON \
-      -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
-      -DOPENSSL_USE_STATIC_LIBS=FALSE \
-      -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
-      -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
-      -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
-    cmake --build "$native_kvs_master_build_dir" --config Release
-    kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
-    test -x "$kvs_master_build_binary"
-    ldd "$kvs_master_build_binary"
-    if ldd "$kvs_master_build_binary" | grep -Fq "not found"; then
-      echo "txing-unit-kvs-master has unresolved shared libraries" >&2
-      exit 1
-    fi
-    ldd "$kvs_master_build_binary" | grep -F "libcamera.so.0.7"
-    ldd "$kvs_master_build_binary" | grep -F "libcamera-base.so.0.7"
-    install -m 755 "$kvs_master_build_binary" "/out/$KVS_MASTER_BINARY"
-    strip "/out/$KVS_MASTER_BINARY"
-    file "/out/$KVS_MASTER_BINARY"
-
-    native_hardware_worker_dir="$PWD/devices/unit/board/hardware_worker"
-    native_hardware_worker_build_dir="$native_hardware_worker_dir/build"
-    cmake \
-      -S "$native_hardware_worker_dir" \
-      -B "$native_hardware_worker_build_dir" \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_TESTING=OFF \
-      -DTXING_HARDWARE_WORKER_GRPC=ON
-    cmake --build "$native_hardware_worker_build_dir" --config Release --target txing-unit-hardware-worker
-    hardware_worker_build_binary="devices/unit/board/hardware_worker/build/$HARDWARE_WORKER_BINARY"
-    test -x "$hardware_worker_build_binary"
-    ldd "$hardware_worker_build_binary"
-    if ldd "$hardware_worker_build_binary" | grep -Fq "not found"; then
-      echo "txing-unit-hardware-worker has unresolved shared libraries" >&2
-      exit 1
-    fi
-    install -m 755 "$hardware_worker_build_binary" "/out/$HARDWARE_WORKER_BINARY"
-    strip "/out/$HARDWARE_WORKER_BINARY"
-    file "/out/$HARDWARE_WORKER_BINARY"
-    KVS_MASTER_BUILD
-
-    install -m 755 "$docker_out_dir/$daemon_binary_name" "$daemon_binary_path"
-    install -m 755 "$docker_out_dir/$kvs_master_binary_name" "$kvs_master_binary_path"
-    install -m 755 "$docker_out_dir/$hardware_worker_binary_name" "$hardware_worker_binary_path"
-    daemon_build_host="$(cat "$docker_out_dir/daemon-build-host")"
-    daemon_build_kernel="$(cat "$docker_out_dir/daemon-build-kernel")"
-    kvs_master_build_host="$(cat "$docker_out_dir/kvs-master-build-host")"
-    kvs_master_build_kernel="$(cat "$docker_out_dir/kvs-master-build-kernel")"
-
     jq -n \
       --arg version "$version" \
       --arg commit "$commit" \
       --argjson timestamp "$timestamp" \
-      --arg daemonBinaryName "$daemon_binary_name" \
-      --arg daemonBinaryPath "$daemon_binary_path" \
-      --arg kvsMasterBinaryName "$kvs_master_binary_name" \
-      --arg kvsMasterBinaryPath "$kvs_master_binary_path" \
-      --arg hardwareWorkerBinaryName "$hardware_worker_binary_name" \
-      --arg hardwareWorkerBinaryPath "$hardware_worker_binary_path" \
+      --arg daemonBinaryName "txing-unit-daemon" \
+      --arg daemonBinaryPath "$bin_dir/txing-unit-daemon" \
+      --arg kvsMasterBinaryName "txing-unit-kvs-master" \
+      --arg kvsMasterBinaryPath "$bin_dir/txing-unit-kvs-master" \
+      --arg hardwareWorkerBinaryName "txing-unit-hardware-worker" \
+      --arg hardwareWorkerBinaryPath "$bin_dir/txing-unit-hardware-worker" \
       --arg projectRoot "$project_root" \
-      --arg daemonBuildHost "$daemon_build_host" \
-      --arg daemonBuildKernel "$daemon_build_kernel" \
-      --arg kvsMasterBuildHost "$kvs_master_build_host" \
-      --arg kvsMasterBuildKernel "$kvs_master_build_kernel" \
+      --arg buildImage "{{alpine_build_image}}" \
+      --arg buildPlatform "{{alpine_build_platform}}" \
       '{
         version: $version,
         commit: $commit,
@@ -545,18 +530,16 @@ docker-build:
           ($hardwareWorkerBinaryName): $hardwareWorkerBinaryPath
         },
         projectRoot: $projectRoot,
-        daemonBuildHost: $daemonBuildHost,
-        daemonBuildKernel: $daemonBuildKernel,
-        kvsMasterBuildHost: $kvsMasterBuildHost,
-        kvsMasterBuildKernel: $kvsMasterBuildKernel
+        buildImage: $buildImage,
+        buildPlatform: $buildPlatform
       }' >"$metadata_path"
 
-    rm -rf "$docker_out_dir"
-
-    printf 'prepared local board binaries with docker\n'
+    printf 'prepared Alpine aarch64 board binaries\n'
     printf '  version: %s\n' "$version"
     printf '  commit: %s\n' "$commit"
-    printf '  daemon binary: %s\n' "$daemon_binary_path"
-    printf '  KVS master binary: %s\n' "$kvs_master_binary_path"
-    printf '  hardware worker binary: %s\n' "$hardware_worker_binary_path"
+    printf '  build image: %s\n' "{{alpine_build_image}}"
+    printf '  daemon binary: %s\n' "$bin_dir/txing-unit-daemon"
+    printf '  KVS master binary: %s\n' "$bin_dir/txing-unit-kvs-master"
+    printf '  hardware worker binary: %s\n' "$bin_dir/txing-unit-hardware-worker"
     printf '  metadata: %s\n' "$metadata_path"
+

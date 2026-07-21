@@ -109,14 +109,9 @@ target_compile_options(
 )
 
 if(TXING_KVS_GRPC_BRIDGE)
-  if(APPLE)
-    # Homebrew protobuf must be resolved in CONFIG mode: the module-mode
-    # find defines only part of the target set that gRPC's config then
-    # tries to define again.
-    find_package(Protobuf CONFIG REQUIRED)
-  else()
-    find_package(Protobuf REQUIRED)
-  endif()
+  # Both Homebrew and Alpine gRPC export protobuf config targets. Resolving
+  # protobuf in module mode first creates a partial duplicate target set.
+  find_package(Protobuf CONFIG REQUIRED)
   find_package(gRPC CONFIG REQUIRED)
   find_program(GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin REQUIRED)
 
