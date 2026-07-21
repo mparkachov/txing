@@ -403,6 +403,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         board_musl_assertion = (
             REPO_ROOT / "release" / "scripts" / "assert-board-musl.sh"
         ).read_text(encoding="utf-8")
+        board_smoke_script = (
+            REPO_ROOT / "release" / "scripts" / "smoke-board-cross-distro.sh"
+        ).read_text(encoding="utf-8")
         release_cli = (
             REPO_ROOT / "release" / "src" / "txing_release" / "cli.py"
         ).read_text(encoding="utf-8")
@@ -636,6 +639,25 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("statically linked|static-pie linked", board_musl_assertion)
         self.assertIn("grep -Fq 'INTERP'", board_musl_assertion)
         self.assertIn("static|musl-libcamera", board_musl_assertion)
+
+        self.assertIn('debian_image="debian:trixie"', board_smoke_script)
+        self.assertIn(
+            'alpine_image="docker.io/library/alpine:3.23.5"', board_smoke_script
+        )
+        self.assertIn('platform="linux/arm64"', board_smoke_script)
+        self.assertIn("libcamera-dev", board_smoke_script)
+        self.assertIn("static|musl-libcamera", board_smoke_script)
+        for workflow in (unit_workflow, cyberbrick_workflow):
+            self.assertIn("name: Cross-distro smoke", workflow)
+            self.assertIn(
+                "release/scripts/smoke-board-cross-distro.sh", workflow
+            )
+            self.assertIn("- smoke", workflow)
+        for daemon_justfile in (unit_daemon_justfile, cyberbrick_daemon_justfile):
+            self.assertIn("docker-smoke:", daemon_justfile)
+            self.assertIn(
+                "release/scripts/smoke-board-cross-distro.sh", daemon_justfile
+            )
 
         for workflow in existing_go_workflows.values():
             self.assertIn("for version in 1.26 1.25 1.24", workflow)

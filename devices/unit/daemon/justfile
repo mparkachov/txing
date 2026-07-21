@@ -472,3 +472,21 @@ docker-build:
     printf '  hardware worker binary: %s\n' "$bin_dir/txing-unit-hardware-worker"
     printf '  metadata: %s\n' "$metadata_path"
 
+docker-smoke:
+    #!/bin/sh
+    set -eu
+    bin_dir="{{docker_build_dir}}/bin"
+    version="$(tr -d '[:space:]' < "{{project_root}}/release/versions/unit")"
+    for binary in txing-unit-daemon txing-unit-kvs-master txing-unit-hardware-worker; do
+      if [ ! -x "$bin_dir/$binary" ]; then
+        echo "Missing $bin_dir/$binary. Run just unit::daemon::docker-build first." >&2
+        exit 1
+      fi
+    done
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-unit-daemon" static "txing-unit-daemon $version"
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-unit-hardware-worker" static "txing-unit-hardware-worker $version"
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-unit-kvs-master" musl-libcamera "txing-unit-kvs-master $version"
+

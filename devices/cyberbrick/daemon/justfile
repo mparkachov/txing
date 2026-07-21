@@ -165,6 +165,24 @@ docker-build:
     printf '  hardware worker binary: %s\n' "$bin_dir/txing-cyberbrick-hardware-worker"
     printf '  metadata: %s\n' "$metadata_path"
 
+docker-smoke:
+    #!/bin/sh
+    set -eu
+    bin_dir="{{docker_build_dir}}/bin"
+    version="$(awk -F '"' '/packageVersion =/ { print $2; exit }' "{{daemon_dir}}/internal/daemon/version.go")"
+    for binary in txing-cyberbrick-daemon txing-cyberbrick-kvs-master txing-cyberbrick-hardware-worker; do
+      if [ ! -x "$bin_dir/$binary" ]; then
+        echo "Missing $bin_dir/$binary. Run just cyberbrick::daemon::docker-build first." >&2
+        exit 1
+      fi
+    done
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-cyberbrick-daemon" static "txing-cyberbrick-daemon $version"
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-cyberbrick-hardware-worker" static "txing-cyberbrick-hardware-worker $version"
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-cyberbrick-kvs-master" musl-libcamera "txing-cyberbrick-kvs-master $version"
+
 [private]
 @_alpine-build component:
     #!/bin/sh
