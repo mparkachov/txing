@@ -216,7 +216,42 @@ Cyberbrick uses the `cyberbrick-v*` release stream and Alpine `v3.23`; the
 release image, installed apk branch, and runtime libraries must move together.
 Publishing a release never upgrades a Cyberbrick automatically. Installation,
 OpenRC service configuration, writable-root maintenance, and the return to a
-read-only root remain explicit operator steps in the Cyberbrick board runbook.
+read-only root remain explicit operator steps in the Cyberbrick board runbook,
+[components/cyberbrick-board.md](./components/cyberbrick-board.md).
+
+The root-owned runtime layout is:
+
+```text
+/root/.config/txing/cyberbrick-daemon/daemon.env
+/root/.config/txing/cyberbrick-daemon/AmazonRootCA1.pem
+/root/.config/txing/cyberbrick-daemon/certificate.arn
+/root/.config/txing/cyberbrick-daemon/certificate.pem.crt
+/root/.config/txing/cyberbrick-daemon/private.pem.key
+/root/.config/txing/cyberbrick-daemon/public.pem.key
+/root/.config/mise/conf.d/txing-cyberbrick-daemon.toml
+/root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon
+/root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master
+/root/.local/share/mise/installs/txing-cyberbrick-hardware-worker/latest/txing-cyberbrick-hardware-worker
+/etc/init.d/txing-cyberbrick-daemon
+/etc/init.d/txing-cyberbrick-kvs-master
+/etc/init.d/txing-cyberbrick-hardware-worker
+```
+
+The `daemon.env` file is rendered from
+`devices/cyberbrick/daemon/daemon.env.template` and follows the unit key
+contract; cyberbrick differs only in its config, socket, and install paths.
+There is no OpenRC equivalent of `txing-unit.target`: each init script is
+enabled individually with `rc-update add <service> default`, and OpenRC
+dependencies order the hardware worker, then the daemon, then the KVS master.
+Service starts stay offline and never invoke mise or call GitHub.
+
+Cyberbrick's ldd policy follows from the musl-dynamic contract: before
+rebooting out of a maintenance window, run `ldd` on each installed `latest`
+binary and confirm the `/lib/ld-musl-aarch64.so.1` interpreter, no
+`not found` libraries, and the KVS master's `libcamera.so.0.6` and
+`libcamera-base.so.0.6` linkage. `apk upgrade` and `mise upgrade` happen
+together in that window, and an Alpine release bump requires a matching
+cyberbrick release built on that Alpine version first.
 
 ## Rig Artifacts
 

@@ -7,6 +7,7 @@ the Alpine ABI constraints are recorded in the Cyberbrick architecture docs.
 
 Related docs:
 
+- [Cyberbrick Alpine board runbook](../../../docs/components/cyberbrick-board.md)
 - [Cyberbrick board video contract](../docs/board-video.md)
 - [Canonical hardware worker ownership contract](../../../docs/contracts/unit-hardware-worker.md)
 - [Cyberbrick board shadow schema](../aws/board-shadow.schema.json)

@@ -854,6 +854,169 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("git clone <repo-url>", installation_docs)
         self.assertNotIn("$TXING_HOME", installation_docs)
 
+    def test_cyberbrick_board_docs_describe_alpine_openrc_runbook(self) -> None:
+        cyberbrick_board_docs = (
+            REPO_ROOT / "docs" / "components" / "cyberbrick-board.md"
+        ).read_text(encoding="utf-8")
+        installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
+            encoding="utf-8"
+        )
+        artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
+            encoding="utf-8"
+        )
+        docs_index = (REPO_ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+        normalized_cyberbrick_board_docs = " ".join(cyberbrick_board_docs.split())
+        normalized_installation_docs = " ".join(installation_docs.split())
+        normalized_artifacts_docs = " ".join(artifacts_docs.split())
+
+        self.assertIn("setup-alpine", cyberbrick_board_docs)
+        self.assertIn("setup-disk -m sys /dev/mmcblk0p2", cyberbrick_board_docs)
+        self.assertIn("chronyd", cyberbrick_board_docs)
+        self.assertIn(
+            'txing-cyberbrick-daemon = "github:mparkachov/txing"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'txing-cyberbrick-kvs-master = "github:mparkachov/txing"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'txing-cyberbrick-hardware-worker = "github:mparkachov/txing"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn('version_prefix = "cyberbrick-v"', cyberbrick_board_docs)
+        self.assertIn(
+            'asset_pattern = "txing-cyberbrick-daemon-linux-aarch64.tar.gz"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'asset_pattern = "txing-cyberbrick-kvs-master-linux-aarch64.tar.gz"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'asset_pattern = "txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise", cyberbrick_board_docs
+        )
+        self.assertIn("/root/.config/txing/cyberbrick-daemon", cyberbrick_board_docs)
+        self.assertIn(
+            "just cyberbrick::daemon::role-policy <thing-id>", cyberbrick_board_docs
+        )
+        self.assertIn(
+            "cat >/etc/init.d/txing-cyberbrick-hardware-worker",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "cat >/etc/init.d/txing-cyberbrick-daemon", cyberbrick_board_docs
+        )
+        self.assertIn(
+            "cat >/etc/init.d/txing-cyberbrick-kvs-master", cyberbrick_board_docs
+        )
+        self.assertIn("supervisor=supervise-daemon", cyberbrick_board_docs)
+        self.assertIn(
+            "rc-update add txing-cyberbrick-hardware-worker default",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "rc-update add txing-cyberbrick-daemon default", cyberbrick_board_docs
+        )
+        self.assertIn(
+            "rc-update add txing-cyberbrick-kvs-master default",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "command=/root/.local/share/mise/installs/"
+            "txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
+            "txing-cyberbrick-daemon/board-video-bridge.sock",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "/run/txing-cyberbrick-hardware-worker/cyberbrick-hardware.sock",
+            cyberbrick_board_docs,
+        )
+        self.assertIn("chronyc waitsync", cyberbrick_board_docs)
+        self.assertIn(
+            "dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4",
+            cyberbrick_board_docs,
+        )
+        self.assertIn("ld-musl-aarch64.so.1", cyberbrick_board_docs)
+        self.assertIn("libcamera.so.0.6", cyberbrick_board_docs)
+        self.assertIn("libcamera-base.so.0.6", cyberbrick_board_docs)
+        self.assertIn('RESOLV_CONF="/run/resolv.conf"', cyberbrick_board_docs)
+        self.assertIn("alias root-rw=", cyberbrick_board_docs)
+        self.assertIn("alias root-ro=", cyberbrick_board_docs)
+        self.assertIn("mount /tmp ; mount /var/tmp", cyberbrick_board_docs)
+        self.assertIn("/var/lib/chrony", cyberbrick_board_docs)
+        self.assertIn(
+            "/root/.local/bin/mise upgrade txing-cyberbrick-daemon "
+            "txing-cyberbrick-kvs-master txing-cyberbrick-hardware-worker",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "`apk upgrade` and `mise upgrade` happen together in the same "
+            "maintenance window",
+            normalized_cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "publish a matching cyberbrick release built on that Alpine version",
+            normalized_cyberbrick_board_docs,
+        )
+        self.assertNotIn("systemctl", cyberbrick_board_docs)
+        self.assertNotIn("apt-get", cyberbrick_board_docs)
+        self.assertNotIn("txing-unit-daemon", cyberbrick_board_docs)
+        self.assertNotIn("libcamera.so.0.7", cyberbrick_board_docs)
+
+        self.assertIn("components/cyberbrick-board.md", installation_docs)
+        self.assertIn("rc-update add <service> default", installation_docs)
+        self.assertIn("setup-disk -m sys", installation_docs)
+        self.assertIn(
+            "installed from `cyberbrick-v*` GitHub Release assets through "
+            "root-owned `mise`, supervised by OpenRC on a read-only root "
+            "filesystem",
+            normalized_installation_docs,
+        )
+
+        self.assertIn("components/cyberbrick-board.md", artifacts_docs)
+        self.assertIn(
+            "/root/.config/txing/cyberbrick-daemon/daemon.env", artifacts_docs
+        )
+        self.assertIn(
+            "/root/.config/mise/conf.d/txing-cyberbrick-daemon.toml",
+            artifacts_docs,
+        )
+        self.assertIn(
+            "/root/.local/share/mise/installs/"
+            "txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon",
+            artifacts_docs,
+        )
+        self.assertIn("/etc/init.d/txing-cyberbrick-daemon", artifacts_docs)
+        self.assertIn("/etc/init.d/txing-cyberbrick-kvs-master", artifacts_docs)
+        self.assertIn(
+            "/etc/init.d/txing-cyberbrick-hardware-worker", artifacts_docs
+        )
+        self.assertIn("/lib/ld-musl-aarch64.so.1", artifacts_docs)
+        self.assertIn(
+            "`apk upgrade` and `mise upgrade` happen together",
+            normalized_artifacts_docs,
+        )
+        self.assertIn(
+            "an Alpine release bump requires a matching cyberbrick release "
+            "built on that Alpine version first",
+            normalized_artifacts_docs,
+        )
+
+        self.assertIn("components/cyberbrick-board.md", docs_index)
+        self.assertIn(
+            "`cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`",
+            docs_index,
+        )
+
     def test_rig_mise_config_uses_github_assets_without_greengrass(self) -> None:
         installer = (REPO_ROOT / "rig" / "install-mise-tools.sh").read_text(
             encoding="utf-8"

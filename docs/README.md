@@ -22,6 +22,7 @@ design notes have been folded into the owning component guides.
 
 - [Rig](./components/rig.md)
 - [Board](./components/board.md)
+- [Cyberbrick board](./components/cyberbrick-board.md)
 - [MCU](./components/mcu.md)
 - [Office](./components/office.md)
 - [Public WWW](./components/www.md)
@@ -46,6 +47,7 @@ capabilities for each AWS IoT ThingType:
 - `cloud`: `sparkplug`
 - `local`: `sparkplug`
 - `unit`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
+- `cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
 - `cloud-mcu`: `sparkplug`, `sqs`, `power`, `ecs`
 - `weather`: `sparkplug`, `ble`, `power`, `weather`
 - `power`: `sparkplug`, `ble`, `power`
