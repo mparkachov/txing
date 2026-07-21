@@ -100,7 +100,12 @@ Cloud MCU registration and runtime behavior are documented in
 The board is the device-side Raspberry Pi. Production boards run the root-owned
 Go `txing-unit-daemon`, native `txing-unit-kvs-master`, and native
 `txing-unit-hardware-worker` installed from GitHub Release assets through
-`mise`.
+`mise`. Release binaries are built in the pinned Alpine musl container under
+the shared board contract: the daemon and hardware worker are fully static and
+run on both Raspberry Pi OS (Debian) and Alpine boards, while the KVS master
+is musl-dynamic against Alpine libcamera and runs on Alpine boards only —
+existing Debian boards stay pinned to the last Debian-built KVS master until
+reimaged to Alpine.
 
 Canonical board installation, runtime config, root-owned service setup,
 read-only-root layout, manual maintenance, and validation instructions live in
@@ -132,8 +137,10 @@ Linux. Production cyberbrick boards run the root-owned Go
 `txing-cyberbrick-daemon`, native `txing-cyberbrick-kvs-master`, and native
 `txing-cyberbrick-hardware-worker` installed from `cyberbrick-v*` GitHub
 Release assets through root-owned `mise`, supervised by OpenRC on a read-only
-root filesystem. All three binaries are dynamically linked against musl, so
-the installed Alpine `v3.23` packages and the release stream move together.
+root filesystem. The daemon and hardware worker are fully static musl
+binaries; the KVS master is dynamically linked against musl and Alpine
+libcamera, so the installed Alpine `v3.23` packages and the release stream
+move together for the camera.
 
 Canonical cyberbrick board installation, Alpine sys install, OpenRC service
 setup, read-only-root layout, manual maintenance, and validation instructions

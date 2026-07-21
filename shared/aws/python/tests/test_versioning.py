@@ -819,7 +819,11 @@ class VersionEnvironmentTests(unittest.TestCase):
             board_docs,
         )
         self.assertIn(
-            "/root/.local/bin/mise upgrade txing-unit-daemon txing-unit-kvs-master txing-unit-hardware-worker",
+            "/root/.local/bin/mise upgrade txing-unit-daemon txing-unit-hardware-worker",
+            board_docs,
+        )
+        self.assertNotIn(
+            "mise upgrade txing-unit-daemon txing-unit-kvs-master",
             board_docs,
         )
         self.assertIn(
@@ -875,12 +879,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("TXING_KVS_MASTER_COMMAND", board_docs)
         self.assertIn("daemon.env", installation_docs)
         self.assertIn("daemon.env", artifacts_docs)
-        self.assertIn("Raspberry Pi OS Trixie", board_docs)
+        self.assertIn("static musl binaries that run unchanged", board_docs)
+        self.assertIn("last Debian-built KVS master", board_docs)
+        self.assertIn("reimaged to Alpine", board_docs)
+        self.assertIn("not a dynamic executable", board_docs)
         self.assertIn("libcamera.so.0.7", board_docs)
         self.assertIn("libcamera.so.0.7", artifacts_docs)
-        self.assertIn("libcamera.so.0.2", board_docs)
-        self.assertIn("libcamera.so.0.4", board_docs)
-        self.assertIn("run `ldd` on the installed `latest` binary", artifacts_docs)
+        self.assertIn("libcamera.so.0.6", artifacts_docs)
+        self.assertIn("assert-board-musl.sh", artifacts_docs)
+        self.assertIn("last Debian-built KVS master", artifacts_docs)
+        self.assertIn("installed `latest` binaries before rebooting", artifacts_docs)
         self.assertIn("mount /tmp ; mount /var/tmp", board_docs)
         self.assertIn(
             "/root/.local/share/mise/installs/txing-unit-daemon/latest/"

@@ -73,10 +73,17 @@ name. Each runtime Lambda `.zip` contains one root-level Go executable named
 `bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
-Cyberbrick binaries are built in the pinned Alpine release and dynamically
-linked against musl. The workflow verifies the musl interpreter and every
-shared-library dependency after stripping the exact executable placed in each
-archive; the KVS master must resolve Alpine's expected libcamera sonames.
+Unit and cyberbrick board binaries are built in the same pinned Alpine
+release under one linkage contract: the Go daemons and hardware workers are
+fully static musl binaries that run on both Debian and Alpine hosts, and each
+KVS master is dynamically linked against musl and stock Alpine libcamera, so
+it runs on Alpine hosts only. Both board workflows verify the linkage kind of
+the exact stripped executable placed in each archive with
+`release/scripts/assert-board-musl.sh` (static: no ELF interpreter;
+musl-dynamic: musl interpreter, fully resolved libraries, expected libcamera
+sonames) and then execute every packaged binary in the userlands it must
+support (`debian:trixie` and pinned Alpine for static binaries, Alpine for
+the KVS master) before anything is published.
 
 Release rollout flow:
 
@@ -178,10 +185,15 @@ Track power trim uses numeric percentage keys such as
 Certificate paths are omitted by default; the daemon derives colocated
 certificate paths from the loaded `daemon.env` directory.
 
-The native KVS master is dynamically linked to the libcamera ABI from Raspberry
-Pi OS Trixie packages. Release workflows assert that the asset links against
-`libcamera.so.0.7` and `libcamera-base.so.0.7`; board maintenance instructions
-run `ldd` on the installed `latest` binary before rebooting.
+Unit assets follow the board linkage contract: `txing-unit-daemon` and
+`txing-unit-hardware-worker` are fully static musl binaries that run on both
+Raspberry Pi OS (Debian) and Alpine boards, while `txing-unit-kvs-master` is
+dynamically linked against musl and stock Alpine libcamera
+(`libcamera.so.0.6`/`libcamera-base.so.0.6`) and runs on Alpine boards only.
+Existing Debian boards keep updating the static pair but stay pinned to the
+last Debian-built KVS master (linked against `libcamera.so.0.7`) until they
+are reimaged to Alpine; board maintenance instructions run `ldd` on the
+installed `latest` binaries before rebooting.
 
 The `txing-unit.target` unit groups the daemon, KVS master, and hardware
 worker services for boot. The board systemd units start the root-owned binaries
@@ -245,13 +257,16 @@ enabled individually with `rc-update add <service> default`, and OpenRC
 dependencies order the hardware worker, then the daemon, then the KVS master.
 Service starts stay offline and never invoke mise or call GitHub.
 
-Cyberbrick's ldd policy follows from the musl-dynamic contract: before
+Cyberbrick's ldd policy follows from the board linkage contract: before
 rebooting out of a maintenance window, run `ldd` on each installed `latest`
-binary and confirm the `/lib/ld-musl-aarch64.so.1` interpreter, no
-`not found` libraries, and the KVS master's `libcamera.so.0.6` and
-`libcamera-base.so.0.6` linkage. `apk upgrade` and `mise upgrade` happen
-together in that window, and an Alpine release bump requires a matching
-cyberbrick release built on that Alpine version first.
+binary. The static daemon and hardware worker must show no shared-library
+dependencies (musl `ldd` refuses them or lists only the loader). The
+musl-dynamic KVS master must show the `/lib/ld-musl-aarch64.so.1`
+interpreter, no `not found` libraries, and the `libcamera.so.0.6` and
+`libcamera-base.so.0.6` linkage. Because of the camera coupling,
+`apk upgrade` and `mise upgrade` happen together in that window, and an
+Alpine release bump requires a matching cyberbrick release built on that
+Alpine version first.
 
 ## Rig Artifacts
 

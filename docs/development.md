@@ -192,10 +192,13 @@ just unit::daemon::run
 just unit::daemon::test
 just unit::daemon::kvs-build-native
 just unit::daemon::kvs-test-native
-just unit::daemon::kvs-build-trixie
+just unit::daemon::kvs-build-alpine
 just unit::daemon::hardware-build-native
 just unit::daemon::hardware-test-native
-just unit::daemon::hardware-build-trixie
+just unit::daemon::hardware-build-alpine
+just unit::daemon::daemon-build-alpine
+just unit::daemon::docker-build
+just unit::daemon::docker-smoke
 ```
 
 The Go unit daemon loads its default config from

@@ -3,16 +3,18 @@
 The cyberbrick board is the device-side Raspberry Pi Zero 2 W for the
 `cyberbrick` device type. It runs the root-owned Go `txing-cyberbrick-daemon`
 plus the native `txing-cyberbrick-kvs-master` and
-`txing-cyberbrick-hardware-worker` on Alpine Linux aarch64, with all three
-daemons dynamically linked against musl, supervised by OpenRC, on a read-only
-root filesystem.
+`txing-cyberbrick-hardware-worker` on Alpine Linux aarch64 — the daemon and
+hardware worker as fully static musl binaries, the KVS master dynamically
+linked against musl — supervised by OpenRC, on a read-only root filesystem.
 
 Cyberbrick board behavior is unit parity by design: the same board/mcp/video
 shadows, retained topics, REDCON contract, BoardVideoBridge and hardware
 worker contracts, MCP tool surface, and active-control rules documented in
 [Board](./board.md). Intentional divergence from unit is limited to the OS
-(Alpine instead of Raspberry Pi OS), the ABI (musl-dynamic instead of
-unit's linkage), and init (OpenRC instead of systemd). This runbook documents
+(Alpine instead of Raspberry Pi OS) and init (OpenRC instead of systemd);
+the artifact ABI follows the shared board linkage contract for both devices
+(static daemon and hardware worker, musl-dynamic KVS master). This runbook
+documents
 the cyberbrick identifiers and the Alpine-specific install, service, and
 maintenance workflow.
 
@@ -45,13 +47,15 @@ is documented in
 - Default Alpine stack: apk, ifupdown-ng + wpa_supplicant + udhcpc
   networking, chronyd time sync, OpenRC init. No systemd and no
   NetworkManager on the board.
-- Every shipped binary is dynamically linked against musl. A healthy install
-  shows the `/lib/ld-musl-aarch64.so.1` interpreter and fully resolved `ldd`
-  output for all three binaries.
-- The KVS master links Alpine's upstream libcamera and must resolve
-  `libcamera.so.0.6` and `libcamera-base.so.0.6`. If `ldd` reports `not
-  found` libraries or a non-musl interpreter, the release asset was built for
-  the wrong OS or the wrong Alpine branch and must be replaced.
+- The daemon and hardware worker are fully static musl binaries that depend
+  only on the kernel: a healthy install shows no shared-library dependencies
+  for them (musl `ldd` refuses them or lists only the loader).
+- The KVS master is the only musl-dynamic binary: it shows the
+  `/lib/ld-musl-aarch64.so.1` interpreter, fully resolved `ldd` output, and
+  links Alpine's upstream libcamera (`libcamera.so.0.6` and
+  `libcamera-base.so.0.6`). If its `ldd` reports `not found` libraries or a
+  non-musl interpreter, the release asset was built for the wrong OS or the
+  wrong Alpine branch and must be replaced.
 - The pinned Alpine build image in the cyberbrick daemon justfile, the
   release workflow containers, and the on-device apk branch must name the
   same Alpine release. Bumping the Alpine release is one coordinated change
@@ -160,8 +164,9 @@ apk add \
 
 The dev packages are the proven runtime superset from the pinned Alpine build
 container: installing them guarantees every shared library the musl-dynamic
-release binaries resolve at run time, on the same `v3.23` branch the release
-was built against. The manual install checks below run `ldd` on the resolved
+release KVS master resolves at run time, on the same `v3.23` branch the
+release was built against (the static daemon and hardware worker need none of
+them). The manual install checks below run `ldd` on the resolved
 binaries before the services are enabled. The release KVS master must link
 `libcamera.so.0.6` and `libcamera-base.so.0.6` from Alpine `v3.23`; if the
 sonames do not resolve, the installed apk branch and the release were built
@@ -258,18 +263,19 @@ MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
 ```
 
 Check the resolved binaries before writing the services. Every binary must
-report the release version, use the musl interpreter, and resolve all shared
-libraries:
+report the release version; the static daemon and hardware worker must show
+no shared-library dependencies (musl `ldd` refuses them or lists only the
+loader), and the musl-dynamic KVS master must use the musl interpreter and
+resolve all shared libraries:
 
 ```sh
 /root/.local/bin/mise list
 /root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon --version
 /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master --version
 /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker/latest/txing-cyberbrick-hardware-worker --version
-ldd /root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon
+ldd /root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon || true
+ldd /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker/latest/txing-cyberbrick-hardware-worker || true
 ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master
-ldd /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker/latest/txing-cyberbrick-hardware-worker
-ldd /root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon | grep -F "ld-musl-aarch64.so.1"
 ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera.so.0.6"
 ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera-base.so.0.6"
 ```
@@ -537,12 +543,13 @@ around them.
 Board update during a writable-root maintenance window. Publish a new
 immutable `cyberbrick-vX.Y.Z` release first.
 
-Because the binaries are dynamically linked against musl and the installed
+Because the KVS master is dynamically linked against musl and the installed
 Alpine libraries, `apk upgrade` and `mise upgrade` happen together in the
 same maintenance window: never upgrade the OS packages without moving to the
 release built for them, and never install a release built against a newer
 Alpine branch than the device runs. Device apk repositories stay on Alpine
-`v3.23` until a coordinated bump.
+`v3.23` until a coordinated bump. The static daemon and hardware worker
+depend only on the kernel and are unaffected by apk upgrades.
 
 ```sh
 root-rw
@@ -590,6 +597,7 @@ just cyberbrick::daemon::daemon-build-alpine
 just cyberbrick::daemon::kvs-build-alpine
 just cyberbrick::daemon::hardware-build-alpine
 just cyberbrick::daemon::docker-build
+just cyberbrick::daemon::docker-smoke
 ```
 
 The local daemon uses
@@ -597,11 +605,13 @@ The local daemon uses
 Provision that directory with `just aws::cert <thing-id>` only when AWS
 resource changes are intended.
 
-The `*-build-alpine` and `docker-build` recipes build inside the pinned
-Alpine aarch64 container and require a native `linux/arm64` Docker daemon.
-They assert the musl interpreter, fully resolved shared libraries, and the
-expected libcamera sonames on every produced binary — the same contract the
-release workflow enforces.
+The `*-build-alpine`, `docker-build`, and `docker-smoke` recipes build and
+verify inside pinned aarch64 containers and require a native `linux/arm64`
+Docker daemon. They assert the linkage contract per binary — static daemon
+and hardware worker (no ELF interpreter), musl-dynamic KVS master with the
+expected libcamera sonames — and `docker-smoke` executes the static pair on
+both `debian:trixie` and pinned Alpine and the KVS master on Alpine, the
+same gates the release workflow enforces.
 
 ## References
 

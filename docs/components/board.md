@@ -403,11 +403,19 @@ apt install -y \
 If NetworkManager was newly installed or enabled, reconnect over the resulting
 network path before continuing.
 
-The release KVS master is built for Raspberry Pi OS Trixie and should link
-against `libcamera.so.0.7` and `libcamera-base.so.0.7`. The manual install
-checks below run `ldd` on the resolved binaries before systemd is restarted. If
-`ldd` reports `libcamera.so.0.2` or `libcamera.so.0.4`, the release asset was
-built against the wrong board image and must be replaced.
+Unit releases are built in the pinned Alpine musl container (the board build
+contract): `txing-unit-daemon` and `txing-unit-hardware-worker` are fully
+static musl binaries that run unchanged on both Raspberry Pi OS (Debian) and
+Alpine hosts, while `txing-unit-kvs-master` is dynamically linked against musl
+and stock Alpine libcamera and therefore runs on Alpine hosts only.
+
+For existing Debian boards this means: the daemon and hardware worker keep
+updating normally, but the camera freezes at the last Debian-built KVS master
+release (which links `libcamera.so.0.7` from the packages above). Never
+upgrade `txing-unit-kvs-master` past that release on a Debian board — newer
+camera builds only run after the board is reimaged to Alpine. The manual
+install checks below run `ldd` on the resolved binaries before systemd is
+restarted.
 
 ### 3. Install Mise
 
@@ -496,12 +504,20 @@ Check the resolved binaries before writing the service:
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master --version
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker --version
-ldd /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
+ldd /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon || true
+ldd /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker || true
 ldd /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master
-ldd /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 ldd /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master | grep -F "libcamera.so.0.7"
 ldd /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master | grep -F "libcamera-base.so.0.7"
 ```
+
+The daemon and hardware worker are static: on a Debian board `ldd` reports
+`not a dynamic executable` or `statically linked` for them, and that is the
+healthy state. The KVS master checks apply to the frozen Debian-built camera
+release: it must resolve every library and link `libcamera.so.0.7` and
+`libcamera-base.so.0.7`. If its `ldd` reports `not found` libraries or an
+older libcamera soname, the installed asset was built for the wrong board
+image and must be replaced with the last Debian-built release.
 
 Write the root-owned systemd units and group them under `txing-unit.target`.
 The daemon owns the board-video bridge socket; the KVS master connects to it as
@@ -767,22 +783,30 @@ Board update during a writable-root maintenance window. Publish a new immutable
 `unit-vX.Y.Z` release first, and replace old root-owned mise config manually if
 it does not include `version_prefix = "unit-v"`:
 
+On a Debian board, upgrade only the static pair — the camera stays frozen at
+the last Debian-built KVS master release (Alpine-built camera binaries do not
+run on Debian):
+
 ```bash
 sudo su -
 root-rw
 apt update
 apt dist-upgrade -y
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise upgrade txing-unit-daemon txing-unit-kvs-master txing-unit-hardware-worker
+  /root/.local/bin/mise upgrade txing-unit-daemon txing-unit-hardware-worker
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon --version
 /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master --version
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker --version
-ldd /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
+ldd /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker || true
 ldd /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master | grep -F "libcamera.so.0.7"
 ldd /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master | grep -F "libcamera-base.so.0.7"
 sync
 reboot
 ```
+
+The static daemon and hardware worker depend only on the kernel, so they stay
+current on Debian indefinitely. The board rejoins the camera update stream
+when it is reimaged to Alpine.
 
 Boards upgraded from the pre-unit target naming must also remove the retired
 systemd units during a writable-root maintenance window. After installing the
@@ -815,10 +839,13 @@ just unit::daemon::test
 just unit::daemon::run
 just unit::daemon::kvs-build-native
 just unit::daemon::kvs-test-native
-just unit::daemon::kvs-build-trixie
+just unit::daemon::kvs-build-alpine
 just unit::daemon::hardware-build-native
 just unit::daemon::hardware-test-native
-just unit::daemon::hardware-build-trixie
+just unit::daemon::hardware-build-alpine
+just unit::daemon::daemon-build-alpine
+just unit::daemon::docker-build
+just unit::daemon::docker-smoke
 ```
 
 `kvs-build-native` builds `txing-unit-kvs-master` and lets the worker CMake
@@ -826,6 +853,14 @@ project fetch the pinned AWS KVS WebRTC SDK into the local build directory. It
 enables the BoardVideoBridge gRPC client on Linux. Third-party KVS, protobuf,
 and gRPC dependencies come from distro packages, not from the SDK's bundled
 source builds.
+
+The `*-build-alpine`, `docker-build`, and `docker-smoke` recipes build and
+verify release-contract binaries inside the pinned Alpine aarch64 container
+and require a native `linux/arm64` Docker daemon. They assert the linkage
+contract per binary — static daemon and hardware worker (no ELF interpreter),
+musl-dynamic KVS master with the expected Alpine libcamera sonames — and
+`docker-smoke` executes the built binaries in both `debian:trixie` and the
+pinned Alpine container, the same gates the release workflow enforces.
 
 Direct raw motor bring-up is no longer supported. Live motion testing goes
 through the Go daemon MCP `cmd_vel` path, including the active-control lease
