@@ -3,7 +3,7 @@ id: doc-29
 title: 'Constraints: cyberbrick Alpine board'
 type: guide
 created_date: '2026-07-15 07:33'
-updated_date: '2026-07-21 19:39'
+updated_date: '2026-07-21 19:55'
 tags:
   - cyberbrick
   - alpine
@@ -15,7 +15,7 @@ Durable rules for building, shipping, and operating cyberbrick board software. T
 
 ## ABI and toolchain
 
-- Linkage policy is defined by the board-wide contract in doc-32 (Constraints: board musl static builds), which supersedes the original musl-dynamic-only rule that stood here: the Go daemon builds `CGO_ENABLED=0` static and the hardware worker links fully static musl (no `PT_INTERP` program header); the KVS master remains **dynamically linked against musl** and stock Alpine libcamera. CI must assert the linkage kind per binary (`release/scripts/assert-cyberbrick-musl.sh`).
+- Linkage policy is defined by the board-wide contract in doc-32 (Constraints: board musl static builds), which supersedes the original musl-dynamic-only rule that stood here: the Go daemon builds `CGO_ENABLED=0` static and the hardware worker links fully static musl (no `PT_INTERP` program header); the KVS master remains **dynamically linked against musl** and stock Alpine libcamera. CI must assert the linkage kind per binary (`release/scripts/assert-board-musl.sh`).
 - All release binaries are built in the **single pinned Alpine version** declared in the cyberbrick daemon justfile. The justfile build image, the release workflow containers, and the runbook's on-device apk branch must name the same Alpine release; bumping it is one coordinated change across all three plus a new cyberbrick release.
 - Dynamic linking couples the KVS master to the device's installed libraries: on-device `apk upgrade` and `mise upgrade` happen together in the same maintenance window, and a major Alpine release bump on the device requires a matching cyberbrick release built on that version first. The static daemon and hardware worker depend only on the kernel.
 - The KVS master links apk's **upstream libcamera** (not the Raspberry Pi fork unit uses). The linked soname is asserted in builds; libcamera apk upgrades that change the soname require a rebuild/release.

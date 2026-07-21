@@ -140,15 +140,15 @@ jobs:
           - component: daemon
             binary: txing-cyberbrick-daemon
             asset: txing-cyberbrick-daemon-linux-aarch64.tar.gz
-            kind: daemon
+            kind: static
           - component: kvs-master
             binary: txing-cyberbrick-kvs-master
             asset: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
-            kind: kvs-master
+            kind: musl-libcamera
           - component: hardware-worker
             binary: txing-cyberbrick-hardware-worker
             asset: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
-            kind: hardware-worker
+            kind: static
 
     steps:
       - name: Install pinned Alpine build dependencies
@@ -263,7 +263,7 @@ jobs:
           install -d "$package_dir"
           install -m 755 "$source" "$package_dir/$BINARY"
           strip "$package_dir/$BINARY"
-          sh release/scripts/assert-cyberbrick-musl.sh \
+          sh release/scripts/assert-board-musl.sh \
             "$package_dir/$BINARY" "$BINARY_KIND"
           tar -C "$package_dir" -czf "$asset_path" "$BINARY"
           archive_listing="$(tar -tzf "$asset_path")"

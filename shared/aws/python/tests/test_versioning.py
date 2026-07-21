@@ -400,8 +400,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         cyberbrick_workflow = (workflow_dir / "release-cyberbrick.yml").read_text(
             encoding="utf-8"
         )
-        cyberbrick_musl_assertion = (
-            REPO_ROOT / "release" / "scripts" / "assert-cyberbrick-musl.sh"
+        board_musl_assertion = (
+            REPO_ROOT / "release" / "scripts" / "assert-board-musl.sh"
         ).read_text(encoding="utf-8")
         release_cli = (
             REPO_ROOT / "release" / "src" / "txing_release" / "cli.py"
@@ -433,7 +433,6 @@ class VersionEnvironmentTests(unittest.TestCase):
         existing_go_workflows = {
             "rig": rig_workflow,
             "lambda": lambda_workflow,
-            "unit": unit_workflow,
         }
         for component, workflow in workflows.items():
             self.assertIn(f"name: Release {component}", workflow)
@@ -512,33 +511,43 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("txing-unit-daemon-linux-aarch64.tar.gz", lambda_workflow)
         self.assertNotIn("txing-enlist-lambda-linux-aarch64.zip", lambda_workflow)
 
-        self.assertIn("build-go-unit-daemon:", unit_workflow)
-        self.assertIn("build-kvs-master:", unit_workflow)
-        self.assertIn("build-hardware-worker:", unit_workflow)
+        self.assertIn("build:", unit_workflow)
+        self.assertIn("matrix:", unit_workflow)
+        self.assertIn("component: daemon", unit_workflow)
+        self.assertIn("component: kvs-master", unit_workflow)
+        self.assertIn("component: hardware-worker", unit_workflow)
         self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
-        self.assertIn("KVS_MASTER_BINARY: txing-unit-kvs-master", unit_workflow)
-        self.assertIn("HARDWARE_WORKER_BINARY: txing-unit-hardware-worker", unit_workflow)
-        self.assertIn("name: Build txing-unit-daemon", unit_workflow)
+        self.assertIn("KVS_MASTER_ASSET: txing-unit-kvs-master-linux-aarch64.tar.gz", unit_workflow)
+        self.assertIn("HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz", unit_workflow)
+        self.assertIn("image: docker.io/library/alpine:3.23.5", unit_workflow)
+        self.assertIn('test "$(cat /etc/alpine-release)" = "3.23.5"', unit_workflow)
+        self.assertIn('test "$(uname -m)" = "aarch64"', unit_workflow)
+        self.assertIn("libusrsctp-dev", unit_workflow)
+        self.assertIn("libcamera-dev", unit_workflow)
+        self.assertIn("grpc-plugins", unit_workflow)
         self.assertIn("cd devices/unit/daemon", unit_workflow)
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", unit_workflow)
         self.assertIn(
-            "-X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=${{ needs.metadata.outputs.version }}",
+            "github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=$VERSION",
             unit_workflow,
         )
-        self.assertIn("Build native KVS master", unit_workflow)
-        self.assertIn("Build txing-unit-hardware-worker", unit_workflow)
-        self.assertIn("image: debian:trixie", unit_workflow)
-        self.assertIn("URIs: https://archive.raspberrypi.com/debian/", unit_workflow)
-        self.assertIn("Trusted: yes", unit_workflow)
-        self.assertIn("apt-cache policy libcamera-dev libcamera0.7", unit_workflow)
+        self.assertNotIn("-linkmode=external", unit_workflow)
         self.assertIn("TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG", unit_workflow)
-        self.assertIn('grep -F "libcamera.so.0.7"', unit_workflow)
-        self.assertIn('grep -F "libcamera-base.so.0.7"', unit_workflow)
-        self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', unit_workflow)
-        self.assertIn('install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"', unit_workflow)
+        self.assertIn(
+            "release/scripts/build-board-static-toolchain.sh", unit_workflow
+        )
+        self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", unit_workflow)
+        self.assertIn("-DBUILD_TESTING=ON", unit_workflow)
+        self.assertIn("ctest --test-dir", unit_workflow)
+        self.assertIn("strip \"$package_dir/$BINARY\"", unit_workflow)
+        self.assertIn("sh release/scripts/assert-board-musl.sh", unit_workflow)
+        self.assertIn("kind: static", unit_workflow)
+        self.assertIn("kind: musl-libcamera", unit_workflow)
+        self.assertIn('archive_listing="$(tar -tzf "$asset_path")"', unit_workflow)
+        self.assertIn('release_asset_paths+=("$asset_path")', unit_workflow)
         self.assertNotIn("build-go-rig-binary:", unit_workflow)
         self.assertNotIn("build-lambda:", unit_workflow)
         self.assertNotIn("txing-sparkplug-manager-linux-aarch64.tar.gz", unit_workflow)
@@ -547,8 +556,13 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("just unit::daemon::kvs-submodules", unit_workflow)
         self.assertNotIn("just unit::daemon::kvs-build-native", unit_workflow)
         self.assertNotIn("just unit::board::", unit_workflow)
+        self.assertNotIn("image: debian:trixie", unit_workflow)
+        self.assertNotIn("apt-get", unit_workflow)
+        self.assertNotIn("archive.raspberrypi.com", unit_workflow)
         self.assertNotIn("raspberrypi.gpg.key", unit_workflow)
         self.assertNotIn("Signed-By:", unit_workflow)
+        self.assertNotIn("libcamera.so.0.7", unit_workflow)
+        self.assertNotIn("libcamera-base.so.0.7", unit_workflow)
         self.assertNotIn("curl https://mise.run | sh", unit_workflow)
         self.assertNotIn("mise/shims", unit_workflow)
 
@@ -599,7 +613,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("-DBUILD_TESTING=ON", cyberbrick_workflow)
         self.assertIn("ctest --test-dir", cyberbrick_workflow)
         self.assertIn("strip \"$package_dir/$BINARY\"", cyberbrick_workflow)
-        self.assertIn("sh release/scripts/assert-cyberbrick-musl.sh", cyberbrick_workflow)
+        self.assertIn("sh release/scripts/assert-board-musl.sh", cyberbrick_workflow)
+        self.assertIn("kind: static", cyberbrick_workflow)
+        self.assertIn("kind: musl-libcamera", cyberbrick_workflow)
         self.assertIn('archive_listing="$(tar -tzf "$asset_path")"', cyberbrick_workflow)
         self.assertIn(
             'release_asset_paths+=("$asset_path")', cyberbrick_workflow
@@ -611,14 +627,15 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("apt-get", cyberbrick_workflow)
         self.assertNotIn("archive.raspberrypi.com", cyberbrick_workflow)
 
-        self.assertIn("ELF 64-bit LSB.*ARM aarch64", cyberbrick_musl_assertion)
-        self.assertIn("/lib/ld-musl-aarch64.so.1", cyberbrick_musl_assertion)
-        self.assertIn("libc.musl-aarch64.so.1", cyberbrick_musl_assertion)
-        self.assertIn("grep -Fq 'not found'", cyberbrick_musl_assertion)
-        self.assertIn("libcamera.so.0.6", cyberbrick_musl_assertion)
-        self.assertIn("libcamera-base.so.0.6", cyberbrick_musl_assertion)
-        self.assertIn("statically linked|static-pie linked", cyberbrick_musl_assertion)
-        self.assertIn("grep -Fq 'INTERP'", cyberbrick_musl_assertion)
+        self.assertIn("ELF 64-bit LSB.*ARM aarch64", board_musl_assertion)
+        self.assertIn("/lib/ld-musl-aarch64.so.1", board_musl_assertion)
+        self.assertIn("libc.musl-aarch64.so.1", board_musl_assertion)
+        self.assertIn("grep -Fq 'not found'", board_musl_assertion)
+        self.assertIn("libcamera.so.0.6", board_musl_assertion)
+        self.assertIn("libcamera-base.so.0.6", board_musl_assertion)
+        self.assertIn("statically linked|static-pie linked", board_musl_assertion)
+        self.assertIn("grep -Fq 'INTERP'", board_musl_assertion)
+        self.assertIn("static|musl-libcamera", board_musl_assertion)
 
         for workflow in existing_go_workflows.values():
             self.assertIn("for version in 1.26 1.25 1.24", workflow)

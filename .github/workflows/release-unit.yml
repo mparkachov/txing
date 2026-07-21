@@ -16,9 +16,7 @@ env:
   RELEASE_TAG_PREFIX: unit-v
   UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
   KVS_MASTER_ASSET: txing-unit-kvs-master-linux-aarch64.tar.gz
-  KVS_MASTER_BINARY: txing-unit-kvs-master
   HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz
-  HARDWARE_WORKER_BINARY: txing-unit-hardware-worker
 
 jobs:
   metadata:
@@ -129,345 +127,155 @@ jobs:
             exit 1
           fi
 
-  build-go-unit-daemon:
-    name: Build txing-unit-daemon
-    runs-on: ubuntu-24.04-arm
-    needs: metadata
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Configure apt networking
-        shell: bash
-        run: |
-          set -euo pipefail
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-            [ -e "$source" ] || continue
-            sudo sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' "$source"
-          done
-          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99txing-ci-network >/dev/null
-
-      - name: Install system build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-
-          go_package=""
-          go_root=""
-          for version in 1.26 1.25 1.24; do
-            candidate="golang-${version}-go"
-            if apt-cache show "$candidate" >/dev/null 2>&1; then
-              go_package="$candidate"
-              go_root="/usr/lib/go-${version}"
-              break
-            fi
-          done
-          if [ -z "$go_package" ]; then
-            echo "Expected a Go 1.24+ compiler package in Ubuntu Noble apt repositories." >&2
-            exit 1
-          fi
-
-          sudo apt-get install -y \
-            build-essential ca-certificates file git "$go_package" \
-            pkg-config
-          echo "$go_root/bin" >>"$GITHUB_PATH"
-          "$go_root/bin/go" version
-
-      - name: Restore Go cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: go-unit-daemon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('devices/unit/daemon/go.mod', 'devices/unit/daemon/go.sum') }}
-          restore-keys: |
-            go-unit-daemon-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Test and build txing-unit-daemon
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd devices/unit/daemon
-          go version
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-            go build -trimpath \
-            -ldflags="-s -w -X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=${{ needs.metadata.outputs.version }}" \
-            -o "$RUNNER_TEMP/txing-unit-daemon" \
-            ./cmd/txing-unit-daemon
-
-      - name: Package ${{ env.UNIT_DAEMON_ASSET }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          source="$RUNNER_TEMP/txing-unit-daemon"
-          package_dir="$RUNNER_TEMP/package-txing-unit-daemon"
-          asset_path="$RUNNER_TEMP/$UNIT_DAEMON_ASSET"
-          test -x "$source"
-          rm -rf "$package_dir"
-          install -d "$package_dir"
-          install -m 755 "$source" "$package_dir/txing-unit-daemon"
-          if file "$package_dir/txing-unit-daemon" | grep -q 'ELF'; then
-            strip "$package_dir/txing-unit-daemon"
-          fi
-          file "$package_dir/txing-unit-daemon"
-          tar -C "$package_dir" -czf "$asset_path" txing-unit-daemon
-          archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "txing-unit-daemon" ]; then
-            echo "Expected $UNIT_DAEMON_ASSET to contain only root-level txing-unit-daemon, got:" >&2
-            printf '%s\n' "$archive_listing" >&2
-            exit 1
-          fi
-
-      - name: Upload ${{ env.UNIT_DAEMON_ASSET }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.UNIT_DAEMON_ASSET }}
-          path: ${{ runner.temp }}/${{ env.UNIT_DAEMON_ASSET }}
-          if-no-files-found: error
-
-  build-kvs-master:
-    name: Build txing-unit-kvs-master
+  build:
+    name: Build ${{ matrix.binary }}
     runs-on: ubuntu-24.04-arm
     needs: metadata
     container:
-      image: debian:trixie
-      env:
-        DEBIAN_FRONTEND: noninteractive
+      image: docker.io/library/alpine:3.23.5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: daemon
+            binary: txing-unit-daemon
+            asset: txing-unit-daemon-linux-aarch64.tar.gz
+            kind: static
+          - component: kvs-master
+            binary: txing-unit-kvs-master
+            asset: txing-unit-kvs-master-linux-aarch64.tar.gz
+            kind: musl-libcamera
+          - component: hardware-worker
+            binary: txing-unit-hardware-worker
+            asset: txing-unit-hardware-worker-linux-aarch64.tar.gz
+            kind: static
 
     steps:
-      - name: Install container bootstrap tools
-        shell: bash
+      - name: Install pinned Alpine build dependencies
+        shell: sh
         run: |
-          set -euo pipefail
-          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
-            >/etc/apt/apt.conf.d/99txing-ci-network
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git binutils file
+          set -eu
+          test "$(cat /etc/alpine-release)" = "3.23.5"
+          test "$(uname -m)" = "aarch64"
+          apk add --no-cache \
+            gcompat build-base cmake pkgconf git perl ca-certificates curl \
+            curl-dev openssl-dev openssl-libs-static log4cplus-dev libsrtp-dev \
+            libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
+            linux-headers protobuf-dev protobuf grpc-dev grpc-plugins \
+            go binutils file tar gzip
 
       - name: Check out repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Install native KVS master dependencies
-        shell: bash
+      - name: Build and test ${{ matrix.binary }}
+        env:
+          COMPONENT: ${{ matrix.component }}
+          BINARY: ${{ matrix.binary }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          AWS_KVS_SDK_COMMIT: bb106510cf74edd2c24881c1ae94ceaa0083d15c
+        shell: sh
         run: |
-          set -euo pipefail
-          cat >/etc/apt/sources.list.d/raspi.sources <<'APT_SOURCE'
-          Types: deb
-          URIs: https://archive.raspberrypi.com/debian/
-          Suites: trixie
-          Components: main
-          Architectures: arm64
-          Trusted: yes
-          APT_SOURCE
-          cat >/etc/apt/preferences.d/raspi-libcamera <<'APT_PREFERENCES'
-          Package: libcamera* python3-libcamera gstreamer1.0-libcamera
-          Pin: origin archive.raspberrypi.com
-          Pin-Priority: 1001
-          APT_PREFERENCES
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            build-essential pkg-config cmake perl file curl git ca-certificates \
-            libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev \
-            libusrsctp-dev libwebsockets-dev zlib1g-dev libcamera-dev \
-            libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
-          apt-cache policy libcamera-dev libcamera0.7
-          protoc --version
-          grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
-          test -x "$grpc_cpp_plugin_path"
-          file "$grpc_cpp_plugin_path"
-          ldd "$grpc_cpp_plugin_path"
+          set -eu
+          output="$RUNNER_TEMP/$BINARY"
 
-      - name: Build native KVS master
-        shell: bash
-        run: |
-          set -euo pipefail
+          case "$COMPONENT" in
+            daemon)
+              (
+                cd devices/unit/daemon
+                GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
+                GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+                  go build -trimpath \
+                    -ldflags="-s -w -X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=$VERSION" \
+                    -o "$output" \
+                    ./cmd/txing-unit-daemon
+              )
+              ;;
+            kvs-master)
+              source_dir="$GITHUB_WORKSPACE/devices/unit/board/kvs_master"
+              build_dir="$RUNNER_TEMP/build-txing-unit-kvs-master"
+              openssl_libdir="$(pkg-config --variable=libdir openssl)"
+              openssl_includedir="$(pkg-config --variable=includedir openssl)"
+              cmake \
+                -S "$source_dir" \
+                -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_TESTING=ON \
+                -DTXING_KVS_SYSTEM_CA_CERT_PATH="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}" \
+                -DTXING_KVS_GRPC_BRIDGE=ON \
+                -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$AWS_KVS_SDK_COMMIT" \
+                -DOPENSSL_USE_STATIC_LIBS=FALSE \
+                -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+                -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+                -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+              cmake --build "$build_dir" --config Release
+              ctest --test-dir "$build_dir" --output-on-failure
+              install -m 755 "$build_dir/$BINARY" "$output"
+              ;;
+            hardware-worker)
+              source_dir="$GITHUB_WORKSPACE/devices/unit/board/hardware_worker"
+              build_dir="$RUNNER_TEMP/build-txing-unit-hardware-worker"
+              toolchain_prefix="$RUNNER_TEMP/static-toolchain"
+              sh release/scripts/build-board-static-toolchain.sh "$toolchain_prefix"
+              PATH="$toolchain_prefix/bin:$PATH" cmake \
+                -S "$source_dir" \
+                -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_TESTING=ON \
+                -DTXING_HARDWARE_WORKER_GRPC=ON \
+                -DCMAKE_PREFIX_PATH="$toolchain_prefix" \
+                -DCMAKE_EXE_LINKER_FLAGS=-static \
+                -DOPENSSL_USE_STATIC_LIBS=TRUE \
+                -DZLIB_USE_STATIC_LIBS=ON
+              PATH="$toolchain_prefix/bin:$PATH" cmake --build "$build_dir" --config Release
+              ctest --test-dir "$build_dir" --output-on-failure
+              install -m 755 "$build_dir/$BINARY" "$output"
+              ;;
+            *)
+              echo "Unsupported unit release component: $COMPONENT" >&2
+              exit 2
+              ;;
+          esac
 
-          project_root="$PWD"
-          native_kvs_master_dir="$project_root/devices/unit/board/kvs_master"
-          native_kvs_master_build_dir="$native_kvs_master_dir/build"
-          board_video_proto="$project_root/devices/unit/proto/txing/unit/board_video/v1/board_video.proto"
-          aws_kvs_sdk_commit="bb106510cf74edd2c24881c1ae94ceaa0083d15c"
-          default_kvs_system_ca_cert_path="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}"
-
-          git config --global --add safe.directory "$PWD"
-          git ls-tree -r HEAD -- devices/unit/proto
-          if [ ! -f "$board_video_proto" ]; then
-            echo "BoardVideoBridge proto missing from checkout: $board_video_proto" >&2
-            git status --short >&2
-            find devices/unit -maxdepth 3 -type d | sort >&2
+          test -x "$output"
+          actual_version="$("$output" --version)"
+          expected_version="$BINARY $VERSION"
+          if [ "$actual_version" != "$expected_version" ]; then
+            echo "Expected '$expected_version', got '$actual_version'." >&2
             exit 1
           fi
 
-          openssl_libdir="$(pkg-config --variable=libdir openssl)"
-          openssl_includedir="$(pkg-config --variable=includedir openssl)"
-
-          cmake \
-            -S "$native_kvs_master_dir" \
-            -B "$native_kvs_master_build_dir" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF \
-            -DTXING_KVS_SYSTEM_CA_CERT_PATH="$default_kvs_system_ca_cert_path" \
-            -DTXING_KVS_GRPC_BRIDGE=ON \
-            -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$aws_kvs_sdk_commit" \
-            -DOPENSSL_USE_STATIC_LIBS=FALSE \
-            -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
-            -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
-            -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
-          cmake --build "$native_kvs_master_build_dir" --config Release
-
-          ldd devices/unit/board/kvs_master/build/txing-unit-kvs-master
-          if ldd devices/unit/board/kvs_master/build/txing-unit-kvs-master | grep -Fq "not found"; then
-            echo "txing-unit-kvs-master has unresolved shared libraries" >&2
-            exit 1
-          fi
-          ldd devices/unit/board/kvs_master/build/txing-unit-kvs-master | grep -F "libcamera.so.0.7"
-          ldd devices/unit/board/kvs_master/build/txing-unit-kvs-master | grep -F "libcamera-base.so.0.7"
-          kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"
-          test -x "$kvs_master_build_binary"
-          file "$kvs_master_build_binary"
-          install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"
-
-      - name: Package ${{ env.KVS_MASTER_ASSET }}
-        shell: bash
+      - name: Package and verify ${{ matrix.asset }}
+        env:
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
+          BINARY_KIND: ${{ matrix.kind }}
+        shell: sh
         run: |
-          set -euo pipefail
-          package_dir="$RUNNER_TEMP/package-$KVS_MASTER_BINARY"
-          asset_path="$RUNNER_TEMP/$KVS_MASTER_ASSET"
+          set -eu
+          source="$RUNNER_TEMP/$BINARY"
+          package_dir="$RUNNER_TEMP/package-$BINARY"
+          asset_path="$RUNNER_TEMP/$ASSET"
           rm -rf "$package_dir"
           install -d "$package_dir"
-          install -m 755 "$RUNNER_TEMP/$KVS_MASTER_BINARY" "$package_dir/$KVS_MASTER_BINARY"
-          if file "$package_dir/$KVS_MASTER_BINARY" | grep -q 'ELF'; then
-            strip "$package_dir/$KVS_MASTER_BINARY"
-          fi
-          file "$package_dir/$KVS_MASTER_BINARY"
-          tar -C "$package_dir" -czf "$asset_path" "$KVS_MASTER_BINARY"
+          install -m 755 "$source" "$package_dir/$BINARY"
+          strip "$package_dir/$BINARY"
+          sh release/scripts/assert-board-musl.sh \
+            "$package_dir/$BINARY" "$BINARY_KIND"
+          tar -C "$package_dir" -czf "$asset_path" "$BINARY"
           archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "$KVS_MASTER_BINARY" ]; then
-            echo "Expected $KVS_MASTER_ASSET to contain only root-level $KVS_MASTER_BINARY, got:" >&2
+          if [ "$archive_listing" != "$BINARY" ]; then
+            echo "Expected $ASSET to contain only root-level $BINARY, got:" >&2
             printf '%s\n' "$archive_listing" >&2
             exit 1
           fi
 
-      - name: Upload ${{ env.KVS_MASTER_ASSET }}
+      - name: Upload ${{ matrix.asset }}
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.KVS_MASTER_ASSET }}
-          path: ${{ runner.temp }}/${{ env.KVS_MASTER_ASSET }}
-          if-no-files-found: error
-
-  build-hardware-worker:
-    name: Build txing-unit-hardware-worker
-    runs-on: ubuntu-24.04-arm
-    needs: metadata
-    container:
-      image: debian:trixie
-      env:
-        DEBIAN_FRONTEND: noninteractive
-
-    steps:
-      - name: Install container bootstrap tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' \
-            >/etc/apt/apt.conf.d/99txing-ci-network
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git binutils file
-
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Install hardware worker dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            build-essential pkg-config cmake file git ca-certificates \
-            libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc
-          protoc --version
-          grpc_cpp_plugin_path="$(command -v grpc_cpp_plugin)"
-          test -x "$grpc_cpp_plugin_path"
-          file "$grpc_cpp_plugin_path"
-          ldd "$grpc_cpp_plugin_path"
-
-      - name: Build txing-unit-hardware-worker
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          project_root="$PWD"
-          hardware_worker_dir="$project_root/devices/unit/board/hardware_worker"
-          hardware_worker_build_dir="$hardware_worker_dir/build"
-          unit_hardware_proto="$project_root/devices/unit/proto/txing/unit/hardware/v1/unit_hardware.proto"
-
-          git config --global --add safe.directory "$PWD"
-          git ls-tree -r HEAD -- devices/unit/proto
-          if [ ! -f "$unit_hardware_proto" ]; then
-            echo "UnitHardware proto missing from checkout: $unit_hardware_proto" >&2
-            git status --short >&2
-            find devices/unit -maxdepth 4 -type d | sort >&2
-            exit 1
-          fi
-
-          cmake \
-            -S "$hardware_worker_dir" \
-            -B "$hardware_worker_build_dir" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=ON \
-            -DTXING_HARDWARE_WORKER_GRPC=ON
-          cmake --build "$hardware_worker_build_dir" --config Release --target txing-unit-hardware-worker-tests
-          ctest --test-dir "$hardware_worker_build_dir" --output-on-failure
-          cmake --build "$hardware_worker_build_dir" --config Release --target txing-unit-hardware-worker
-
-          hardware_worker_build_binary="devices/unit/board/hardware_worker/build/$HARDWARE_WORKER_BINARY"
-          test -x "$hardware_worker_build_binary"
-          ldd "$hardware_worker_build_binary"
-          if ldd "$hardware_worker_build_binary" | grep -Fq "not found"; then
-            echo "txing-unit-hardware-worker has unresolved shared libraries" >&2
-            exit 1
-          fi
-          file "$hardware_worker_build_binary"
-          install -m 755 "$hardware_worker_build_binary" "$RUNNER_TEMP/$HARDWARE_WORKER_BINARY"
-
-      - name: Package ${{ env.HARDWARE_WORKER_ASSET }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_dir="$RUNNER_TEMP/package-$HARDWARE_WORKER_BINARY"
-          asset_path="$RUNNER_TEMP/$HARDWARE_WORKER_ASSET"
-          rm -rf "$package_dir"
-          install -d "$package_dir"
-          install -m 755 "$RUNNER_TEMP/$HARDWARE_WORKER_BINARY" "$package_dir/$HARDWARE_WORKER_BINARY"
-          if file "$package_dir/$HARDWARE_WORKER_BINARY" | grep -q 'ELF'; then
-            strip "$package_dir/$HARDWARE_WORKER_BINARY"
-          fi
-          file "$package_dir/$HARDWARE_WORKER_BINARY"
-          tar -C "$package_dir" -czf "$asset_path" "$HARDWARE_WORKER_BINARY"
-          archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "$HARDWARE_WORKER_BINARY" ]; then
-            echo "Expected $HARDWARE_WORKER_ASSET to contain only root-level $HARDWARE_WORKER_BINARY, got:" >&2
-            printf '%s\n' "$archive_listing" >&2
-            exit 1
-          fi
-
-      - name: Upload ${{ env.HARDWARE_WORKER_ASSET }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.HARDWARE_WORKER_ASSET }}
-          path: ${{ runner.temp }}/${{ env.HARDWARE_WORKER_ASSET }}
+          name: ${{ matrix.asset }}
+          path: ${{ runner.temp }}/${{ matrix.asset }}
           if-no-files-found: error
 
   publish:
@@ -475,9 +283,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     needs:
       - metadata
-      - build-go-unit-daemon
-      - build-kvs-master
-      - build-hardware-worker
+      - build
 
     steps:
       - name: Download release assets
@@ -522,6 +328,7 @@ jobs:
             echo "- Version: $VERSION"
             echo "- Tag: $TAG"
             echo "- Commit: $RELEASE_TARGET"
+            echo "- Build image: docker.io/library/alpine:3.23.5"
             echo "- Assets:"
             for asset in "${release_assets[@]}"; do
               echo "  - $asset"

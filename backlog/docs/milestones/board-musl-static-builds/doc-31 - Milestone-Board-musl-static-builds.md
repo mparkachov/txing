@@ -43,6 +43,6 @@ The milestone is complete when no CI or justfile build path uses Debian containe
 - Architecture spec: `backlog/docs/architecture/board-musl-static-builds/doc-30 - Board-musl-static-builds-architecture.md`
 - Constraints: `backlog/docs/constraints/board-musl-static-builds/doc-32 - Constraints-board-musl-static-builds.md` (supersedes the musl-dynamic-only ABI clause of doc-29)
 - Parent milestone task: `TASK-23` (milestone `m-4`; note the archived rig milestone task in `backlog/archive/tasks/` also carries the id task-23)
-- Alpine reference implementation: `.github/workflows/release-cyberbrick.yml`, `devices/cyberbrick/daemon/justfile`, `release/scripts/assert-cyberbrick-musl.sh`
+- Alpine reference implementation: `.github/workflows/release-cyberbrick.yml`, `devices/cyberbrick/daemon/justfile`, `release/scripts/assert-board-musl.sh` (generalized from the cyberbrick-only assert script by TASK-23.4)
 - Debian surfaces being retired: `.github/workflows/release-unit.yml`, `devices/unit/daemon/justfile`
 - Toolchain proof precedent: `backlog/tasks/task-22.1 - Alpine-musl-toolchain-is-proven-for-the-cyberbrick-board-stack.md` and `backlog/docs/architecture/cyberbrick-device-type/doc-27 - Cyberbrick-device-type-architecture.md`
