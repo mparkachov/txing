@@ -131,8 +131,6 @@ jobs:
     name: Build ${{ matrix.binary }}
     runs-on: ubuntu-24.04-arm
     needs: metadata
-    container:
-      image: docker.io/library/alpine:3.23.5
     strategy:
       fail-fast: false
       matrix:
@@ -151,9 +149,29 @@ jobs:
             kind: static
 
     steps:
-      - name: Install pinned Alpine build dependencies
-        shell: sh
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # JavaScript actions cannot run inside musl containers on arm64
+      # runners, so the job runs on the host and drives the pinned Alpine
+      # build container through docker exec. Workspace and temp are mounted
+      # at their host paths so step bodies see identical locations.
+      - name: Start pinned Alpine build container
+        shell: bash
         run: |
+          docker run -d --name board-build \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" \
+            docker.io/library/alpine:3.23.5 \
+            tail -f /dev/null
+
+      - name: Install pinned Alpine build dependencies
+        shell: bash
+        run: |
+          docker exec -i board-build sh <<'EOF'
           set -eu
           test "$(cat /etc/alpine-release)" = "3.23.5"
           test "$(uname -m)" = "aarch64"
@@ -163,11 +181,8 @@ jobs:
             libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
             linux-headers protobuf-dev protobuf grpc-dev grpc-plugins \
             go binutils file tar gzip
-
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+          git config --global --add safe.directory '*'
+          EOF
 
       - name: Build and test ${{ matrix.binary }}
         env:
@@ -175,8 +190,16 @@ jobs:
           BINARY: ${{ matrix.binary }}
           VERSION: ${{ needs.metadata.outputs.version }}
           AWS_KVS_SDK_COMMIT: bb106510cf74edd2c24881c1ae94ceaa0083d15c
-        shell: sh
+        shell: bash
         run: |
+          docker exec -i \
+            -e COMPONENT="$COMPONENT" \
+            -e BINARY="$BINARY" \
+            -e VERSION="$VERSION" \
+            -e AWS_KVS_SDK_COMMIT="$AWS_KVS_SDK_COMMIT" \
+            -e GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            -e RUNNER_TEMP="$RUNNER_TEMP" \
+            board-build sh <<'EOF'
           set -eu
           output="$RUNNER_TEMP/$BINARY"
 
@@ -245,14 +268,22 @@ jobs:
             echo "Expected '$expected_version', got '$actual_version'." >&2
             exit 1
           fi
+          EOF
 
       - name: Package and verify ${{ matrix.asset }}
         env:
           BINARY: ${{ matrix.binary }}
           ASSET: ${{ matrix.asset }}
           BINARY_KIND: ${{ matrix.kind }}
-        shell: sh
+        shell: bash
         run: |
+          docker exec -i \
+            -e BINARY="$BINARY" \
+            -e ASSET="$ASSET" \
+            -e BINARY_KIND="$BINARY_KIND" \
+            -e GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            -e RUNNER_TEMP="$RUNNER_TEMP" \
+            board-build sh <<'EOF'
           set -eu
           source="$RUNNER_TEMP/$BINARY"
           package_dir="$RUNNER_TEMP/package-$BINARY"
@@ -270,6 +301,7 @@ jobs:
             printf '%s\n' "$archive_listing" >&2
             exit 1
           fi
+          EOF
 
       - name: Upload ${{ matrix.asset }}
         uses: actions/upload-artifact@v7
