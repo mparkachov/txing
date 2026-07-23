@@ -157,7 +157,10 @@ reboot
 ```
 
 All remaining steps run as `root` on the sys install while the root
-filesystem is still writable.
+filesystem is still writable. `setup-disk -m sys` writes a UUID-based
+`/etc/fstab` and mounts the boot FAT at `/boot` (not `/media/mmcblk0p1`, which
+only existed during the diskless boot above); steps 6 and 7 use `/boot` and
+those UUIDs.
 
 ### 2. Install OS Packages
 
@@ -448,31 +451,48 @@ tail -n 160 /var/log/txing-cyberbrick-kvs-master.log
 Expected:
 
 - all three services are `started` and stay up under `supervise-daemon`
-- the daemon log includes `version=<release-version>`
+- the daemon's local OpenRC log
+  (`/var/log/txing-cyberbrick-daemon.log`) is empty by design: the Go daemon
+  ships logs to CloudWatch (`txing/<town>/<rig>/<thing>`), not stdout. Confirm
+  it locally by a stable single daemon PID that is not respawning and by the
+  bound bridge socket; version, MQTT connect, and state publishes appear in
+  CloudWatch
 - the daemon binds `/run/txing-cyberbrick-daemon/board-video-bridge.sock`
 - the hardware worker binds
   `/run/txing-cyberbrick-hardware-worker/cyberbrick-hardware.sock`
 - the worker logs version and local actuator readiness or a clear hardware
-  error
-- MQTT connects
-- retained `board`, dynamic `mcp`, and `video` state is published
+  error (a missing `/sys/class/pwm/pwmchip0` before the PWM overlay in
+  [Enable PWM Overlay](#6-enable-pwm-overlay) is expected)
+- MQTT connects and retained `board`, dynamic `mcp`, and `video` state is
+  published (visible in CloudWatch)
 - the KVS master service reaches READY over the bridge when camera and
-  signaling are available
+  signaling are available; with no camera attached it completes signaling and
+  then exits on `configured camera index is not available` and
+  supervise-daemon retires it to `failed` — expected until a camera is present
 - REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
   and `video` capability state
 
 ### 6. Enable PWM Overlay
 
-Append this to `usercfg.txt` on the boot FAT partition (the stock Raspberry
-Pi `config.txt` includes it) while the partition is writable:
+After `setup-disk -m sys`, the boot FAT partition is mounted at `/boot` (the
+`/media/mmcblk0p1` mount only exists during the diskless boot in step 1). Add
+the overlay while `/boot` is writable. If `config.txt` includes `usercfg.txt`,
+append to `usercfg.txt`; otherwise append to `config.txt` directly:
 
-```ini
-dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4
+```sh
+grep -q 'pwm-2chan' /boot/config.txt /boot/usercfg.txt 2>/dev/null || {
+  if grep -q 'include usercfg.txt' /boot/config.txt; then
+    printf 'dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4\n' >> /boot/usercfg.txt
+  else
+    printf 'dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4\n' >> /boot/config.txt
+  fi
+}
 ```
 
 The `pwm-2chan.dtbo` overlay ships in Alpine's `raspberrypi-bootloader`
-content already present on the boot FAT partition. Restart after changing the
-overlay so PWM devices exist before motor validation.
+content already present on the boot FAT partition. Reboot after changing the
+overlay so `/sys/class/pwm/pwmchip0` exists; without it the hardware worker
+logs `PWM chip path does not exist` on every start.
 
 ### 7. Configure Read-Only Root
 
@@ -502,24 +522,34 @@ rc-service networking restart
 getent hosts example.com
 ```
 
-Use this `fstab` layout (partition device names are stable in the Pi's SD
-slot; verify with `lsblk` before writing):
+`setup-disk -m sys` writes a UUID-based fstab with the root ext4 at `/` and
+the boot FAT at `/boot`. Read the two UUIDs from `blkid` (root is the ext4
+partition, boot is the vfat partition) and set both to `ro`, adding the
+tmpfs mounts:
+
+```sh
+blkid   # note the ext4 (root) and vfat (boot) UUIDs
+```
 
 ```fstab
-/dev/mmcblk0p1  /media/mmcblk0p1  vfat  defaults,ro,noatime  0 2
-/dev/mmcblk0p2  /                 ext4  defaults,ro,noatime  0 1
-tmpfs           /tmp              tmpfs nosuid,nodev,mode=1777,size=32M 0 0
-tmpfs           /var/tmp          tmpfs nosuid,nodev,exec,mode=1777,size=96M 0 0
-tmpfs           /var/log          tmpfs nosuid,nodev,mode=0755,size=16M 0 0
-tmpfs           /var/lib/chrony   tmpfs nosuid,nodev,mode=0755,size=4M 0 0
+UUID=<root-ext4-uuid>  /      ext4  ro,noatime  0 1
+UUID=<boot-vfat-uuid>  /boot  vfat  ro,noatime  0 2
+tmpfs  /tmp             tmpfs  nosuid,nodev,mode=1777,size=32M      0 0
+tmpfs  /var/tmp         tmpfs  nosuid,nodev,exec,mode=1777,size=96M 0 0
+tmpfs  /var/log         tmpfs  nosuid,nodev,mode=0755,size=16M      0 0
+tmpfs  /var/lib/chrony  tmpfs  nosuid,nodev,mode=0755,size=4M       0 0
 ```
+
+The RPi firmware reads `config.txt`/`cmdline.txt` from the FAT before Linux
+mounts it, so a read-only `/boot` does not affect boot; `root-rw` remounts it
+writable for later overlay or kernel changes.
 
 Useful shell aliases:
 
 ```sh
 cat >> /root/.profile <<'EOF'
-alias root-rw='mount -o remount,rw /; mount -o remount,rw /media/mmcblk0p1; umount /var/tmp; umount /tmp'
-alias root-ro='rm -rf /var/tmp/* /tmp/* ; sync; mount -o remount,ro /media/mmcblk0p1 ; mount -o remount,ro / ; mount /tmp ; mount /var/tmp'
+alias root-rw='mount -o remount,rw /; mount -o remount,rw /boot; umount /var/tmp 2>/dev/null; umount /tmp 2>/dev/null'
+alias root-ro='rm -rf /var/tmp/* /tmp/* ; sync; mount -o remount,ro /boot ; mount -o remount,ro / ; mount /tmp ; mount /var/tmp'
 EOF
 ```
 
@@ -566,10 +596,12 @@ Expected:
 - root filesystem is read-only
 - `/etc/resolv.conf` points at `/run/resolv.conf` and DNS resolves through
   udhcpc
-- all three services start under OpenRC without a source checkout and without
-  network access to GitHub
-- daemon log includes `version=<release-version>`
-- MQTT connects and retained board/MCP/video state is published
+- the daemon and hardware worker start under OpenRC and stay up without a
+  source checkout and without network access to GitHub; the KVS master also
+  autostarts and completes signaling but stays up only with a camera attached
+- the daemon reports version, MQTT connect, and retained board/MCP/video state
+  to CloudWatch (its local OpenRC log is empty by design); confirm locally by a
+  stable daemon PID and the bound bridge socket
 
 First bring-up on a physical board must additionally confirm the video and
 motor assumptions carried over from unit before declaring parity: camera
