@@ -20,7 +20,7 @@ native_hardware_worker_test_build_dir := native_hardware_worker_dir + "/build-te
 aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
 default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/ca-certificates.crt")
 
-alpine_build_image := "docker.io/library/alpine:3.23.5"
+alpine_build_image := "docker.io/library/alpine:3.24.1"
 alpine_build_platform := "linux/arm64"
 docker_build_dir := daemon_dir + "/target/docker-build"
 docker_build_metadata := docker_build_dir + "/metadata.json"
@@ -233,7 +233,7 @@ docker-smoke:
       sh -se <<'ALPINE_BUILD'
     set -eu
 
-    expected_release="3.23.5"
+    expected_release="3.24.1"
     actual_release="$(cat /etc/alpine-release)"
     if [ "$actual_release" != "$expected_release" ]; then
       echo "Expected Alpine $expected_release, got $actual_release" >&2
@@ -339,8 +339,8 @@ docker-smoke:
       ctest --test-dir "$kvs_build" --output-on-failure
       assert_musl_dynamic "$kvs_build/txing-cyberbrick-kvs-master" "txing-cyberbrick-kvs-master"
       kvs_ldd="$(ldd "$kvs_build/txing-cyberbrick-kvs-master")"
-      printf '%s\n' "$kvs_ldd" | grep -F 'libcamera.so.0.6'
-      printf '%s\n' "$kvs_ldd" | grep -F 'libcamera-base.so.0.6'
+      printf '%s\n' "$kvs_ldd" | grep -F 'libcamera.so.0.7'
+      printf '%s\n' "$kvs_ldd" | grep -F 'libcamera-base.so.0.7'
       "$kvs_build/txing-cyberbrick-kvs-master" --version
       install -m 755 "$kvs_build/txing-cyberbrick-kvs-master" /out/txing-cyberbrick-kvs-master
     }

@@ -6,7 +6,7 @@
 namespace txing::board::kvs_master {
 
 #ifndef TXING_CYBERBRICK_KVS_MASTER_VERSION
-#define TXING_CYBERBRICK_KVS_MASTER_VERSION "0.15.4"
+#define TXING_CYBERBRICK_KVS_MASTER_VERSION "0.15.5"
 #endif
 
 inline constexpr std::string_view kTxingCyberbrickKvsMasterVersion =

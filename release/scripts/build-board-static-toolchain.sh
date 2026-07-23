@@ -13,7 +13,7 @@ absl_version="20250814.1"
 protobuf_version="31.1"
 re2_version="2025-11-05"
 cares_version="1.34.8"
-grpc_version="1.76.0"
+grpc_version="1.78.1"
 
 marker="$prefix/.txing-static-toolchain"
 spec="alpine=$(cat /etc/alpine-release) absl=$absl_version protobuf=$protobuf_version re2=$re2_version cares=$cares_version grpc=$grpc_version"

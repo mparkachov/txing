@@ -50,8 +50,8 @@ case "$kind" in
       echo "Board release binary does not resolve musl libc: $binary" >&2
       exit 1
     fi
-    printf '%s\n' "$ldd_output" | grep -F 'libcamera.so.0.6'
-    printf '%s\n' "$ldd_output" | grep -F 'libcamera-base.so.0.6'
+    printf '%s\n' "$ldd_output" | grep -F 'libcamera.so.0.7'
+    printf '%s\n' "$ldd_output" | grep -F 'libcamera-base.so.0.7'
     ;;
   *)
     echo "unknown board binary linkage kind: $kind" >&2

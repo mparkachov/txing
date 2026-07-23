@@ -164,7 +164,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/static-toolchain
-          key: board-static-toolchain-alpine3.23.5-${{ hashFiles('release/scripts/build-board-static-toolchain.sh') }}
+          key: board-static-toolchain-alpine3.24.1-${{ hashFiles('release/scripts/build-board-static-toolchain.sh') }}
 
       # JavaScript actions cannot run inside musl containers on arm64
       # runners, so the job runs on the host and drives the pinned Alpine
@@ -177,7 +177,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             -v "$RUNNER_TEMP:$RUNNER_TEMP" \
             -w "$GITHUB_WORKSPACE" \
-            docker.io/library/alpine:3.23.5 \
+            docker.io/library/alpine:3.24.1 \
             tail -f /dev/null
 
       - name: Install pinned Alpine build dependencies
@@ -185,7 +185,7 @@ jobs:
         run: |
           docker exec -i board-build sh <<'EOF'
           set -eu
-          test "$(cat /etc/alpine-release)" = "3.23.5"
+          test "$(cat /etc/alpine-release)" = "3.24.1"
           test "$(uname -m)" = "aarch64"
           apk add --no-cache \
             gcompat build-base cmake pkgconf git perl ca-certificates curl \
@@ -414,7 +414,7 @@ jobs:
             echo "- Version: $VERSION"
             echo "- Tag: $TAG"
             echo "- Commit: $RELEASE_TARGET"
-            echo "- Build image: docker.io/library/alpine:3.23.5"
+            echo "- Build image: docker.io/library/alpine:3.24.1"
             echo "- Assets:"
             for asset in "${release_assets[@]}"; do
               echo "  - $asset"

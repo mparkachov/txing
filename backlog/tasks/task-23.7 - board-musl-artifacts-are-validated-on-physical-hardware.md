@@ -4,7 +4,7 @@ title: board musl artifacts are validated on physical hardware
 status: To Do
 assignee: []
 created_date: '2026-07-21 09:01'
-updated_date: '2026-07-22 20:32'
+updated_date: '2026-07-23 18:52'
 labels: []
 milestone: m-4
 dependencies:
@@ -47,4 +47,6 @@ Detour found and fixed during validation: (1) first upgrade pulled unit-v0.15.4,
 Upgrade (writable-root window): mise upgrade of the static pair to Alpine-built unit-v0.15.6. Post-upgrade checks: txing-unit-daemon 0.15.6 ldd 'not a dynamic executable'; txing-unit-hardware-worker 0.15.6 ldd 'statically linked' (static-pie); txing-unit-kvs-master pinned at 0.14.14, ldd resolves libcamera.so.0.7 and libcamera-base.so.0.7.
 
 Post-reboot: root filesystem ro; txing-unit.target and all three services active in the fresh boot; daemon logs version 0.15.6; frozen KVS master 0.14.14 streaming - TXING_VIEWER_CONNECTED and TXING_MCP_DATACHANNEL_OPEN within ~8s of service start. Note: hardware worker systemd start time displays as May 23 due to Pi no-RTC clock skew at early boot (before chrony sync); the current-boot journal logs version 0.15.6 for it, proving the new static binary is the running one.
+
+Milestone finding during AC2 prep: fresh Alpine install came up on 3.24.1, and the operator decided the stack should target current Alpine instead of pinning back to v3.23. Coordinated Alpine bump 3.23.5 -> 3.24.1 applied across both release workflows (image, release check, publish notes, toolchain cache key), both daemon justfiles, assert-board-musl.sh, smoke-board-cross-distro.sh, build-board-static-toolchain.sh (grpc 1.76.0 -> 1.78.1 to match v3.24 apk; absl/protobuf/re2/c-ares apk versions unchanged), docs (cyberbrick-board.md, artifacts.md, installation.md), and test_versioning.py pins. Alpine v3.24 ships libcamera 0.7.1, so the Alpine soname is now libcamera.so.0.7 - identical to Debian trixie's; linkage checks distinguish ABIs by ELF interpreter, not soname, and 0.6-vs-0.7 test guards were flipped to guard against stale 0.6 references. Runbook gaps fixed: community apk repo must be enabled (libcamera/grpc/re2 live there); hostname requirement relaxed (thing id lives in daemon config). cyberbrick-v0.15.4 (first-ever cyberbrick release, built on 3.23.5) is incompatible with the 3.24.1 board (libcamera 0.6 linkage); cyberbrick bumped to 0.15.5 for the first 3.24.1-built release. Versioning tests: 143 passed after the change.
 <!-- SECTION:NOTES:END -->

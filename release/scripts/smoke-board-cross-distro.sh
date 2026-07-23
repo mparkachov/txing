@@ -17,7 +17,7 @@ kind="$2"
 expected="$3"
 
 debian_image="debian:trixie"
-alpine_image="docker.io/library/alpine:3.23.5"
+alpine_image="docker.io/library/alpine:3.24.1"
 platform="linux/arm64"
 alpine_runtime_packages="ca-certificates curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev libwebsockets-dev zlib-dev libcamera-dev protobuf-dev grpc-dev"
 

@@ -139,7 +139,7 @@ Linux. Production cyberbrick boards run the root-owned Go
 Release assets through root-owned `mise`, supervised by OpenRC on a read-only
 root filesystem. The daemon and hardware worker are fully static musl
 binaries; the KVS master is dynamically linked against musl and Alpine
-libcamera, so the installed Alpine `v3.23` packages and the release stream
+libcamera, so the installed Alpine `v3.24` packages and the release stream
 move together for the camera.
 
 Canonical cyberbrick board installation, Alpine sys install, OpenRC service
@@ -149,7 +149,7 @@ live in
 
 The short production flow is:
 
-1. Write the Alpine `v3.23` aarch64 Raspberry Pi image, run `setup-alpine`,
+1. Write the Alpine `v3.24` aarch64 Raspberry Pi image, run `setup-alpine`,
    and convert the card to a persistent install with `setup-disk -m sys`.
 2. Install the runtime apk packages and root-owned `mise`.
 3. Generate the daemon environment/certificate bundle on the operator machine

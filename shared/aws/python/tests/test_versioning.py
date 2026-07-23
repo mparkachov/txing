@@ -525,8 +525,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("KVS_MASTER_ASSET: txing-unit-kvs-master-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz", unit_workflow)
-        self.assertIn("image: docker.io/library/alpine:3.23.5", unit_workflow)
-        self.assertIn('test "$(cat /etc/alpine-release)" = "3.23.5"', unit_workflow)
+        self.assertIn("image: docker.io/library/alpine:3.24.1", unit_workflow)
+        self.assertIn('test "$(cat /etc/alpine-release)" = "3.24.1"', unit_workflow)
         self.assertIn('test "$(uname -m)" = "aarch64"', unit_workflow)
         self.assertIn("libusrsctp-dev", unit_workflow)
         self.assertIn("libcamera-dev", unit_workflow)
@@ -564,8 +564,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("archive.raspberrypi.com", unit_workflow)
         self.assertNotIn("raspberrypi.gpg.key", unit_workflow)
         self.assertNotIn("Signed-By:", unit_workflow)
-        self.assertNotIn("libcamera.so.0.7", unit_workflow)
-        self.assertNotIn("libcamera-base.so.0.7", unit_workflow)
+        self.assertNotIn("libcamera.so.0.6", unit_workflow)
+        self.assertNotIn("libcamera-base.so.0.6", unit_workflow)
         self.assertNotIn("curl https://mise.run | sh", unit_workflow)
         self.assertNotIn("mise/shims", unit_workflow)
 
@@ -586,9 +586,9 @@ class VersionEnvironmentTests(unittest.TestCase):
             "HARDWARE_WORKER_ASSET: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz",
             cyberbrick_workflow,
         )
-        self.assertIn("image: docker.io/library/alpine:3.23.5", cyberbrick_workflow)
+        self.assertIn("image: docker.io/library/alpine:3.24.1", cyberbrick_workflow)
         self.assertIn(
-            'test "$(cat /etc/alpine-release)" = "3.23.5"',
+            'test "$(cat /etc/alpine-release)" = "3.24.1"',
             cyberbrick_workflow,
         )
         self.assertIn('test "$(uname -m)" = "aarch64"', cyberbrick_workflow)
@@ -634,15 +634,15 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("/lib/ld-musl-aarch64.so.1", board_musl_assertion)
         self.assertIn("libc.musl-aarch64.so.1", board_musl_assertion)
         self.assertIn("grep -Fq 'not found'", board_musl_assertion)
-        self.assertIn("libcamera.so.0.6", board_musl_assertion)
-        self.assertIn("libcamera-base.so.0.6", board_musl_assertion)
+        self.assertIn("libcamera.so.0.7", board_musl_assertion)
+        self.assertIn("libcamera-base.so.0.7", board_musl_assertion)
         self.assertIn("statically linked|static-pie linked", board_musl_assertion)
         self.assertIn("grep -Fq 'INTERP'", board_musl_assertion)
         self.assertIn("static|musl-libcamera", board_musl_assertion)
 
         self.assertIn('debian_image="debian:trixie"', board_smoke_script)
         self.assertIn(
-            'alpine_image="docker.io/library/alpine:3.23.5"', board_smoke_script
+            'alpine_image="docker.io/library/alpine:3.24.1"', board_smoke_script
         )
         self.assertIn('platform="linux/arm64"', board_smoke_script)
         self.assertIn("libcamera-dev", board_smoke_script)
@@ -707,7 +707,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("release/versions/unit", unit_daemon_justfile)
         self.assertNotIn("/" + "VERSION", unit_daemon_justfile)
         self.assertIn(
-            'alpine_build_image := "docker.io/library/alpine:3.23.5"',
+            'alpine_build_image := "docker.io/library/alpine:3.24.1"',
             cyberbrick_daemon_justfile,
         )
         self.assertIn(
@@ -749,7 +749,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("docker-build:", justfile)
         self.assertIn('docker_build_dir := daemon_dir + "/target/docker-build"', justfile)
         self.assertIn(
-            'alpine_build_image := "docker.io/library/alpine:3.23.5"', justfile
+            'alpine_build_image := "docker.io/library/alpine:3.24.1"', justfile
         )
         self.assertNotIn("debian:trixie", justfile)
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", justfile)
@@ -759,10 +759,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("just unit::daemon::kvs-build-native", justfile)
         self.assertNotIn("just unit::board::", justfile)
         self.assertNotIn("archive.raspberrypi.com", justfile)
-        self.assertNotIn("libcamera.so.0.7", justfile)
-        self.assertNotIn("libcamera-base.so.0.7", justfile)
-        self.assertIn("libcamera.so.0.6", justfile)
-        self.assertIn("libcamera-base.so.0.6", justfile)
+        self.assertNotIn("libcamera.so.0.6", justfile)
+        self.assertNotIn("libcamera-base.so.0.6", justfile)
+        self.assertIn("libcamera.so.0.7", justfile)
+        self.assertIn("libcamera-base.so.0.7", justfile)
         self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", justfile)
         self.assertIn("statically linked|static-pie linked", justfile)
         self.assertIn("outputs: {", justfile)
@@ -885,7 +885,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("not a dynamic executable", board_docs)
         self.assertIn("libcamera.so.0.7", board_docs)
         self.assertIn("libcamera.so.0.7", artifacts_docs)
-        self.assertIn("libcamera.so.0.6", artifacts_docs)
+        self.assertNotIn("libcamera.so.0.6", artifacts_docs)
         self.assertIn("assert-board-musl.sh", artifacts_docs)
         self.assertIn("last Debian-built KVS master", artifacts_docs)
         self.assertIn("installed `latest` binaries before rebooting", artifacts_docs)
@@ -1014,8 +1014,8 @@ class VersionEnvironmentTests(unittest.TestCase):
             cyberbrick_board_docs,
         )
         self.assertIn("ld-musl-aarch64.so.1", cyberbrick_board_docs)
-        self.assertIn("libcamera.so.0.6", cyberbrick_board_docs)
-        self.assertIn("libcamera-base.so.0.6", cyberbrick_board_docs)
+        self.assertIn("libcamera.so.0.7", cyberbrick_board_docs)
+        self.assertIn("libcamera-base.so.0.7", cyberbrick_board_docs)
         self.assertIn('RESOLV_CONF="/run/resolv.conf"', cyberbrick_board_docs)
         self.assertIn("alias root-rw=", cyberbrick_board_docs)
         self.assertIn("alias root-ro=", cyberbrick_board_docs)
@@ -1038,7 +1038,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("systemctl", cyberbrick_board_docs)
         self.assertNotIn("apt-get", cyberbrick_board_docs)
         self.assertNotIn("txing-unit-daemon", cyberbrick_board_docs)
-        self.assertNotIn("libcamera.so.0.7", cyberbrick_board_docs)
+        self.assertNotIn("libcamera.so.0.6", cyberbrick_board_docs)
 
         self.assertIn("components/cyberbrick-board.md", installation_docs)
         self.assertIn("rc-update add <service> default", installation_docs)

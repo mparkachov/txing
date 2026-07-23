@@ -43,7 +43,7 @@ is documented in
 ## OS And ABI Contract
 
 - Alpine Linux aarch64 on Raspberry Pi Zero 2 W, **sys install**
-  (`setup-disk -m sys`), device apk repositories on the Alpine `v3.23` branch.
+  (`setup-disk -m sys`), device apk repositories on the Alpine `v3.24` branch.
 - Default Alpine stack: apk, ifupdown-ng + wpa_supplicant + udhcpc
   networking, chronyd time sync, OpenRC init. No systemd and no
   NetworkManager on the board.
@@ -52,8 +52,8 @@ is documented in
   for them (musl `ldd` refuses them or lists only the loader).
 - The KVS master is the only musl-dynamic binary: it shows the
   `/lib/ld-musl-aarch64.so.1` interpreter, fully resolved `ldd` output, and
-  links Alpine's upstream libcamera (`libcamera.so.0.6` and
-  `libcamera-base.so.0.6`). If its `ldd` reports `not found` libraries or a
+  links Alpine's upstream libcamera (`libcamera.so.0.7` and
+  `libcamera-base.so.0.7`). If its `ldd` reports `not found` libraries or a
   non-musl interpreter, the release asset was built for the wrong OS or the
   wrong Alpine branch and must be replaced.
 - The pinned Alpine build image in the cyberbrick daemon justfile, the
@@ -95,7 +95,7 @@ or call GitHub. If a board needs new binaries, follow
 Assumptions:
 
 - Raspberry Pi Zero 2 W
-- Alpine Linux aarch64 Raspberry Pi image from the `v3.23` branch
+- Alpine Linux aarch64 Raspberry Pi image from the `v3.24` branch
 - AWS resources and the target cyberbrick thing already exist
   (`just aws::deploy` once per stack, then
   `just aws::deploy-device <raspi-rig-id> cyberbrick <name>`)
@@ -104,7 +104,7 @@ Assumptions:
 
 ### 1. Create The Card And Sys Install
 
-Prepare the SD card on the operator machine with the Alpine `v3.23`
+Prepare the SD card on the operator machine with the Alpine `v3.24`
 Raspberry Pi aarch64 image (`alpine-rpi-<version>-aarch64`) following the
 Alpine Raspberry Pi imaging instructions, boot the board from it, and log in
 on the console as `root` (empty password).
@@ -117,7 +117,8 @@ setup-alpine
 
 Answers that matter for a cyberbrick board:
 
-- hostname: the thing id (for example `cyberbrick-bl95f2`)
+- hostname: any stable name; board identity is the thing id carried in the
+  daemon config, the hostname is cosmetic
 - interface: `wlan0` with the deployment Wi-Fi SSID and passphrase
   (setup-alpine configures ifupdown-ng + wpa_supplicant + udhcpc), or `eth0`
   with a wired adapter
@@ -152,7 +153,11 @@ filesystem is still writable.
 
 ### 2. Install OS Packages
 
+`setup-alpine` enables only the `main` apk repository, but libcamera, grpc,
+and re2 ship in `community`; uncomment it first:
+
 ```sh
+sed -i 's|^#\(http.*/community\)$|\1|' /etc/apk/repositories
 apk update
 apk upgrade
 apk add \
@@ -164,11 +169,11 @@ apk add \
 
 The dev packages are the proven runtime superset from the pinned Alpine build
 container: installing them guarantees every shared library the musl-dynamic
-release KVS master resolves at run time, on the same `v3.23` branch the
+release KVS master resolves at run time, on the same `v3.24` branch the
 release was built against (the static daemon and hardware worker need none of
 them). The manual install checks below run `ldd` on the resolved
 binaries before the services are enabled. The release KVS master must link
-`libcamera.so.0.6` and `libcamera-base.so.0.6` from Alpine `v3.23`; if the
+`libcamera.so.0.7` and `libcamera-base.so.0.7` from Alpine `v3.24`; if the
 sonames do not resolve, the installed apk branch and the release were built
 against different Alpine releases and must be realigned first.
 
@@ -276,8 +281,8 @@ resolve all shared libraries:
 ldd /root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon || true
 ldd /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker/latest/txing-cyberbrick-hardware-worker || true
 ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master
-ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera.so.0.6"
-ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera-base.so.0.6"
+ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera.so.0.7"
+ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera-base.so.0.7"
 ```
 
 Write the root-owned OpenRC init scripts. There is no OpenRC equivalent of
@@ -548,7 +553,7 @@ Alpine libraries, `apk upgrade` and `mise upgrade` happen together in the
 same maintenance window: never upgrade the OS packages without moving to the
 release built for them, and never install a release built against a newer
 Alpine branch than the device runs. Device apk repositories stay on Alpine
-`v3.23` until a coordinated bump. The static daemon and hardware worker
+`v3.24` until a coordinated bump. The static daemon and hardware worker
 depend only on the kernel and are unaffected by apk upgrades.
 
 ```sh
@@ -562,8 +567,8 @@ MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
 /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker/latest/txing-cyberbrick-hardware-worker --version
 ldd /root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon
 ldd /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker/latest/txing-cyberbrick-hardware-worker
-ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera.so.0.6"
-ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera-base.so.0.6"
+ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera.so.0.7"
+ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera-base.so.0.7"
 sync
 reboot
 ```
@@ -577,7 +582,7 @@ firmware, sync the refreshed boot files from the kernel package onto the boot
 FAT partition per Alpine's Raspberry Pi sys-install guidance before
 rebooting; the Pi firmware only reads the FAT partition.
 
-Bumping the Alpine release (for example a future move off `v3.23`, or a
+Bumping the Alpine release (for example a future move off `v3.24`, or a
 libcamera soname change inside the branch) is one coordinated change: update
 the pinned build image in the cyberbrick daemon justfile and the release
 workflow containers, publish a matching cyberbrick release built on that

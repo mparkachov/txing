@@ -189,11 +189,14 @@ Unit assets follow the board linkage contract: `txing-unit-daemon` and
 `txing-unit-hardware-worker` are fully static musl binaries that run on both
 Raspberry Pi OS (Debian) and Alpine boards, while `txing-unit-kvs-master` is
 dynamically linked against musl and stock Alpine libcamera
-(`libcamera.so.0.6`/`libcamera-base.so.0.6`) and runs on Alpine boards only.
+(`libcamera.so.0.7`/`libcamera-base.so.0.7`) and runs on Alpine boards only.
 Existing Debian boards keep updating the static pair but stay pinned to the
 last Debian-built KVS master (linked against `libcamera.so.0.7`) until they
 are reimaged to Alpine; board maintenance instructions run `ldd` on the
-installed `latest` binaries before rebooting.
+installed `latest` binaries before rebooting. Alpine `v3.24` and Debian
+trixie both ship the `libcamera.so.0.7` soname; the glibc-built and
+musl-built KVS masters are still not interchangeable, and the linkage checks
+distinguish them by ELF interpreter, not by soname.
 
 The `txing-unit.target` unit groups the daemon, KVS master, and hardware
 worker services for boot. The board systemd units start the root-owned binaries
@@ -224,7 +227,7 @@ txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
 
 Installed commands are `txing-cyberbrick-daemon`,
 `txing-cyberbrick-kvs-master`, and `txing-cyberbrick-hardware-worker`.
-Cyberbrick uses the `cyberbrick-v*` release stream and Alpine `v3.23`; the
+Cyberbrick uses the `cyberbrick-v*` release stream and Alpine `v3.24`; the
 release image, installed apk branch, and runtime libraries must move together.
 Publishing a release never upgrades a Cyberbrick automatically. Installation,
 OpenRC service configuration, writable-root maintenance, and the return to a
@@ -262,8 +265,8 @@ rebooting out of a maintenance window, run `ldd` on each installed `latest`
 binary. The static daemon and hardware worker must show no shared-library
 dependencies (musl `ldd` refuses them or lists only the loader). The
 musl-dynamic KVS master must show the `/lib/ld-musl-aarch64.so.1`
-interpreter, no `not found` libraries, and the `libcamera.so.0.6` and
-`libcamera-base.so.0.6` linkage. Because of the camera coupling,
+interpreter, no `not found` libraries, and the `libcamera.so.0.7` and
+`libcamera-base.so.0.7` linkage. Because of the camera coupling,
 `apk upgrade` and `mise upgrade` happen together in that window, and an
 Alpine release bump requires a matching cyberbrick release built on that
 Alpine version first.

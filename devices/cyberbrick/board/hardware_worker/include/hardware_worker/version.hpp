@@ -4,7 +4,7 @@
 namespace txing::cyberbrick::hardware_worker {
 
 #ifndef TXING_CYBERBRICK_HARDWARE_WORKER_VERSION
-#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "0.15.4"
+#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "0.15.5"
 #endif
 
 inline constexpr const char* kTxingCyberbrickHardwareWorkerVersion = TXING_CYBERBRICK_HARDWARE_WORKER_VERSION;
