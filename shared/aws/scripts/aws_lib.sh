@@ -152,8 +152,14 @@ txing_cert_create_iot_bundle() {
   private_key_path="$output_dir/private.pem.key"
   cert_arn_path="$output_dir/certificate.arn"
   root_ca_path="$output_dir/AmazonRootCA1.pem"
+  signaling_ca_path="$output_dir/SFSRootCAG2.pem"
 
   curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
+  # Board KVS masters verify the AWS signaling endpoint against this single
+  # anchor: the endpoint presents Amazon Root CA 1 cross-signed by Starfield
+  # Services Root CA G2, and the SDK's TLS layer needs that issuer rather than
+  # a full OS bundle. Provisioned next to AmazonRootCA1.pem; rigs ignore it.
+  curl -fsSL https://www.amazontrust.com/repository/SFSRootCAG2.pem -o "$signaling_ca_path"
   cert_arn="$(
     aws iot create-keys-and-certificate \
       --set-as-active \
@@ -173,7 +179,7 @@ txing_cert_create_iot_bundle() {
     >/dev/null
   printf '%s\n' "$cert_arn" >"$cert_arn_path"
   chmod 600 "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
-  chmod 644 "$root_ca_path"
+  chmod 644 "$root_ca_path" "$signaling_ca_path"
   printf '%s\n' "$cert_arn"
 }
 
@@ -186,7 +192,8 @@ txing_cert_write_runtime_tarball() {
     public.pem.key \
     private.pem.key \
     certificate.arn \
-    AmazonRootCA1.pem
+    AmazonRootCA1.pem \
+    SFSRootCAG2.pem
   chmod 600 "$tarball_path"
 }
 

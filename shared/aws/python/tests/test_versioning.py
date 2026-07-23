@@ -1030,13 +1030,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("libcamera.so.0.7", cyberbrick_board_docs)
         self.assertIn("libcamera-base.so.0.7", cyberbrick_board_docs)
         self.assertIn('minimum_release_age = "0s"', cyberbrick_board_docs)
-        self.assertIn("/etc/txing/kvs-ca.pem", cyberbrick_board_docs)
+        self.assertIn(
+            "/root/.config/txing/cyberbrick-daemon/SFSRootCAG2.pem",
+            cyberbrick_board_docs,
+        )
         self.assertIn("TXING_KVS_SYSTEM_CA_CERT_PATH", cyberbrick_board_docs)
         self.assertIn(
             "Starfield Services Root Certificate Authority - G2",
             cyberbrick_board_docs,
         )
-        self.assertIn("curl jq ca-certificates openssl", cyberbrick_board_docs)
+        self.assertNotIn("/etc/txing/kvs-ca.pem", cyberbrick_board_docs)
         self.assertIn('RESOLV_CONF="/run/resolv.conf"', cyberbrick_board_docs)
         self.assertIn("alias root-rw=", cyberbrick_board_docs)
         self.assertIn("alias root-ro=", cyberbrick_board_docs)

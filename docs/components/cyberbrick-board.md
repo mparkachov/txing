@@ -60,10 +60,10 @@ is documented in
   anchor and cannot use Alpine's full `/etc/ssl/certs/ca-certificates.crt`
   bundle: the SDK's TLS layer follows the server-presented chain and a
   140-cert bundle fails (`X509_V_ERR = 20`) where the one Starfield Services
-  Root CA G2 that AWS chains to succeeds. The install provisions that anchor
-  at `/etc/txing/kvs-ca.pem` and points the binary there through
-  `TXING_KVS_SYSTEM_CA_CERT_PATH`; the daemon's own MQTT TLS is separate and
-  uses the provisioned `AmazonRootCA1.pem`.
+  Root CA G2 that AWS chains to succeeds. The daemon config bundle ships that
+  anchor as `SFSRootCAG2.pem` alongside `AmazonRootCA1.pem`, and the KVS
+  service points the binary at it through `TXING_KVS_SYSTEM_CA_CERT_PATH`. The
+  daemon's own MQTT TLS is separate and uses `AmazonRootCA1.pem`.
 - The pinned Alpine build image in the cyberbrick daemon justfile, the
   release workflow containers, and the on-device apk branch must name the
   same Alpine release. Bumping the Alpine release is one coordinated change
@@ -169,14 +169,11 @@ sed -i 's|^#\(http.*/community\)$|\1|' /etc/apk/repositories
 apk update
 apk upgrade
 apk add \
-  curl jq ca-certificates openssl \
+  curl jq ca-certificates \
   curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
   libwebsockets-dev zlib-dev libcamera-dev \
   protobuf-dev grpc-dev
 ```
-
-`openssl` (the CLI) is needed to extract the KVS signaling trust anchor
-below; it is not part of the dev superset.
 
 The dev packages are the proven runtime superset from the pinned Alpine build
 container: installing them guarantees every shared library the musl-dynamic
@@ -222,8 +219,14 @@ chmod 600 "$HOME/.config/txing/cyberbrick-daemon/certificate.pem.crt"
 chmod 600 "$HOME/.config/txing/cyberbrick-daemon/private.pem.key"
 chmod 600 "$HOME/.config/txing/cyberbrick-daemon/public.pem.key"
 chmod 644 "$HOME/.config/txing/cyberbrick-daemon/AmazonRootCA1.pem"
+chmod 644 "$HOME/.config/txing/cyberbrick-daemon/SFSRootCAG2.pem"
 rm -f /tmp/<thing-id>-daemon-config.tgz
 ```
+
+`AmazonRootCA1.pem` is the daemon's MQTT trust root; `SFSRootCAG2.pem` is the
+Starfield Services Root CA G2 that the KVS master's signaling TLS verifies
+against (see [OS And ABI Contract](#os-and-abi-contract)). Both are fetched
+from AWS's public repository by `just aws::cert` and shipped in the bundle.
 
 `daemon.env` is rendered from
 `devices/cyberbrick/daemon/daemon.env.template` and uses plain `KEY=value`
@@ -300,25 +303,18 @@ ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cy
 ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera-base.so.0.7"
 ```
 
-Provision the AWS signaling trust anchor. The KVS SDK's TLS layer verifies
-the signaling endpoint against a single root and cannot consume Alpine's full
-`ca-certificates.crt`; extract the Starfield Services Root CA G2 that AWS
-chains to into a dedicated file the KVS service points at through
-`TXING_KVS_SYSTEM_CA_CERT_PATH`:
+Confirm the KVS signaling anchor provisioned with the daemon config is
+present and names the expected root:
 
 ```sh
-install -d -m 755 /etc/txing
-openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt \
-  | openssl pkcs7 -print_certs \
-  | awk '/Starfield Services Root Certificate Authority - G2/{g=1} g&&/BEGIN CERT/{b=1} b{print} /END CERT/{if(b)exit}' \
-  > /etc/txing/kvs-ca.pem
-openssl x509 -in /etc/txing/kvs-ca.pem -noout -subject
+openssl x509 -in /root/.config/txing/cyberbrick-daemon/SFSRootCAG2.pem -noout -subject
 ```
 
-The subject line must name `Starfield Services Root Certificate Authority - G2`
-and the file must contain exactly one certificate. This anchor is stable
-(valid to 2037); re-extract it only if AWS rotates the signaling roots, in the
-same writable-root window as any other update.
+The subject must name `Starfield Services Root Certificate Authority - G2`.
+The KVS service points its TLS at this file through
+`TXING_KVS_SYSTEM_CA_CERT_PATH` (set in the init script below), because the
+SDK cannot verify the signaling chain against the full OS bundle. This anchor
+is stable (valid to 2037).
 
 Write the root-owned OpenRC init scripts. There is no OpenRC equivalent of
 unit's `txing-unit.target`; each service is enabled individually and OpenRC
@@ -408,7 +404,7 @@ respawn_period=600
 output_log=/var/log/txing-cyberbrick-kvs-master.log
 error_log=/var/log/txing-cyberbrick-kvs-master.log
 
-ca_cert=/etc/txing/kvs-ca.pem
+ca_cert=/root/.config/txing/cyberbrick-daemon/SFSRootCAG2.pem
 
 depend() {
     need net

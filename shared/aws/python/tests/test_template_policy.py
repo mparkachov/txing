@@ -1053,6 +1053,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("attach-thing-principal", aws_lib)
         self.assertIn("--thing-principal-type EXCLUSIVE_THING", aws_lib)
         self.assertIn("https://www.amazontrust.com/repository/AmazonRootCA1.pem", aws_lib)
+        self.assertIn("https://www.amazontrust.com/repository/SFSRootCAG2.pem", aws_lib)
+        self.assertIn("SFSRootCAG2.pem", aws_lib)
         self.assertIn("Certificate or daemon material already exists", aws_lib)
         self.assertIn("__TXING_IOT_ROLE_ALIAS__", rig_env_template)
         self.assertIn("TXING_RIG_IPC_SOCKET=/run/txing-rig/rig-ipc.sock", rig_env_template)
