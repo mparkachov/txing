@@ -154,6 +154,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The static protobuf/gRPC toolchain takes ~25 minutes to source-build.
+      # build-board-static-toolchain.sh validates the restored prefix against
+      # its version marker and rebuilds on mismatch, so a stale cache can slow
+      # a run down but never poison it. Keep the alpine version in this key in
+      # sync with the pinned build image below.
+      - name: Cache static toolchain
+        if: matrix.component == 'hardware-worker'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/static-toolchain
+          key: board-static-toolchain-alpine3.23.5-${{ hashFiles('release/scripts/build-board-static-toolchain.sh') }}
+
       # JavaScript actions cannot run inside musl containers on arm64
       # runners, so the job runs on the host and drives the pinned Alpine
       # build container through docker exec. Workspace and temp are mounted
