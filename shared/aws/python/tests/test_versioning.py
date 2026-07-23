@@ -933,6 +933,19 @@ class VersionEnvironmentTests(unittest.TestCase):
             encoding="utf-8"
         )
         docs_index = (REPO_ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+        kvs_session_real = (
+            REPO_ROOT
+            / "devices"
+            / "cyberbrick"
+            / "board"
+            / "kvs_master"
+            / "src"
+            / "kvs_session_real.cpp"
+        ).read_text(encoding="utf-8")
+        # The signaling CA path must stay runtime-selectable so boards can point
+        # the SDK's TLS layer at a single-anchor file instead of the OS bundle.
+        self.assertIn('"TXING_KVS_SYSTEM_CA_CERT_PATH"', kvs_session_real)
+        self.assertIn("std::getenv(kSystemCaCertPathEnvVar)", kvs_session_real)
         normalized_cyberbrick_board_docs = " ".join(cyberbrick_board_docs.split())
         normalized_installation_docs = " ".join(installation_docs.split())
         normalized_artifacts_docs = " ".join(artifacts_docs.split())
@@ -1016,6 +1029,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("ld-musl-aarch64.so.1", cyberbrick_board_docs)
         self.assertIn("libcamera.so.0.7", cyberbrick_board_docs)
         self.assertIn("libcamera-base.so.0.7", cyberbrick_board_docs)
+        self.assertIn('minimum_release_age = "0s"', cyberbrick_board_docs)
+        self.assertIn("/etc/txing/kvs-ca.pem", cyberbrick_board_docs)
+        self.assertIn("TXING_KVS_SYSTEM_CA_CERT_PATH", cyberbrick_board_docs)
+        self.assertIn(
+            "Starfield Services Root Certificate Authority - G2",
+            cyberbrick_board_docs,
+        )
+        self.assertIn("curl jq ca-certificates openssl", cyberbrick_board_docs)
         self.assertIn('RESOLV_CONF="/run/resolv.conf"', cyberbrick_board_docs)
         self.assertIn("alias root-rw=", cyberbrick_board_docs)
         self.assertIn("alias root-ro=", cyberbrick_board_docs)
@@ -1097,6 +1118,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn('txing-rig-deploy = "github:$owner/$repo"', installer)
         self.assertIn('[settings]', installer)
         self.assertIn('fetch_remote_versions_cache = "0s"', installer)
+        self.assertIn('minimum_release_age = "0s"', installer)
         self.assertIn('version_prefix = "rig-v"', installer)
         self.assertIn('asset_pattern = "txing-sparkplug-manager-linux-aarch64.tar.gz"', installer)
         self.assertIn('asset_pattern = "txing-ble-connectivity-linux-aarch64.tar.gz"', installer)

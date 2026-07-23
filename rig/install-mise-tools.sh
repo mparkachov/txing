@@ -29,6 +29,7 @@ trap 'rm -f "$tmp"' EXIT
 cat >"$tmp" <<EOF
 [settings]
 fetch_remote_versions_cache = "0s"
+minimum_release_age = "0s"
 
 [tool_alias]
 txing-sparkplug-manager = "github:$owner/$repo"

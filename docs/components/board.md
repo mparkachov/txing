@@ -464,13 +464,17 @@ just unit::daemon::role-policy <thing-id>
 
 ### 5. Install Runtime
 
-Run from the board root shell while root is writable:
+Run from the board root shell while root is writable.
+`minimum_release_age = "0s"` opts out of mise's default 24-hour release-age
+filter: boards install first-party releases minutes after they are
+published, and with the default filter `latest` resolves to nothing.
 
 ```bash
 install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
 cat >/root/.config/mise/conf.d/txing-unit-daemon.toml <<'EOF'
 [settings]
 fetch_remote_versions_cache = "10m"
+minimum_release_age = "0s"
 
 [tool_alias]
 txing-unit-daemon = "github:mparkachov/txing"

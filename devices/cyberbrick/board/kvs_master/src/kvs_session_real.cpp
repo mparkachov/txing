@@ -58,6 +58,7 @@ constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
 constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
 constexpr CHAR kDefaultMcpDataChannelLabel[] = "txing.mcp.v1";
 constexpr char kSystemCaCertPath[] = TXING_KVS_SYSTEM_CA_CERT_PATH;
+constexpr char kSystemCaCertPathEnvVar[] = "TXING_KVS_SYSTEM_CA_CERT_PATH";
 constexpr std::size_t kCandidateAddressTokenIndex = 4;
 constexpr int kMcpIpcResponseTimeoutMs = 7000;
 
@@ -413,7 +414,17 @@ bool IsRemoteIceCandidateIgnorableFailure(STATUS status) {
 }
 
 std::string ResolveSignalingCaCertPath() {
-    const std::string path = kSystemCaCertPath;
+    // The KVS SDK's TLS layer verifies the signaling endpoint against a single
+    // trust anchor and cannot consume a full OS CA bundle: a 140-cert
+    // ca-certificates.crt fails where the one Starfield Services Root CA G2
+    // anchor AWS chains to succeeds. Boards provision that anchor at a
+    // dedicated path and select it here through the environment; the compiled
+    // path remains a fallback.
+    std::string path = kSystemCaCertPath;
+    if (const char* override_path = std::getenv(kSystemCaCertPathEnvVar);
+        override_path != nullptr && override_path[0] != '\0') {
+        path = override_path;
+    }
     std::ifstream ca_bundle(path);
     if (!ca_bundle.good()) {
         throw std::runtime_error(

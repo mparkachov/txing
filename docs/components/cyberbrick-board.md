@@ -56,6 +56,14 @@ is documented in
   `libcamera-base.so.0.7`). If its `ldd` reports `not found` libraries or a
   non-musl interpreter, the release asset was built for the wrong OS or the
   wrong Alpine branch and must be replaced.
+- The KVS master verifies the AWS signaling endpoint against a single trust
+  anchor and cannot use Alpine's full `/etc/ssl/certs/ca-certificates.crt`
+  bundle: the SDK's TLS layer follows the server-presented chain and a
+  140-cert bundle fails (`X509_V_ERR = 20`) where the one Starfield Services
+  Root CA G2 that AWS chains to succeeds. The install provisions that anchor
+  at `/etc/txing/kvs-ca.pem` and points the binary there through
+  `TXING_KVS_SYSTEM_CA_CERT_PATH`; the daemon's own MQTT TLS is separate and
+  uses the provisioned `AmazonRootCA1.pem`.
 - The pinned Alpine build image in the cyberbrick daemon justfile, the
   release workflow containers, and the on-device apk branch must name the
   same Alpine release. Bumping the Alpine release is one coordinated change
@@ -161,11 +169,14 @@ sed -i 's|^#\(http.*/community\)$|\1|' /etc/apk/repositories
 apk update
 apk upgrade
 apk add \
-  curl jq ca-certificates \
+  curl jq ca-certificates openssl \
   curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
   libwebsockets-dev zlib-dev libcamera-dev \
   protobuf-dev grpc-dev
 ```
+
+`openssl` (the CLI) is needed to extract the KVS signaling trust anchor
+below; it is not part of the dev superset.
 
 The dev packages are the proven runtime superset from the pinned Alpine build
 container: installing them guarantees every shared library the musl-dynamic
@@ -234,13 +245,17 @@ just cyberbrick::daemon::role-policy <thing-id>
 
 ### 5. Install Runtime And OpenRC Services
 
-Install the release tools through root-owned `mise`:
+Install the release tools through root-owned `mise`.
+`minimum_release_age = "0s"` opts out of mise's default 24-hour release-age
+filter: boards install first-party releases minutes after they are
+published, and with the default filter `latest` resolves to nothing.
 
 ```sh
 install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
 cat >/root/.config/mise/conf.d/txing-cyberbrick-daemon.toml <<'EOF'
 [settings]
 fetch_remote_versions_cache = "10m"
+minimum_release_age = "0s"
 
 [tool_alias]
 txing-cyberbrick-daemon = "github:mparkachov/txing"
@@ -284,6 +299,26 @@ ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cy
 ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera.so.0.7"
 ldd /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master | grep -F "libcamera-base.so.0.7"
 ```
+
+Provision the AWS signaling trust anchor. The KVS SDK's TLS layer verifies
+the signaling endpoint against a single root and cannot consume Alpine's full
+`ca-certificates.crt`; extract the Starfield Services Root CA G2 that AWS
+chains to into a dedicated file the KVS service points at through
+`TXING_KVS_SYSTEM_CA_CERT_PATH`:
+
+```sh
+install -d -m 755 /etc/txing
+openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt \
+  | openssl pkcs7 -print_certs \
+  | awk '/Starfield Services Root Certificate Authority - G2/{g=1} g&&/BEGIN CERT/{b=1} b{print} /END CERT/{if(b)exit}' \
+  > /etc/txing/kvs-ca.pem
+openssl x509 -in /etc/txing/kvs-ca.pem -noout -subject
+```
+
+The subject line must name `Starfield Services Root Certificate Authority - G2`
+and the file must contain exactly one certificate. This anchor is stable
+(valid to 2037); re-extract it only if AWS rotates the signaling roots, in the
+same writable-root window as any other update.
 
 Write the root-owned OpenRC init scripts. There is no OpenRC equivalent of
 unit's `txing-unit.target`; each service is enabled individually and OpenRC
@@ -373,6 +408,8 @@ respawn_period=600
 output_log=/var/log/txing-cyberbrick-kvs-master.log
 error_log=/var/log/txing-cyberbrick-kvs-master.log
 
+ca_cert=/etc/txing/kvs-ca.pem
+
 depend() {
     need net
     use dns
@@ -381,7 +418,9 @@ depend() {
 
 start_pre() {
     test -x "$command" || return 1
+    test -r "$ca_cert" || return 1
     export HOME=/root
+    export TXING_KVS_SYSTEM_CA_CERT_PATH="$ca_cert"
     export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-cyberbrick-daemon/board-video-bridge.sock
 }
 EOF
