@@ -56,6 +56,18 @@ is documented in
   `libcamera-base.so.0.7`). If its `ldd` reports `not found` libraries or a
   non-musl interpreter, the release asset was built for the wrong OS or the
   wrong Alpine branch and must be replaced.
+- Linking the KVS master against libcamera is necessary but not sufficient for
+  video. Camera capture additionally requires the Raspberry Pi pipeline
+  handler, IPA module, and sensor tuning files (`libcamera-raspberrypi`), a
+  running udev daemon for libcamera's device enumerator (`eudev`), firmware
+  camera autodetection in `config.txt`, and the `bcm2835-codec` and
+  `bcm2835-isp` kernel modules. None of these are implied by the build
+  container's package set or by `ldd` linkage checks, and every one of them
+  fails as the same KVS master error,
+  `configured camera index is not available`. See
+  [Install OS Packages](#2-install-os-packages),
+  [Enable Udev](#2a-enable-udev), and
+  [Enable PWM Overlay And Camera](#6-enable-pwm-overlay-and-camera).
 - The KVS master verifies the AWS signaling endpoint against a single trust
   anchor and cannot use Alpine's full `/etc/ssl/certs/ca-certificates.crt`
   bundle: the SDK's TLS layer follows the server-presented chain and a
@@ -97,6 +109,17 @@ repository-wide latest release. Service starts are offline by design:
 restarting an OpenRC service does not install or upgrade tools, invoke mise,
 or call GitHub. If a board needs new binaries, follow
 [Maintenance](#maintenance).
+
+The release gates bound what these artifacts prove. `assert-board-musl.sh`
+checks linkage kinds and `smoke-board-cross-distro.sh` runs each binary in
+`debian:trixie` and pinned Alpine containers asserting only `--version`.
+Neither performs a live AWS handshake (no credentials in CI) nor touches a
+camera, and the smoke container installs the same build-derived package set
+that omits `libcamera-raspberrypi` and a udev daemon. TLS trust-anchor faults
+and every camera-enumeration fault in
+[Camera Does Not Enumerate](#camera-does-not-enumerate) are therefore
+invisible to CI by construction and can only be caught on a physical board
+with a camera attached.
 
 ## Fresh Board Install
 
@@ -175,7 +198,8 @@ apk add \
   curl jq ca-certificates \
   curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
   libwebsockets-dev zlib-dev libcamera-dev \
-  protobuf-dev grpc-dev
+  protobuf-dev grpc-dev \
+  libcamera-raspberrypi eudev v4l-utils
 ```
 
 The dev packages are the proven runtime superset from the pinned Alpine build
@@ -187,6 +211,57 @@ binaries before the services are enabled. The release KVS master must link
 `libcamera.so.0.7` and `libcamera-base.so.0.7` from Alpine `v3.24`; if the
 sonames do not resolve, the installed apk branch and the release were built
 against different Alpine releases and must be realigned first.
+
+`libcamera-raspberrypi` and `eudev` are **runtime-only** requirements that the
+build-container package set does not imply, and neither is pulled in as a
+dependency of anything above:
+
+- `libcamera-dev` provides only what the KVS master links against
+  (`libcamera.so.0.7`, `libcamera-base.so.0.7`). The Raspberry Pi pipeline
+  handler, the `ipa_rpi_vc4.so` IPA module, and the per-sensor tuning files in
+  `/usr/share/libcamera/ipa/rpi/vc4/` live in `libcamera-raspberrypi`. Without
+  it libcamera starts normally and enumerates zero cameras.
+- libcamera links `libudev.so.1` and therefore uses its **udev** device
+  enumerator, not the sysfs fallback. apk satisfies `so:libudev.so.1` with
+  `eudev-libs` alone, which is the shared library and not the daemon; with no
+  udev running, libcamera queries an empty database and again enumerates zero
+  cameras while `/dev/media0` works normally. `eudev` supplies the daemon,
+  wired into the `sysinit` runlevel in
+  [Enable Udev](#2a-enable-udev).
+
+Both failures surface identically and misleadingly, as
+`configured camera index is not available` from the KVS master — the error the
+capturer raises when the requested camera index exceeds the enumerated camera
+count, which is `0`. `v4l-utils` is not required at run time; it provides
+`media-ctl` for the diagnostics in
+[Camera Does Not Enumerate](#camera-does-not-enumerate).
+
+### 2a. Enable Udev
+
+Alpine's `setup-alpine` leaves the board on busybox `mdev`. libcamera needs a
+udev database, so switch device management to udev before installing the
+runtime. `setup-udev` from `alpine-conf` is not present on all Alpine images;
+wire the services directly, which is equivalent and image-independent:
+
+```sh
+for s in udev udev-trigger udev-settle; do rc-update add $s sysinit; done
+rc-service udev start
+rc-service udev-trigger start
+```
+
+Verify:
+
+```sh
+ls -d /run/udev
+rc-status sysinit | grep -i udev
+```
+
+The three services must land in **`sysinit`**, not `default`: device
+enumeration has to complete before the txing services start, and `sysinit`
+placement is also what makes this survive the read-only-root reboot in
+[Configure Read-Only Root](#7-configure-read-only-root). A board where video
+works before a reboot and fails after it is almost always udev left in the
+wrong runlevel.
 
 ### 3. Install Mise
 
@@ -462,7 +537,8 @@ Expected:
   `/run/txing-cyberbrick-hardware-worker/cyberbrick-hardware.sock`
 - the worker logs version and local actuator readiness or a clear hardware
   error (a missing `/sys/class/pwm/pwmchip0` before the PWM overlay in
-  [Enable PWM Overlay](#6-enable-pwm-overlay) is expected)
+  [Enable PWM Overlay And Camera](#6-enable-pwm-overlay-and-camera) is
+  expected)
 - MQTT connects and retained `board`, dynamic `mcp`, and `video` state is
   published (visible in CloudWatch)
 - the KVS master service reaches READY over the bridge when camera and
@@ -472,7 +548,7 @@ Expected:
 - REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
   and `video` capability state
 
-### 6. Enable PWM Overlay
+### 6. Enable PWM Overlay And Camera
 
 After `setup-disk -m sys`, the boot FAT partition is mounted at `/boot` (the
 `/media/mmcblk0p1` mount only exists during the diskless boot in step 1). Add
@@ -493,6 +569,52 @@ The `pwm-2chan.dtbo` overlay ships in Alpine's `raspberrypi-bootloader`
 content already present on the boot FAT partition. Reboot after changing the
 overlay so `/sys/class/pwm/pwmchip0` exists; without it the hardware worker
 logs `PWM chip path does not exist` on every start.
+
+The camera is off by default and needs firmware autodetection plus two kernel
+modules. Nothing in the base Alpine image enables either:
+
+```sh
+grep -q 'camera_auto_detect' /boot/config.txt /boot/usercfg.txt 2>/dev/null || {
+  if grep -q 'include usercfg.txt' /boot/config.txt; then
+    printf 'camera_auto_detect=1\n' >> /boot/usercfg.txt
+  else
+    printf 'camera_auto_detect=1\n' >> /boot/config.txt
+  fi
+}
+
+for m in bcm2835-codec bcm2835-isp; do
+  grep -qx "$m" /etc/modules || echo "$m" >> /etc/modules
+done
+```
+
+`camera_auto_detect=1` makes the firmware probe the CSI sensor over I²C and
+insert the matching overlay; without it no sensor, `unicam`, or `/dev/video0`
+appears at all. A non-standard sensor needs an explicit `dtoverlay=` line
+instead.
+
+The two modules cover the rest of the pipeline and neither autoloads:
+
+- `bcm2835-codec` registers the V4L2 H.264 encoder at `/dev/video11`, which
+  the KVS master opens by that hard-coded path. Missing, the capturer fails
+  with `failed to open V4L2 H.264 encoder` *after* the camera opens
+  successfully.
+- `bcm2835-isp` registers the ISP nodes (`/dev/video13`–`/dev/video16`,
+  `/dev/video20`–`/dev/video23`) and its own media devices. libcamera's
+  `rpi/vc4` pipeline handler needs an ISP media device in addition to Unicam,
+  so without it enumeration returns zero cameras even when the sensor probes
+  correctly.
+
+Reboot after this step and confirm before continuing:
+
+```sh
+ls /dev/video* /dev/media*
+for d in /sys/class/video4linux/*; do echo "$(basename $d) -> $(cat $d/name)"; done
+dmesg | grep -iE 'imx|ov5647|unicam|codec'
+```
+
+Expect the sensor subdev named for the attached module (for example
+`imx708_wide`), `unicam-image` on `/dev/video0`, `/dev/video11` present, and
+four media devices: `unicam`, `bcm2835-codec`, and two `bcm2835-isp`.
 
 ### 7. Configure Read-Only Root
 
@@ -602,13 +724,139 @@ Expected:
 - the daemon reports version, MQTT connect, and retained board/MCP/video state
   to CloudWatch (its local OpenRC log is empty by design); confirm locally by a
   stable daemon PID and the bound bridge socket
+- udev is in the `sysinit` runlevel and `/run/udev` exists after the reboot,
+  so libcamera enumerates the camera on a cold boot and not only in the
+  session where the modules were loaded by hand
 
-First bring-up on a physical board must additionally confirm the video and
-motor assumptions carried over from unit before declaring parity: camera
-enumeration through Alpine's libcamera, the `/dev/video11` H.264 encoder
-assumption, a short end-to-end H.264 capture, and both PWM channels moving
-the motors. Record deviations as milestone findings instead of patching
+With a camera attached, confirm the full video path end to end:
+
+```sh
+rc-service txing-cyberbrick-kvs-master stop
+/root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master \
+  --camera-probe
+rc-service txing-cyberbrick-kvs-master start
+grep -E 'TXING_KVS_READY|TXING_KVS_ERROR' /var/log/txing-cyberbrick-kvs-master.log
+```
+
+`--camera-probe` is capture-only: it exercises camera enumeration, capture,
+and H.264 encoding without opening a KVS session, which separates camera
+faults from AWS faults. Under the service, `TXING_KVS_READY` is emitted on the
+first encoded keyframe and is the same event that reports `READY` over the
+bridge and raises the `video` capability; REDCON reaches `1` shortly after.
+
+Motor movement on both PWM channels is the remaining first bring-up
+confirmation. Record deviations as milestone findings instead of patching
 around them.
+
+## Troubleshooting
+
+### Camera Does Not Enumerate
+
+The KVS master reports `configured camera index is not available` whenever the
+requested camera index is not below the enumerated camera count. With the
+default index `0` this means libcamera enumerated **no** cameras, and it is
+the single error for every distinct cause below. `ldd` linkage checks and
+`--version` all pass in each case, so work down the pipeline in order:
+
+```sh
+ls /dev/video* /dev/media*
+for d in /sys/class/video4linux/*; do echo "$(basename $d) -> $(cat $d/name)"; done
+ls /usr/lib/libcamera/ipa/ | grep rpi
+ls /usr/share/libcamera/ipa/rpi/vc4/ | head
+ls -d /run/udev
+rc-status sysinit | grep -i udev
+LIBCAMERA_LOG_LEVELS=*:DEBUG \
+  /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master \
+  --camera-probe 2>&1 | tail -40
+```
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| No `/dev/video0`, no sensor in `dmesg` | firmware camera autodetection off | `camera_auto_detect=1` ([step 6](#6-enable-pwm-overlay-and-camera)) |
+| `/dev/video0` present, no `/dev/video11` | `bcm2835-codec` not loaded | add to `/etc/modules` ([step 6](#6-enable-pwm-overlay-and-camera)) |
+| Only `unicam` + `bcm2835-codec` media devices | `bcm2835-isp` not loaded | add to `/etc/modules` ([step 6](#6-enable-pwm-overlay-and-camera)) |
+| No `ipa_rpi_vc4.so`, no `vc4/` tuning dir | `libcamera-raspberrypi` missing | `apk add libcamera-raspberrypi` ([step 2](#2-install-os-packages)) |
+| All of the above present, `/run/udev` missing | no udev daemon | `apk add eudev` + [step 2a](#2a-enable-udev) |
+
+The debug trace is decisive. `Unable to acquire a Unicam instance` from
+`rpi/vc4` means the pipeline handler ran but matched no Unicam media device —
+either the ISP/tuning pieces are missing, or the enumerator itself is empty
+because udev is not running. `Unable to acquire a CFE instance` from
+`rpi/pisp` immediately above it is expected and harmless: that is the Pi 5
+pipeline handler correctly declining a Pi Zero 2 W.
+
+Confirm the media device layer independently of libcamera with `media-ctl`,
+which reads the devices directly and does not use udev:
+
+```sh
+for m in /dev/media*; do echo "== $m"; media-ctl -d $m -p | head -8; done
+```
+
+A healthy Pi Zero 2 W shows four media devices — `unicam`, `bcm2835-codec`,
+and two `bcm2835-isp`. If `media-ctl` shows a working `unicam` while
+libcamera still enumerates nothing, the fault is in libcamera's enumeration
+(udev or `libcamera-raspberrypi`), not in the kernel or the sensor.
+
+### Video Never Reaches READY
+
+If the KVS master logs repeated `GetWorkerConfig failed: ... connect failed`
+against the bridge socket, the worker cannot reach the daemon and never gets
+as far as the camera. The daemon binds the bridge socket at startup and only
+when `video` is in `TXING_DAEMON_CAPABILITIES`:
+
+```sh
+grep -E 'CAPABILITIES|SOCKET_PATH' /root/.config/txing/cyberbrick-daemon/daemon.env
+ls -l /run/txing-cyberbrick-daemon/ /run/txing-cyberbrick-hardware-worker/
+pid=$(pgrep -f txing-cyberbrick-daemon | head -1)
+tr '\0' '\n' < /proc/$pid/environ | grep SOCKET_PATH
+```
+
+An empty `/run/txing-cyberbrick-daemon/` with a healthy daemon means `video`
+is absent from the capability list, or the daemon bound a path other than the
+one the KVS service dials. The same applies to the hardware worker: a daemon
+logging `connect to hardware worker: context deadline exceeded` against a
+bound worker socket means the two resolved different paths.
+
+`daemon.env` deliberately does **not** set `TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`
+or `TXING_HARDWARE_WORKER_SOCKET_PATH`. Every binary compiles device-correct
+defaults and falls back to them when unset, so sockets follow the installed
+binaries. A `SOCKET_PATH` line in a board's `daemon.env` is therefore a
+red flag: it usually means the file was generated before this default was
+adopted, or was hand-edited. Remove the line and restart rather than
+compensating elsewhere — in particular, do not pin these paths with `export`
+in the OpenRC `start_pre()` blocks, which reintroduces by hand exactly the
+per-device coupling the defaults remove.
+
+The `/proc/<pid>/environ` read is the authoritative check: it shows what the
+running daemon resolved, including anything an init script exported, rather
+than what a config file claims.
+
+Both failure modes are quiet by construction — the daemon logs to CloudWatch
+rather than locally, so an empty `/var/log/txing-cyberbrick-daemon.log` is
+expected and is not evidence of either problem.
+
+### Restart Order
+
+Service restarts have a required order, dependencies first:
+
+```sh
+rc-service txing-cyberbrick-hardware-worker restart
+rc-service txing-cyberbrick-daemon restart
+rc-service txing-cyberbrick-kvs-master restart
+```
+
+**Restarting the daemon always requires restarting the KVS master after it.**
+A daemon restart resets its video state to `starting` and recreates the bridge
+socket, but the KVS master emits `READY` only once per session, latched on the
+first encoded keyframe. It keeps streaming to AWS while the daemon believes
+video never came up, so the `video` capability stays false, REDCON falls back
+to `2`, and MCP reports the WebRTC data channel as unavailable. State reporting
+over the bridge is best-effort and logs nothing when it fails, so the only
+symptom is video silently never becoming ready.
+
+Restarting the hardware worker or the KVS master alone is safe and needs no
+daemon restart: the daemon dials the worker per request and does not cache
+failed connections.
 
 ## Maintenance
 

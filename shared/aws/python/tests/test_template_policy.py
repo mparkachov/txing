@@ -293,10 +293,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             aws_lib,
         )
         self.assertIn("TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}", daemon_env_template)
-        self.assertIn(
-            "TXING_HARDWARE_WORKER_SOCKET_PATH=/run/"
-            "txing-unit-hardware-worker/unit-hardware.sock",
-            daemon_env_template,
+        # Local socket paths must stay out of the identity bundle so each
+        # binary's compiled device-correct default applies; setting them here
+        # breaks any board running another device type's binaries.
+        self.assertNotIn("TXING_HARDWARE_WORKER_SOCKET_PATH=", daemon_env_template)
+        self.assertNotIn(
+            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=", daemon_env_template
         )
         self.assertIn("TXING_HARDWARE_WORKER_TIMEOUT_MS=700", daemon_env_template)
         self.assertIn("AWS_REGION={{AWS_REGION}}", daemon_env_template)
@@ -396,16 +398,13 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}",
             daemon_env_template,
         )
-        self.assertIn(
-            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
-            "txing-cyberbrick-daemon/board-video-bridge.sock",
-            daemon_env_template,
+        # Local socket paths must stay out of the identity bundle so each
+        # binary's compiled device-correct default applies; setting them here
+        # breaks any board running another device type's binaries.
+        self.assertNotIn(
+            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=", daemon_env_template
         )
-        self.assertIn(
-            "TXING_HARDWARE_WORKER_SOCKET_PATH=/run/"
-            "txing-cyberbrick-hardware-worker/cyberbrick-hardware.sock",
-            daemon_env_template,
-        )
+        self.assertNotIn("TXING_HARDWARE_WORKER_SOCKET_PATH=", daemon_env_template)
         self.assertNotIn("txing-unit", daemon_env_template)
 
     def test_template_defines_rig_daemon_credential_resources(self) -> None:

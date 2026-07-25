@@ -278,14 +278,22 @@ Default runtime inputs include:
 
 - `AWS_REGION`
 - `TXING_DAEMON_CAPABILITIES`
-- `TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`
 - `TXING_BOARD_VIDEO_CHANNEL_NAME`
 - `TXING_KVS_PREFER_IPV6`
 - `TXING_KVS_DISABLE_IPV4_TURN`
-- `TXING_HARDWARE_WORKER_SOCKET_PATH`
 - `TXING_HARDWARE_WORKER_TIMEOUT_MS`
 - `TXING_MOTOR_*`
 - CloudWatch log configuration
+
+Local socket paths are deliberately not among them.
+`TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH` and
+`TXING_HARDWARE_WORKER_SOCKET_PATH` remain accepted as overrides, but the
+generated `daemon.env` does not set them: each binary compiles
+device-correct defaults and falls back to them when unset, so sockets follow
+the installed binaries instead of the identity bundle. This keeps a bundle
+generated for one device type from breaking another device's binaries, which
+matters while boards run mixed combinations during the Debian-to-Alpine
+transition.
 
 Motor calibration supports per-track output trim through the shared
 `daemon.env` file. Values are numeric percentages in `(0, 100]`; omit the `%`
@@ -304,13 +312,15 @@ range, applies per-track trim, and keeps every nonzero physical output within
 `TXING_MOTOR_CMD_RAW_MIN_SPEED` and `TXING_MOTOR_CMD_RAW_MAX_SPEED`.
 
 The default video channel is `<thing_id>-board-video`. The default bridge
-socket path is `/run/txing-unit-daemon/board-video-bridge.sock`. Existing
-boards with an older generated `daemon.env` must remove leading `export `
-prefixes for systemd `EnvironmentFile=` compatibility and add
-`TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`,
-`TXING_HARDWARE_WORKER_SOCKET_PATH`, and
-`TXING_HARDWARE_WORKER_TIMEOUT_MS`; generated config files are not overwritten
-by binary upgrades. Existing boards must also add
+socket path is `/run/txing-unit-daemon/board-video-bridge.sock` and the
+default hardware worker socket is
+`/run/txing-unit-hardware-worker/unit-hardware.sock`, both compiled into the
+unit binaries. Existing boards with an older generated `daemon.env` must
+remove leading `export ` prefixes for systemd `EnvironmentFile=`
+compatibility and add `TXING_HARDWARE_WORKER_TIMEOUT_MS`; generated config
+files are not overwritten by binary upgrades. Older files that still carry
+`TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH` or `TXING_HARDWARE_WORKER_SOCKET_PATH`
+should have those lines deleted so the compiled defaults apply. Existing boards must also add
 `TXING_MOTOR_LEFT_TRACK_POWER_PERCENT=100` and
 `TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=100` if their `daemon.env` predates
 track power trim. The daemon ignores `TXING_MOTOR_*`; those values are consumed

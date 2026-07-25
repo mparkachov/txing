@@ -1026,6 +1026,28 @@ class VersionEnvironmentTests(unittest.TestCase):
             "dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4",
             cyberbrick_board_docs,
         )
+        # Camera capture needs more than libcamera linkage: the rpi pipeline
+        # handler and IPA, a udev daemon for libcamera's enumerator, firmware
+        # autodetection, and the codec/ISP modules. Every one of these missing
+        # surfaces as the same "configured camera index is not available".
+        self.assertIn(
+            "libcamera-raspberrypi eudev v4l-utils", cyberbrick_board_docs
+        )
+        self.assertIn(
+            "for s in udev udev-trigger udev-settle; do rc-update add $s sysinit; done",
+            cyberbrick_board_docs,
+        )
+        self.assertIn("camera_auto_detect=1", cyberbrick_board_docs)
+        self.assertIn(
+            "for m in bcm2835-codec bcm2835-isp; do", cyberbrick_board_docs
+        )
+        self.assertIn("ipa_rpi_vc4.so", cyberbrick_board_docs)
+        self.assertIn("/usr/share/libcamera/ipa/rpi/vc4/", cyberbrick_board_docs)
+        self.assertIn("--camera-probe", cyberbrick_board_docs)
+        self.assertIn("TXING_KVS_READY", cyberbrick_board_docs)
+        self.assertIn(
+            "configured camera index is not available", cyberbrick_board_docs
+        )
         self.assertIn("ld-musl-aarch64.so.1", cyberbrick_board_docs)
         self.assertIn("libcamera.so.0.7", cyberbrick_board_docs)
         self.assertIn("libcamera-base.so.0.7", cyberbrick_board_docs)
