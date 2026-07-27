@@ -138,6 +138,11 @@ or loss of `thread` capability is a failed SED runtime test, not an Office-only
 problem. Release and ordinary `debug` profiles do not advertise
 `profile=sed-debug` and do not change Thread link mode in response to REDCON.
 
+For `sed-debug`, REDCON `4` keeps the receiver on for a bounded `100 ms`
+response grace after the CoAP changed-state reply, then enters `n`. This lets
+the rig receive synchronous confirmation before the child becomes sleepy; it
+does not change the 5000 ms poll period or the final REDCON 4 link policy.
+
 ## Factory Data
 
 `power-si` stores a versioned `TXT1` factory record in the XIAO MG24 factory

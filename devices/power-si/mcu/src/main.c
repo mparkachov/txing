@@ -46,6 +46,7 @@ LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 #define STATE_JSON_SIZE 160
 #define REQUEST_JSON_SIZE 96
 #define SED_FALLBACK_GRACE_SECONDS 20
+#define SED_REDCON_RESPONSE_GRACE_MS 100
 #define BATTERY_DIVIDER_SETTLE_MS 30
 #define BATTERY_DIVIDER_RATIO 2
 
@@ -125,6 +126,7 @@ static atomic_t sed_mode_active;
 static atomic_t sed_transition_failed;
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
 static atomic_t sed_debug_receiver_on_requested;
+static atomic_t sed_debug_sleep_transition_requested;
 #endif
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
 static atomic_t sed_recovery_pending;
@@ -156,12 +158,17 @@ static bool thread_receiver_on_requested(void);
 static bool thread_sed_mode_requested(void);
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
 static int apply_sed_debug_redcon_thread_mode(int redcon);
+static void sed_debug_redcon_sleep_work_handler(struct k_work *work);
 #endif
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
 static void sed_recovery_work_handler(struct k_work *work);
 #endif
 static K_WORK_DELAYABLE_DEFINE(sed_transition_work, sed_transition_work_handler);
 static K_WORK_DELAYABLE_DEFINE(sed_fallback_work, sed_fallback_work_handler);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+static K_WORK_DELAYABLE_DEFINE(sed_debug_redcon_sleep_work,
+			       sed_debug_redcon_sleep_work_handler);
+#endif
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
 static K_WORK_DELAYABLE_DEFINE(sed_recovery_work, sed_recovery_work_handler);
 #endif
@@ -587,14 +594,29 @@ static void redcon_handler(void *context, otMessage *message, const otMessageInf
 		return;
 	}
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
-	if (apply_sed_debug_redcon_thread_mode(request.redcon) != 0) {
-		LOG_ERR("SED debug REDCON %d link-mode update failed", request.redcon);
-		if (set_outputs_for_redcon(previous_redcon) != 0) {
-			LOG_ERR("REDCON output rollback to %d failed", previous_redcon);
+	if (request.redcon == TXING_REDCON_ON) {
+		atomic_set(&sed_debug_sleep_transition_requested, 0);
+		(void)k_work_cancel_delayable(&sed_debug_redcon_sleep_work);
+		if (apply_sed_debug_redcon_thread_mode(request.redcon) != 0) {
+			LOG_ERR("SED debug REDCON %d link-mode update failed", request.redcon);
+			if (set_outputs_for_redcon(previous_redcon) != 0) {
+				LOG_ERR("REDCON output rollback to %d failed", previous_redcon);
+			}
+			send_response(message, message_info, OT_COAP_CODE_INTERNAL_ERROR, NULL);
+			return;
 		}
-		send_response(message, message_info, OT_COAP_CODE_INTERNAL_ERROR, NULL);
+		send_state_response(message, message_info, OT_COAP_CODE_CHANGED);
 		return;
 	}
+
+	/* Keep the receiver on until the CoAP Changed response has left the stack. */
+	atomic_set(&sed_debug_sleep_transition_requested, 1);
+	send_state_response(message, message_info, OT_COAP_CODE_CHANGED);
+	LOG_INF("SED debug REDCON 4 response grace %u ms before Thread link mode n",
+		(unsigned int)SED_REDCON_RESPONSE_GRACE_MS);
+	(void)k_work_schedule(&sed_debug_redcon_sleep_work,
+			      K_MSEC(SED_REDCON_RESPONSE_GRACE_MS));
+	return;
 #endif
 	send_state_response(message, message_info, OT_COAP_CODE_CHANGED);
 }
@@ -891,6 +913,30 @@ static int apply_sed_debug_redcon_thread_mode(int redcon)
 		receiver_on_when_idle ? "rn" : "n");
 	return 0;
 }
+
+static void sed_debug_redcon_sleep_work_handler(struct k_work *work)
+{
+	otInstance *ot;
+	int rc;
+
+	ARG_UNUSED(work);
+	if (!atomic_cas(&sed_debug_sleep_transition_requested, 1, 0)) {
+		return;
+	}
+
+	ot = openthread_get_default_instance();
+	if (ot == NULL) {
+		LOG_ERR("SED debug REDCON 4 link-mode transition failed: OpenThread unavailable");
+		return;
+	}
+
+	openthread_mutex_lock();
+	rc = apply_sed_debug_redcon_thread_mode(TXING_REDCON_OFF);
+	openthread_mutex_unlock();
+	if (rc != 0) {
+		LOG_ERR("SED debug REDCON 4 link-mode transition failed after CoAP response: %d", rc);
+	}
+}
 #endif
 
 #if !IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
@@ -1165,6 +1211,7 @@ static int start_thread(otInstance *ot)
 	atomic_set(&sed_transition_failed, 0);
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
 	atomic_set(&sed_debug_receiver_on_requested, 0);
+	atomic_set(&sed_debug_sleep_transition_requested, 0);
 #endif
 #if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
 	atomic_set(&sed_recovery_pending, 0);
