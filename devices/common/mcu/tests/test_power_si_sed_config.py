@@ -209,8 +209,10 @@ class PowerSiSedConfigTests(unittest.TestCase):
         self.assertIn("configure_thread_mtd_mode_locked(ot, false)", source)
         self.assertIn("k_work_cancel_delayable(&sed_fallback_work)", source)
         self.assertIn("requested link-mode recovery", source)
-        self.assertIn("Use REDCON to switch sed-debug link mode", kconfig)
-        self.assertIn("retains the existing Thread child and SRP service", kconfig)
+        self.assertIn("Use REDCON to switch requested Thread link mode", kconfig)
+        self.assertIn("Active-power policy shared by the final release", kconfig)
+        self.assertIn("retains the existing Thread child", kconfig)
+        self.assertIn("and SRP service.", kconfig)
 
 
 if __name__ == "__main__":

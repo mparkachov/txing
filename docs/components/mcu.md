@@ -95,7 +95,10 @@ over Thread, and no Matter/CHIP stack.
   result. Latest DC observations were approximately `16-20 mA` in both SED
   `n` and receiver-on `rn` states, so no low-current conclusion is accepted.
 - REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
-  and the board LED following the same state.
+  and the board LED following the same state. The final release and `sed-debug`
+  use a live Thread link-mode policy: REDCON `3` requests receiver-on MTD
+  (`rn`) for immediate follow-up control, while REDCON `4` replies before a
+  bounded 100 ms grace then returns to sleepy MTD (`n`).
 - Factory data: `TXT1` written by
   `just mcu::nve <thing-name> <dataset-tlvs-file>` at `0x0817a000`. The final
   16 KiB of flash (`0x0817c000..0x0817ffff`) is reserved for Zephyr/OpenThread

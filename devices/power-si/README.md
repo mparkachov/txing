@@ -102,7 +102,7 @@ sudo journalctl -u txing-thread-connectivity.service -u txing-sparkplug-manager.
 ```
 
 At initial REDCON 4, the child row must remain `R=0`; the service must be
-`deleted:false` on port `5683` and include the test-only TXT value
+`deleted:false` on port `5683` and include the SED-policy TXT value
 `profile=sed-debug` (shown by `ot-ctl` as
 `profile=7365642d6465627567`). The Thread daemon must have reconciled the
 enlisted device and must not report CoAP discovery or polling failures. Within
@@ -110,10 +110,10 @@ one Thread poll/discovery cycle, open the Thing in Office: it is registered
 when the Sparkplug state is live, `thread` is shown active, and the REDCON ring
 reflects the CoAP state.
 
-The `sed-debug` profile alone tests active-power link policy. Use the Office
-REDCON control to command `3`: the device applies D1/LED state, changes its
-attached Thread child to receiver-on MTD (`ot mode` reports `rn` and OTBR shows
-`R=1`), then returns the confirmed CoAP state. The Thread daemon logs:
+The final release and `sed-debug` share the active-power link policy. Use the
+Office REDCON control to command `3`: the device applies D1/LED state, changes
+its attached Thread child to receiver-on MTD (`ot mode` reports `rn` and OTBR
+shows `R=1`), then returns the confirmed CoAP state. The Thread daemon logs:
 
 ```text
 Thread REDCON command received thing=<thing-name> command=<command-id> redcon=3
@@ -134,8 +134,9 @@ Sparkplug DCMD to local IPC to Thread CoAP path; allow up to the configured
 `12000 ms` Thread CoAP timeout. Confirm the final state in Office, the
 `power-si` D1 output, the board LED, and the OTBR child row. A command timeout
 or loss of `thread` capability is a failed SED runtime test, not an Office-only
-problem. Release and ordinary `debug` profiles do not advertise
-`profile=sed-debug` and do not change Thread link mode in response to REDCON.
+problem. The final release shares the `profile=sed-debug` marker and the
+REDCON link policy; ordinary `debug` neither advertises that marker nor changes
+Thread link mode in response to REDCON.
 
 For `sed-debug`, REDCON `4` keeps the receiver on for a bounded `100 ms`
 response grace after the CoAP changed-state reply, then enters `n`. This lets
@@ -265,7 +266,7 @@ accepts an equivalent fix.
 
 | Profile | Command | Source and runtime policy | Intended use |
 | --- | --- | --- | --- |
-| Release | `just power-si::mcu::build` | Validated SED overlay and isolated RadioAES candidate, applied only during the build; console, shell, logging, and application diagnostics disabled; on-demand PD3/PD4 battery sampling enabled. | Final product firmware and Office/LED REDCON acceptance. |
+| Release | `just power-si::mcu::build` | Validated SED overlay and isolated RadioAES candidate, applied only during the build; REDCON `3` requests receiver-on `rn` and REDCON `4` returns to sleepy `n`; console, shell, logging, and application diagnostics disabled; on-demand PD3/PD4 battery sampling enabled. | Final product firmware and Office/LED REDCON acceptance. |
 | Debug | `just power-si::mcu::build-debug` | Unmodified stock Zephyr with UART, shell, and OpenThread diagnostics; ordinary receiver-on recovery remains available. | General firmware and Thread diagnosis. |
 | SED debug | `just power-si::mcu::build-sed-debug` | Isolated RadioAES candidate applied only for the build; UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, bounded requested-link recovery, and REDCON 3/4 `rn`/`n` link-policy testing. | SED functional, recovery, indirect-delivery, and active-power link-policy diagnosis. |
 
