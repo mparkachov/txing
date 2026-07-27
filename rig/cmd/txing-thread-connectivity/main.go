@@ -37,7 +37,7 @@ func main() {
 		os.Exit(2)
 	}
 	if dryRun {
-		fmt.Printf("txing-thread-connectivity version=%s rig=%s town=%s ipc=%s domain=%s\n", version.Version, cfg.RigID, cfg.TownID, cfg.IPCSocket, cfg.ThreadServiceDomain)
+		fmt.Printf("txing-thread-connectivity version=%s rig=%s town=%s ipc=%s domain=%s otctl=%s\n", version.Version, cfg.RigID, cfg.TownID, cfg.IPCSocket, cfg.ThreadServiceDomain, cfg.ThreadOTCTL)
 		return
 	}
 
@@ -61,7 +61,7 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 		cfg.CloudWatchRetentionDays,
 	)
 	logger.Ensure(ctx)
-	logger.Print(ctx, "info", fmt.Sprintf("version=%s rig=%s domain=%s", version.Version, cfg.RigID, cfg.ThreadServiceDomain))
+	logger.Print(ctx, "info", fmt.Sprintf("version=%s rig=%s domain=%s otctl=%s", version.Version, cfg.RigID, cfg.ThreadServiceDomain, cfg.ThreadOTCTL))
 
 	client, err := ipc.Dial(ctx, cfg.IPCSocket)
 	if err != nil {
@@ -78,13 +78,27 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 	}
 
 	runtime := rigthread.NewRuntime(
-		rigthread.Discoverer{
-			Resolver: rigthread.NewSystemDNSResolver(cfg.ThreadCoAPTimeout),
-			Domain:   cfg.ThreadServiceDomain,
+		rigthread.OTCTLSRPDiscoverer{
+			Path:    cfg.ThreadOTCTL,
+			Domain:  cfg.ThreadServiceDomain,
+			Timeout: 2 * time.Second,
 		},
 		rigthread.CoAPClient{Timeout: cfg.ThreadCoAPTimeout, Attempts: 2},
 		client,
 	)
+	runtime.OnSEDDebugRedconConfirmed = func(endpoint rigthread.Endpoint, redcon uint8) {
+		logger.Print(ctx, "info", fmt.Sprintf("Thread sed-debug REDCON transition confirmed thing=%s redcon=%d requestedLinkMode=%s",
+			endpoint.ThingName, redcon, rigthread.SEDDebugLinkModeForRedcon(redcon)))
+	}
+	scheduler := rigthread.NewScheduler(runtime, 4)
+	scheduler.OnMaintenanceError = func(err error) {
+		logger.Print(ctx, "warning", fmt.Sprintf("Thread maintenance failed error=%q", err))
+	}
+	scheduler.OnCommandError = func(command protocol.CapabilityCommand, err error) {
+		logger.Print(ctx, "warning", fmt.Sprintf("Thread command handling failed thing=%s command=%s error=%q", command.ThingName, command.CommandID, err))
+	}
+	scheduler.Start(ctx)
+	defer scheduler.Close()
 
 	messages := make(chan ipc.Message, 256)
 	ipcErrors := make(chan error, 1)
@@ -117,23 +131,19 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 		case err := <-ipcErrors:
 			return fmt.Errorf("IPC receive failed: %w", err)
 		case <-discoveryTicker.C:
-			if err := runtime.DiscoverAndPoll(ctx); err != nil {
-				logger.Print(ctx, "warning", fmt.Sprintf("Thread discovery failed error=%q", err))
-			}
+			scheduler.RequestMaintenance()
 		case <-pollTicker.C:
-			if err := runtime.DiscoverAndPoll(ctx); err != nil {
-				logger.Print(ctx, "warning", fmt.Sprintf("Thread poll failed error=%q", err))
-			}
+			scheduler.RequestMaintenance()
 		case <-heartbeatTicker.C:
 			publishHeartbeat(ctx, client, nil, heartbeatSeq)
 			heartbeatSeq++
 		case message := <-messages:
-			handleIPCMessage(ctx, logger, runtime, message)
+			handleIPCMessage(ctx, logger, runtime, scheduler, message)
 		}
 	}
 }
 
-func handleIPCMessage(ctx context.Context, logger *awsx.CloudWatchLogger, runtime *rigthread.Runtime, message ipc.Message) {
+func handleIPCMessage(ctx context.Context, logger *awsx.CloudWatchLogger, runtime *rigthread.Runtime, scheduler *rigthread.Scheduler, message ipc.Message) {
 	if message.Topic == protocol.InventoryTopic {
 		inventory, err := protocol.DecodeInventory(message.Payload)
 		if err != nil {
@@ -154,7 +164,8 @@ func handleIPCMessage(ctx context.Context, logger *awsx.CloudWatchLogger, runtim
 			logger.Print(ctx, "warning", fmt.Sprintf("command thing mismatch topic=%s payloadThing=%s", message.Topic, command.ThingName))
 			return
 		}
-		if err := runtime.HandleCommand(ctx, command); err != nil {
+		logger.Print(ctx, "info", fmt.Sprintf("Thread REDCON command received thing=%s command=%s redcon=%d", command.ThingName, command.CommandID, command.Target.Redcon))
+		if err := scheduler.SubmitCommand(command); err != nil {
 			logger.Print(ctx, "warning", fmt.Sprintf("Thread command handling failed thing=%s command=%s error=%q", command.ThingName, command.CommandID, err))
 		}
 	}

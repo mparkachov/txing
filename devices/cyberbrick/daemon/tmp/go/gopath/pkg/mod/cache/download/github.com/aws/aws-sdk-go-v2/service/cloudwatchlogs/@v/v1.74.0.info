@@ -1,0 +1,1 @@
+{"Version":"v1.74.0","Time":"2026-05-15T18:15:05Z","Origin":{"VCS":"git","URL":"https://github.com/aws/aws-sdk-go-v2","Subdir":"service/cloudwatchlogs","Hash":"f29464eb7d59e0f436636245835fcc40a26908c9","Ref":"refs/tags/service/cloudwatchlogs/v1.74.0"}}

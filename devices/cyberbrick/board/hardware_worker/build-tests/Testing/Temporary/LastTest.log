@@ -1,0 +1,19 @@
+Start testing: Jul 16 08:51 CEST
+----------------------------------------------------------
+1/1 Testing: txing-cyberbrick-hardware-worker-tests
+1/1 Test: txing-cyberbrick-hardware-worker-tests
+Command: "/Users/Maxim/Developer/txing/devices/cyberbrick/board/hardware_worker/build-tests/txing-cyberbrick-hardware-worker-tests"
+Directory: /Users/Maxim/Developer/txing/devices/cyberbrick/board/hardware_worker/build-tests
+"txing-cyberbrick-hardware-worker-tests" start time: Jul 16 08:51 CEST
+Output:
+----------------------------------------------------------
+txing-cyberbrick-hardware-worker tests passed
+<end of output>
+Test time =   0.08 sec
+----------------------------------------------------------
+Test Passed.
+"txing-cyberbrick-hardware-worker-tests" end time: Jul 16 08:51 CEST
+"txing-cyberbrick-hardware-worker-tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jul 16 08:51 CEST

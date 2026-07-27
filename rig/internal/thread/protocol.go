@@ -19,6 +19,7 @@ const (
 	DefaultDomain   = "default.service.arpa"
 	DefaultCoAPPort = uint16(5683)
 	ProtocolVersion = "1"
+	RequestVersion  = 1
 
 	SparkplugCapability = "sparkplug"
 	ThreadCapability    = "thread"
@@ -26,6 +27,9 @@ const (
 
 	ThreadShadowName = "thread"
 	PowerShadowName  = "power"
+
+	DeviceProfileTXTKey = "profile"
+	SEDDebugProfile     = "sed-debug"
 )
 
 type DeviceSpec struct {
@@ -58,12 +62,24 @@ type DeviceState struct {
 }
 
 type RedconRequest struct {
-	Redcon uint8 `json:"redcon"`
+	Version int   `json:"version"`
+	Redcon  uint8 `json:"redcon"`
 }
 
 type ShadowUpdate struct {
 	Topic   string
 	Payload []byte
+}
+
+func IsSEDDebugEndpoint(endpoint Endpoint) bool {
+	return endpoint.TXT[DeviceProfileTXTKey] == SEDDebugProfile
+}
+
+func SEDDebugLinkModeForRedcon(redcon uint8) string {
+	if redcon == 3 {
+		return "rn"
+	}
+	return "n"
 }
 
 func DeviceSpecFromInventory(device protocol.InventoryDevice) *DeviceSpec {
@@ -267,7 +283,7 @@ func EncodeRedconRequest(redcon uint8) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(RedconRequest{Redcon: normalized})
+	return json.Marshal(RedconRequest{Version: RequestVersion, Redcon: normalized})
 }
 
 func NowMS() uint64 {

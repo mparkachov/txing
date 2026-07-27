@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 import shutil
@@ -38,7 +39,8 @@ NRF_OPENOCD_SUPPORT_DIR = ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54l15" / "
 NRF_OPENOCD_CFG = NRF_OPENOCD_SUPPORT_DIR / "openocd.cfg"
 PYOCD_REQUIRED_TARGETS = ("EFR32MG24B220F1536IM48",)
 PYOCD_PACK_TARGETS = PYOCD_REQUIRED_TARGETS
-HAL_SILABS_BLOBS_DIR = WORKSPACE_DIR / "modules" / "hal" / "silabs" / "zephyr" / "blobs"
+HAL_SILABS_DIR = WORKSPACE_DIR / "modules" / "hal" / "silabs"
+HAL_SILABS_BLOBS_DIR = HAL_SILABS_DIR / "zephyr" / "blobs"
 POWER_SI_BLOB_REGEX = (
     r"simplicity_sdk/("
     r"protocol/openthread/.*/libsl_openthread\.a|"
@@ -67,6 +69,54 @@ POWER_SI_REQUIRED_BLOBS = (
     / "librail_release"
     / "librail_efr32xg24_gcc_release.a",
 )
+@dataclass(frozen=True)
+class IsolatedPatch:
+    checkout: Path
+    patch: Path
+
+
+@dataclass(frozen=True)
+class BuildProfile:
+    name: str
+    build_suffix: str = ""
+    debug_conf: bool = False
+    sed_debug_conf: bool = False
+    release_conf: bool = False
+    use_silabs_ccm_candidate: bool = False
+    force_pristine: bool = False
+
+
+POWER_SI_SILABS_CCM_PATCH_ENV = "TXING_POWER_SI_SILABS_CCM_PATCH"
+POWER_SI_SILABS_CCM_PATCHES = (
+    IsolatedPatch(
+        HAL_SILABS_DIR,
+        COMMON_MCU_DIR / "patches" / "silabs-radioaes-zero-length-ccm.patch",
+    ),
+)
+BUILD_PROFILES = {
+    profile.name: profile
+    for profile in (
+        BuildProfile("release"),
+        BuildProfile("debug", build_suffix="-debug", debug_conf=True, force_pristine=True),
+        BuildProfile(
+            "sed-debug",
+            build_suffix="-sed-debug",
+            debug_conf=True,
+            sed_debug_conf=True,
+            use_silabs_ccm_candidate=True,
+            force_pristine=True,
+        ),
+    )
+}
+ACTIVE_BUILD_PROFILES = tuple(BUILD_PROFILES)
+
+POWER_SI_RELEASE_PROFILE = BuildProfile(
+    "release",
+    sed_debug_conf=True,
+    release_conf=True,
+    use_silabs_ccm_candidate=True,
+    force_pristine=True,
+)
 
 
 @dataclass(frozen=True)
@@ -76,6 +126,8 @@ class DeviceConfig:
     overlay_name: str
     extra_conf: Path | None = None
     debug_conf: Path | None = None
+    sed_debug_conf: Path | None = None
+    release_conf: Path | None = None
     flash_runner: str | None = None
 
 
@@ -101,6 +153,18 @@ DEVICE_CONFIGS = {
         / "mcu"
         / "zephyr"
         / "debug.conf",
+        sed_debug_conf=PROJECT_ROOT
+        / "devices"
+        / "power-si"
+        / "mcu"
+        / "zephyr"
+        / "sed-debug.conf",
+        release_conf=PROJECT_ROOT
+        / "devices"
+        / "power-si"
+        / "mcu"
+        / "zephyr"
+        / "release.conf",
         flash_runner="west-pyocd",
     ),
 }
@@ -310,6 +374,109 @@ def ensure_power_si_blobs() -> None:
         )
 
 
+def env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_profile(device: str, *, profile: str = "release", debug: bool = False) -> BuildProfile:
+    if debug:
+        if profile != "release":
+            fail("--debug cannot be combined with --profile")
+        profile = "debug"
+    try:
+        selected = BUILD_PROFILES[profile]
+    except KeyError:
+        fail(
+            f"unsupported MCU build profile: {profile}. "
+            f"Supported profiles: {', '.join(ACTIVE_BUILD_PROFILES)}"
+        )
+    if device == "power-si" and selected.name == "release":
+        selected = POWER_SI_RELEASE_PROFILE
+    if selected.use_silabs_ccm_candidate and device != "power-si":
+        fail(f"{selected.name} is only supported for power-si")
+    return selected
+
+
+def checkout_status(checkout: Path) -> str:
+    return run(
+        ["git", "status", "--porcelain"],
+        cwd=checkout,
+        env=local_env(),
+        capture=True,
+    ).stdout.strip()
+
+
+def isolated_patches_for_device(
+    device: str, *, profile: str = "release", debug: bool = False
+) -> tuple[IsolatedPatch, ...]:
+    selected = build_profile(device, profile=profile, debug=debug)
+    patches: list[IsolatedPatch] = []
+    if device == "power-si" and (
+        selected.use_silabs_ccm_candidate
+        or env_flag(POWER_SI_SILABS_CCM_PATCH_ENV)
+    ):
+        patches.extend(POWER_SI_SILABS_CCM_PATCHES)
+    return tuple(patches)
+
+
+@contextmanager
+def applied_isolated_patches(patches: tuple[IsolatedPatch, ...]):
+    if not patches:
+        yield
+        return
+
+    for patch in patches:
+        if not patch.checkout.is_dir():
+            fail(f"missing isolated patch checkout: {patch.checkout}")
+        if not patch.patch.exists():
+            fail(f"missing isolated patch: {patch.patch}")
+
+    checked_roots: set[Path] = set()
+    for patch in patches:
+        if patch.checkout in checked_roots:
+            continue
+        checked_roots.add(patch.checkout)
+        status = checkout_status(patch.checkout)
+        if status:
+            fail(
+                "refusing to apply isolated patch to dirty checkout: "
+                f"{patch.checkout}. Clean the checkout or reverse any interrupted patch first."
+            )
+
+    log("applying isolated build patch(es); stock sources remain unchanged after the build")
+    applied: list[IsolatedPatch] = []
+    try:
+        for patch in patches:
+            run(
+                ["git", "apply", "--check", patch.patch],
+                cwd=patch.checkout,
+                env=local_env(),
+            )
+            run(["git", "apply", patch.patch], cwd=patch.checkout, env=local_env())
+            applied.append(patch)
+        yield
+    finally:
+        log("reversing isolated build patch(es)")
+        for patch in reversed(applied):
+            reverse_check = subprocess.run(
+                ["git", "apply", "--reverse", "--check", str(patch.patch)],
+                cwd=patch.checkout,
+                env=local_env(),
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if reverse_check.returncode == 0:
+                run(["git", "apply", "--reverse", patch.patch], cwd=patch.checkout, env=local_env())
+            else:
+                fail(f"could not reverse isolated patch automatically: {patch.patch}")
+
+        for checkout in checked_roots:
+            status = checkout_status(checkout)
+            if status:
+                fail(f"checkout is dirty after reversing isolated patch: {checkout}")
+
+
 def verify_workspace() -> None:
     if not WEST_CONFIG.exists():
         fail("missing stock Zephyr west workspace. Run: just mcu::install")
@@ -410,39 +577,51 @@ def overlay_file(device: str) -> Path:
     return app_dir(device) / "boards" / device_config(device).overlay_name
 
 
-def build_dir(device: str, *, debug: bool = False) -> Path:
-    build_name = device_config(device).build_name
-    if debug:
-        build_name = f"{build_name}-debug"
+def build_dir(device: str, *, debug: bool = False, profile: str = "release") -> Path:
+    selected = build_profile(device, profile=profile, debug=debug)
+    build_name = f"{device_config(device).build_name}{selected.build_suffix}"
     return device_mcu_dir(device) / "build" / build_name
 
 
-def firmware_candidates(device: str, *, debug: bool = False) -> tuple[Path, Path]:
-    directory = build_dir(device, debug=debug)
+def firmware_candidates(
+    device: str, *, debug: bool = False, profile: str = "release"
+) -> tuple[Path, Path]:
+    directory = build_dir(device, debug=debug, profile=profile)
     return (
         directory / "zephyr" / "zephyr.hex",
         directory / "zephyr" / "zephyr" / "zephyr.hex",
     )
 
 
-def firmware_hex(device: str, *, debug: bool = False) -> Path:
-    candidates = firmware_candidates(device, debug=debug)
+def firmware_hex(device: str, *, debug: bool = False, profile: str = "release") -> Path:
+    candidates = firmware_candidates(device, debug=debug, profile=profile)
     for candidate in candidates:
         if candidate.exists():
             return candidate
     return candidates[0]
 
 
-def require_firmware_hex(device: str, *, debug: bool = False) -> Path:
-    candidate = firmware_hex(device, debug=debug)
+def build_command_for_profile(profile: str) -> str:
+    if profile == "release":
+        return "build"
+    return f"build-{profile}"
+
+
+def require_firmware_hex(
+    device: str, *, debug: bool = False, profile: str = "release"
+) -> Path:
+    selected = build_profile(device, profile=profile, debug=debug)
+    candidate = firmware_hex(device, profile=selected.name)
     if not candidate.exists():
-        target = "build-debug" if debug else "build"
-        fail(f"missing firmware hex. Run: just {device}::mcu::{target}")
+        fail(
+            "missing firmware hex. Run: "
+            f"just {device}::mcu::{build_command_for_profile(selected.name)}"
+        )
     return candidate
 
 
-def pristine_mode(device: str) -> str:
-    cache = build_dir(device) / "CMakeCache.txt"
+def pristine_mode(device: str, *, profile: str = "release") -> str:
+    cache = build_dir(device, profile=profile) / "CMakeCache.txt"
     if not cache.exists():
         return "auto"
     text = cache.read_text(encoding="utf-8", errors="replace")
@@ -457,11 +636,12 @@ def pristine_mode(device: str) -> str:
     return "auto"
 
 
-def build(device: str, *, debug: bool = False) -> None:
+def build(device: str, *, debug: bool = False, profile: str = "release") -> None:
     require_commands("git", "python3", "cmake", "ninja", "dtc", "arm-none-eabi-gcc")
     verify_workspace()
     if device == "power-si":
         ensure_power_si_blobs()
+    selected = build_profile(device, profile=profile, debug=debug)
     config = device_config(device)
     conf = prj_conf(device)
     overlay = overlay_file(device)
@@ -469,10 +649,18 @@ def build(device: str, *, debug: bool = False) -> None:
     extra_conf_files = []
     if config.extra_conf is not None:
         extra_conf_files.append(config.extra_conf)
-    if debug:
+    if selected.debug_conf:
         if config.debug_conf is None:
             fail(f"{device} does not have a debug MCU build profile")
         extra_conf_files.append(config.debug_conf)
+    if selected.sed_debug_conf:
+        if config.sed_debug_conf is None:
+            fail(f"{device} does not have an SED debug MCU build profile")
+        extra_conf_files.append(config.sed_debug_conf)
+    if selected.release_conf:
+        if config.release_conf is None:
+            fail(f"{device} does not have a release MCU build overlay")
+        extra_conf_files.append(config.release_conf)
     required_inputs.extend(extra_conf_files)
     for path in required_inputs:
         if not path.exists():
@@ -486,36 +674,46 @@ def build(device: str, *, debug: bool = False) -> None:
         cmake_args.append(
             "-DEXTRA_CONF_FILE=" + ";".join(str(path) for path in extra_conf_files)
         )
-    run(
-        west_command()
-        + [
-            "-z",
-            ZEPHYR_BASE,
-            "build",
-            "-p",
-            "always" if debug else pristine_mode(device),
-            "-b",
-            config.board,
-            app_dir(device),
-            "-d",
-            build_dir(device, debug=debug),
-            "--",
-        ]
-        + cmake_args,
-        cwd=WORKSPACE_DIR,
-        env=local_env(),
-    )
-    hex_file = firmware_hex(device, debug=debug)
+    with applied_isolated_patches(
+        isolated_patches_for_device(device, profile=selected.name)
+    ):
+        run(
+            west_command()
+            + [
+                "-z",
+                ZEPHYR_BASE,
+                "build",
+                "-p",
+                (
+                    "always"
+                    if selected.force_pristine
+                    else pristine_mode(device, profile=selected.name)
+                ),
+                "-b",
+                config.board,
+                app_dir(device),
+                "-d",
+                build_dir(device, profile=selected.name),
+                "--",
+            ]
+            + cmake_args,
+            cwd=WORKSPACE_DIR,
+            env=local_env(),
+        )
+    hex_file = firmware_hex(device, profile=selected.name)
     if not hex_file.exists():
         fail(f"build completed, but no expected firmware HEX was created: {hex_file}")
     log(f"ok: built {hex_file}")
 
 
 def clean(device: str) -> None:
-    path = build_dir(device)
-    if path.exists():
-        log(f"removing {path}")
-        shutil.rmtree(path)
+    for profile in ACTIVE_BUILD_PROFILES:
+        if BUILD_PROFILES[profile].use_silabs_ccm_candidate and device != "power-si":
+            continue
+        path = build_dir(device, profile=profile)
+        if path.exists():
+            log(f"removing {path}")
+            shutil.rmtree(path)
 
 
 def openocd_program() -> str:
@@ -598,14 +796,19 @@ def run_openocd(device: str, hex_file: Path) -> None:
 
 
 def west_flash_command(
-    device: str, hex_file: Path | None = None, *, debug: bool = False
+    device: str,
+    hex_file: Path | None = None,
+    *,
+    debug: bool = False,
+    profile: str = "release",
 ) -> list[str | Path]:
+    selected = build_profile(device, profile=profile, debug=debug)
     command: list[str | Path] = [
         *west_command(),
         "flash",
         "--no-rebuild",
         "-d",
-        build_dir(device, debug=debug),
+        build_dir(device, profile=selected.name),
         "-r",
         "pyocd",
         "--",
@@ -618,25 +821,31 @@ def west_flash_command(
 
 
 def run_west_flash(
-    device: str, hex_file: Path | None = None, *, debug: bool = False
+    device: str,
+    hex_file: Path | None = None,
+    *,
+    debug: bool = False,
+    profile: str = "release",
 ) -> None:
+    selected = build_profile(device, profile=profile, debug=debug)
     verify_workspace()
     require_pyocd_targets()
     run(
-        west_flash_command(device, hex_file, debug=debug),
+        west_flash_command(device, hex_file, profile=selected.name),
         cwd=WORKSPACE_DIR,
         env=local_env(),
     )
 
 
-def flash(device: str, *, debug: bool = False) -> None:
-    require_firmware_hex(device, debug=debug)
+def flash(device: str, *, debug: bool = False, profile: str = "release") -> None:
+    selected = build_profile(device, profile=profile, debug=debug)
+    hex_file = require_firmware_hex(device, profile=selected.name)
     runner = device_config(device).flash_runner
     if runner == "openocd-nrf54l15":
-        run_openocd(device, firmware_hex(device, debug=debug))
+        run_openocd(device, hex_file)
         return
     if runner == "west-pyocd":
-        run_west_flash(device, debug=debug)
+        run_west_flash(device, hex_file, profile=selected.name)
         return
     fail(f"{device} does not have an automated flash recipe")
 
@@ -716,7 +925,13 @@ def main() -> None:
     parser.add_argument("--device", choices=ACTIVE_DEVICES)
     parser.add_argument("--output", type=Path, help="output path for generated factory HEX")
     parser.add_argument("--port", type=int, default=5683, help="CoAP port for power-si TXT1 data")
-    parser.add_argument("--debug", action="store_true", help="flash debug firmware output")
+    parser.add_argument(
+        "--profile",
+        choices=ACTIVE_BUILD_PROFILES,
+        default="release",
+        help="firmware build/flash profile",
+    )
+    parser.add_argument("--debug", action="store_true", help="legacy alias for --profile debug")
     parser.add_argument(
         "command",
         choices=(
@@ -724,6 +939,7 @@ def main() -> None:
             "check",
             "build",
             "build-debug",
+            "build-sed-debug",
             "clean",
             "flash",
             "nve",
@@ -736,6 +952,8 @@ def main() -> None:
 
     if args.debug and args.command != "flash":
         fail("--debug is only supported with flash")
+    if args.debug and args.profile != "release":
+        fail("--debug cannot be combined with --profile")
 
     if args.command == "install":
         install()
@@ -744,13 +962,21 @@ def main() -> None:
             fail("mcu check is shared and does not take --device")
         check()
     elif args.command == "build":
+        if args.profile != "release":
+            fail("--profile is only supported with flash; use build-* commands for builds")
         build(require_device(args.command, args.device))
     elif args.command == "build-debug":
-        build(require_device(args.command, args.device), debug=True)
+        if args.profile != "release":
+            fail("--profile is only supported with flash; use build-* commands for builds")
+        build(require_device(args.command, args.device), profile="debug")
+    elif args.command == "build-sed-debug":
+        if args.profile != "release":
+            fail("--profile is only supported with flash; use build-* commands for builds")
+        build(require_device(args.command, args.device), profile="sed-debug")
     elif args.command == "clean":
         clean(require_device(args.command, args.device))
     elif args.command == "flash":
-        flash(require_device(args.command, args.device), debug=args.debug)
+        flash(require_device(args.command, args.device), debug=args.debug, profile=args.profile)
     elif args.command == "nve":
         if args.thing_name is None:
             fail("nve requires <thing-name>")

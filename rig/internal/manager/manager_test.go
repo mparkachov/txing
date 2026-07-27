@@ -329,6 +329,15 @@ func TestThreadPowerSIStateSelectsRedconFromThreadCapabilities(t *testing.T) {
 	}
 	assertCapability(t, snapshot.Capabilities, "thread", true)
 	assertCapability(t, snapshot.Capabilities, PowerCapability, false)
+	publication, err := state.DecidePublication(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublication(t, publication, PublicationBirth, 4, []sparkplug.Metric{
+		sparkplug.NewBooleanMetric("capability.power", false),
+		sparkplug.NewBooleanMetric("capability.sparkplug", true),
+		sparkplug.NewBooleanMetric("capability.thread", true),
+	})
 
 	if err := state.ObserveState(capabilityState(
 		"dev.txing.rig.ThreadConnectivity",
@@ -346,6 +355,15 @@ func TestThreadPowerSIStateSelectsRedconFromThreadCapabilities(t *testing.T) {
 	}
 	assertCapability(t, snapshot.Capabilities, "thread", true)
 	assertCapability(t, snapshot.Capabilities, PowerCapability, true)
+	publication, err = state.DecidePublication(2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPublication(t, publication, PublicationData, 3, []sparkplug.Metric{
+		sparkplug.NewBooleanMetric("capability.power", true),
+		sparkplug.NewBooleanMetric("capability.sparkplug", true),
+		sparkplug.NewBooleanMetric("capability.thread", true),
+	})
 }
 
 func TestBleRedcon4TransitionPublishesDataEvenWithRetainedBoardState(t *testing.T) {
@@ -655,11 +673,14 @@ func TestCommandResultProjectsToSparkplugMetrics(t *testing.T) {
 }
 
 func TestMqttSessionSpecsUseExpectedLWTTopics(t *testing.T) {
-	node, err := NodeSessionSpec("town-1", "rig-1", "rig-1-sparkplug-manager", 11, 1000)
+	if got := NodeClientID("rig-1"); got != "rig-1" {
+		t.Fatalf("node client id = %s, want rig-1", got)
+	}
+	node, err := NodeSessionSpec("town-1", "rig-1", NodeClientID("rig-1"), 11, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if node.ClientID != "rig-1-sparkplug-manager" || node.Will.Topic != "spBv1.0/town-1/NDEATH/rig-1" {
+	if node.ClientID != "rig-1" || node.Will.Topic != "spBv1.0/town-1/NDEATH/rig-1" {
 		t.Fatalf("node session = %#v", node)
 	}
 	device, err := DeviceSessionSpec("town-1", "rig-1", "unit-1", 1000)

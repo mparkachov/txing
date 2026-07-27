@@ -3,6 +3,7 @@ package thread
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"net"
 	"testing"
 	"time"
@@ -30,6 +31,13 @@ func TestCoAPClientPutRedconReturnsConfirmedState(t *testing.T) {
 	endpoint, done := startCoAPTestServer(t, func(request coapTestRequest) (byte, []byte) {
 		if request.code != coapCodePUT || request.path != "txing/v1/redcon" {
 			t.Fatalf("request = %#v", request)
+		}
+		var body RedconRequest
+		if err := json.Unmarshal(request.payload, &body); err != nil {
+			t.Fatalf("decode request payload: %v", err)
+		}
+		if body.Version != RequestVersion || body.Redcon != 3 {
+			t.Fatalf("request body = %#v", body)
 		}
 		return coapCodeChanged, JSONPayload(DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 3})
 	})
@@ -61,6 +69,7 @@ type coapTestRequest struct {
 	messageID uint16
 	token     []byte
 	path      string
+	payload   []byte
 }
 
 func startCoAPTestServer(t *testing.T, handler func(coapTestRequest) (byte, []byte)) (Endpoint, func()) {
@@ -106,6 +115,7 @@ func parseCoAPTestRequest(payload []byte) (coapTestRequest, error) {
 	segments := []string{}
 	for i := 4 + tokenLen; i < len(payload); {
 		if payload[i] == coapPayloadMark {
+			request.payload = append([]byte(nil), payload[i+1:]...)
 			break
 		}
 		deltaNibble := payload[i] >> 4

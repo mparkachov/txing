@@ -17,11 +17,15 @@ device_type := "power-si"
 @build-debug:
     "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build-debug
 
+@build-sed-debug:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build-sed-debug
+
 @flash profile='release':
     @case "{{ profile }}" in \
       release) "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash ;; \
       debug) "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" --debug flash ;; \
-      *) echo "usage: just power-si::mcu::flash [release|debug]" >&2; exit 2 ;; \
+      sed-debug) "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" --profile sed-debug flash ;; \
+      *) echo "usage: just power-si::mcu::flash [release|debug|sed-debug]" >&2; exit 2 ;; \
     esac
 
 @log port='' baud='115200':

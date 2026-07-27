@@ -20,6 +20,19 @@ func TestLoadDefaultsThreadCoAPTimeoutForSleepyEndDevices(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsThreadOTCTLForLocalOTBRRegistry(t *testing.T) {
+	t.Setenv("TXING_THREAD_OT_CTL", "")
+	configDir := writeTestConfigDir(t)
+
+	cfg, err := Load(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ThreadOTCTL != "ot-ctl" {
+		t.Fatalf("ThreadOTCTL = %q, want ot-ctl", cfg.ThreadOTCTL)
+	}
+}
+
 func TestLoadDefaultsInventoryIntervalToFiveMinutes(t *testing.T) {
 	t.Setenv("TXING_INVENTORY_INTERVAL_SECONDS", "")
 	configDir := writeTestConfigDir(t)
