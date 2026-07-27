@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mparkachov/txing/rig/internal/protocol"
@@ -190,7 +191,28 @@ func TestRuntimeUnavailableDevicePublishesOffline(t *testing.T) {
 	if state.Capabilities["sparkplug"] || state.Capabilities["thread"] || state.Capabilities["power"] {
 		t.Fatalf("offline capabilities = %#v", state.Capabilities)
 	}
+	if got := publisher.publishedTopicCount(stateTopic); got != 1 {
+		t.Fatalf("offline capability publications = %d, want one", got)
+	}
 	assertPublishedTopic(t, publisher, "$aws/things/power-si-001/shadow/name/thread/update")
+}
+
+func TestRuntimeFailedPollPublishesOfflineOnce(t *testing.T) {
+	publisher := &recordingPublisher{}
+	runtime := NewRuntime(
+		&fakeDiscoverer{endpoints: []Endpoint{testEndpoint("power-si-001")}},
+		&fakeDeviceClient{err: context.DeadlineExceeded},
+		publisher,
+	)
+	runtime.ReconcileInventory(testInventory())
+
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stateTopic, _ := protocol.BuildCapabilityStateTopic("power-si-001", AdapterID)
+	if got := publisher.publishedTopicCount(stateTopic); got != 1 {
+		t.Fatalf("offline capability publications after failed poll = %d, want one", got)
+	}
 }
 
 func TestRuntimeCommandReportsSuccessAfterConfirmedState(t *testing.T) {
@@ -452,6 +474,7 @@ func (f *fakeDeviceClient) PutRedcon(_ context.Context, _ Endpoint, target uint8
 }
 
 type recordingPublisher struct {
+	mu        sync.Mutex
 	published []publishedMessage
 	retained  map[string][]byte
 }
@@ -462,11 +485,15 @@ type publishedMessage struct {
 }
 
 func (p *recordingPublisher) Publish(topic string, payload []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.published = append(p.published, publishedMessage{topic: topic, payload: append([]byte(nil), payload...)})
 	return nil
 }
 
 func (p *recordingPublisher) PublishRetained(topic string, payload []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.retained == nil {
 		p.retained = map[string][]byte{}
 	}
@@ -477,6 +504,8 @@ func (p *recordingPublisher) PublishRetained(topic string, payload []byte) error
 
 func (p *recordingPublisher) commandResults(t *testing.T) []protocol.CapabilityCommandResult {
 	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	results := []protocol.CapabilityCommandResult{}
 	for _, message := range p.published {
 		if !strings.Contains(message.topic, protocol.CapabilityCommandResultTopicPrefix) {
@@ -492,6 +521,8 @@ func (p *recordingPublisher) commandResults(t *testing.T) []protocol.CapabilityC
 }
 
 func (p *recordingPublisher) publishedTopicCount(topic string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	count := 0
 	for _, message := range p.published {
 		if message.topic == topic {
@@ -503,6 +534,8 @@ func (p *recordingPublisher) publishedTopicCount(topic string) int {
 
 func assertPublishedTopic(t *testing.T, publisher *recordingPublisher, topic string) {
 	t.Helper()
+	publisher.mu.Lock()
+	defer publisher.mu.Unlock()
 	for _, message := range publisher.published {
 		if message.topic == topic {
 			return

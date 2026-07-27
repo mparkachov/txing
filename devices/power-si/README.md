@@ -117,8 +117,15 @@ attached Thread child to receiver-on MTD (`ot mode` reports `rn` and OTBR shows
 `R=1`), then returns the confirmed CoAP state. The Thread daemon logs:
 
 ```text
+Thread REDCON command received thing=<thing-name> command=<command-id> redcon=3
 Thread sed-debug REDCON transition confirmed thing=<thing-name> redcon=3 requestedLinkMode=rn
 ```
+
+Record the journal timestamps for those two entries while the device is in
+REDCON 4 / `ot mode n`. Their difference must be no more than one `5000 ms`
+child poll plus bounded processing margin; retain the two timestamped lines in
+the task or release acceptance record. Repeat the same capture for REDCON `3`
+to `4`; receiver-on behavior should be immediate apart from processing margin.
 
 Command `4` next. The device returns to sleepy MTD (`ot mode` reports `n` and
 OTBR shows `R=0`) and the daemon logs `requestedLinkMode=n`. SRP must remain

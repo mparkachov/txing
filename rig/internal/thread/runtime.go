@@ -35,6 +35,7 @@ type Runtime struct {
 	endpoints map[string]Endpoint
 	seq       uint64
 
+	publishMu      sync.Mutex
 	shadowMu       sync.Mutex
 	shadowPayloads map[string][]byte
 }
@@ -70,6 +71,21 @@ func (r *Runtime) ReconcileInventory(inventory protocol.Inventory) int {
 }
 
 func (r *Runtime) DiscoverAndPoll(ctx context.Context) error {
+	if err := r.Discover(ctx); err != nil {
+		return err
+	}
+	for _, thingName := range r.EndpointThingNames() {
+		if err := r.Poll(ctx, thingName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Discover refreshes the SRP endpoint cache and publishes offline state for
+// enlisted devices that have no current endpoint. It intentionally does not
+// make CoAP state requests; callers can schedule those independently.
+func (r *Runtime) Discover(ctx context.Context) error {
 	if r.Discoverer == nil || r.Client == nil || r.Publisher == nil {
 		return fmt.Errorf("thread runtime is not fully configured")
 	}
@@ -81,18 +97,44 @@ func (r *Runtime) DiscoverAndPoll(ctx context.Context) error {
 	r.recordEndpoints(endpoints)
 	specs := r.specSnapshot()
 	for thingName := range specs {
-		endpoint, ok := r.endpointFor(thingName)
-		if !ok {
+		if _, ok := r.endpointFor(thingName); !ok {
 			if err := r.publishOffline(ctx, thingName); err != nil {
 				return err
 			}
-			continue
-		}
-		if err := r.pollEndpoint(ctx, endpoint); err != nil {
-			_ = r.publishOffline(ctx, thingName)
 		}
 	}
 	return nil
+}
+
+// Poll performs one maintenance GET for an enlisted device. A missing
+// endpoint is represented as offline state, matching DiscoverAndPoll's
+// historical behavior.
+func (r *Runtime) Poll(ctx context.Context, thingName string) error {
+	if r.Client == nil || r.Publisher == nil {
+		return fmt.Errorf("thread runtime is not fully configured")
+	}
+	endpoint, ok := r.endpointFor(thingName)
+	if !ok {
+		return r.publishOffline(ctx, thingName)
+	}
+	if err := r.pollEndpoint(ctx, endpoint); err != nil {
+		_ = r.publishOffline(ctx, thingName)
+		return nil
+	}
+	return nil
+}
+
+// EndpointThingNames returns the currently discovered and enlisted devices.
+// Discovery has already published offline state for every other enlisted
+// device, so those devices must not receive a duplicate maintenance GET.
+func (r *Runtime) EndpointThingNames() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	thingNames := make([]string, 0, len(r.endpoints))
+	for thingName := range r.endpoints {
+		thingNames = append(thingNames, thingName)
+	}
+	return thingNames
 }
 
 func (r *Runtime) HandleCommand(ctx context.Context, command protocol.CapabilityCommand) error {
@@ -149,6 +191,9 @@ func (r *Runtime) pollEndpoint(ctx context.Context, endpoint Endpoint) error {
 }
 
 func (r *Runtime) publishState(_ context.Context, state DeviceState) error {
+	r.publishMu.Lock()
+	defer r.publishMu.Unlock()
+
 	capability := CapabilityStateFromDeviceState(state)
 	payload, err := capability.Marshal()
 	if err != nil {
@@ -169,6 +214,9 @@ func (r *Runtime) publishState(_ context.Context, state DeviceState) error {
 }
 
 func (r *Runtime) publishOffline(_ context.Context, thingName string) error {
+	r.publishMu.Lock()
+	defer r.publishMu.Unlock()
+
 	state := OfflineCapabilityState(thingName, r.nowMS(), r.nextSeq())
 	payload, err := state.Marshal()
 	if err != nil {
@@ -211,6 +259,9 @@ func (r *Runtime) publishAllOffline(ctx context.Context) {
 }
 
 func (r *Runtime) publishCommandResult(command protocol.CapabilityCommand, status string, message *string, redcon *uint8) error {
+	r.publishMu.Lock()
+	defer r.publishMu.Unlock()
+
 	topic, payload, err := PublishCommandResult(command, status, message, redcon, r.nowMS(), r.nextSeq())
 	if err != nil {
 		return err

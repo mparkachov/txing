@@ -78,6 +78,12 @@ payload, a new manager process, or a re-enlisted device publishes normally.
 `power-si` is a Thread Sleepy End Device with a 5 second poll period. Thread
 REDCON commands remain synchronous, so the Thread CoAP timeout is longer than
 the BLE command timeout to allow one sleepy poll window plus network jitter.
+The Thread daemon coalesces overlapping discovery/state-maintenance cycles and
+uses bounded per-device work scheduling: a received REDCON command cancels an
+in-flight maintenance GET for that device and runs before queued maintenance.
+This prevents a command for a sleeping device from missing its next child poll
+behind periodic state work. The daemon's command-received and
+transition-confirmed logs are the operator evidence for this bound.
 The Thread daemon reads the active SRP registry through the configured
 `TXING_THREAD_OT_CTL` command (`ot-ctl` by default). It does not require mDNS
 publication or DNS records in `/etc/resolv.conf`; a rig using `power-si` must
