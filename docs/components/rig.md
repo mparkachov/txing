@@ -37,8 +37,8 @@ stop. `local` rigs manage `mac` devices; see
 `txing-sparkplug-manager` owns all external AWS connectivity for the standalone
 rig host. It uses the rig certificate and IoT role alias to:
 
-- connect to AWS IoT MQTT with the Sparkplug node client id
-  `<rig>-sparkplug-manager`
+- connect to AWS IoT MQTT with the rig Thing name `<rig>` as the Sparkplug node
+  client id, so AWS IoT connectivity indexing shows the rig as connected
 - create per-device Sparkplug MQTT sessions using managed thing names as client
   ids
 - subscribe to Sparkplug `DCMD` messages and publish local IPC commands

@@ -64,11 +64,12 @@ manually on a development Mac.
 - Raspi physical/service death also needs watchdog or external publication in a
   future milestone. The current raspi manager publishes its normal MQTT will and
   graceful shutdown death, but this does not cover every physical failure mode.
-- For `raspi`, the Sparkplug node MQTT session uses
-  `<rig>-sparkplug-manager` as its AWS IoT MQTT client id. For `cloud`, the
-  Lambda runtime publishes the same Sparkplug topic model from the AWS-hosted
-  runtime. The Sparkplug edge node id in topics remains `<rig>`, but any
-  transport client id must not collide with another rig/runtime client id.
+- For standalone `raspi` and `local` rigs, the Sparkplug node MQTT session uses
+  the rig Thing name `<rig>` as its AWS IoT MQTT client id, so AWS IoT
+  connectivity indexing reports the running rig as connected. The Sparkplug edge
+  node id in topics also remains `<rig>`; operators must not run another runtime
+  with the same rig Thing/client id concurrently. The cloud runtime publishes the
+  same Sparkplug topic model from AWS-hosted infrastructure.
 - Managed device Sparkplug MQTT sessions use the managed thing name as their MQTT client id so AWS IoT thing connectivity tracks device session state. The manager creates a device session only for an impending `DBIRTH`; on a device `DDEATH` it disconnects that client and does not recreate it until fresh validated BLE GATT or Thread CoAP evidence requires a new `DBIRTH`. The rig node MQTT session and other device sessions remain independent.
 
 ## Authority and Ownership

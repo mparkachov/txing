@@ -673,11 +673,14 @@ func TestCommandResultProjectsToSparkplugMetrics(t *testing.T) {
 }
 
 func TestMqttSessionSpecsUseExpectedLWTTopics(t *testing.T) {
-	node, err := NodeSessionSpec("town-1", "rig-1", "rig-1-sparkplug-manager", 11, 1000)
+	if got := NodeClientID("rig-1"); got != "rig-1" {
+		t.Fatalf("node client id = %s, want rig-1", got)
+	}
+	node, err := NodeSessionSpec("town-1", "rig-1", NodeClientID("rig-1"), 11, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if node.ClientID != "rig-1-sparkplug-manager" || node.Will.Topic != "spBv1.0/town-1/NDEATH/rig-1" {
+	if node.ClientID != "rig-1" || node.Will.Topic != "spBv1.0/town-1/NDEATH/rig-1" {
 		t.Fatalf("node session = %#v", node)
 	}
 	device, err := DeviceSessionSpec("town-1", "rig-1", "unit-1", 1000)

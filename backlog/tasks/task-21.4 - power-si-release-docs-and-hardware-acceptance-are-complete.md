@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@Codex'
 created_date: '2026-06-20 07:12'
-updated_date: '2026-06-26 16:59'
+updated_date: '2026-07-27 17:29'
 labels: []
 milestone: m-0
 dependencies:
@@ -43,10 +43,7 @@ Make the power-si Thread runtime operationally usable by packaging the new rig d
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Inspect existing rig, MCU, shared AWS, and Office docs/tests to identify what TASK-21.4 must add beyond the implementation tasks.
-2. Update durable docs for txing-thread-connectivity release/service coverage, OTBR prerequisites, power-si factory provisioning, manual flashing, dataset secrecy, and hardware acceptance evidence capture.
-3. Run the relevant MCU, rig Go, shared AWS/Python, and Office validation commands that can run without hardware/AWS mutation.
-4. Record validation and manual-acceptance status in Backlog, marking only criteria proven by current evidence.
+1. Preserve the existing release/hardware-acceptance scope. 2. Correct the standalone rig node MQTT client ID to its rig Thing name, keeping node topics/will and device sessions stable. 3. Add focused tests and update lifecycle/rig documentation. 4. Run rig validation; retain TASK-21.4 manual hardware acceptance as the closing gate.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -71,6 +68,10 @@ TASK-21.4 AC #4 remains open. Still required: real rig DNS-SD discovery; rig CoA
 SED follow-up split (2026-06-26): created TASK-21.5 to restore the original power-si Sleepy End Device intent with 5 second poll latency and 12 second rig Thread CoAP timeout. TASK-21.4 remains open for release documentation and hardware acceptance evidence, and now depends on TASK-21.5 before final acceptance can close.
 
 TASK-21.5 software update (2026-06-26): power-si firmware and docs now target a 5 second poll Thread SED. TASK-21.4 AC #4 still requires user-run hardware evidence for SED mode, rig discovery, REDCON 4/3, D1/LED, Thread/power shadows, and Sparkplug DBIRTH/DDATA/DDEATH behavior.
+
+User approved a prerequisite raspi node-connectivity correction before TASK-21.4 closes: align the standalone Sparkplug node MQTT client ID with the rig Thing name so AWS IoT connectivity indexing reflects the live manager session. Preserve Sparkplug topics/will and managed-device sessions.
+
+Implemented the approved raspi node-connectivity correction: NodeClientID now returns the rig Thing name, so the standalone node MQTT connection is indexed against the rig Thing. Updated lifecycle/rig docs with the one-runtime-per-rig-client constraint. The NDEATH topic remains spBv1.0/<town>/NDEATH/<rig>; device MQTT client IDs are unchanged. Validation passed: go test -race ./internal/manager ./cmd/txing-sparkplug-manager; go vet ./...; just rig::test.
 <!-- SECTION:NOTES:END -->
 
 ## Validation
