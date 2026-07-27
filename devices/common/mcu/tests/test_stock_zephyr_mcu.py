@@ -25,15 +25,10 @@ def test_power_si_debug_build_dir_is_separate_from_release() -> None:
         mcu.build_dir("power-si", profile="sed-debug").name
         == "zephyr-xiao_mg24-sed-debug"
     )
-    assert (
-        mcu.build_dir("power-si", profile="sed-current").name
-        == "zephyr-xiao_mg24-sed-current"
-    )
     assert mcu.ACTIVE_BUILD_PROFILES == (
         "release",
         "debug",
         "sed-debug",
-        "sed-current",
     )
 
 
@@ -50,18 +45,18 @@ def test_power_si_sed_debug_profile_uses_debug_and_sed_overlays() -> None:
     assert config.sed_debug_conf.name == "sed-debug.conf"
 
 
-def test_power_si_sed_current_profile_reuses_the_sed_debug_functional_overlay() -> None:
+def test_power_si_release_profile_reuses_the_sed_debug_functional_overlay() -> None:
     mcu = load_stock_zephyr_mcu()
 
-    current_profile = mcu.build_profile("power-si", profile="sed-current")
+    release_profile = mcu.build_profile("power-si")
     config = mcu.device_config("power-si")
 
-    assert not current_profile.debug_conf
-    assert current_profile.sed_debug_conf
-    assert current_profile.sed_current_conf
-    assert current_profile.use_silabs_ccm_candidate
-    assert config.sed_current_conf is not None
-    assert config.sed_current_conf.name == "sed-current.conf"
+    assert not release_profile.debug_conf
+    assert release_profile.sed_debug_conf
+    assert release_profile.release_conf
+    assert release_profile.use_silabs_ccm_candidate
+    assert config.release_conf is not None
+    assert config.release_conf.name == "release.conf"
 
 
 def test_power_si_debug_flash_uses_debug_build_directory() -> None:
@@ -72,9 +67,6 @@ def test_power_si_debug_flash_uses_debug_build_directory() -> None:
     sed_debug_command = [
         str(part) for part in mcu.west_flash_command("power-si", profile="sed-debug")
     ]
-    sed_current_command = [
-        str(part) for part in mcu.west_flash_command("power-si", profile="sed-current")
-    ]
 
     assert release_command[release_command.index("-d") + 1].endswith(
         "devices/power-si/mcu/build/zephyr-xiao_mg24"
@@ -84,9 +76,6 @@ def test_power_si_debug_flash_uses_debug_build_directory() -> None:
     )
     assert sed_debug_command[sed_debug_command.index("-d") + 1].endswith(
         "devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug"
-    )
-    assert sed_current_command[sed_current_command.index("-d") + 1].endswith(
-        "devices/power-si/mcu/build/zephyr-xiao_mg24-sed-current"
     )
     assert "--pyocd" in debug_command
 
@@ -100,27 +89,24 @@ def test_power_si_debug_flash_uses_debug_build_directory() -> None:
     assert explicit_command[explicit_command.index("--hex-file") + 1] == str(sed_debug_hex)
 
 
-def test_power_si_sed_candidate_patch_is_opt_in() -> None:
+def test_power_si_sed_candidate_patch_is_used_by_release_and_sed_debug() -> None:
     mcu = load_stock_zephyr_mcu()
     previous = os.environ.pop(mcu.POWER_SI_SILABS_CCM_PATCH_ENV, None)
 
     try:
-        assert mcu.isolated_patches_for_device("power-si") == ()
         assert mcu.isolated_patches_for_device("power-si", profile="debug") == ()
         assert mcu.isolated_patches_for_device("power") == ()
 
-        profile_patches = mcu.isolated_patches_for_device(
-            "power-si", profile="sed-debug"
-        )
-        assert [patch.patch.name for patch in profile_patches] == [
+        release_patches = mcu.isolated_patches_for_device("power-si")
+        assert [patch.patch.name for patch in release_patches] == [
             "silabs-radioaes-zero-length-ccm.patch",
         ]
-        assert [patch.checkout.name for patch in profile_patches] == ["silabs"]
+        assert [patch.checkout.name for patch in release_patches] == ["silabs"]
 
-        current_profile_patches = mcu.isolated_patches_for_device(
-            "power-si", profile="sed-current"
+        sed_debug_patches = mcu.isolated_patches_for_device(
+            "power-si", profile="sed-debug"
         )
-        assert [patch.patch.name for patch in current_profile_patches] == [
+        assert [patch.patch.name for patch in sed_debug_patches] == [
             "silabs-radioaes-zero-length-ccm.patch",
         ]
         os.environ[mcu.POWER_SI_SILABS_CCM_PATCH_ENV] = "1"

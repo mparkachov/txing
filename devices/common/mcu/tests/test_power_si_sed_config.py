@@ -58,8 +58,8 @@ class PowerSiSedConfigTests(unittest.TestCase):
             read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
         )
 
-    def test_sed_current_only_overrides_sed_debug_observability(self) -> None:
-        values = read_conf(POWER_SI_MCU / "zephyr" / "sed-current.conf")
+    def test_release_only_overrides_sed_debug_observability(self) -> None:
+        values = read_conf(POWER_SI_MCU / "zephyr" / "release.conf")
 
         for key in (
             "CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST",
@@ -97,7 +97,7 @@ class PowerSiSedConfigTests(unittest.TestCase):
             read_conf(POWER_SI_MCU / "zephyr" / "debug.conf"),
         )
 
-    def test_sed_current_alone_reports_xiao_mg24_battery_voltage(self) -> None:
+    def test_release_alone_reports_xiao_mg24_battery_voltage(self) -> None:
         for conf in ("prj.conf", "debug.conf", "sed-debug.conf"):
             self.assertNotIn(
                 "CONFIG_TXING_POWER_SI_BATTERY_REPORTING",

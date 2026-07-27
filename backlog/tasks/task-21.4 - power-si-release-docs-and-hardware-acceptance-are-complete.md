@@ -1,11 +1,11 @@
 ---
 id: TASK-21.4
 title: power-si release docs and hardware acceptance are complete
-status: In Progress
+status: Done
 assignee:
   - '@Codex'
 created_date: '2026-06-20 07:12'
-updated_date: '2026-07-27 17:29'
+updated_date: '2026-07-27 19:03'
 labels: []
 milestone: m-0
 dependencies:
@@ -37,7 +37,7 @@ Make the power-si Thread runtime operationally usable by packaging the new rig d
 - [x] #1 Rig build, release, mise/service, and installation documentation include txing-thread-connectivity as the third daemon without changing existing BLE/Sparkplug service semantics.
 - [x] #2 Documentation explains external OTBR prerequisites, power-si factory provisioning, manual firmware/factory flashing commands, and the rule that real Thread dataset TLVs are never committed.
 - [x] #3 Automated validation results are recorded for MCU, rig Go, shared AWS/Python, and Office tests relevant to power-si.
-- [ ] #4 Manual acceptance evidence covers user-run factory provisioning, firmware flashing, SRP registration, rig discovery, REDCON 4/3 transitions, D1 output, battery shadow updates, and Sparkplug birth/data/death behavior.
+- [x] #4 Manual acceptance evidence covers user-run factory provisioning, firmware flashing, SRP registration, rig discovery, REDCON 4/3 transitions, D1 output, battery shadow updates, and Sparkplug birth/data/death behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -72,7 +72,25 @@ TASK-21.5 software update (2026-06-26): power-si firmware and docs now target a 
 User approved a prerequisite raspi node-connectivity correction before TASK-21.4 closes: align the standalone Sparkplug node MQTT client ID with the rig Thing name so AWS IoT connectivity indexing reflects the live manager session. Preserve Sparkplug topics/will and managed-device sessions.
 
 Implemented the approved raspi node-connectivity correction: NodeClientID now returns the rig Thing name, so the standalone node MQTT connection is indexed against the rig Thing. Updated lifecycle/rig docs with the one-runtime-per-rig-client constraint. The NDEATH topic remains spBv1.0/<town>/NDEATH/<rig>; device MQTT client IDs are unchanged. Validation passed: go test -race ./internal/manager ./cmd/txing-sparkplug-manager; go vet ./...; just rig::test.
+
+Manual evidence update (2026-07-27, no dataset TLVs recorded): sed-debug power-si-g5i08j shell reported role=child and ot mode n. OTBR child table showed RLOC16 0x2c06 with receiver-on flag R=0; SRP service was deleted:false on port 5683 with type=power-si, pv=1, and profile=sed-debug. After Thread daemon 0.16.3 restart, inventory reconciled one device. Logged 4->3 command/confirmation 2026-07-27T17:41:53.539143165Z -> 17:42:01.278173332Z (7.739s, requestedLinkMode=rn); 3->4 was 17:42:11.809410193Z -> 17:42:11.947718082Z (138ms, requestedLinkMode=n). Operator confirmed Office and LED state remained in sync. Thread shadow reported online=true, current address/host/port/service/protocolVersion. Operator also confirmed the rig and device connectivity Console behavior after the node client-ID correction.
+
+Additional manual evidence (2026-07-27): operator flashed/ran sed-current. Thread daemon logged REDCON 4->3 command at 2026-07-27T18:45:55.886829029Z and confirmed REDCON 3 at 2026-07-27T18:46:02.188383617Z (6.302s, requestedLinkMode=rn). At REDCON 3, OTBR child table reported the same child with receiver-on flag R=1. The power named shadow reported batteryMv=3968, proving battery measurement and power-shadow forwarding. No Thread dataset TLVs recorded.
+
+Additional manual evidence (2026-07-27): operator measured D1 directly at 3.33 V in REDCON 3. Its state matched the board LED and Office REDCON state; prior REDCON 4 observations established the corresponding off state. This completes the required direct D1/LED evidence.
+
+Additional manual lifecycle evidence (2026-07-27, Console event timeline): operator disconnected power-si-g5i08j and observed presence/disconnected at 20:57:39 CEST, with two sparkplug named-shadow update acceptances at the same timestamp. After reconnection, thread and power shadow updates were accepted at 20:57:51; presence/connected occurred at 20:57:53 with two further sparkplug named-shadow update acceptances; later power updates were accepted at 20:57:53 and 20:58:07. This confirms a real per-device MQTT disconnect in the middle and fresh reconnect/lifecycle projection on recovery. Preserve exact Sparkplug message-type capture before closing AC #4.
+
+Direct Sparkplug MQTT capture (2026-07-27): `spBv1.0/town-jhgjjd/DDEATH/raspi-6q6abe/power-si-g5i08j` observed at 21:00:29 CEST after the controlled disconnect. Recovery produced `spBv1.0/town-jhgjjd/DBIRTH/raspi-6q6abe/power-si-g5i08j` at 21:00:51 CEST; decoded payload carried redcon=3 and capability.power=true, capability.sparkplug=true, capability.thread=true. This is direct DDEATH/DBIRTH evidence, not inferred from shadow projections. Remaining Sparkplug evidence: one DDATA after a REDCON transition.
+
+Final direct Sparkplug DDATA evidence (2026-07-27): DCMD.redcon=3 was captured at 21:02:19 CEST for dcmd-power-si-g5i08j-17. The manager published accepted DDATA at 21:02:19 with redcon=4, status=accepted, target=3; it then published confirmed DDATA at 21:02:20 with redcon=3, capability.power/sparkplug/thread=true, followed by succeeded DDATA with the same command correlation and target. Together with the 21:00:29 DDEATH and 21:00:51 recovered DBIRTH capture, this completes direct DBIRTH/DDATA/DDEATH lifecycle evidence.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed TASK-21.4 manual hardware acceptance. Operator evidence covers TXT1 provisioning and production flash, fresh SRP registration, SED child state R=0 at REDCON 4 and R=1 at REDCON 3, rig Thread discovery, synchronous REDCON transitions, direct D1=3.33 V at REDCON 3 matching LED/Office behavior, sed-current power shadow batteryMv=3968, corrected rig/device AWS IoT connectivity, and direct Sparkplug DCMD/accepted DDATA/confirmed DDATA/DDEATH/recovered DBIRTH captures. No Thread dataset TLVs were recorded.
+<!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Validation
 

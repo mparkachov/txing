@@ -65,13 +65,11 @@ over Thread, and no Matter/CHIP stack.
   CoAP commands have bounded sleepy-device latency. On XIAO MG24, startup uses
   a temporary receiver-on SRP bootstrap mode for reliable attach and service
   registration, then updates the attached child into steady-state
-  `mRxOnWhenIdle=false` with full network data after SRP acceptance. Release
-  and ordinary debug return to receiver-on bootstrap mode once per boot if that
-  SED attachment fails, so the device remains discoverable while the upstream
-  hardware blocker remains open. The `sed-debug` candidate profile instead
-  enables a bounded SED-only recovery policy: it makes at most three SED retries
-  after loss and never restores receiver-on mode. TASK-21.5 SED validation uses
-  this explicit profile. It temporarily applies one isolated downstream
+  `mRxOnWhenIdle=false` with full network data after SRP acceptance. The final
+  release and `sed-debug` profiles enable a bounded SED-only recovery policy:
+  each makes at most three SED retries after loss and never restores receiver-on
+  mode. Ordinary debug retains the one-time receiver-on fallback for diagnosis.
+  The final release and `sed-debug` profiles temporarily apply one isolated downstream
   candidate to the owning Silabs HAL checkout for the build only: an encrypted
   empty CCM message with a MIC derives its tag from B0 and formatted AAD with the
   existing RadioAES ECB primitive instead of the empty-payload CCM DMA
@@ -81,14 +79,13 @@ over Thread, and no Matter/CHIP stack.
   upstream accepts an equivalent fix.
   Hardware validation of the candidate shows accepted 5000 ms SED Data Polls,
   `RxErrSec: 0` after a fresh OTBR counter reset, active SRP, and successful
-  queued indirect ICMPv6 delivery. It does not make the unmodified release/debug
-  images a production SED path.
-  Normal `build` and `build-debug` profiles keep unmodified Zephyr sources;
-  release disables serial interfaces, while ordinary debug enables UART, shell,
-  and OpenThread diagnostics. `sed-debug` is the candidate SED diagnostic
-  profile. The silent `sed-current` candidate profile loads the same
-  `sed-debug.conf` functional overlay, then disables console, shell, logging,
-  and application diagnostics for current characterization. A temporary PM,
+  queued indirect ICMPv6 delivery. The final release is the production SED
+  path; it applies the candidate only during the build and leaves upstream
+  sources unchanged afterward. Ordinary debug remains an unmodified Zephyr
+  diagnostic image. `sed-debug` retains the same candidate and functional
+  overlay with UART, shell, and PM diagnostics. The silent release overlay
+  disables console, shell, logging, and application diagnostics while retaining
+  the validated SED behavior. A temporary PM,
   RAIL, and ACK diagnostic experiment confirmed EM2 residency but did not
   identify a causal or safe corrective change; its isolated patches and profile
   were removed on 2026-07-20.
@@ -107,19 +104,17 @@ over Thread, and no Matter/CHIP stack.
   over Thread CoAP on port `5683`. The version-1 PUT body is
   `{"version":1,"redcon":3}` or `{"version":1,"redcon":4}`. SRP registers
   `_txing-coap._udp` with TXT records `type=power-si` and `pv=1`.
-- Battery: `sed-current` samples the XIAO MG24 battery divider on demand using
+- Battery: the final release samples the XIAO MG24 battery divider on demand using
   active-high PD3 enable, a 30 ms settling interval, and the PD4 IADC input with
   the calibrated internal 1.21 V reference at 0.5x gain, then reports twice the
-  divider voltage as `batteryMv`. Release, ordinary debug, and `sed-debug`
-  continue to return `batteryMv: null`. The rig only publishes a `power` battery
+  divider voltage as `batteryMv`. Ordinary debug and `sed-debug` continue to
+  return `batteryMv: null`. The rig only publishes a `power` battery
   shadow when the device supplies a value; sampling failure remains `null`
   rather than a fabricated zero.
 - Production firmware deliberately disables UART, console, shell, and log
   backends. The prior claim that its USART0/PA8/PA9 initialization determined
-  SED current was based on invalid AC-current readings and is withdrawn. Keep
-  the current unmodified release profile separate from SED current acceptance;
-  validate production attachment through SRP/DNS-SD and the rig, not serial
-  output.
+  SED current was based on invalid AC-current readings and is withdrawn. Validate
+  the final release through SRP/DNS-SD and the rig, not serial output.
 
 See [devices/power-si/README.md](../../devices/power-si/README.md) for OTBR
 prerequisites, provisioning, manual flashing, and hardware acceptance steps.
@@ -136,7 +131,6 @@ just power::mcu::build
 just weather::mcu::build
 just power-si::mcu::build
 just power-si::mcu::build-sed-debug
-just power-si::mcu::build-sed-current
 ```
 
 Or from `devices/unit/mcu/`:
@@ -157,7 +151,6 @@ just weather::mcu::flash
 just power-si::mcu::flash
 just power-si::mcu::flash debug
 just power-si::mcu::flash sed-debug
-just power-si::mcu::flash sed-current
 just mcu::nve <thing-name>
 just mcu::nve <thing-name> <dataset-tlvs-file>
 ```
