@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@root'
 created_date: '2026-07-19 13:01'
-updated_date: '2026-07-27 17:11'
+updated_date: '2026-07-27 20:12'
 labels: []
 milestone: m-0
-dependencies:
-  - TASK-21.3
+dependencies: []
 references:
   - rig/cmd/txing-sparkplug-manager/main.go
   - rig/internal/manager/manager.go

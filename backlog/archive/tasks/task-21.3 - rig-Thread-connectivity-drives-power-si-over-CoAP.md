@@ -5,12 +5,10 @@ status: Done
 assignee:
   - '@Codex'
 created_date: '2026-06-20 07:12'
-updated_date: '2026-06-20 12:49'
+updated_date: '2026-07-27 20:12'
 labels: []
 milestone: m-0
-dependencies:
-  - TASK-21.1
-  - TASK-21.2
+dependencies: []
 references:
   - rig/internal/protocol
   - rig/internal/manager

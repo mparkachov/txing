@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@Codex'
 created_date: '2026-06-20 07:12'
-updated_date: '2026-06-26 16:28'
+updated_date: '2026-07-27 20:12'
 labels: []
 milestone: m-0
-dependencies:
-  - TASK-21.1
+dependencies: []
 references:
   - devices/common/mcu/scripts/stock_zephyr_mcu.py
   - tmp/ot_ping/ot_ping.ino

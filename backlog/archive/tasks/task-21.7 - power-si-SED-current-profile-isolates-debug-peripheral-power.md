@@ -5,10 +5,9 @@ status: Done
 assignee:
   - '@Codex'
 created_date: '2026-07-20 01:02'
-updated_date: '2026-07-20 01:08'
+updated_date: '2026-07-27 20:12'
 labels: []
-dependencies:
-  - TASK-21.5
+dependencies: []
 documentation:
   - devices/power-si/README.md
   - docs/components/mcu.md

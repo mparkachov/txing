@@ -5,11 +5,9 @@ status: Done
 assignee:
   - '@root'
 created_date: '2026-07-20 20:08'
-updated_date: '2026-07-27 17:02'
+updated_date: '2026-07-27 20:12'
 labels: []
-dependencies:
-  - TASK-21.3
-  - TASK-21.8
+dependencies: []
 references:
   - rig/cmd/txing-thread-connectivity/main.go
   - rig/internal/thread/runtime.go
