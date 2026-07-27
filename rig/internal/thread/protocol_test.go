@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mparkachov/txing/rig/internal/protocol"
@@ -58,6 +59,57 @@ func TestDiscovererFiltersPowerSIEndpoints(t *testing.T) {
 	}
 }
 
+func TestParseOTCTLSRPServicesFiltersActivePowerSI(t *testing.T) {
+	output := `power-si-001._txing-coap._udp.default.service.arpa.
+    deleted: false
+    port: 5683
+    TXT: [type=706f7765722d7369, pv=31, profile=7365642d6465627567]
+    host: power-si-001.default.service.arpa.
+    addresses: [fdde:ad00:beef::1]
+unit-001._txing-coap._udp.default.service.arpa.
+    deleted: false
+    port: 5683
+    TXT: [type=756e6974, pv=31]
+    host: unit-001.default.service.arpa.
+    addresses: [fdde:ad00:beef::2]
+removed._txing-coap._udp.default.service.arpa.
+    deleted: true
+    port: 5683
+    TXT: [type=706f7765722d7369, pv=31]
+    host: removed.default.service.arpa.
+    addresses: [fdde:ad00:beef::3]
+Done
+`
+
+	endpoints, err := ParseOTCTLSRPServices(output, DefaultDomain, func() uint64 { return 1000 }, func() uint64 { return 7 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("endpoints = %#v, want one active power-si endpoint", endpoints)
+	}
+	endpoint := endpoints[0]
+	if endpoint.ThingName != "power-si-001" || endpoint.Port != 5683 || endpoint.Address.String() != "fdde:ad00:beef::1" {
+		t.Fatalf("endpoint = %#v", endpoint)
+	}
+	if endpoint.TXT["type"] != "power-si" || endpoint.TXT["pv"] != "1" ||
+		endpoint.TXT[DeviceProfileTXTKey] != SEDDebugProfile {
+		t.Fatalf("TXT = %#v", endpoint.TXT)
+	}
+}
+
+func TestOTCTLSRPDiscovererReportsCommandFailure(t *testing.T) {
+	discoverer := OTCTLSRPDiscoverer{
+		Path:   "/usr/sbin/ot-ctl",
+		Domain: DefaultDomain,
+		Runner: fakeOTCTLRunner{err: context.DeadlineExceeded, output: []byte("connection failed")},
+	}
+	_, err := discoverer.Discover(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ot-ctl srp server service") || !strings.Contains(err.Error(), "connection failed") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRuntimePublishesStateAndShadows(t *testing.T) {
 	publisher := &recordingPublisher{}
 	runtime := NewRuntime(
@@ -94,6 +146,29 @@ func TestRuntimePublishesStateAndShadows(t *testing.T) {
 	assertPublishedTopic(t, publisher, "$aws/things/power-si-001/shadow/name/power/update")
 }
 
+func TestRuntimeDoesNotRepublishUnchangedShadows(t *testing.T) {
+	publisher := &recordingPublisher{}
+	runtime := NewRuntime(
+		&fakeDiscoverer{endpoints: []Endpoint{testEndpoint("power-si-001")}},
+		&fakeDeviceClient{state: DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 4}},
+		publisher,
+	)
+	runtime.NowMS = func() uint64 { return 2000 }
+	runtime.ReconcileInventory(testInventory())
+
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	topic := "$aws/things/power-si-001/shadow/name/thread/update"
+	if got := publisher.publishedTopicCount(topic); got != 1 {
+		t.Fatalf("Thread shadow updates = %d, want 1", got)
+	}
+}
+
 func TestRuntimeUnavailableDevicePublishesOffline(t *testing.T) {
 	publisher := &recordingPublisher{}
 	runtime := NewRuntime(
@@ -116,7 +191,28 @@ func TestRuntimeUnavailableDevicePublishesOffline(t *testing.T) {
 	if state.Capabilities["sparkplug"] || state.Capabilities["thread"] || state.Capabilities["power"] {
 		t.Fatalf("offline capabilities = %#v", state.Capabilities)
 	}
+	if got := publisher.publishedTopicCount(stateTopic); got != 1 {
+		t.Fatalf("offline capability publications = %d, want one", got)
+	}
 	assertPublishedTopic(t, publisher, "$aws/things/power-si-001/shadow/name/thread/update")
+}
+
+func TestRuntimeFailedPollPublishesOfflineOnce(t *testing.T) {
+	publisher := &recordingPublisher{}
+	runtime := NewRuntime(
+		&fakeDiscoverer{endpoints: []Endpoint{testEndpoint("power-si-001")}},
+		&fakeDeviceClient{err: context.DeadlineExceeded},
+		publisher,
+	)
+	runtime.ReconcileInventory(testInventory())
+
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stateTopic, _ := protocol.BuildCapabilityStateTopic("power-si-001", AdapterID)
+	if got := publisher.publishedTopicCount(stateTopic); got != 1 {
+		t.Fatalf("offline capability publications after failed poll = %d, want one", got)
+	}
 }
 
 func TestRuntimeCommandReportsSuccessAfterConfirmedState(t *testing.T) {
@@ -144,6 +240,17 @@ func TestRuntimeCommandReportsSuccessAfterConfirmedState(t *testing.T) {
 	if client.putTarget != 4 {
 		t.Fatalf("put target = %d, want 4", client.putTarget)
 	}
+	stateTopic, err := protocol.BuildCapabilityStateTopic("power-si-001", AdapterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := protocol.DecodeCapabilityState(publisher.retained[stateTopic])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Capabilities[ThreadCapability] || state.Capabilities[PowerCapability] {
+		t.Fatalf("confirmed REDCON 4 capability state = %#v", state.Capabilities)
+	}
 	results := publisher.commandResults(t)
 	if len(results) < 2 {
 		t.Fatalf("command results = %#v", results)
@@ -153,6 +260,64 @@ func TestRuntimeCommandReportsSuccessAfterConfirmedState(t *testing.T) {
 	}
 	if results[len(results)-1].Status != protocol.CommandSucceeded {
 		t.Fatalf("last status = %s, want succeeded", results[len(results)-1].Status)
+	}
+}
+
+func TestRuntimeReportsConfirmedSEDDebugRedconTransition(t *testing.T) {
+	publisher := &recordingPublisher{}
+	endpoint := testEndpoint("power-si-001")
+	endpoint.TXT[DeviceProfileTXTKey] = SEDDebugProfile
+	client := &fakeDeviceClient{putState: DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 3}}
+	runtime := NewRuntime(&fakeDiscoverer{endpoints: []Endpoint{endpoint}}, client, publisher)
+	runtime.NowMS = func() uint64 { return 4500 }
+	runtime.ReconcileInventory(testInventory())
+	runtime.recordEndpoints([]Endpoint{endpoint})
+
+	var confirmed Endpoint
+	var redcon uint8
+	runtime.OnSEDDebugRedconConfirmed = func(received Endpoint, target uint8) {
+		confirmed = received
+		redcon = target
+	}
+	command, err := protocol.NewCapabilityCommand("cmd-sed", "power-si-001", 3, "test", 4500, 77, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.HandleCommand(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed.ThingName != "power-si-001" || redcon != 3 {
+		t.Fatalf("sed-debug confirmation = endpoint=%#v redcon=%d", confirmed, redcon)
+	}
+	if !IsSEDDebugEndpoint(confirmed) {
+		t.Fatalf("endpoint is not sed-debug: %#v", confirmed)
+	}
+	if mode := SEDDebugLinkModeForRedcon(redcon); mode != "rn" {
+		t.Fatalf("redcon %d mode = %q, want rn", redcon, mode)
+	}
+}
+
+func TestRuntimeDoesNotReportRedconTransitionForNormalProfile(t *testing.T) {
+	publisher := &recordingPublisher{}
+	endpoint := testEndpoint("power-si-001")
+	client := &fakeDeviceClient{putState: DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 4}}
+	runtime := NewRuntime(&fakeDiscoverer{endpoints: []Endpoint{endpoint}}, client, publisher)
+	runtime.NowMS = func() uint64 { return 4600 }
+	runtime.ReconcileInventory(testInventory())
+	runtime.recordEndpoints([]Endpoint{endpoint})
+	reported := false
+	runtime.OnSEDDebugRedconConfirmed = func(Endpoint, uint8) { reported = true }
+	command, err := protocol.NewCapabilityCommand("cmd-normal", "power-si-001", 4, "test", 4600, 78, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.HandleCommand(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	if reported {
+		t.Fatal("normal profile reported a sed-debug REDCON transition")
 	}
 }
 
@@ -274,6 +439,15 @@ type fakeDiscoverer struct {
 	err       error
 }
 
+type fakeOTCTLRunner struct {
+	output []byte
+	err    error
+}
+
+func (f fakeOTCTLRunner) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
+	return f.output, f.err
+}
+
 func (f *fakeDiscoverer) Discover(_ context.Context) ([]Endpoint, error) {
 	return f.endpoints, f.err
 }
@@ -300,6 +474,7 @@ func (f *fakeDeviceClient) PutRedcon(_ context.Context, _ Endpoint, target uint8
 }
 
 type recordingPublisher struct {
+	mu        sync.Mutex
 	published []publishedMessage
 	retained  map[string][]byte
 }
@@ -310,11 +485,15 @@ type publishedMessage struct {
 }
 
 func (p *recordingPublisher) Publish(topic string, payload []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.published = append(p.published, publishedMessage{topic: topic, payload: append([]byte(nil), payload...)})
 	return nil
 }
 
 func (p *recordingPublisher) PublishRetained(topic string, payload []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.retained == nil {
 		p.retained = map[string][]byte{}
 	}
@@ -325,6 +504,8 @@ func (p *recordingPublisher) PublishRetained(topic string, payload []byte) error
 
 func (p *recordingPublisher) commandResults(t *testing.T) []protocol.CapabilityCommandResult {
 	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	results := []protocol.CapabilityCommandResult{}
 	for _, message := range p.published {
 		if !strings.Contains(message.topic, protocol.CapabilityCommandResultTopicPrefix) {
@@ -339,8 +520,22 @@ func (p *recordingPublisher) commandResults(t *testing.T) []protocol.CapabilityC
 	return results
 }
 
+func (p *recordingPublisher) publishedTopicCount(topic string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	count := 0
+	for _, message := range p.published {
+		if message.topic == topic {
+			count++
+		}
+	}
+	return count
+}
+
 func assertPublishedTopic(t *testing.T, publisher *recordingPublisher, topic string) {
 	t.Helper()
+	publisher.mu.Lock()
+	defer publisher.mu.Unlock()
 	for _, message := range publisher.published {
 		if message.topic == topic {
 			return

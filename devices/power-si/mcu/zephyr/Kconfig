@@ -19,3 +19,46 @@ config TXING_POWER_SI_SRP_PSA_DIAGNOSTICS
 	help
 	  Log exact PSA status values for the OpenThread SRP ECDSA key path.
 	  This is intended for debug firmware only.
+
+config TXING_POWER_SI_SED_RECOVERY_TEST
+	bool "Retry a lost requested-link attachment"
+	depends on OPENTHREAD_MTD_SED
+	default n
+	help
+	  Recovery policy for the validated SED profiles. After the SRP bootstrap
+	  transitions the child to SED mode, retry a persistent lost attachment with
+	  the requested link mode. Without the optional REDCON link-mode policy this
+	  is SED only. The retry count and delays are intentionally bounded.
+
+config TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST
+	bool "Use REDCON to switch requested Thread link mode"
+	depends on TXING_POWER_SI_SED_RECOVERY_TEST
+	default n
+	help
+	  Active-power policy shared by the final release and SED debug image. REDCON
+	  3 keeps the MTD receiver on when idle (`rn`) so follow-up commands are
+	  immediate. REDCON 4 returns to the normal sleepy (`n`) posture. The
+	  transition is a live link-mode update and retains the existing Thread child
+	  and SRP service.
+
+config TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS
+	bool "Log Silicon Labs EM1/EM2 sleep-mode changes"
+	depends on PM && SOC_FAMILY_SILABS_S2
+	default n
+	help
+	  Subscribe to Silicon Labs power-manager transition events and log the
+	  initial EM1/EM2 sleep-mode selection plus changes between those modes.
+	  Routine wake transitions through EM0 are intentionally omitted. This is a
+	  focused sed-debug diagnostic and should not be enabled in release or
+	  ordinary debug firmware.
+
+config TXING_POWER_SI_BATTERY_REPORTING
+	bool "Report XIAO MG24 battery voltage"
+	depends on ADC && PM_DEVICE
+	default n
+	help
+	  Sample the XIAO MG24 battery divider on demand for CoAP state responses.
+	  The board's active-high PD3 divider enable is asserted only while PD4 is
+	  settling and sampled. The IADC uses its calibrated internal reference at
+	  half gain, and the measured divider voltage is multiplied by two. This is
+	  enabled by the final release profile.

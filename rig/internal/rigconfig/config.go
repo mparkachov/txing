@@ -41,6 +41,7 @@ type Config struct {
 	MaxBLEConnections         int
 	BLENoRadio                bool
 	ThreadServiceDomain       string
+	ThreadOTCTL               string
 	ThreadDiscoveryInterval   time.Duration
 	ThreadPollInterval        time.Duration
 	ThreadCoAPTimeout         time.Duration
@@ -91,6 +92,7 @@ func Load(configDirOverride string) (Config, error) {
 		MaxBLEConnections:         intEnv(lookup("TXING_BLE_MAX_CONNECTIONS"), 0),
 		BLENoRadio:                boolEnv(lookup("TXING_BLE_NO_RADIO"), false),
 		ThreadServiceDomain:       firstNonEmpty(lookup("TXING_THREAD_SERVICE_DOMAIN"), "default.service.arpa"),
+		ThreadOTCTL:               firstNonEmpty(lookup("TXING_THREAD_OT_CTL"), "ot-ctl"),
 		ThreadDiscoveryInterval:   millisEnv(lookup("TXING_THREAD_DISCOVERY_INTERVAL_MS"), 10*time.Second),
 		ThreadPollInterval:        millisEnv(lookup("TXING_THREAD_POLL_INTERVAL_MS"), 10*time.Second),
 		ThreadCoAPTimeout:         millisEnv(lookup("TXING_THREAD_COAP_TIMEOUT_MS"), 12*time.Second),

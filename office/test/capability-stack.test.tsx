@@ -55,6 +55,36 @@ describe('capability stack', () => {
     expect(markup).toContain('title="ble: inactive"')
   })
 
+  test('renders Thread as active from the Sparkplug projection for power-si', () => {
+    const markup = renderToStaticMarkup(
+      <CapabilityStack
+        thingName="power-si-001"
+        label="Power SI"
+        capabilities={['sparkplug', 'thread', 'power']}
+        sparkplugShadow={{
+          state: {
+            reported: {
+              payload: {
+                metrics: {
+                  capability: {
+                    sparkplug: true,
+                    thread: true,
+                    power: false,
+                  },
+                },
+              },
+            },
+          },
+        }}
+        sparkplugShadowStatus="ready"
+      />,
+    )
+
+    expect(markup).toContain('title="thread: active"')
+    expect(markup).toContain('title="power: inactive"')
+    expect(markup).not.toContain('title="sparkplug: active"')
+  })
+
   test('renders nothing when only invisible capabilities are present', () => {
     const markup = renderToStaticMarkup(
       <CapabilityStack

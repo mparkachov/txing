@@ -5,12 +5,15 @@
 
 #include <zephyr/data/json.h>
 #include <zephyr/device.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/openthread.h>
+#include <zephyr/pm/device.h>
 #include <zephyr/psa/key_ids.h>
 #include <zephyr/storage/flash_map.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/crc.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
@@ -25,6 +28,10 @@
 #include <openthread/thread.h>
 #include <psa/crypto.h>
 
+#if defined(CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS)
+#include <sl_power_manager.h>
+#endif
+
 LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 
 #define TXING_PROTOCOL_VERSION 1
@@ -38,6 +45,17 @@ LOG_MODULE_REGISTER(txing_power_si, LOG_LEVEL_INF);
 #define TXT1_DATASET_TLVS_SIZE 254
 #define STATE_JSON_SIZE 160
 #define REQUEST_JSON_SIZE 96
+#define SED_FALLBACK_GRACE_SECONDS 20
+#define SED_REDCON_RESPONSE_GRACE_MS 100
+#define BATTERY_DIVIDER_SETTLE_MS 30
+#define BATTERY_DIVIDER_RATIO 2
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+#define SED_RECOVERY_MAX_ATTEMPTS 3
+#define SED_RECOVERY_INITIAL_DELAY_SECONDS 5
+#define SED_RECOVERY_SECOND_DELAY_SECONDS 10
+#define SED_RECOVERY_MAX_DELAY_SECONDS 20
+#endif
 
 BUILD_ASSERT(IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED),
 	     "power-si must build as a Thread Sleepy End Device");
@@ -46,6 +64,13 @@ BUILD_ASSERT(CONFIG_OPENTHREAD_POLL_PERIOD == 5000,
 
 static const struct gpio_dt_spec power_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(power), gpios);
 static const struct gpio_dt_spec led_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_BATTERY_REPORTING)
+#define BATTERY_NODE DT_NODELABEL(txing_battery)
+static const struct adc_dt_spec battery_adc = ADC_DT_SPEC_GET(BATTERY_NODE);
+static const struct gpio_dt_spec battery_enable =
+	GPIO_DT_SPEC_GET(BATTERY_NODE, enable_gpios);
+static bool battery_available;
+#endif
 
 struct factory_data {
 	char thing_name[TXT1_THING_NAME_SIZE + 1];
@@ -74,9 +99,15 @@ static const struct json_obj_descr redcon_request_descr[] = {
 static otIp6Address srp_host_address;
 static const uint8_t txt_type[] = "power-si";
 static const uint8_t txt_proto[] = "1";
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+static const uint8_t txt_profile[] = "sed-debug";
+#endif
 static const otDnsTxtEntry service_txt[] = {
 	{.mKey = "type", .mValue = txt_type, .mValueLength = sizeof(txt_type) - 1},
 	{.mKey = "pv", .mValue = txt_proto, .mValueLength = sizeof(txt_proto) - 1},
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+	{.mKey = "profile", .mValue = txt_profile, .mValueLength = sizeof(txt_profile) - 1},
+#endif
 };
 static otSrpClientService srp_service = {
 	.mName = "_txing-coap._udp",
@@ -90,14 +121,134 @@ static otSrpClientService srp_service = {
 
 static otCoapResource state_resource;
 static otCoapResource redcon_resource;
+static atomic_t srp_registration_accepted;
+static atomic_t sed_mode_active;
+static atomic_t sed_transition_failed;
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+static atomic_t sed_debug_receiver_on_requested;
+static atomic_t sed_debug_sleep_transition_requested;
+#endif
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static atomic_t sed_recovery_pending;
+static atomic_t sed_recovery_attempts;
+#endif
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS)
+struct pm_sleep_mode_change {
+	int8_t previous;
+	int8_t current;
+};
+
+#define PM_SLEEP_MODE_UNKNOWN (-1)
+#define PM_SLEEP_MODE_CHANGE_QUEUE_DEPTH 8
+
+static int8_t pm_last_sleep_mode = PM_SLEEP_MODE_UNKNOWN;
+static void pm_transition_log_work_handler(struct k_work *work);
+K_MSGQ_DEFINE(pm_sleep_mode_changes, sizeof(struct pm_sleep_mode_change),
+	      PM_SLEEP_MODE_CHANGE_QUEUE_DEPTH, 1);
+static K_WORK_DEFINE(pm_transition_log_work, pm_transition_log_work_handler);
+#endif
 static void thread_state_changed(uint32_t flags, void *context);
 static void srp_client_callback(otError error, const otSrpClientHostInfo *host_info,
 				const otSrpClientService *services,
 				const otSrpClientService *removed_services, void *context);
 static void srp_autostart_callback(const otSockAddr *server, void *context);
+static void sed_transition_work_handler(struct k_work *work);
+static void sed_fallback_work_handler(struct k_work *work);
+static bool thread_receiver_on_requested(void);
+static bool thread_sed_mode_requested(void);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+static int apply_sed_debug_redcon_thread_mode(int redcon);
+static void sed_debug_redcon_sleep_work_handler(struct k_work *work);
+#endif
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static void sed_recovery_work_handler(struct k_work *work);
+#endif
+static K_WORK_DELAYABLE_DEFINE(sed_transition_work, sed_transition_work_handler);
+static K_WORK_DELAYABLE_DEFINE(sed_fallback_work, sed_fallback_work_handler);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+static K_WORK_DELAYABLE_DEFINE(sed_debug_redcon_sleep_work,
+			       sed_debug_redcon_sleep_work_handler);
+#endif
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static K_WORK_DELAYABLE_DEFINE(sed_recovery_work, sed_recovery_work_handler);
+#endif
 static struct openthread_state_changed_callback thread_state_cb = {
 	.otCallback = thread_state_changed,
 };
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_PM_TRANSITION_DIAGNOSTICS)
+static const char *pm_sleep_mode_name(int8_t mode)
+{
+	switch (mode) {
+	case SL_POWER_MANAGER_EM1:
+		return "EM1";
+	case SL_POWER_MANAGER_EM2:
+		return "EM2";
+	default:
+		return "unknown";
+	}
+}
+
+static void pm_transition_log_work_handler(struct k_work *work)
+{
+	struct pm_sleep_mode_change change;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&pm_sleep_mode_changes, &change, K_NO_WAIT) == 0) {
+		if (change.previous == PM_SLEEP_MODE_UNKNOWN) {
+			LOG_INF("Silicon Labs PM sleep mode selected: %s",
+				pm_sleep_mode_name(change.current));
+		} else {
+			LOG_INF("Silicon Labs PM sleep mode changed: %s -> %s",
+				pm_sleep_mode_name(change.previous),
+				pm_sleep_mode_name(change.current));
+		}
+	}
+}
+
+static void pm_transition_event(sl_power_manager_em_t from,
+				sl_power_manager_em_t to)
+{
+	struct pm_sleep_mode_change change;
+
+	ARG_UNUSED(from);
+
+	if (to != SL_POWER_MANAGER_EM1 && to != SL_POWER_MANAGER_EM2) {
+		return;
+	}
+	if (pm_last_sleep_mode == (int8_t)to) {
+		return;
+	}
+
+	change.previous = pm_last_sleep_mode;
+	change.current = (int8_t)to;
+	pm_last_sleep_mode = change.current;
+	if (k_msgq_put(&pm_sleep_mode_changes, &change, K_NO_WAIT) == 0) {
+		(void)k_work_submit(&pm_transition_log_work);
+	}
+}
+
+static sl_power_manager_em_transition_event_handle_t pm_transition_event_handle;
+static const sl_power_manager_em_transition_event_info_t pm_transition_event_info = {
+	.event_mask = SL_POWER_MANAGER_EVENT_TRANSITION_ENTERING_EM1 |
+		      SL_POWER_MANAGER_EVENT_TRANSITION_ENTERING_EM2,
+	.on_event = pm_transition_event,
+};
+
+static void register_pm_transition_diagnostics(void)
+{
+	pm_last_sleep_mode = PM_SLEEP_MODE_UNKNOWN;
+	sl_power_manager_subscribe_em_transition_event(&pm_transition_event_handle,
+						&pm_transition_event_info);
+	LOG_INF("Silicon Labs PM transition diagnostics enabled; "
+		"reporting EM1/EM2 sleep-mode changes");
+}
+#else
+static void register_pm_transition_diagnostics(void)
+{
+}
+#endif
 
 #if DT_NODE_EXISTS(DT_NODELABEL(txing_factory_partition))
 static uint16_t u16_le(const uint8_t *value)
@@ -219,8 +370,112 @@ static int init_outputs(void)
 	return set_outputs_for_redcon(TXING_REDCON_OFF);
 }
 
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_BATTERY_REPORTING)
+static int init_battery(void)
+{
+	int rc;
+
+	if (!adc_is_ready_dt(&battery_adc) || !gpio_is_ready_dt(&battery_enable)) {
+		return -ENODEV;
+	}
+
+	rc = gpio_pin_configure_dt(&battery_enable, GPIO_OUTPUT_INACTIVE);
+	if (rc != 0) {
+		return rc;
+	}
+	rc = adc_channel_setup_dt(&battery_adc);
+	if (rc != 0) {
+		return rc;
+	}
+	rc = pm_device_action_run(battery_adc.dev, PM_DEVICE_ACTION_SUSPEND);
+	if (rc != 0 && rc != -EALREADY) {
+		return rc;
+	}
+
+	battery_available = true;
+	return 0;
+}
+
+static bool sample_battery_mv(uint16_t *battery_mv)
+{
+	uint16_t raw;
+	int32_t millivolts;
+	struct adc_sequence sequence = {
+		.buffer = &raw,
+		.buffer_size = sizeof(raw),
+	};
+	bool sampled = false;
+	int rc;
+
+	if (!battery_available) {
+		return false;
+	}
+
+	rc = pm_device_action_run(battery_adc.dev, PM_DEVICE_ACTION_RESUME);
+	if (rc != 0 && rc != -EALREADY) {
+		return false;
+	}
+	rc = gpio_pin_set_dt(&battery_enable, 1);
+	if (rc != 0) {
+		goto out;
+	}
+
+	k_msleep(BATTERY_DIVIDER_SETTLE_MS);
+	(void)adc_sequence_init_dt(&battery_adc, &sequence);
+	rc = adc_read_dt(&battery_adc, &sequence);
+	if (rc != 0) {
+		goto out;
+	}
+
+	millivolts = battery_adc.channel_cfg.differential ?
+		(int32_t)(int16_t)raw : (int32_t)raw;
+	rc = adc_raw_to_millivolts_dt(&battery_adc, &millivolts);
+	if (rc != 0 || millivolts < 0) {
+		goto out;
+	}
+
+	millivolts *= BATTERY_DIVIDER_RATIO;
+	*battery_mv = (uint16_t)MIN(millivolts, UINT16_MAX);
+	sampled = true;
+
+out:
+	(void)gpio_pin_set_dt(&battery_enable, 0);
+	(void)pm_device_action_run(battery_adc.dev, PM_DEVICE_ACTION_SUSPEND);
+	return sampled;
+}
+#else
+static int init_battery(void)
+{
+	return 0;
+}
+#endif
+
+static bool thread_receiver_on_requested(void)
+{
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+	return atomic_get(&sed_debug_receiver_on_requested) != 0;
+#else
+	return false;
+#endif
+}
+
+static bool thread_sed_mode_requested(void)
+{
+	return !thread_receiver_on_requested();
+}
+
 static int format_state(char *buffer, size_t size)
 {
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_BATTERY_REPORTING)
+	uint16_t battery_mv;
+
+	if (sample_battery_mv(&battery_mv)) {
+		return snprintk(buffer, size,
+				"{\"version\":%d,\"thingName\":\"%s\",\"redcon\":%d,\"batteryMv\":%u}",
+				TXING_PROTOCOL_VERSION, factory.thing_name, redcon_level,
+				battery_mv);
+	}
+#endif
 	return snprintk(buffer, size,
 			"{\"version\":%d,\"thingName\":\"%s\",\"redcon\":%d,\"batteryMv\":null}",
 			TXING_PROTOCOL_VERSION, factory.thing_name, redcon_level);
@@ -319,6 +574,7 @@ static bool parse_redcon_request(otMessage *message, struct redcon_request *requ
 static void redcon_handler(void *context, otMessage *message, const otMessageInfo *message_info)
 {
 	struct redcon_request request = {0};
+	int previous_redcon;
 
 	ARG_UNUSED(context);
 
@@ -332,10 +588,36 @@ static void redcon_handler(void *context, otMessage *message, const otMessageInf
 		send_response(message, message_info, OT_COAP_CODE_BAD_REQUEST, NULL);
 		return;
 	}
+	previous_redcon = redcon_level;
 	if (set_outputs_for_redcon(request.redcon) != 0) {
 		send_response(message, message_info, OT_COAP_CODE_INTERNAL_ERROR, NULL);
 		return;
 	}
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+	if (request.redcon == TXING_REDCON_ON) {
+		atomic_set(&sed_debug_sleep_transition_requested, 0);
+		(void)k_work_cancel_delayable(&sed_debug_redcon_sleep_work);
+		if (apply_sed_debug_redcon_thread_mode(request.redcon) != 0) {
+			LOG_ERR("SED debug REDCON %d link-mode update failed", request.redcon);
+			if (set_outputs_for_redcon(previous_redcon) != 0) {
+				LOG_ERR("REDCON output rollback to %d failed", previous_redcon);
+			}
+			send_response(message, message_info, OT_COAP_CODE_INTERNAL_ERROR, NULL);
+			return;
+		}
+		send_state_response(message, message_info, OT_COAP_CODE_CHANGED);
+		return;
+	}
+
+	/* Keep the receiver on until the CoAP Changed response has left the stack. */
+	atomic_set(&sed_debug_sleep_transition_requested, 1);
+	send_state_response(message, message_info, OT_COAP_CODE_CHANGED);
+	LOG_INF("SED debug REDCON 4 response grace %u ms before Thread link mode n",
+		(unsigned int)SED_REDCON_RESPONSE_GRACE_MS);
+	(void)k_work_schedule(&sed_debug_redcon_sleep_work,
+			      K_MSEC(SED_REDCON_RESPONSE_GRACE_MS));
+	return;
+#endif
 	send_state_response(message, message_info, OT_COAP_CODE_CHANGED);
 }
 
@@ -458,6 +740,12 @@ static void srp_client_callback(otError error, const otSrpClientHostInfo *host_i
 
 	if (error == OT_ERROR_NONE) {
 		LOG_INF("SRP update accepted");
+		atomic_set(&srp_registration_accepted, 1);
+		if (thread_sed_mode_requested() &&
+		    atomic_get(&sed_mode_active) == 0 &&
+		    atomic_get(&sed_transition_failed) == 0) {
+			(void)k_work_schedule(&sed_transition_work, K_MSEC(500));
+		}
 	} else {
 		LOG_WRN("SRP update failed: %s (%d)", otThreadErrorToString(error), error);
 	}
@@ -482,13 +770,13 @@ static void srp_autostart_callback(const otSockAddr *server, void *context)
 	LOG_INF("SRP auto-start selected server %s", server_string);
 }
 
-static int configure_thread_sed_mode(otInstance *ot)
+static int configure_thread_mtd_mode_locked(otInstance *ot, bool receiver_on_when_idle)
 {
 	otLinkModeConfig link_mode;
 	otError error;
 
 	link_mode = otThreadGetLinkMode(ot);
-	link_mode.mRxOnWhenIdle = false;
+	link_mode.mRxOnWhenIdle = receiver_on_when_idle;
 	link_mode.mDeviceType = false;
 	link_mode.mNetworkData = true;
 
@@ -504,9 +792,398 @@ static int configure_thread_sed_mode(otInstance *ot)
 		return -EIO;
 	}
 
-	LOG_INF("Thread SED mode configured: rxOnWhenIdle=0 poll=%u ms fullNetworkData=1",
-		CONFIG_OPENTHREAD_POLL_PERIOD);
 	return 0;
+}
+
+static int configure_thread_bootstrap_mode_locked(otInstance *ot)
+{
+	int rc = configure_thread_mtd_mode_locked(ot, true);
+
+	if (rc == 0) {
+		LOG_INF("Thread SRP bootstrap mode configured: rxOnWhenIdle=1 poll=%u ms fullNetworkData=1",
+			CONFIG_OPENTHREAD_POLL_PERIOD);
+	}
+	return rc;
+}
+
+static int configure_thread_sed_mode_locked(otInstance *ot)
+{
+	int rc = configure_thread_mtd_mode_locked(ot, false);
+
+	if (rc == 0) {
+		LOG_INF("Thread SED link mode configured after SRP registration: rxOnWhenIdle=0 poll=%u ms fullNetworkData=1",
+			CONFIG_OPENTHREAD_POLL_PERIOD);
+	}
+	return rc;
+}
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+static int configure_thread_receiver_on_mode_locked(otInstance *ot)
+{
+	int rc = configure_thread_mtd_mode_locked(ot, true);
+
+	if (rc == 0) {
+		LOG_INF("Thread SED debug REDCON mode configured: rxOnWhenIdle=1 poll=%u ms fullNetworkData=1",
+			CONFIG_OPENTHREAD_POLL_PERIOD);
+	}
+	return rc;
+}
+#endif
+
+static int restart_thread_with_config_locked(otInstance *ot,
+					     int (*configure)(otInstance *ot),
+					     const char *mode_name)
+{
+	otError error;
+	int rc;
+
+	error = otThreadSetEnabled(ot, false);
+	if (error != OT_ERROR_NONE && error != OT_ERROR_INVALID_STATE) {
+		LOG_ERR("Thread disable before %s restart failed: %d", mode_name, error);
+		return -EIO;
+	}
+
+	rc = configure(ot);
+	if (rc != 0) {
+		return rc;
+	}
+
+	error = otThreadSetEnabled(ot, true);
+	if (error != OT_ERROR_NONE) {
+		LOG_ERR("Thread %s restart failed: %d", mode_name, error);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static int switch_thread_to_sed_mode_locked(otInstance *ot)
+{
+	int rc = configure_thread_sed_mode_locked(ot);
+
+	if (rc != 0) {
+		return rc;
+	}
+
+	LOG_INF("Thread switched to SED mode after SRP registration");
+	return 0;
+}
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+static int apply_sed_debug_redcon_thread_mode(int redcon)
+{
+	otInstance *ot = openthread_get_default_instance();
+	bool receiver_on_when_idle = (redcon == TXING_REDCON_ON);
+	atomic_val_t previous_receiver_on = atomic_get(&sed_debug_receiver_on_requested);
+	int rc;
+
+	if (ot == NULL) {
+		return -ENODEV;
+	}
+
+	/* CoAP handlers execute in the OpenThread processing context. */
+	atomic_set(&sed_debug_receiver_on_requested, receiver_on_when_idle ? 1 : 0);
+	rc = receiver_on_when_idle ? configure_thread_receiver_on_mode_locked(ot) :
+		configure_thread_mtd_mode_locked(ot, false);
+	if (rc != 0) {
+		atomic_set(&sed_debug_receiver_on_requested, previous_receiver_on);
+		return rc;
+	}
+	if (!receiver_on_when_idle) {
+		LOG_INF("Thread SED debug REDCON mode configured: rxOnWhenIdle=0 poll=%u ms fullNetworkData=1",
+			CONFIG_OPENTHREAD_POLL_PERIOD);
+	}
+
+	atomic_set(&sed_mode_active, 1);
+	atomic_set(&sed_transition_failed, 0);
+	if (receiver_on_when_idle) {
+		(void)k_work_cancel_delayable(&sed_transition_work);
+		(void)k_work_cancel_delayable(&sed_fallback_work);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+		(void)k_work_cancel_delayable(&sed_recovery_work);
+		atomic_set(&sed_recovery_pending, 0);
+		atomic_set(&sed_recovery_attempts, 0);
+#endif
+	} else {
+		(void)k_work_schedule(&sed_fallback_work,
+				      K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+	}
+
+	LOG_INF("SED debug REDCON %d switched Thread link mode to %s", redcon,
+		receiver_on_when_idle ? "rn" : "n");
+	return 0;
+}
+
+static void sed_debug_redcon_sleep_work_handler(struct k_work *work)
+{
+	otInstance *ot;
+	int rc;
+
+	ARG_UNUSED(work);
+	if (!atomic_cas(&sed_debug_sleep_transition_requested, 1, 0)) {
+		return;
+	}
+
+	ot = openthread_get_default_instance();
+	if (ot == NULL) {
+		LOG_ERR("SED debug REDCON 4 link-mode transition failed: OpenThread unavailable");
+		return;
+	}
+
+	openthread_mutex_lock();
+	rc = apply_sed_debug_redcon_thread_mode(TXING_REDCON_OFF);
+	openthread_mutex_unlock();
+	if (rc != 0) {
+		LOG_ERR("SED debug REDCON 4 link-mode transition failed after CoAP response: %d", rc);
+	}
+}
+#endif
+
+#if !IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static int restart_thread_in_bootstrap_mode_locked(otInstance *ot)
+{
+	int rc = restart_thread_with_config_locked(ot, configure_thread_bootstrap_mode_locked,
+						   "SRP bootstrap");
+
+	if (rc != 0) {
+		return rc;
+	}
+
+	LOG_INF("Thread restarted in SRP bootstrap mode after SED fallback");
+	return 0;
+}
+#endif
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+static int restart_thread_in_requested_mode_locked(otInstance *ot)
+{
+	int rc;
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+	if (thread_receiver_on_requested()) {
+		rc = restart_thread_with_config_locked(ot, configure_thread_receiver_on_mode_locked,
+					       "REDCON receiver-on MTD");
+		if (rc == 0) {
+			LOG_INF("Thread restarted in receiver-on MTD mode during SED debug REDCON recovery");
+		}
+		return rc;
+	}
+#endif
+
+	rc = restart_thread_with_config_locked(ot, configure_thread_sed_mode_locked, "SED");
+	if (rc == 0) {
+		LOG_INF("Thread restarted in SED mode during SED recovery");
+	}
+	return rc;
+}
+
+static uint32_t sed_recovery_delay_seconds(int completed_attempts)
+{
+	if (completed_attempts <= 0) {
+		return SED_RECOVERY_INITIAL_DELAY_SECONDS;
+	}
+	if (completed_attempts == 1) {
+		return SED_RECOVERY_SECOND_DELAY_SECONDS;
+	}
+	return SED_RECOVERY_MAX_DELAY_SECONDS;
+}
+
+static void abandon_sed_recovery(void)
+{
+	LOG_ERR("Thread requested link-mode recovery exhausted after %d attempts; requested=%s",
+		SED_RECOVERY_MAX_ATTEMPTS, thread_receiver_on_requested() ? "rn" : "n");
+	atomic_set(&sed_transition_failed, 1);
+	atomic_set(&sed_recovery_pending, 0);
+}
+
+static void schedule_sed_recovery(otDeviceRole role, bool rx_on_when_idle)
+{
+	int completed_attempts = atomic_get(&sed_recovery_attempts);
+	uint32_t delay_seconds;
+
+	if (completed_attempts >= SED_RECOVERY_MAX_ATTEMPTS) {
+		abandon_sed_recovery();
+		return;
+	}
+	if (!atomic_cas(&sed_recovery_pending, 0, 1)) {
+		return;
+	}
+
+	delay_seconds = sed_recovery_delay_seconds(completed_attempts);
+	LOG_WRN("Thread requested link mode lost: role=%s rxOnWhenIdle=%u requested=%s; scheduling recovery %d/%d in %u s",
+		otThreadDeviceRoleToString(role), rx_on_when_idle,
+		thread_receiver_on_requested() ? "rn" : "n",
+		completed_attempts + 1, SED_RECOVERY_MAX_ATTEMPTS,
+		(unsigned int)delay_seconds);
+	(void)k_work_schedule(&sed_recovery_work, K_SECONDS(delay_seconds));
+}
+
+static void sed_recovery_work_handler(struct k_work *work)
+{
+	otInstance *ot;
+	otDeviceRole role;
+	otLinkModeConfig link_mode;
+	bool receiver_on_expected;
+	int attempt;
+	int rc;
+
+	ARG_UNUSED(work);
+	atomic_set(&sed_recovery_pending, 0);
+
+	if (atomic_get(&sed_mode_active) == 0 ||
+	    atomic_get(&sed_transition_failed) != 0) {
+		return;
+	}
+
+	ot = openthread_get_default_instance();
+	if (ot == NULL) {
+		LOG_WRN("Thread SED recovery deferred: OpenThread instance unavailable");
+		schedule_sed_recovery(OT_DEVICE_ROLE_DISABLED, false);
+		return;
+	}
+
+	openthread_mutex_lock();
+	role = otThreadGetDeviceRole(ot);
+	link_mode = otThreadGetLinkMode(ot);
+	receiver_on_expected = thread_receiver_on_requested();
+	if (role == OT_DEVICE_ROLE_CHILD &&
+	    link_mode.mRxOnWhenIdle == receiver_on_expected) {
+		openthread_mutex_unlock();
+		atomic_set(&sed_recovery_attempts, 0);
+		return;
+	}
+
+	attempt = atomic_inc(&sed_recovery_attempts) + 1;
+	LOG_WRN("Thread attempting requested link-mode recovery %d/%d: role=%s rxOnWhenIdle=%u requested=%s",
+		attempt, SED_RECOVERY_MAX_ATTEMPTS,
+		otThreadDeviceRoleToString(role), link_mode.mRxOnWhenIdle,
+		receiver_on_expected ? "rn" : "n");
+	rc = restart_thread_in_requested_mode_locked(ot);
+	openthread_mutex_unlock();
+	if (rc == 0) {
+		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+		return;
+	}
+
+	LOG_WRN("Thread requested link-mode recovery restart failed: %d", rc);
+	schedule_sed_recovery(role, link_mode.mRxOnWhenIdle);
+}
+#endif
+
+static void schedule_sed_transition_if_ready(otDeviceRole role)
+{
+	if (thread_sed_mode_requested() &&
+	    role == OT_DEVICE_ROLE_CHILD &&
+	    atomic_get(&srp_registration_accepted) != 0 &&
+	    atomic_get(&sed_mode_active) == 0 &&
+	    atomic_get(&sed_transition_failed) == 0) {
+		(void)k_work_schedule(&sed_transition_work, K_NO_WAIT);
+	}
+}
+
+static void sed_transition_work_handler(struct k_work *work)
+{
+	otInstance *ot;
+	otDeviceRole role;
+	int rc;
+
+	ARG_UNUSED(work);
+
+	if (!thread_sed_mode_requested() ||
+	    atomic_get(&srp_registration_accepted) == 0 ||
+	    atomic_get(&sed_mode_active) != 0) {
+		return;
+	}
+
+	ot = openthread_get_default_instance();
+	if (ot == NULL) {
+		LOG_WRN("Thread SED transition deferred: OpenThread instance unavailable");
+		(void)k_work_schedule(&sed_transition_work, K_SECONDS(1));
+		return;
+	}
+
+	openthread_mutex_lock();
+	role = otThreadGetDeviceRole(ot);
+	if (role != OT_DEVICE_ROLE_CHILD) {
+		LOG_INF("Thread SED transition deferred: role=%s",
+			otThreadDeviceRoleToString(role));
+		openthread_mutex_unlock();
+		(void)k_work_schedule(&sed_transition_work, K_SECONDS(1));
+		return;
+	}
+
+	rc = switch_thread_to_sed_mode_locked(ot);
+	openthread_mutex_unlock();
+	if (rc == 0) {
+		atomic_set(&sed_mode_active, 1);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+		atomic_set(&sed_recovery_pending, 0);
+		atomic_set(&sed_recovery_attempts, 0);
+#endif
+		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+		return;
+	}
+
+	(void)k_work_schedule(&sed_transition_work, K_SECONDS(5));
+}
+
+static void sed_fallback_work_handler(struct k_work *work)
+{
+	otInstance *ot;
+	otDeviceRole role;
+	otLinkModeConfig link_mode;
+	bool receiver_on_expected;
+#if !IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+	int rc;
+#endif
+
+	ARG_UNUSED(work);
+
+	if (atomic_get(&sed_mode_active) == 0 ||
+	    atomic_get(&sed_transition_failed) != 0) {
+		return;
+	}
+
+	ot = openthread_get_default_instance();
+	if (ot == NULL) {
+		LOG_WRN("Thread SED fallback deferred: OpenThread instance unavailable");
+		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(5));
+		return;
+	}
+
+	openthread_mutex_lock();
+	role = otThreadGetDeviceRole(ot);
+	link_mode = otThreadGetLinkMode(ot);
+	receiver_on_expected = thread_receiver_on_requested();
+	if (role == OT_DEVICE_ROLE_CHILD &&
+	    link_mode.mRxOnWhenIdle == receiver_on_expected) {
+		openthread_mutex_unlock();
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+		atomic_set(&sed_recovery_pending, 0);
+		atomic_set(&sed_recovery_attempts, 0);
+#endif
+		return;
+	}
+
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+	openthread_mutex_unlock();
+	schedule_sed_recovery(role, link_mode.mRxOnWhenIdle);
+	return;
+#else
+	LOG_WRN("Thread SED mode did not remain attached: role=%s rxOnWhenIdle=%u; reverting to SRP bootstrap mode",
+		otThreadDeviceRoleToString(role), link_mode.mRxOnWhenIdle);
+	atomic_set(&sed_mode_active, 0);
+	atomic_set(&sed_transition_failed, 1);
+	rc = restart_thread_in_bootstrap_mode_locked(ot);
+	openthread_mutex_unlock();
+	if (rc == 0) {
+		return;
+	}
+
+	atomic_set(&sed_mode_active, 1);
+	atomic_set(&sed_transition_failed, 0);
+	(void)k_work_schedule(&sed_fallback_work, K_SECONDS(5));
+#endif
 }
 
 static int start_thread(otInstance *ot)
@@ -529,7 +1206,18 @@ static int start_thread(otInstance *ot)
 		return -EIO;
 	}
 	LOG_INF("Thread active dataset accepted: %u TLV bytes", factory.dataset_tlvs_len);
-	if (configure_thread_sed_mode(ot) != 0) {
+	atomic_set(&srp_registration_accepted, 0);
+	atomic_set(&sed_mode_active, 0);
+	atomic_set(&sed_transition_failed, 0);
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_REDCON_LINK_MODE_TEST)
+	atomic_set(&sed_debug_receiver_on_requested, 0);
+	atomic_set(&sed_debug_sleep_transition_requested, 0);
+#endif
+#if IS_ENABLED(CONFIG_TXING_POWER_SI_SED_RECOVERY_TEST)
+	atomic_set(&sed_recovery_pending, 0);
+	atomic_set(&sed_recovery_attempts, 0);
+#endif
+	if (configure_thread_bootstrap_mode_locked(ot) != 0) {
 		openthread_mutex_unlock();
 		return -EIO;
 	}
@@ -554,9 +1242,16 @@ static int start_thread(otInstance *ot)
 static void thread_state_changed(uint32_t flags, void *context)
 {
 	otInstance *ot = context;
+	otDeviceRole role = otThreadGetDeviceRole(ot);
 
 	LOG_INF("Thread state flags=0x%08x role=%s", flags,
-		otThreadDeviceRoleToString(otThreadGetDeviceRole(ot)));
+		otThreadDeviceRoleToString(role));
+	if (atomic_get(&sed_mode_active) != 0 &&
+	    atomic_get(&sed_transition_failed) == 0 &&
+	    role != OT_DEVICE_ROLE_CHILD) {
+		(void)k_work_schedule(&sed_fallback_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+	}
+	schedule_sed_transition_if_ready(role);
 }
 
 static void register_thread_state_logger(otInstance *ot)
@@ -698,6 +1393,10 @@ int main(void)
 		LOG_ERR("GPIO init failed: %d", rc);
 		return rc;
 	}
+	rc = init_battery();
+	if (rc != 0) {
+		LOG_WRN("battery measurement init failed: %d", rc);
+	}
 	ot = openthread_get_default_instance();
 	if (ot == NULL) {
 		LOG_ERR("OpenThread instance unavailable");
@@ -708,6 +1407,7 @@ int main(void)
 	if (start_thread(ot) != 0 || start_coap(ot) != 0 || start_srp(ot) != 0) {
 		LOG_ERR("power-si Thread services did not start");
 	}
+	register_pm_transition_diagnostics();
 
 	while (true) {
 		k_sleep(K_SECONDS(60));

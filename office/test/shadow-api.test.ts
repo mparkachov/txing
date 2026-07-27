@@ -75,6 +75,24 @@ describe('shadow protocol helpers', () => {
     ])
   })
 
+  test('includes the power-si Thread named shadow from catalog capabilities', () => {
+    const topics = buildNamedShadowTopics('power-si-001', [
+      'sparkplug',
+      'thread',
+      'power',
+    ])
+
+    expect(topics.thread).toEqual({
+      shadowName: 'thread',
+      get: '$aws/things/power-si-001/shadow/name/thread/get',
+      getAccepted: '$aws/things/power-si-001/shadow/name/thread/get/accepted',
+      getRejected: '$aws/things/power-si-001/shadow/name/thread/get/rejected',
+      update: '$aws/things/power-si-001/shadow/name/thread/update',
+      updateAccepted: '$aws/things/power-si-001/shadow/name/thread/update/accepted',
+      updateRejected: '$aws/things/power-si-001/shadow/name/thread/update/rejected',
+    })
+  })
+
   test('builds get publish packets with client tokens', () => {
     const topics = buildShadowTopics('txing')
     const getPacket = buildGetShadowPublishPacket(topics, 'get-token')

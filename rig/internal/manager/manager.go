@@ -68,7 +68,7 @@ type DeviceRuntimeState struct {
 }
 
 func NodeClientID(edgeNodeID string) string {
-	return edgeNodeID + "-sparkplug-manager"
+	return edgeNodeID
 }
 
 func NewDeviceRuntimeState(inventory protocol.InventoryDevice) *DeviceRuntimeState {

@@ -1,0 +1,14 @@
+description: GPIO-controlled battery voltage divider
+
+compatible: "txing-battery-divider"
+
+include: base.yaml
+
+properties:
+  io-channels:
+    type: phandle-array
+    required: true
+
+  enable-gpios:
+    type: phandle-array
+    required: true
