@@ -47,6 +47,15 @@ rig host. It uses the rig certificate and IoT role alias to:
 - forward BLE-owned named-shadow updates from IPC to AWS IoT MQTT
 - write CloudWatch logs to `txing/<town>/<rig>`
 
+Per-device MQTT sessions are evidence-gated rather than inventory-gated. A
+validated BLE GATT or Thread CoAP capability state creates a device session
+immediately before its `DBIRTH`. When that adapter makes `sparkplug`
+unavailable, the manager publishes one `DDEATH`, disconnects that device client,
+and leaves it disconnected through later publication ticks. A later validated
+adapter state creates a fresh session before the recovery `DBIRTH`. This lets
+AWS IoT Thing connection status agree with the transport availability shown in
+Office; the rig node MQTT session and other device sessions are unaffected.
+
 Inventory refreshes are cost-aware so an idle-awake rig stays cheap at
 REDCON 1. Each refresh performs one fleet-indexing `SearchIndex` query and
 builds device registrations from the returned documents; there are no

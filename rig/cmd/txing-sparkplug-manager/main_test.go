@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/mparkachov/txing/rig/internal/ipc"
 	"github.com/mparkachov/txing/rig/internal/manager"
@@ -368,6 +369,207 @@ func TestSparkplugDevicePublicationsAreNotRetained(t *testing.T) {
 		if client.publishes[i].retained {
 			t.Fatalf("%s publish must not be retained", wantTopic)
 		}
+	}
+}
+
+func TestDeviceSessionLifecycleFollowsValidatedBLEAndThreadEvidence(t *testing.T) {
+	tests := []struct {
+		name         string
+		inventory    protocol.InventoryDevice
+		adapterID    string
+		capabilities map[string]bool
+	}{
+		{
+			name:      "BLE",
+			inventory: powerBLEInventory("power-ble-1"),
+			adapterID: "dev.txing.rig.BleConnectivity",
+			capabilities: map[string]bool{
+				"sparkplug": true, "ble": true, "power": true,
+			},
+		},
+		{
+			name:      "Thread",
+			inventory: powerThreadInventory("power-si-1"),
+			adapterID: "dev.txing.rig.ThreadConnectivity",
+			capabilities: map[string]bool{
+				"sparkplug": true, "thread": true, "power": true,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			managed := &managedDevice{state: manager.NewDeviceRuntimeState(test.inventory)}
+			state := &runtimeState{
+				cfg: rigconfig.Config{TownID: "town-1", RigID: "rig-1"},
+				devices: map[string]*managedDevice{
+					test.inventory.ThingName: managed,
+				},
+			}
+			var clients []*fakeNodeMQTTClient
+			state.newDeviceMQTT = func(options mqttx.Options) (managedMQTTClient, error) {
+				if options.ClientID != test.inventory.ThingName {
+					t.Fatalf("device client id = %s, want %s", options.ClientID, test.inventory.ThingName)
+				}
+				client := &fakeNodeMQTTClient{}
+				clients = append(clients, client)
+				return client, nil
+			}
+
+			now := uint64(time.Now().UnixMilli())
+			if err := managed.state.ObserveState(protocol.CapabilityState{
+				SchemaVersion: protocol.SchemaVersion,
+				AdapterID:     test.adapterID,
+				ThingName:     test.inventory.ThingName,
+				Capabilities:  test.capabilities,
+				Metrics:       map[string]protocol.MetricValue{},
+				ObservedAtMS:  now,
+				Seq:           1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			state.publishDeviceState(context.Background())
+			if len(clients) != 1 || managed.mqtt != clients[0] {
+				t.Fatalf("validated evidence created clients=%d mqtt=%T, want one active device client", len(clients), managed.mqtt)
+			}
+			assertPublishedDeviceTopic(t, clients[0], sparkplug.BuildDeviceTopic("town-1", "DBIRTH", "rig-1", test.inventory.ThingName), 1)
+
+			unavailable := make(map[string]bool, len(test.capabilities))
+			for capability := range test.capabilities {
+				unavailable[capability] = false
+			}
+			if err := managed.state.ObserveState(protocol.CapabilityState{
+				SchemaVersion: protocol.SchemaVersion,
+				AdapterID:     test.adapterID,
+				ThingName:     test.inventory.ThingName,
+				Capabilities:  unavailable,
+				Metrics:       map[string]protocol.MetricValue{},
+				ObservedAtMS:  now + 1,
+				Seq:           2,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			state.publishDeviceState(context.Background())
+			assertPublishedDeviceTopic(t, clients[0], sparkplug.BuildDeviceTopic("town-1", "DDEATH", "rig-1", test.inventory.ThingName), 1)
+			if clients[0].disconnects != 1 || managed.mqtt != nil {
+				t.Fatalf("unavailable device disconnects=%d mqtt=%T, want one disconnect and no session", clients[0].disconnects, managed.mqtt)
+			}
+
+			state.publishDeviceState(context.Background())
+			if len(clients) != 1 {
+				t.Fatalf("unavailable publication tick recreated %d clients, want one", len(clients))
+			}
+			assertPublishedDeviceTopic(t, clients[0], sparkplug.BuildDeviceTopic("town-1", "DDEATH", "rig-1", test.inventory.ThingName), 1)
+
+			if err := managed.state.ObserveState(protocol.CapabilityState{
+				SchemaVersion: protocol.SchemaVersion,
+				AdapterID:     test.adapterID,
+				ThingName:     test.inventory.ThingName,
+				Capabilities:  test.capabilities,
+				Metrics:       map[string]protocol.MetricValue{},
+				ObservedAtMS:  now + 2,
+				Seq:           3,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			state.publishDeviceState(context.Background())
+			if len(clients) != 2 || managed.mqtt != clients[1] {
+				t.Fatalf("recovered evidence created clients=%d mqtt=%T, want a new active device client", len(clients), managed.mqtt)
+			}
+			recoveryTopic := sparkplug.BuildDeviceTopic("town-1", "DBIRTH", "rig-1", test.inventory.ThingName)
+			assertPublishedDeviceTopic(t, clients[1], recoveryTopic, 1)
+			recovery, err := sparkplug.DecodePayload(clients[1].publishes[0].payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for capability, available := range test.capabilities {
+				assertMetric(t, recovery.Metrics, sparkplug.NewBooleanMetric("capability."+capability, available))
+			}
+		})
+	}
+}
+
+func TestOfflineDeviceSessionDoesNotInterruptOtherDeviceSession(t *testing.T) {
+	firstInventory := powerBLEInventory("power-ble-1")
+	secondInventory := powerThreadInventory("power-si-1")
+	first := &managedDevice{state: manager.NewDeviceRuntimeState(firstInventory)}
+	second := &managedDevice{state: manager.NewDeviceRuntimeState(secondInventory)}
+	node := &fakeNodeMQTTClient{}
+	state := &runtimeState{
+		cfg:      rigconfig.Config{TownID: "town-1", RigID: "rig-1"},
+		nodeMQTT: node,
+		devices: map[string]*managedDevice{
+			firstInventory.ThingName:  first,
+			secondInventory.ThingName: second,
+		},
+	}
+	clients := map[string]*fakeNodeMQTTClient{}
+	state.newDeviceMQTT = func(options mqttx.Options) (managedMQTTClient, error) {
+		client := &fakeNodeMQTTClient{}
+		clients[options.ClientID] = client
+		return client, nil
+	}
+	now := uint64(time.Now().UnixMilli())
+	for _, observed := range []struct {
+		managed      *managedDevice
+		inventory    protocol.InventoryDevice
+		adapterID    string
+		capabilities map[string]bool
+	}{
+		{first, firstInventory, "dev.txing.rig.BleConnectivity", map[string]bool{"sparkplug": true, "ble": true, "power": true}},
+		{second, secondInventory, "dev.txing.rig.ThreadConnectivity", map[string]bool{"sparkplug": true, "thread": true, "power": true}},
+	} {
+		if err := observed.managed.state.ObserveState(protocol.CapabilityState{
+			SchemaVersion: protocol.SchemaVersion, AdapterID: observed.adapterID, ThingName: observed.inventory.ThingName,
+			Capabilities: observed.capabilities, Metrics: map[string]protocol.MetricValue{}, ObservedAtMS: now, Seq: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state.publishDeviceState(context.Background())
+
+	if err := first.state.ObserveState(protocol.CapabilityState{
+		SchemaVersion: protocol.SchemaVersion, AdapterID: "dev.txing.rig.BleConnectivity", ThingName: firstInventory.ThingName,
+		Capabilities: map[string]bool{"sparkplug": false, "ble": false, "power": false}, Metrics: map[string]protocol.MetricValue{}, ObservedAtMS: now + 1, Seq: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state.publishDeviceState(context.Background())
+	if clients[firstInventory.ThingName].disconnects != 1 || first.mqtt != nil {
+		t.Fatalf("offline device session = %#v disconnects=%d", first.mqtt, clients[firstInventory.ThingName].disconnects)
+	}
+	if clients[secondInventory.ThingName].disconnects != 0 || second.mqtt != clients[secondInventory.ThingName] {
+		t.Fatalf("unrelated device session was interrupted mqtt=%#v disconnects=%d", second.mqtt, clients[secondInventory.ThingName].disconnects)
+	}
+	if node.disconnects != 0 {
+		t.Fatalf("rig node MQTT session was interrupted disconnects=%d", node.disconnects)
+	}
+}
+
+func powerBLEInventory(thingName string) protocol.InventoryDevice {
+	return protocol.InventoryDevice{
+		ThingName: thingName, ThingType: "power", Capabilities: []string{"sparkplug", "ble", "power"},
+		RedconCommandLevels: []uint8{4, 3}, RedconRules: map[uint8][]string{4: {"sparkplug", "ble"}, 3: {"sparkplug", "ble", "power"}},
+	}
+}
+
+func powerThreadInventory(thingName string) protocol.InventoryDevice {
+	return protocol.InventoryDevice{
+		ThingName: thingName, ThingType: "power-si", Capabilities: []string{"sparkplug", "thread", "power"},
+		RedconCommandLevels: []uint8{4, 3}, RedconRules: map[uint8][]string{4: {"sparkplug", "thread"}, 3: {"sparkplug", "thread", "power"}},
+	}
+}
+
+func assertPublishedDeviceTopic(t *testing.T, client *fakeNodeMQTTClient, topic string, want int) {
+	t.Helper()
+	got := 0
+	for _, publication := range client.publishes {
+		if publication.topic == topic {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("publications on %s = %d, want %d; all=%#v", topic, got, want, client.publishes)
 	}
 }
 

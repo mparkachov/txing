@@ -69,7 +69,7 @@ manually on a development Mac.
   Lambda runtime publishes the same Sparkplug topic model from the AWS-hosted
   runtime. The Sparkplug edge node id in topics remains `<rig>`, but any
   transport client id must not collide with another rig/runtime client id.
-- Managed device Sparkplug MQTT sessions use the managed thing name as their MQTT client id so AWS IoT thing connectivity tracks device session state.
+- Managed device Sparkplug MQTT sessions use the managed thing name as their MQTT client id so AWS IoT thing connectivity tracks device session state. The manager creates a device session only for an impending `DBIRTH`; on a device `DDEATH` it disconnects that client and does not recreate it until fresh validated BLE GATT or Thread CoAP evidence requires a new `DBIRTH`. The rig node MQTT session and other device sessions remain independent.
 
 ## Authority and Ownership
 
