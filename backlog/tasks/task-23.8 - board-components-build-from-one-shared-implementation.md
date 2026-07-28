@@ -1,11 +1,11 @@
 ---
 id: TASK-23.8
 title: board components build from one shared implementation
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 17:43'
-updated_date: '2026-07-28 19:31'
+updated_date: '2026-07-28 19:48'
 labels: []
 milestone: m-4
 dependencies:
@@ -287,6 +287,34 @@ fails naming both variables.
 No release tag was created - the failure was in `build`, and `gh release create`
 runs in `publish`, which depends on `build` and `smoke`. The same version can be
 re-run once the fix is pushed.
+
+## Operator validation on physical hardware (cyberbrick stream, unit board)
+
+`cyberbrick-v0.15.8`, the first release built from the merged sources, installed
+on a physical unit board running Alpine and carrying the cyberbrick binaries.
+Operator-reported evidence:
+
+- All three binaries report `0.15.8`. Nothing in the source tree carries that
+  literal any more, so this is build-time injection proven on real artifacts.
+- `txing-cyberbrick-daemon`: `ldd` reports `Not a valid dynamic program`, which
+  is the expected result for the static binary rather than a fault.
+- `txing-cyberbrick-hardware-worker`: `ldd` shows only the musl loader, static.
+- `txing-cyberbrick-kvs-master`: musl-dynamic with no unresolved entries,
+  resolving `libcamera.so.0.7` and `libcamera-base.so.0.7` from `/usr/lib`.
+- After reboot the board reaches REDCON 1 with live video **and working motion
+  control**.
+
+Motion control is the load-bearing result. Video rides `BoardVideoBridge`, whose
+proto and service name were untouched, so it would have come up even with the
+hardware rename broken. Control exercises the daemon to hardware worker path
+over the renamed `BoardHardware` service, which is the one breaking change in
+this task, and it works.
+
+Scope of what this proves: the consolidated implementation is behaviourally
+identical to the pre-merge cyberbrick build on the same hardware, with identical
+config paths, socket paths, service names, and adapter id. It does not yet
+exercise the unit release stream on that board; switching device streams is
+TASK-23.13.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -298,3 +326,9 @@ created: 2026-07-28 07:07
 Architecture decision (user-approved): the hardware gRPC service is renamed to the device-neutral `BoardHardware` on both device types, matching the existing `BoardVideoBridge` precedent, while the proto packages stay per-device (`txing.unit.hardware.v1` / `txing.cyberbrick.hardware.v1`). This makes the generated Go and C++ symbols identical so one source tree compiles for both, and leaves TASK-23.9 its stated job of collapsing the per-device packages. Consequence: the hardware method path changes, so the daemon and hardware worker must be upgraded together - the same coordinated-upgrade hazard TASK-23.9 documents, arriving one task earlier.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Both board device types now build their daemon, hardware worker, and KVS master from one shared implementation under devices/common/board/, with the device type as a build input that selects the proto package, binary names, socket paths, and release stream. The duplication that caused the signaling trust-anchor defect is gone: unit gained the runtime CA override it was missing, cyberbrick lost the known-bad compiled default it was relying on an env var to mask, and both now inject their version at build time from release/versions/<device> with no source literal left to drift. The hardware gRPC service is device-neutral BoardHardware while its package stays per device, so the daemon's Go bindings are generated per device at build time rather than checked in. Verified by the linkage and cross-distro gates for both device types in the pinned Alpine container, the full python and Go suites, and an operator install of cyberbrick-v0.15.8 on a physical board reaching REDCON 1 with video and working motion control.
+<!-- SECTION:FINAL_SUMMARY:END -->
