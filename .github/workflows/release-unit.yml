@@ -210,6 +210,8 @@ jobs:
             -e COMPONENT="$COMPONENT" \
             -e BINARY="$BINARY" \
             -e VERSION="$VERSION" \
+            -e PROTOC_GEN_GO_VERSION="$PROTOC_GEN_GO_VERSION" \
+            -e PROTOC_GEN_GO_GRPC_VERSION="$PROTOC_GEN_GO_GRPC_VERSION" \
             -e AWS_KVS_SDK_COMMIT="$AWS_KVS_SDK_COMMIT" \
             -e GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             -e RUNNER_TEMP="$RUNNER_TEMP" \

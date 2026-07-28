@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-25 17:43'
-updated_date: '2026-07-28 08:33'
+updated_date: '2026-07-28 19:31'
 labels: []
 milestone: m-4
 dependencies:
@@ -259,6 +259,34 @@ Linkage, asserted inside the build container:
 Cross-distro smoke: the two static binaries per device execute and report their version on both `debian:trixie` and pinned Alpine; each KVS master executes on Alpine, which is the documented camera-build limit rather than a gap.
 
 Each device reported its own stream from one shared source tree: unit at 0.15.9, cyberbrick at 0.15.7, which is AC #3 proven end to end on real binaries.
+
+## CI failure: protoc plugin versions were not forwarded into the build container
+
+The first real `release-cyberbrick` run failed at the build step with
+`sh: PROTOC_GEN_GO_VERSION: parameter not set`.
+
+Cause: the release workflows run their build body as a quoted heredoc inside
+`docker exec`, which sees only the variables passed with an explicit `-e`
+allowlist. The two protoc plugin versions were added to the step's `env:` block
+but not to that list, so under `set -eu` the container aborted. The local
+`_alpine-build` path was unaffected because its `docker run` already forwards
+both, which is why the end-to-end container gates passed here while CI did not:
+the justfile and the workflow are two separate implementations of the same
+build, and only the former had been executed.
+
+Fixed by forwarding `PROTOC_GEN_GO_VERSION` and `PROTOC_GEN_GO_GRPC_VERSION` in
+both workflows. A sweep of every `docker exec` heredoc in both files confirms no
+other variable is referenced without being forwarded, assigned locally, or given
+a `:-` default.
+
+Added `test_release_workflow_containers_receive_every_variable_they_use`, which
+parses each heredoc block and compares referenced variables against the
+forwarded set. Verified it catches this exact defect: with the fix reverted it
+fails naming both variables.
+
+No release tag was created - the failure was in `build`, and `gh release create`
+runs in `publish`, which depends on `build` and `smoke`. The same version can be
+re-run once the fix is pushed.
 <!-- SECTION:NOTES:END -->
 
 ## Comments

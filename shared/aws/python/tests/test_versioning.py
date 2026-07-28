@@ -936,6 +936,29 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("git clone <repo-url>", installation_docs)
         self.assertNotIn("$TXING_HOME", installation_docs)
 
+    def test_release_workflow_containers_receive_every_variable_they_use(self) -> None:
+        # The build steps run a quoted heredoc inside `docker exec`, which only
+        # sees variables forwarded with -e. Under `set -eu` a missing one aborts
+        # the job, and nothing outside CI exercises that path.
+        import re
+
+        for device_type in ("unit", "cyberbrick"):
+            workflow = (
+                REPO_ROOT / ".github" / "workflows" / f"release-{device_type}.yml"
+            ).read_text(encoding="utf-8")
+            blocks = re.findall(
+                r"(docker exec.*?<<'EOF'\n)(.*?)\n\s*EOF\n", workflow, re.S
+            )
+            self.assertTrue(blocks, f"no docker exec heredoc found in {device_type}")
+            for head, body in blocks:
+                forwarded = set(re.findall(r"-e (\w+)=", head))
+                assigned = set(re.findall(r"^\s*(\w+)=", body, re.M))
+                defaulted = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*):-", body))
+                used = set(re.findall(r"\$\{?([A-Z][A-Z0-9_]{2,})\b", body))
+                missing = used - forwarded - assigned - defaulted - {"PWD", "HOME", "PATH"}
+                with self.subTest(device_type=device_type):
+                    self.assertEqual(set(), missing)
+
     def test_board_components_build_from_one_shared_implementation(self) -> None:
         board_dir = REPO_ROOT / "devices" / "common" / "board"
         # There is exactly one copy of each board component.
