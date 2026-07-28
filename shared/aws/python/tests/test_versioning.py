@@ -320,7 +320,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh",
             REPO_ROOT / "rig" / "justfile",
             REPO_ROOT / "devices" / "unit" / "justfile",
-            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile",
+            REPO_ROOT / "devices" / "common" / "board" / "justfile",
             REPO_ROOT / "devices" / "power-si" / "justfile",
             REPO_ROOT / "office" / "justfile",
         ]
@@ -414,12 +414,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
-        unit_daemon_justfile = (
-            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile"
+        # Both device types build from the one shared board justfile.
+        board_justfile = (
+            REPO_ROOT / "devices" / "common" / "board" / "justfile"
         ).read_text(encoding="utf-8")
-        cyberbrick_daemon_justfile = (
-            REPO_ROOT / "devices" / "cyberbrick" / "daemon" / "justfile"
-        ).read_text(encoding="utf-8")
+        unit_daemon_justfile = board_justfile
+        cyberbrick_daemon_justfile = board_justfile
         artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
             encoding="utf-8"
         )
@@ -531,10 +531,18 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("libusrsctp-dev", unit_workflow)
         self.assertIn("libcamera-dev", unit_workflow)
         self.assertIn("grpc-plugins", unit_workflow)
-        self.assertIn("cd devices/unit/daemon", unit_workflow)
+        self.assertIn("cd devices/common/board/daemon", unit_workflow)
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", unit_workflow)
         self.assertIn(
-            "github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=$VERSION",
+            "github.com/mparkachov/txing/devices/common/board/daemon"
+            "/internal/daemon.DaemonVersion=$VERSION",
+            unit_workflow,
+        )
+        # The device identity is injected alongside the version: one shared
+        # implementation serves every board device type.
+        self.assertIn(
+            "github.com/mparkachov/txing/devices/common/board/daemon"
+            "/internal/daemon.DeviceType=unit",
             unit_workflow,
         )
         self.assertNotIn("-linkmode=external", unit_workflow)
@@ -556,7 +564,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("txing-sparkplug-manager-linux-aarch64.tar.gz", unit_workflow)
         self.assertNotIn("txing-witness-lambda-linux-aarch64.zip", unit_workflow)
         self.assertNotIn("docker run --rm -i", unit_workflow)
-        self.assertNotIn("just unit::daemon::kvs-submodules", unit_workflow)
+        self.assertNotIn("just common::board::kvs-submodules", unit_workflow)
         self.assertNotIn("just unit::daemon::kvs-build-native", unit_workflow)
         self.assertNotIn("just unit::board::", unit_workflow)
         self.assertNotIn("image: debian:trixie", unit_workflow)
@@ -602,15 +610,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", cyberbrick_workflow)
         self.assertIn(
-            "github.com/mparkachov/txing/devices/cyberbrick/daemon/internal/daemon.DaemonVersion=$VERSION",
+            "github.com/mparkachov/txing/devices/common/board/daemon"
+            "/internal/daemon.DaemonVersion=$VERSION",
             cyberbrick_workflow,
         )
         self.assertIn(
-            "-DTXING_CYBERBRICK_KVS_MASTER_VERSION=\"$VERSION\"",
+            "-DTXING_BOARD_KVS_MASTER_VERSION=\"$VERSION\"",
             cyberbrick_workflow,
         )
         self.assertIn(
-            "-DTXING_CYBERBRICK_HARDWARE_WORKER_VERSION=\"$VERSION\"",
+            "-DTXING_BOARD_HARDWARE_WORKER_VERSION=\"$VERSION\"",
             cyberbrick_workflow,
         )
         self.assertIn("-DBUILD_TESTING=ON", cyberbrick_workflow)
@@ -653,11 +662,10 @@ class VersionEnvironmentTests(unittest.TestCase):
                 "release/scripts/smoke-board-cross-distro.sh", workflow
             )
             self.assertIn("- smoke", workflow)
-        for daemon_justfile in (unit_daemon_justfile, cyberbrick_daemon_justfile):
-            self.assertIn("docker-smoke:", daemon_justfile)
-            self.assertIn(
-                "release/scripts/smoke-board-cross-distro.sh", daemon_justfile
-            )
+        # One shared board justfile serves both device types; the device is the
+        # recipe's first argument.
+        self.assertIn("docker-smoke device:", board_justfile)
+        self.assertIn("release/scripts/smoke-board-cross-distro.sh", board_justfile)
 
         for workflow in existing_go_workflows.values():
             self.assertIn("for version in 1.26 1.25 1.24", workflow)
@@ -677,17 +685,13 @@ class VersionEnvironmentTests(unittest.TestCase):
             self.assertNotIn("txing-greengrass-lite-payload/root", workflow)
             self.assertNotIn('run_nucleus "$payload_dir', workflow)
 
-        self.assertIn(
-            'Path("devices/unit/daemon/internal/daemon/version.go")',
-            release_cli,
-        )
-        self.assertIn("kTxingUnitKvsMasterVersion", release_cli)
-        self.assertIn(
-            'Path("devices/cyberbrick/daemon/internal/daemon/version.go")',
-            release_cli,
-        )
-        self.assertIn("TXING_CYBERBRICK_KVS_MASTER_VERSION", release_cli)
-        self.assertIn("TXING_CYBERBRICK_HARDWARE_WORKER_VERSION", release_cli)
+        # Board versions are injected at build time from release/versions/<device>,
+        # so the release CLI manages no board source file and there is no
+        # per-device literal left for a bump to drift against.
+        self.assertNotIn('Path("devices/', release_cli)
+        self.assertNotIn("KVS_MASTER_VERSION", release_cli)
+        self.assertNotIn("HARDWARE_WORKER_VERSION", release_cli)
+        self.assertNotIn("packageVersion", release_cli)
         self.assertIn(
             'components := "rig lambda unit cyberbrick office"', release_justfile
         )
@@ -704,7 +708,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("mod power-si 'devices/power-si/justfile'", root_justfile)
         self.assertIn("release/versions/rig", rig_justfile)
         self.assertNotIn("/" + "VERSION", rig_justfile)
-        self.assertIn("release/versions/unit", unit_daemon_justfile)
+        # The shared board justfile resolves the release stream from the device
+        # it is invoked with rather than naming one device type.
+        self.assertIn("release/versions/{{device}}", board_justfile)
+        self.assertIn("release/versions/$device", board_justfile)
+        self.assertNotIn("release/versions/unit", board_justfile)
+        self.assertNotIn("release/versions/cyberbrick", board_justfile)
         self.assertNotIn("/" + "VERSION", unit_daemon_justfile)
         self.assertIn(
             'alpine_build_image := "docker.io/library/alpine:3.24.1"',
@@ -736,18 +745,20 @@ class VersionEnvironmentTests(unittest.TestCase):
         removed_publish_recipe = "prerelease-" + "publish"
         removed_version_suffix = "-feature" + "."
         workflow_path = REPO_ROOT / ".github" / "workflows" / removed_workflow
-        daemon_dir = REPO_ROOT / "devices" / "unit" / "daemon"
-        justfile = (daemon_dir / "justfile").read_text(encoding="utf-8")
+        board_dir = REPO_ROOT / "devices" / "common" / "board"
+        daemon_dir = board_dir / "daemon"
+        justfile = (board_dir / "justfile").read_text(encoding="utf-8")
 
         self.assertFalse(workflow_path.exists())
         self.assertFalse((daemon_dir / "Dockerfile.docker-builder").exists())
         self.assertFalse((daemon_dir / removed_dockerfile).exists())
         self.assertIn("go test ./...", justfile)
-        self.assertIn("go run ./cmd/txing-unit-daemon", justfile)
+        self.assertIn("go run -ldflags=", justfile)
+        self.assertIn("./cmd/txing-board-daemon", justfile)
         self.assertNotIn("docker-builder-image", justfile)
         self.assertNotIn("docker-builder-shell", justfile)
-        self.assertIn("docker-build:", justfile)
-        self.assertIn('docker_build_dir := daemon_dir + "/target/docker-build"', justfile)
+        self.assertIn("docker-build device:", justfile)
+        self.assertIn('"{{board_dir}}/target/docker-build-$device"', justfile)
         self.assertIn(
             'alpine_build_image := "docker.io/library/alpine:3.24.1"', justfile
         )
@@ -755,7 +766,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", justfile)
         self.assertIn("DaemonVersion=$version", justfile)
         self.assertNotIn("TXING_DAEMON_BUILD_VERSION", justfile)
-        self.assertNotIn("just unit::daemon::kvs-submodules", justfile)
+        self.assertNotIn("just common::board::kvs-submodules", justfile)
         self.assertNotIn("just unit::daemon::kvs-build-native", justfile)
         self.assertNotIn("just unit::board::", justfile)
         self.assertNotIn("archive.raspberrypi.com", justfile)
@@ -766,9 +777,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", justfile)
         self.assertIn("statically linked|static-pie linked", justfile)
         self.assertIn("outputs: {", justfile)
-        self.assertIn("txing-unit-daemon", justfile)
-        self.assertIn("txing-unit-kvs-master", justfile)
-        self.assertIn("txing-unit-hardware-worker", justfile)
+        # Binary names are derived from the device the recipe is invoked with.
+        self.assertIn("txing-$device-daemon", justfile)
+        self.assertIn("txing-$device-kvs-master", justfile)
+        self.assertIn("txing-$device-hardware-worker", justfile)
+        self.assertNotIn("txing-unit-daemon", justfile)
+        self.assertNotIn("txing-cyberbrick-daemon", justfile)
         self.assertNotIn("gh release create", justfile)
         self.assertNotIn(removed_cli_flag, justfile)
         self.assertNotIn(removed_publish_recipe, justfile)
@@ -777,7 +791,7 @@ class VersionEnvironmentTests(unittest.TestCase):
     def test_unit_daemon_root_owned_installer_removed(self) -> None:
         removed_installer = "install-" + "systemd.sh"
         removed_mise_env = "MISE_" + "PRERELEASES"
-        daemon_dir = REPO_ROOT / "devices" / "unit" / "daemon"
+        daemon_dir = REPO_ROOT / "devices" / "common" / "board" / "daemon"
         board_docs = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
             encoding="utf-8"
         )
@@ -866,7 +880,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "txing-unit-kvs-master",
             board_docs,
         )
-        self.assertIn("just unit::daemon::role-policy <thing-id>", board_docs)
+        self.assertIn("just common::board::role-policy unit <thing-id>", board_docs)
         self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
         self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", artifacts_docs)
@@ -922,6 +936,125 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("git clone <repo-url>", installation_docs)
         self.assertNotIn("$TXING_HOME", installation_docs)
 
+    def test_board_components_build_from_one_shared_implementation(self) -> None:
+        board_dir = REPO_ROOT / "devices" / "common" / "board"
+        # There is exactly one copy of each board component.
+        for component in ("daemon", "kvs_master", "hardware_worker"):
+            self.assertTrue((board_dir / component).is_dir())
+        for device_type in ("unit", "cyberbrick"):
+            device_dir = REPO_ROOT / "devices" / device_type
+            self.assertFalse((device_dir / "board").exists())
+            self.assertFalse((device_dir / "daemon").exists())
+            # Genuinely per-device material stays with the device.
+            self.assertTrue((device_dir / "manifest.toml").is_file())
+            self.assertTrue((device_dir / "aws").is_dir())
+            self.assertTrue((device_dir / "proto").is_dir())
+
+        # The device type is a build input, not a source axis.
+        for cmakelists in (
+            board_dir / "kvs_master" / "CMakeLists.txt",
+            board_dir / "hardware_worker" / "CMakeLists.txt",
+        ):
+            text = cmakelists.read_text(encoding="utf-8")
+            self.assertIn("TXING_BOARD_DEVICE_TYPE", text)
+            self.assertNotIn("txing-unit-", text)
+            self.assertNotIn("txing-cyberbrick-", text)
+
+        device_go = (
+            board_dir / "daemon" / "internal" / "daemon" / "device.go"
+        ).read_text(encoding="utf-8")
+        self.assertIn("var DeviceType", device_go)
+        for derived in (
+            "AdapterID",
+            "DefaultConfigSubdir",
+            "DefaultKVSMasterCommand",
+            "DefaultHardwareSocketPath",
+        ):
+            self.assertIn(derived, derived_source := device_go)
+        self.assertNotIn('"unit"', derived_source)
+        self.assertNotIn('"cyberbrick"', derived_source)
+
+        # The hardware service name is device-independent; the proto package is
+        # still per device, which TASK-23.9 collapses.
+        for device_type in ("unit", "cyberbrick"):
+            proto = (
+                REPO_ROOT
+                / "devices"
+                / device_type
+                / "proto"
+                / "txing"
+                / device_type
+                / "hardware"
+                / "v1"
+                / f"{device_type}_hardware.proto"
+            ).read_text(encoding="utf-8")
+            self.assertIn("service BoardHardware {", proto)
+            self.assertIn(f"package txing.{device_type}.hardware.v1;", proto)
+
+    def test_board_kvs_master_selects_the_signaling_trust_anchor_at_runtime(
+        self,
+    ) -> None:
+        # The KVS SDK's TLS layer verifies against a single trust anchor and
+        # cannot consume a full OS CA bundle, so a board must be able to point
+        # it at a provisioned single-anchor file without a rebuild.
+        kvs_session_real = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "kvs_master"
+            / "src"
+            / "kvs_session_real.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"TXING_KVS_SYSTEM_CA_CERT_PATH"', kvs_session_real)
+        self.assertIn("std::getenv(kSystemCaCertPathEnvVar)", kvs_session_real)
+
+    def test_board_release_versions_are_injected_at_build_time(self) -> None:
+        # Each device type keeps an independent release stream, and with one
+        # shared implementation there is no source literal left to mirror.
+        board_dir = REPO_ROOT / "devices" / "common" / "board"
+        kvs_version = (
+            board_dir / "kvs_master" / "include" / "kvs_master" / "version.hpp"
+        ).read_text(encoding="utf-8")
+        worker_version = (
+            board_dir
+            / "hardware_worker"
+            / "include"
+            / "hardware_worker"
+            / "version.hpp"
+        ).read_text(encoding="utf-8")
+        daemon_version = (
+            board_dir / "daemon" / "internal" / "daemon" / "version.go"
+        ).read_text(encoding="utf-8")
+        self.assertIn("#ifndef TXING_BOARD_KVS_MASTER_VERSION", kvs_version)
+        self.assertIn("#ifndef TXING_BOARD_HARDWARE_WORKER_VERSION", worker_version)
+        self.assertIn("var DaemonVersion", daemon_version)
+        self.assertNotIn("packageVersion", daemon_version)
+
+        for device_type in ("unit", "cyberbrick"):
+            with self.subTest(device_type=device_type):
+                self.assertTrue(
+                    (REPO_ROOT / "release" / "versions" / device_type).is_file()
+                )
+                workflow = (
+                    REPO_ROOT
+                    / ".github"
+                    / "workflows"
+                    / f"release-{device_type}.yml"
+                ).read_text(encoding="utf-8")
+                self.assertIn(
+                    '-DTXING_BOARD_KVS_MASTER_VERSION="$VERSION"', workflow
+                )
+                self.assertIn(
+                    '-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', workflow
+                )
+                self.assertIn(f"-DTXING_BOARD_DEVICE_TYPE={device_type}", workflow)
+                self.assertIn(
+                    "github.com/mparkachov/txing/devices/common/board/daemon"
+                    f"/internal/daemon.DeviceType={device_type}",
+                    workflow,
+                )
+
     def test_cyberbrick_board_docs_describe_alpine_openrc_runbook(self) -> None:
         cyberbrick_board_docs = (
             REPO_ROOT / "docs" / "components" / "cyberbrick-board.md"
@@ -934,10 +1067,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         docs_index = (REPO_ROOT / "docs" / "README.md").read_text(encoding="utf-8")
         kvs_session_real = (
-            REPO_ROOT
-            / "devices"
-            / "cyberbrick"
-            / "board"
+            REPO_ROOT / "devices" / "common" / "board"
             / "kvs_master"
             / "src"
             / "kvs_session_real.cpp"
@@ -983,7 +1113,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn("/root/.config/txing/cyberbrick-daemon", cyberbrick_board_docs)
         self.assertIn(
-            "just cyberbrick::daemon::role-policy <thing-id>", cyberbrick_board_docs
+            "just common::board::role-policy cyberbrick <thing-id>", cyberbrick_board_docs
         )
         self.assertIn(
             "cat >/etc/init.d/txing-cyberbrick-hardware-worker",

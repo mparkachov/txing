@@ -201,6 +201,8 @@ jobs:
           COMPONENT: ${{ matrix.component }}
           BINARY: ${{ matrix.binary }}
           VERSION: ${{ needs.metadata.outputs.version }}
+          PROTOC_GEN_GO_VERSION: v1.36.10
+          PROTOC_GEN_GO_GRPC_VERSION: v1.5.1
           AWS_KVS_SDK_COMMIT: bb106510cf74edd2c24881c1ae94ceaa0083d15c
         shell: bash
         run: |
@@ -217,18 +219,41 @@ jobs:
 
           case "$COMPONENT" in
             daemon)
+              # The daemon's Go bindings carry the device's proto package, so
+              # they are generated per device here rather than checked in.
+              plugin_dir="$RUNNER_TEMP/protoc-plugins"
+              GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$PROTOC_GEN_GO_VERSION"
+              GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$PROTOC_GEN_GO_GRPC_VERSION"
+              proto_root="$GITHUB_WORKSPACE/devices/unit/proto"
+              out_dir="$GITHUB_WORKSPACE/devices/common/board/daemon/internal/proto"
+              hardware_proto="txing/unit/hardware/v1/unit_hardware.proto"
+              board_video_proto="txing/unit/board_video/v1/board_video.proto"
+              rm -rf "$out_dir"
+              install -d "$out_dir"
+              PATH="$plugin_dir:$PATH" protoc \
+                "--proto_path=$proto_root" \
+                "--go_out=$out_dir" \
+                "--go_opt=module=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto" \
+                "--go_opt=M$hardware_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/hardwarev1" \
+                "--go_opt=M$board_video_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/boardvideov1" \
+                "--go-grpc_out=$out_dir" \
+                "--go-grpc_opt=module=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto" \
+                "--go-grpc_opt=M$hardware_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/hardwarev1" \
+                "--go-grpc_opt=M$board_video_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/boardvideov1" \
+                "$hardware_proto" \
+                "$board_video_proto"
               (
-                cd devices/unit/daemon
+                cd devices/common/board/daemon
                 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
                 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
                   go build -trimpath \
-                    -ldflags="-s -w -X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=$VERSION" \
+                    -ldflags="-s -w -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DeviceType=unit -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DaemonVersion=$VERSION" \
                     -o "$output" \
-                    ./cmd/txing-unit-daemon
+                    ./cmd/txing-board-daemon
               )
               ;;
             kvs-master)
-              source_dir="$GITHUB_WORKSPACE/devices/unit/board/kvs_master"
+              source_dir="$GITHUB_WORKSPACE/devices/common/board/kvs_master"
               build_dir="$RUNNER_TEMP/build-txing-unit-kvs-master"
               openssl_libdir="$(pkg-config --variable=libdir openssl)"
               openssl_includedir="$(pkg-config --variable=includedir openssl)"
@@ -240,6 +265,8 @@ jobs:
                 -DTXING_KVS_SYSTEM_CA_CERT_PATH="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}" \
                 -DTXING_KVS_GRPC_BRIDGE=ON \
                 -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$AWS_KVS_SDK_COMMIT" \
+                -DTXING_BOARD_DEVICE_TYPE=unit \
+                -DTXING_BOARD_KVS_MASTER_VERSION="$VERSION" \
                 -DOPENSSL_USE_STATIC_LIBS=FALSE \
                 -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
                 -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
@@ -249,7 +276,7 @@ jobs:
               install -m 755 "$build_dir/$BINARY" "$output"
               ;;
             hardware-worker)
-              source_dir="$GITHUB_WORKSPACE/devices/unit/board/hardware_worker"
+              source_dir="$GITHUB_WORKSPACE/devices/common/board/hardware_worker"
               build_dir="$RUNNER_TEMP/build-txing-unit-hardware-worker"
               toolchain_prefix="$RUNNER_TEMP/static-toolchain"
               sh release/scripts/build-board-static-toolchain.sh "$toolchain_prefix"
@@ -259,6 +286,8 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release \
                 -DBUILD_TESTING=ON \
                 -DTXING_HARDWARE_WORKER_GRPC=ON \
+                -DTXING_BOARD_DEVICE_TYPE=unit \
+                -DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION" \
                 -DCMAKE_PREFIX_PATH="$toolchain_prefix" \
                 -DCMAKE_EXE_LINKER_FLAGS=-static \
                 -DOPENSSL_USE_STATIC_LIBS=TRUE \

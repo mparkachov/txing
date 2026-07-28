@@ -1,4 +1,4 @@
-// MQTT 5 client copied from devices/unit/daemon/internal/daemon/runtime.go
+// MQTT 5 client copied from devices/common/board/daemon/internal/daemon/runtime.go
 // (MQTTPublisher and packet codec). Keep byte-compatible with the unit
 // daemon: QoS 1 publishes, retained messages with MQTT 5 message expiry,
 // 60 second keep-alive.

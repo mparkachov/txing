@@ -243,10 +243,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
         daemon_env_template = (
-            REPO_ROOT / "devices" / "unit" / "daemon" / "daemon.env.template"
+            REPO_ROOT / "devices" / "common" / "board" / "daemon" / "daemon.env.template"
         ).read_text(encoding="utf-8")
         daemon_justfile = (
-            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile"
+            REPO_ROOT / "devices" / "common" / "board" / "justfile"
         ).read_text(encoding="utf-8")
         root_gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
@@ -268,7 +268,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("DaemonBoardVideoMaster", aws_lib)
         self.assertIn("kinesisvideo:ConnectAsMaster", aws_lib)
         self.assertIn("arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-board-video/*", aws_lib)
-        self.assertIn('role-policy thing_id=', daemon_justfile)
+        self.assertIn('role-policy device thing_id=', daemon_justfile)
         self.assertIn("logs:PutRetentionPolicy", aws_lib)
         self.assertIn("logs:PutLogEvents", aws_lib)
         self.assertIn("arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}", aws_lib)
@@ -380,7 +380,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
         daemon_env_template = (
-            REPO_ROOT / "devices" / "cyberbrick" / "daemon" / "daemon.env.template"
+            REPO_ROOT / "devices" / "common" / "board" / "daemon" / "daemon.env.template"
         ).read_text(encoding="utf-8")
 
         self.assertIn("cyberbrick_daemon_env_template", aws_justfile)
@@ -954,7 +954,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             AWS_DIR / "scripts" / "aws_lib.sh",
             REPO_ROOT / "devices" / "cloud-mcu" / "justfile",
             REPO_ROOT / "devices" / "cloud-mcu" / "lambda" / "justfile",
-            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile",
+            REPO_ROOT / "devices" / "common" / "board" / "justfile",
             REPO_ROOT / "office" / "justfile",
             REPO_ROOT / "rig" / "justfile",
             REPO_ROOT / "witness" / "justfile",

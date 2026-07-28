@@ -38,30 +38,6 @@ class ReleaseCliTests(unittest.TestCase):
             'version = 1\n\n[[package]]\nname = "aws"\nversion = "0.0.0"\n',
         )
         self._write(
-            "devices/unit/daemon/internal/daemon/version.go",
-            f'package daemon\n\nconst packageVersion = "{version}"\n',
-        )
-        self._write(
-            "devices/unit/board/kvs_master/include/kvs_master/version.hpp",
-            f'inline constexpr std::string_view kTxingUnitKvsMasterVersion = "{version}";\n',
-        )
-        self._write(
-            "devices/unit/board/hardware_worker/include/hardware_worker/version.hpp",
-            f'#define TXING_UNIT_HARDWARE_WORKER_VERSION "{version}"\n',
-        )
-        self._write(
-            "devices/cyberbrick/daemon/internal/daemon/version.go",
-            f'package daemon\n\nconst packageVersion = "{version}"\n',
-        )
-        self._write(
-            "devices/cyberbrick/board/kvs_master/include/kvs_master/version.hpp",
-            f'#define TXING_CYBERBRICK_KVS_MASTER_VERSION "{version}"\n',
-        )
-        self._write(
-            "devices/cyberbrick/board/hardware_worker/include/hardware_worker/version.hpp",
-            f'#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "{version}"\n',
-        )
-        self._write(
             "office/package.json",
             json.dumps({"name": "office", "version": version}, indent=2) + "\n",
         )
@@ -85,24 +61,6 @@ class ReleaseCliTests(unittest.TestCase):
                 cli.bump("unit", "1.2.4")
 
             self.assertEqual((cli.ROOT / "release/versions/unit").read_text(), "1.2.4\n")
-            self.assertIn(
-                'const packageVersion = "1.2.4"',
-                (cli.ROOT / "devices/unit/daemon/internal/daemon/version.go").read_text(),
-            )
-            self.assertIn(
-                'kTxingUnitKvsMasterVersion = "1.2.4";',
-                (
-                    cli.ROOT
-                    / "devices/unit/board/kvs_master/include/kvs_master/version.hpp"
-                ).read_text(),
-            )
-            self.assertIn(
-                '#define TXING_UNIT_HARDWARE_WORKER_VERSION "1.2.4"',
-                (
-                    cli.ROOT
-                    / "devices/unit/board/hardware_worker/include/hardware_worker/version.hpp"
-                ).read_text(),
-            )
             self.assertEqual((cli.ROOT / "release/versions/rig").read_text(), "1.2.3\n")
             self.assertEqual((cli.ROOT / "release/versions/lambda").read_text(), "1.2.3\n")
             self.assertEqual((cli.ROOT / "release/versions/office").read_text(), "1.2.3\n")
@@ -126,27 +84,6 @@ class ReleaseCliTests(unittest.TestCase):
 
             self.assertEqual(
                 (cli.ROOT / "release/versions/cyberbrick").read_text(), "1.2.4\n"
-            )
-            self.assertIn(
-                'const packageVersion = "1.2.4"',
-                (
-                    cli.ROOT
-                    / "devices/cyberbrick/daemon/internal/daemon/version.go"
-                ).read_text(),
-            )
-            self.assertIn(
-                '#define TXING_CYBERBRICK_KVS_MASTER_VERSION "1.2.4"',
-                (
-                    cli.ROOT
-                    / "devices/cyberbrick/board/kvs_master/include/kvs_master/version.hpp"
-                ).read_text(),
-            )
-            self.assertIn(
-                '#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "1.2.4"',
-                (
-                    cli.ROOT
-                    / "devices/cyberbrick/board/hardware_worker/include/hardware_worker/version.hpp"
-                ).read_text(),
             )
             self.assertEqual((cli.ROOT / "release/versions/unit").read_text(), "1.2.3\n")
             self.assertEqual((cli.ROOT / "release/versions/rig").read_text(), "1.2.3\n")
@@ -201,20 +138,17 @@ class ReleaseCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             cli.ROOT = Path(temp_dir)
             self._write_minimal_repo()
-            self._write(
-                "devices/unit/daemon/internal/daemon/version.go",
-                'package daemon\n\nconst packageVersion = "1.2.2"\n',
-            )
+            # office still mirrors its version into a source literal; the board
+            # components inject theirs at build time and manage no source files.
+            self._write("office/src/config.ts", "export const version = '1.2.2'\n")
 
             stdout = io.StringIO()
             stderr = io.StringIO()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                cli.bump("unit", "1.2.3")
+                cli.bump("office", "1.2.3")
 
-            self.assertIn("unit managed version sources:", stdout.getvalue())
-            self.assertIn("warning:", stderr.getvalue())
-            self.assertIn("expected 1.2.3, got '1.2.2'", stderr.getvalue())
-            self.assertEqual((cli.ROOT / "release/versions/unit").read_text(), "1.2.3\n")
+            self.assertIn("office managed version sources:", stdout.getvalue())
+            self.assertEqual((cli.ROOT / "release/versions/office").read_text(), "1.2.3\n")
 
     def test_standalone_check_command_is_not_registered(self) -> None:
         argv = sys.argv

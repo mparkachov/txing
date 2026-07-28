@@ -1,7 +1,7 @@
 // Package action implements the mac device action layer: the board-style
 // AWS IoT publications (retained capability/video/mcp topics and named
 // shadows), the BoardVideoBridge gRPC server, and a read-only MCP stub.
-// It is a copied and trimmed sibling of devices/unit/daemon/internal/daemon
+// It is a copied and trimmed sibling of devices/common/board/daemon/internal/daemon
 // (no hardware worker, no cmd_vel actuators, no CloudWatch logging); the
 // published wire contracts must stay aligned with the unit daemon and
 // docs/contracts/board-video-bridge.md.

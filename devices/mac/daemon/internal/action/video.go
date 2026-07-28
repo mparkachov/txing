@@ -1,5 +1,5 @@
 // Video runtime state copied from
-// devices/unit/daemon/internal/daemon/runtime.go. In the mac daemon the
+// devices/common/board/daemon/internal/daemon/runtime.go. In the mac daemon the
 // video capability stays not-ready until a KVS worker reports READY over
 // the BoardVideoBridge (worker supervision arrives with the video task).
 package action

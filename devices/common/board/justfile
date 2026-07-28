@@ -1,0 +1,643 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet := true
+
+board_dir := source_directory()
+project_root := canonicalize(board_dir + "/../../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+export GOPATH := tmp_dir + "/go/gopath"
+export GOMODCACHE := tmp_dir + "/go/gopath/pkg/mod"
+export GOCACHE := tmp_dir + "/go/build"
+
+root_justfile := project_root + "/justfile"
+board_justfile := board_dir + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
+daemon_dir := board_dir + "/daemon"
+daemon_module := "github.com/mparkachov/txing/devices/common/board/daemon"
+native_kvs_master_dir := board_dir + "/kvs_master"
+native_hardware_worker_dir := board_dir + "/hardware_worker"
+aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
+default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
+
+# Pinned to the versions the previously checked-in bindings were generated with.
+protoc_gen_go_version := "v1.36.10"
+protoc_gen_go_grpc_version := "v1.5.1"
+
+alpine_build_image := "docker.io/library/alpine:3.24.1"
+alpine_build_platform := "linux/arm64"
+
+# Alpine apk ships no static archives for the gRPC stack (doc-30); the
+# hardware worker's static protobuf/gRPC dependencies are source-built by
+# release/scripts/build-board-static-toolchain.sh into this cached prefix.
+static_toolchain_dir := board_dir + "/target/alpine-static-toolchain"
+
+# Every recipe takes the board device type as its first argument. It selects the
+# proto package under devices/<device>/proto, the binary names, and the release
+# stream in release/versions/<device>.
+[private]
+@_require-device device:
+    #!/bin/sh
+    set -eu
+    device="{{device}}"
+    if [ -z "$device" ]; then
+      echo "a board device type is required, for example: just common::board::test unit" >&2
+      exit 2
+    fi
+    if [ ! -f "{{project_root}}/devices/$device/manifest.toml" ]; then
+      echo "unknown board device type '$device': devices/$device/manifest.toml does not exist" >&2
+      exit 2
+    fi
+    if [ ! -f "{{project_root}}/release/versions/$device" ]; then
+      echo "board device type '$device' has no release stream at release/versions/$device" >&2
+      exit 2
+    fi
+
+[private]
+@_device-version device:
+    #!/bin/sh
+    set -eu
+    version_file="{{project_root}}/release/versions/{{device}}"
+    version="$(tr -d '[:space:]' < "$version_file")"
+    if ! printf '%s\n' "$version" | grep -E -q '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+      echo "$version_file must contain a semantic version like x.y.z." >&2
+      exit 1
+    fi
+    printf '%s\n' "$version"
+
+# Regenerate the daemon's Go bindings for one device (not checked in).
+proto-gen device:
+    #!/bin/sh
+    set -eu
+    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    device="{{device}}"
+    proto_root="{{project_root}}/devices/$device/proto"
+    out_dir="{{daemon_dir}}/internal/proto"
+
+    for command in go protoc; do
+      if ! command -v "$command" >/dev/null 2>&1; then
+        echo "board proto-gen requires '$command'." >&2
+        exit 1
+      fi
+    done
+
+    plugin_dir="{{tmp_dir}}/go/protoc-plugins"
+    install -d "$plugin_dir"
+    GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@{{protoc_gen_go_version}}"
+    GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@{{protoc_gen_go_grpc_version}}"
+
+    rm -rf "$out_dir"
+    install -d "$out_dir"
+    hardware_proto="txing/$device/hardware/v1/${device}_hardware.proto"
+    board_video_proto="txing/$device/board_video/v1/board_video.proto"
+    PATH="$plugin_dir:$PATH" protoc \
+      "--proto_path=$proto_root" \
+      "--go_out=$out_dir" \
+      "--go_opt=module={{daemon_module}}/internal/proto" \
+      "--go_opt=M$hardware_proto={{daemon_module}}/internal/proto/hardwarev1" \
+      "--go_opt=M$board_video_proto={{daemon_module}}/internal/proto/boardvideov1" \
+      "--go-grpc_out=$out_dir" \
+      "--go-grpc_opt=module={{daemon_module}}/internal/proto" \
+      "--go-grpc_opt=M$hardware_proto={{daemon_module}}/internal/proto/hardwarev1" \
+      "--go-grpc_opt=M$board_video_proto={{daemon_module}}/internal/proto/boardvideov1" \
+      "$hardware_proto" \
+      "$board_video_proto"
+
+role-policy device thing_id='':
+    #!/bin/sh
+    set -eu
+    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    requested_thing_name="{{thing_id}}"
+    case "$requested_thing_name" in *=*) echo "Do not pass just recipe arguments as name=value. Use: just common::board::role-policy {{device}} <thing-id>" >&2; exit 2 ;; esac
+    if [ -n "$requested_thing_name" ]; then
+      export TXING_THING_ID="$requested_thing_name"
+    fi
+    . "{{aws_lib}}"
+    eval "$(just --justfile "{{root_justfile}}" _project-aws-env device)"
+    txing_aws_init
+    effective_thing_name="${requested_thing_name:-$THING_NAME}"
+    case "$effective_thing_name" in *=*) echo "Invalid Thing ID '$effective_thing_name'. Use positional just arguments, for example: just common::board::role-policy {{device}} {{device}}-bl95f2" >&2; exit 2 ;; esac
+    if ! printf '%s\n' "$effective_thing_name" | grep -E -q '^[a-zA-Z0-9:_-]+$'; then
+      echo "Invalid Thing ID '$effective_thing_name'. Allowed characters: letters, digits, colon, underscore, hyphen." >&2
+      exit 2
+    fi
+    account_id="$(aws sts get-caller-identity --query Account --output text)"
+    caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
+    partition="$(printf '%s\n' "$caller_arn" | cut -d: -f2)"
+    daemon_role_name="txing-daemon-$effective_thing_name"
+    if ! aws iam get-role --role-name "$daemon_role_name" >/dev/null 2>&1; then
+      echo "Daemon IAM role $daemon_role_name does not exist. Run just aws::cert <thing-id> first." >&2
+      exit 1
+    fi
+    cloudwatch_log_group="txing/${TXING_TOWN_ID}/${TXING_RIG_ID}/${effective_thing_name}"
+    credential_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-credential-policy.XXXXXX")"
+    cleanup() {
+      rm -f "$credential_policy_file"
+    }
+    trap cleanup EXIT
+    jq -n \
+      --arg iotShadowArn "arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${effective_thing_name}/sparkplug" \
+      --arg cloudwatchLogGroupArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
+      --arg cloudwatchLogStreamArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
+      --arg kvsChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${effective_thing_name}-board-video/*" \
+      '{Version: "2012-10-17", Statement: [
+        {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
+        {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
+        {Sid: "DaemonBoardVideoMaster", Effect: "Allow", Action: ["kinesisvideo:DescribeSignalingChannel", "kinesisvideo:GetSignalingChannelEndpoint", "kinesisvideo:GetIceServerConfig", "kinesisvideo:ConnectAsMaster"], Resource: $kvsChannelArn}
+      ]}' \
+      >"$credential_policy_file"
+    aws iam put-role-policy \
+      --role-name "$daemon_role_name" \
+      --policy-name txing-daemon-own-thing \
+      --policy-document "file://$credential_policy_file"
+    printf 'refreshed daemon IAM role policy\n'
+    printf '  thing: %s\n' "$effective_thing_name"
+    printf '  role: %s\n' "$daemon_role_name"
+    printf '  video region: %s\n' "$TXING_AWS_REGION"
+
+test device:
+    #!/bin/sh
+    set -eu
+    just --quiet --justfile "{{board_justfile}}" proto-gen "{{device}}"
+    cd "{{daemon_dir}}" && go test ./...
+
+run device:
+    #!/bin/sh
+    set -eu
+    just --quiet --justfile "{{board_justfile}}" proto-gen "{{device}}"
+    cd "{{daemon_dir}}"
+    go run -ldflags="-X {{daemon_module}}/internal/daemon.DeviceType={{device}}" ./cmd/txing-board-daemon
+
+[private]
+@_kvs-check-system-dependencies:
+    #!/bin/sh
+    set -eu
+    if [ "$(uname -s)" != "Linux" ]; then
+        exit 0
+    fi
+
+    missing=""
+    add_missing() {
+        if [ -z "$missing" ]; then
+            missing="$1"
+        else
+            missing="$missing $1"
+        fi
+    }
+    for pc in openssl libcurl libwebsockets zlib protobuf grpc++; do
+        if ! pkg-config --exists "$pc"; then
+            add_missing "$pc"
+        fi
+    done
+
+    for header in usrsctp.h srtp2/srtp.h; do
+        if ! printf '#include <%s>\nint main(void) { return 0; }\n' "$header" | cc -x c - -fsyntax-only >/dev/null 2>&1; then
+            add_missing "$header"
+        fi
+    done
+    if ! printf '#include <log4cplus/logger.h>\nint main() { return 0; }\n' | c++ -x c++ - -fsyntax-only >/dev/null 2>&1; then
+        add_missing "log4cplus/logger.h"
+    fi
+    command -v protoc >/dev/null 2>&1 || add_missing "protoc"
+    command -v grpc_cpp_plugin >/dev/null 2>&1 || add_missing "grpc_cpp_plugin"
+
+    for library in srtp2 usrsctp log4cplus curl websockets z ssl crypto protobuf grpc++ grpc; do
+        path="$(cc -print-file-name="lib${library}.so")"
+        if [ "$path" = "lib${library}.so" ] || [ ! -f "$path" ]; then
+            add_missing "lib${library}.so"
+        fi
+    done
+
+    if [ -n "$missing" ]; then
+        printf 'Missing system KVS dependency/dependencies: %s\n' "$missing" >&2
+        printf 'Install distro packages, for example:\n' >&2
+        printf '  apt install -y libssl-dev libcurl4-openssl-dev liblog4cplus-dev libsrtp2-dev libusrsctp-dev libwebsockets-dev zlib1g-dev libprotobuf-dev protobuf-compiler libgrpc++-dev protobuf-compiler-grpc\n' >&2
+        exit 1
+    fi
+
+kvs-build-native device:
+    #!/bin/sh
+    set -eu
+    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    build_dir="{{native_kvs_master_dir}}/build-{{device}}"
+    version="$(just --quiet --justfile "{{board_justfile}}" _device-version "{{device}}")"
+    if [ -f "$build_dir/CMakeCache.txt" ] && grep -Fq "TXING_KVS_WEBRTC_SDK_" "$build_dir/CMakeCache.txt"; then
+        rm -rf "$build_dir"
+    fi
+    if [ "$(uname -s)" = "Linux" ]; then
+        just --justfile "{{board_justfile}}" _kvs-check-system-dependencies
+        openssl_libdir="$(pkg-config --variable=libdir openssl)"
+        openssl_includedir="$(pkg-config --variable=includedir openssl)"
+        cmake \
+            -S "{{native_kvs_master_dir}}" \
+            -B "$build_dir" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DTXING_BOARD_DEVICE_TYPE="{{device}}" \
+            -DTXING_BOARD_KVS_MASTER_VERSION="$version" \
+            -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
+            -DTXING_KVS_GRPC_BRIDGE=ON \
+            -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
+            -DOPENSSL_USE_STATIC_LIBS=FALSE \
+            -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+            -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+            -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+    else
+        cmake \
+            -S "{{native_kvs_master_dir}}" \
+            -B "$build_dir" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DTXING_BOARD_DEVICE_TYPE="{{device}}" \
+            -DTXING_BOARD_KVS_MASTER_VERSION="$version" \
+            -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
+            -DTXING_KVS_GRPC_BRIDGE=OFF
+    fi
+    cmake --build "$build_dir" --config Release
+    test -x "$build_dir/txing-{{device}}-kvs-master"
+
+kvs-test-native device:
+    #!/bin/sh
+    set -eu
+    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    build_dir="{{native_kvs_master_dir}}/build-tests-{{device}}"
+    cmake -S "{{native_kvs_master_dir}}" -B "$build_dir" -DCMAKE_BUILD_TYPE=Debug -DTXING_BOARD_DEVICE_TYPE="{{device}}" -DTXING_KVS_REAL_SDK=OFF -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}"
+    cmake --build "$build_dir" --config Debug --target "txing-{{device}}-kvs-master-tests"
+    ctest --test-dir "$build_dir" --output-on-failure
+
+hardware-build-native device:
+    #!/bin/sh
+    set -eu
+    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    build_dir="{{native_hardware_worker_dir}}/build-{{device}}"
+    version="$(just --quiet --justfile "{{board_justfile}}" _device-version "{{device}}")"
+    cmake -S "{{native_hardware_worker_dir}}" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DTXING_BOARD_DEVICE_TYPE="{{device}}" -DTXING_BOARD_HARDWARE_WORKER_VERSION="$version" -DTXING_HARDWARE_WORKER_GRPC=ON
+    cmake --build "$build_dir" --config Release --target "txing-{{device}}-hardware-worker"
+    test -x "$build_dir/txing-{{device}}-hardware-worker"
+
+hardware-test-native device:
+    #!/bin/sh
+    set -eu
+    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    build_dir="{{native_hardware_worker_dir}}/build-tests-{{device}}"
+    cmake -S "{{native_hardware_worker_dir}}" -B "$build_dir" -DCMAKE_BUILD_TYPE=Debug -DTXING_BOARD_DEVICE_TYPE="{{device}}" -DTXING_HARDWARE_WORKER_GRPC=OFF
+    cmake --build "$build_dir" --config Debug --target "txing-{{device}}-hardware-worker-tests"
+    ctest --test-dir "$build_dir" --output-on-failure
+
+@daemon-build-alpine device:
+    just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" daemon
+
+@kvs-build-alpine device:
+    just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" kvs-master
+
+@hardware-build-alpine device:
+    just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" hardware-worker
+
+docker-build device:
+    #!/bin/sh
+    set -eu
+
+    for command in git jq; do
+      if ! command -v "$command" >/dev/null 2>&1; then
+        echo "board docker-build requires '$command'." >&2
+        exit 1
+      fi
+    done
+
+    just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" all
+
+    device="{{device}}"
+    project_root="{{project_root}}"
+    output_root="{{board_dir}}/target/docker-build-$device"
+    metadata_path="$output_root/metadata.json"
+    bin_dir="$output_root/bin"
+    version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
+    commit="$(git -C "$project_root" rev-parse HEAD)"
+    timestamp="$(date -u +%s)"
+
+    jq -n \
+      --arg version "$version" \
+      --arg commit "$commit" \
+      --argjson timestamp "$timestamp" \
+      --arg daemonBinaryName "txing-$device-daemon" \
+      --arg daemonBinaryPath "$bin_dir/txing-$device-daemon" \
+      --arg kvsMasterBinaryName "txing-$device-kvs-master" \
+      --arg kvsMasterBinaryPath "$bin_dir/txing-$device-kvs-master" \
+      --arg hardwareWorkerBinaryName "txing-$device-hardware-worker" \
+      --arg hardwareWorkerBinaryPath "$bin_dir/txing-$device-hardware-worker" \
+      --arg projectRoot "$project_root" \
+      --arg buildImage "{{alpine_build_image}}" \
+      --arg buildPlatform "{{alpine_build_platform}}" \
+      '{
+        version: $version,
+        commit: $commit,
+        timestamp: $timestamp,
+        outputs: {
+          ($daemonBinaryName): $daemonBinaryPath,
+          ($kvsMasterBinaryName): $kvsMasterBinaryPath,
+          ($hardwareWorkerBinaryName): $hardwareWorkerBinaryPath
+        },
+        projectRoot: $projectRoot,
+        buildImage: $buildImage,
+        buildPlatform: $buildPlatform
+      }' >"$metadata_path"
+
+    printf 'prepared Alpine aarch64 board binaries\n'
+    printf '  device: %s\n' "$device"
+    printf '  version: %s\n' "$version"
+    printf '  commit: %s\n' "$commit"
+    printf '  build image: %s\n' "{{alpine_build_image}}"
+    printf '  daemon binary: %s\n' "$bin_dir/txing-$device-daemon"
+    printf '  KVS master binary: %s\n' "$bin_dir/txing-$device-kvs-master"
+    printf '  hardware worker binary: %s\n' "$bin_dir/txing-$device-hardware-worker"
+    printf '  metadata: %s\n' "$metadata_path"
+
+docker-smoke device:
+    #!/bin/sh
+    set -eu
+    device="{{device}}"
+    bin_dir="{{board_dir}}/target/docker-build-$device/bin"
+    version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
+    for binary in "txing-$device-daemon" "txing-$device-kvs-master" "txing-$device-hardware-worker"; do
+      if [ ! -x "$bin_dir/$binary" ]; then
+        echo "Missing $bin_dir/$binary. Run just common::board::docker-build $device first." >&2
+        exit 1
+      fi
+    done
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-$device-daemon" static "txing-$device-daemon $version"
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-$device-hardware-worker" static "txing-$device-hardware-worker $version"
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+      "$bin_dir/txing-$device-kvs-master" musl-libcamera "txing-$device-kvs-master $version"
+
+[private]
+@_alpine-build device component:
+    #!/bin/sh
+    set -eu
+
+    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    device="{{device}}"
+    component="{{component}}"
+    project_root="{{project_root}}"
+    output_root="{{board_dir}}/target/docker-build-$device"
+    output_stage="$output_root/alpine-out"
+    toolchain_dir="{{static_toolchain_dir}}"
+    image="{{alpine_build_image}}"
+    platform="{{alpine_build_platform}}"
+    version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
+
+    case "$component" in
+      daemon|kvs-master|hardware-worker|all) ;;
+      *)
+        echo "Unsupported board Alpine component: $component" >&2
+        exit 2
+        ;;
+    esac
+
+    command -v docker >/dev/null 2>&1 || {
+      echo "docker is required to build board projects in Alpine." >&2
+      exit 1
+    }
+    server_platform="$(docker version --format '{{"{{"}}.Server.Os{{"}}"}}/{{"{{"}}.Server.Arch{{"}}"}}')"
+    if [ "$server_platform" != "linux/arm64" ]; then
+      echo "board Alpine builds require a native linux/arm64 Docker daemon, got: $server_platform" >&2
+      exit 1
+    fi
+
+    if [ "$component" = "all" ]; then
+      rm -rf "$output_root"
+    fi
+    rm -rf "$output_stage"
+    install -d "$output_stage" "$output_root/bin" "$toolchain_dir"
+
+    docker run --rm -i \
+      --platform "$platform" \
+      --mount "type=bind,source=$project_root,target=$project_root,readonly" \
+      --mount "type=bind,source=$output_stage,target=/out" \
+      --mount "type=bind,source=$toolchain_dir,target=/toolchain" \
+      -w "$project_root" \
+      -e TXING_ALPINE_COMPONENT="$component" \
+      -e TXING_BOARD_DEVICE_TYPE="$device" \
+      -e TXING_BOARD_RELEASE_VERSION="$version" \
+      -e TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
+      -e TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
+      -e TXING_PROTOC_GEN_GO_VERSION="{{protoc_gen_go_version}}" \
+      -e TXING_PROTOC_GEN_GO_GRPC_VERSION="{{protoc_gen_go_grpc_version}}" \
+      "$image" \
+      sh -se <<'ALPINE_BUILD'
+    set -eu
+
+    expected_release="3.24.1"
+    actual_release="$(cat /etc/alpine-release)"
+    if [ "$actual_release" != "$expected_release" ]; then
+      echo "Expected Alpine $expected_release, got $actual_release" >&2
+      exit 1
+    fi
+    if [ "$(uname -m)" != "aarch64" ]; then
+      echo "Expected native aarch64 Alpine container, got $(uname -m)" >&2
+      exit 1
+    fi
+
+    device="$TXING_BOARD_DEVICE_TYPE"
+    version="$TXING_BOARD_RELEASE_VERSION"
+    daemon_module="github.com/mparkachov/txing/devices/common/board/daemon"
+
+    apk add --no-cache \
+      build-base cmake pkgconf git perl ca-certificates curl \
+      curl-dev openssl-dev openssl-libs-static log4cplus-dev libsrtp-dev \
+      libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
+      linux-headers protobuf-dev protobuf grpc-dev grpc-plugins \
+      go binutils file
+
+    # Alpine gcc defaults to PIE, so -static produces a static-PIE: file says
+    # 'static-pie linked' and the hard invariant is the absent PT_INTERP header.
+    assert_static() {
+      asserted_binary="$1"
+      asserted_name="$2"
+      test -x "$asserted_binary"
+      file "$asserted_binary" | grep -E 'ELF 64-bit LSB.*ARM aarch64'
+      file "$asserted_binary" | grep -E 'statically linked|static-pie linked'
+      if readelf -l "$asserted_binary" | grep -Fq 'INTERP'; then
+        echo "$asserted_name unexpectedly has an ELF interpreter (not static)" >&2
+        exit 1
+      fi
+    }
+
+    assert_musl_dynamic() {
+      asserted_binary="$1"
+      asserted_name="$2"
+      test -x "$asserted_binary"
+      file "$asserted_binary" | grep -E 'ELF 64-bit LSB.*ARM aarch64'
+      readelf -l "$asserted_binary" | grep -F '[Requesting program interpreter: /lib/ld-musl-aarch64.so.1]'
+      ldd_output="$(ldd "$asserted_binary")"
+      printf '%s\n' "$ldd_output"
+      if printf '%s\n' "$ldd_output" | grep -Fq 'not found'; then
+        echo "$asserted_name has unresolved shared libraries" >&2
+        exit 1
+      fi
+      printf '%s\n' "$ldd_output" | grep -F 'libc.musl-aarch64.so.1'
+    }
+
+    # The daemon's Go bindings are generated per device rather than checked in,
+    # because the proto package still carries the device type. The project root
+    # is mounted read-only, so generation lands in a writable copy of the daemon
+    # module and the build runs from there.
+    daemon_workdir=""
+    generate_go_bindings() {
+      daemon_workdir="$(mktemp -d /tmp/txing-board-daemon-src.XXXXXX)"
+      cp -a "$PWD/devices/common/board/daemon/." "$daemon_workdir/"
+      plugin_dir="$(mktemp -d /tmp/txing-protoc-plugins.XXXXXX)"
+      GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$TXING_PROTOC_GEN_GO_VERSION"
+      GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$TXING_PROTOC_GEN_GO_GRPC_VERSION"
+      proto_root="$PWD/devices/$device/proto"
+      out_dir="$daemon_workdir/internal/proto"
+      hardware_proto="txing/$device/hardware/v1/${device}_hardware.proto"
+      board_video_proto="txing/$device/board_video/v1/board_video.proto"
+      rm -rf "$out_dir"
+      install -d "$out_dir"
+      PATH="$plugin_dir:$PATH" protoc \
+        "--proto_path=$proto_root" \
+        "--go_out=$out_dir" \
+        "--go_opt=module=$daemon_module/internal/proto" \
+        "--go_opt=M$hardware_proto=$daemon_module/internal/proto/hardwarev1" \
+        "--go_opt=M$board_video_proto=$daemon_module/internal/proto/boardvideov1" \
+        "--go-grpc_out=$out_dir" \
+        "--go-grpc_opt=module=$daemon_module/internal/proto" \
+        "--go-grpc_opt=M$hardware_proto=$daemon_module/internal/proto/hardwarev1" \
+        "--go-grpc_opt=M$board_video_proto=$daemon_module/internal/proto/boardvideov1" \
+        "$hardware_proto" \
+        "$board_video_proto"
+    }
+
+    build_daemon() {
+      daemon_source="$daemon_workdir"
+      daemon_build="$(mktemp -d /tmp/txing-board-daemon.XXXXXX)"
+      (
+        cd "$daemon_source"
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+          go build -trimpath -buildvcs=false \
+            -ldflags="-s -w -X $daemon_module/internal/daemon.DeviceType=$device -X $daemon_module/internal/daemon.DaemonVersion=$version" \
+            -o "$daemon_build/txing-$device-daemon" \
+            ./cmd/txing-board-daemon
+      )
+      assert_static "$daemon_build/txing-$device-daemon" "txing-$device-daemon"
+      "$daemon_build/txing-$device-daemon" --version
+      install -m 755 "$daemon_build/txing-$device-daemon" "/out/txing-$device-daemon"
+    }
+
+    build_hardware_worker() {
+      sh release/scripts/build-board-static-toolchain.sh /toolchain
+      hardware_source="$PWD/devices/common/board/hardware_worker"
+      hardware_build="$(mktemp -d /tmp/txing-board-hardware-worker.XXXXXX)"
+      PATH="/toolchain/bin:$PATH" cmake \
+        -S "$hardware_source" \
+        -B "$hardware_build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=ON \
+        -DTXING_BOARD_DEVICE_TYPE="$device" \
+        -DTXING_BOARD_HARDWARE_WORKER_VERSION="$version" \
+        -DTXING_HARDWARE_WORKER_GRPC=ON \
+        -DCMAKE_PREFIX_PATH=/toolchain \
+        -DCMAKE_EXE_LINKER_FLAGS=-static \
+        -DOPENSSL_USE_STATIC_LIBS=TRUE \
+        -DZLIB_USE_STATIC_LIBS=ON
+      PATH="/toolchain/bin:$PATH" cmake --build "$hardware_build" --config Release
+      ctest --test-dir "$hardware_build" --output-on-failure
+      assert_static "$hardware_build/txing-$device-hardware-worker" "txing-$device-hardware-worker"
+      "$hardware_build/txing-$device-hardware-worker" --version
+      install -m 755 "$hardware_build/txing-$device-hardware-worker" "/out/txing-$device-hardware-worker"
+    }
+
+    build_kvs_master() {
+      kvs_source="$PWD/devices/common/board/kvs_master"
+      kvs_build="$(mktemp -d /tmp/txing-board-kvs-master.XXXXXX)"
+      openssl_libdir="$(pkg-config --variable=libdir openssl)"
+      openssl_includedir="$(pkg-config --variable=includedir openssl)"
+      cmake \
+        -S "$kvs_source" \
+        -B "$kvs_build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=ON \
+        -DTXING_BOARD_DEVICE_TYPE="$device" \
+        -DTXING_BOARD_KVS_MASTER_VERSION="$version" \
+        -DTXING_KVS_SYSTEM_CA_CERT_PATH="$TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH" \
+        -DTXING_KVS_GRPC_BRIDGE=ON \
+        -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG" \
+        -DOPENSSL_USE_STATIC_LIBS=FALSE \
+        -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+        -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+        -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+      cmake --build "$kvs_build" --config Release
+      ctest --test-dir "$kvs_build" --output-on-failure
+      assert_musl_dynamic "$kvs_build/txing-$device-kvs-master" "txing-$device-kvs-master"
+      kvs_ldd="$(ldd "$kvs_build/txing-$device-kvs-master")"
+      printf '%s\n' "$kvs_ldd" | grep -F 'libcamera.so.0.7'
+      printf '%s\n' "$kvs_ldd" | grep -F 'libcamera-base.so.0.7'
+      "$kvs_build/txing-$device-kvs-master" --version
+      install -m 755 "$kvs_build/txing-$device-kvs-master" "/out/txing-$device-kvs-master"
+    }
+
+    case "$TXING_ALPINE_COMPONENT" in
+      daemon)
+        generate_go_bindings
+        build_daemon
+        ;;
+      kvs-master)
+        build_kvs_master
+        ;;
+      hardware-worker)
+        build_hardware_worker
+        ;;
+      all)
+        generate_go_bindings
+        build_daemon
+        build_kvs_master
+        build_hardware_worker
+        ;;
+    esac
+    ALPINE_BUILD
+
+    case "$component" in
+      daemon)
+        install -m 755 "$output_stage/txing-$device-daemon" "$output_root/bin/txing-$device-daemon"
+        ;;
+      kvs-master)
+        install -m 755 "$output_stage/txing-$device-kvs-master" "$output_root/bin/txing-$device-kvs-master"
+        ;;
+      hardware-worker)
+        install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
+        ;;
+      all)
+        install -m 755 "$output_stage/txing-$device-daemon" "$output_root/bin/txing-$device-daemon"
+        install -m 755 "$output_stage/txing-$device-kvs-master" "$output_root/bin/txing-$device-kvs-master"
+        install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
+        ;;
+    esac
+    rm -rf "$output_stage"
+
+clean device='':
+    #!/bin/sh
+    set -eu
+    device="{{device}}"
+    if [ -n "$device" ]; then
+      rm -rf \
+        "{{native_kvs_master_dir}}/build-$device" \
+        "{{native_kvs_master_dir}}/build-tests-$device" \
+        "{{native_hardware_worker_dir}}/build-$device" \
+        "{{native_hardware_worker_dir}}/build-tests-$device" \
+        "{{board_dir}}/target/docker-build-$device"
+    else
+      rm -rf \
+        "{{native_kvs_master_dir}}"/build-* \
+        "{{native_hardware_worker_dir}}"/build-* \
+        "{{board_dir}}"/target/docker-build-* \
+        "{{board_dir}}/aws-kvs-webrtc-sdk-build" \
+        "{{board_dir}}/aws-kvs-webrtc-sdk-install" \
+        "{{board_dir}}/aws-kvs-webrtc-sdk-system-deps" \
+        "{{static_toolchain_dir}}"
+    fi
+    rm -rf "{{daemon_dir}}/internal/proto"
+
+@default:
+    @just --list

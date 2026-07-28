@@ -1,5 +1,5 @@
 // BoardVideoBridge gRPC server copied from
-// devices/unit/daemon/internal/daemon/runtime.go. The contract is
+// devices/common/board/daemon/internal/daemon/runtime.go. The contract is
 // docs/contracts/board-video-bridge.md; the generated stubs come from
 // the shared proto devices/unit/proto/txing/unit/board_video/v1.
 package action

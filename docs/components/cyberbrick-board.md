@@ -307,7 +307,7 @@ against (see [OS And ABI Contract](#os-and-abi-contract)). Both are fetched
 from AWS's public repository by `just aws::cert` and shipped in the bundle.
 
 `daemon.env` is rendered from
-`devices/cyberbrick/daemon/daemon.env.template` and uses plain `KEY=value`
+`devices/common/board/daemon/daemon.env.template` and uses plain `KEY=value`
 lines so both the daemon and the hardware worker init script can consume the
 same root-owned file. Certificate paths are omitted by default; the daemon
 derives colocated paths from the loaded `daemon.env` directory. For manual
@@ -321,7 +321,7 @@ If the device daemon role policy needs to be refreshed later (for example
 after policy changes on the operator side), run this on the operator machine:
 
 ```sh
-just cyberbrick::daemon::role-policy <thing-id>
+just common::board::role-policy cyberbrick <thing-id>
 ```
 
 ### 5. Install Runtime And OpenRC Services
@@ -909,15 +909,15 @@ coupled `apk upgrade` + `mise upgrade` window above.
 Daemon and native board worker commands:
 
 ```sh
-just cyberbrick::daemon::test
-just cyberbrick::daemon::run
-just cyberbrick::daemon::kvs-test-native
-just cyberbrick::daemon::hardware-test-native
-just cyberbrick::daemon::daemon-build-alpine
-just cyberbrick::daemon::kvs-build-alpine
-just cyberbrick::daemon::hardware-build-alpine
-just cyberbrick::daemon::docker-build
-just cyberbrick::daemon::docker-smoke
+just common::board::test cyberbrick
+just common::board::run cyberbrick
+just common::board::kvs-test-native cyberbrick
+just common::board::hardware-test-native cyberbrick
+just common::board::daemon-build-alpine cyberbrick
+just common::board::kvs-build-alpine cyberbrick
+just common::board::hardware-build-alpine cyberbrick
+just common::board::docker-build cyberbrick
+just common::board::docker-smoke cyberbrick
 ```
 
 The local daemon uses

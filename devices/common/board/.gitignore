@@ -1,3 +1,21 @@
-*
-!.gitignore
-!README.md
+# Local logs
+*.log
+
+# OS files
+.DS_Store
+
+# Legacy generated AWS KVS WebRTC SDK outputs (see README.md)
+aws-kvs-webrtc-sdk-build/
+aws-kvs-webrtc-sdk-install/
+aws-kvs-webrtc-sdk-system-deps/
+
+# Native worker build artifacts
+kvs_master/build/
+kvs_master/build-macos/
+kvs_master/build-tests/
+hardware_worker/build/
+hardware_worker/build-tests/
+hardware_worker/build-grpc/
+
+# Generated Go proto bindings (produced per device at build time)
+daemon/internal/proto/

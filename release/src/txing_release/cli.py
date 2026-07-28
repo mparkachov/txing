@@ -26,49 +26,9 @@ class TextVersion:
     count: int = 1
 
 
-UNIT_TEXT_VERSIONS = (
-    TextVersion(
-        Path("devices/unit/daemon/internal/daemon/version.go"),
-        "unit daemon Go version",
-        re.compile(r'const packageVersion = "[^"]+"'),
-        'const packageVersion = "{version}"',
-    ),
-    TextVersion(
-        Path("devices/unit/board/kvs_master/include/kvs_master/version.hpp"),
-        "board native KVS master version",
-        re.compile(r'inline constexpr std::string_view kTxingUnitKvsMasterVersion = "[^"]+";'),
-        'inline constexpr std::string_view kTxingUnitKvsMasterVersion = "{version}";',
-    ),
-    TextVersion(
-        Path("devices/unit/board/hardware_worker/include/hardware_worker/version.hpp"),
-        "unit hardware worker version",
-        re.compile(r'#define TXING_UNIT_HARDWARE_WORKER_VERSION "[^"]+"'),
-        '#define TXING_UNIT_HARDWARE_WORKER_VERSION "{version}"',
-    ),
-)
-
-CYBERBRICK_TEXT_VERSIONS = (
-    TextVersion(
-        Path("devices/cyberbrick/daemon/internal/daemon/version.go"),
-        "cyberbrick daemon Go version",
-        re.compile(r'const packageVersion = "[^"]+"'),
-        'const packageVersion = "{version}"',
-    ),
-    TextVersion(
-        Path("devices/cyberbrick/board/kvs_master/include/kvs_master/version.hpp"),
-        "cyberbrick native KVS master version",
-        re.compile(r'#define TXING_CYBERBRICK_KVS_MASTER_VERSION "[^"]+"'),
-        '#define TXING_CYBERBRICK_KVS_MASTER_VERSION "{version}"',
-    ),
-    TextVersion(
-        Path(
-            "devices/cyberbrick/board/hardware_worker/include/hardware_worker/version.hpp"
-        ),
-        "cyberbrick hardware worker version",
-        re.compile(r'#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "[^"]+"'),
-        '#define TXING_CYBERBRICK_HARDWARE_WORKER_VERSION "{version}"',
-    ),
-)
+# Board release versions are injected at build time from release/versions/<device>
+# rather than mirrored into source literals: one shared implementation serves
+# every device type, so there is no per-device file left to rewrite.
 
 OFFICE_TEXT_VERSIONS = (
     TextVersion(
@@ -100,12 +60,10 @@ COMPONENTS = {
     "unit": Component(
         name="unit",
         version_path=Path("release/versions/unit"),
-        text_versions=UNIT_TEXT_VERSIONS,
     ),
     "cyberbrick": Component(
         name="cyberbrick",
         version_path=Path("release/versions/cyberbrick"),
-        text_versions=CYBERBRICK_TEXT_VERSIONS,
     ),
     "office": Component(
         name="office",

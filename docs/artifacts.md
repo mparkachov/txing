@@ -174,7 +174,7 @@ The root-owned runtime layout is:
 ```
 
 The `daemon.env` file is a systemd-compatible environment file rendered from
-`devices/unit/daemon/daemon.env.template`. It contains daemon-owned `TXING_*`
+`devices/common/board/daemon/daemon.env.template`. It contains daemon-owned `TXING_*`
 runtime defaults for video, capabilities, CloudWatch, hardware-worker socket
 configuration, and motor control. The Go daemon consumes the daemon/cloud/video
 keys. The hardware worker consumes the `TXING_HARDWARE_WORKER_*` and
@@ -253,7 +253,7 @@ The root-owned runtime layout is:
 ```
 
 The `daemon.env` file is rendered from
-`devices/cyberbrick/daemon/daemon.env.template` and follows the unit key
+`devices/common/board/daemon/daemon.env.template` and follows the unit key
 contract; cyberbrick differs only in its config, socket, and install paths.
 There is no OpenRC equivalent of `txing-unit.target`: each init script is
 enabled individually with `rc-update add <service> default`, and OpenRC

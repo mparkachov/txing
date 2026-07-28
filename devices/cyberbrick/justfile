@@ -6,7 +6,6 @@ project_root := canonicalize(cyberbrick_dir + "/../..")
 tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
 
-mod daemon 'daemon/justfile'
 
 @default:
     @just --list

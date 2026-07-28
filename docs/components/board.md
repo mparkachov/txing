@@ -268,7 +268,7 @@ Deployed boards use root-owned config:
 ```
 
 `daemon.env` is a systemd-compatible environment file rendered from
-`devices/unit/daemon/daemon.env.template`. It uses plain `KEY=value` lines so
+`devices/common/board/daemon/daemon.env.template`. It uses plain `KEY=value` lines so
 both `txing-unit-hardware-worker.service` and the daemon can consume the same
 root-owned file. Certificate paths are omitted by default; the daemon derives
 colocated paths from the loaded `daemon.env` directory. For manual shell export,
@@ -469,7 +469,7 @@ For existing devices provisioned before daemon KVS permissions were added,
 refresh the per-device daemon role policy from the operator machine:
 
 ```bash
-just unit::daemon::role-policy <thing-id>
+just common::board::role-policy unit <thing-id>
 ```
 
 ### 5. Install Runtime
@@ -838,7 +838,7 @@ systemctl daemon-reload
 Go unit daemon:
 
 ```bash
-just unit::daemon::run
+just common::board::run unit
 ```
 
 The local daemon uses
@@ -849,17 +849,17 @@ resource changes are intended.
 Daemon and native board worker commands:
 
 ```bash
-just unit::daemon::test
-just unit::daemon::run
-just unit::daemon::kvs-build-native
-just unit::daemon::kvs-test-native
-just unit::daemon::kvs-build-alpine
-just unit::daemon::hardware-build-native
-just unit::daemon::hardware-test-native
-just unit::daemon::hardware-build-alpine
-just unit::daemon::daemon-build-alpine
-just unit::daemon::docker-build
-just unit::daemon::docker-smoke
+just common::board::test unit
+just common::board::run unit
+just common::board::kvs-build-native unit
+just common::board::kvs-test-native unit
+just common::board::kvs-build-alpine unit
+just common::board::hardware-build-native unit
+just common::board::hardware-test-native unit
+just common::board::hardware-build-alpine unit
+just common::board::daemon-build-alpine unit
+just common::board::docker-build unit
+just common::board::docker-smoke unit
 ```
 
 `kvs-build-native` builds `txing-unit-kvs-master` and lets the worker CMake

@@ -8,8 +8,11 @@ export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
 aws_lib := aws_dir + "/scripts/aws_lib.sh"
 rig_env_template := project_root + "/rig/rig-daemon.env.template"
-unit_daemon_env_template := project_root + "/devices/unit/daemon/daemon.env.template"
-cyberbrick_daemon_env_template := project_root + "/devices/cyberbrick/daemon/daemon.env.template"
+# Both board device types build from one shared implementation, so they share
+# one daemon env template; the per-device names are kept because
+# txing_generate_iot_certificate_bundle still selects by device type.
+unit_daemon_env_template := project_root + "/devices/common/board/daemon/daemon.env.template"
+cyberbrick_daemon_env_template := unit_daemon_env_template
 mac_daemon_env_template := project_root + "/devices/mac/daemon.env.template"
 
 stack_name := ""

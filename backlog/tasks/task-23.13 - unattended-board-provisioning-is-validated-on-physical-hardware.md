@@ -4,6 +4,7 @@ title: unattended board provisioning is validated on physical hardware
 status: To Do
 assignee: []
 created_date: '2026-07-25 17:44'
+updated_date: '2026-07-28 06:44'
 labels: []
 milestone: m-4
 dependencies:
@@ -26,7 +27,7 @@ Operator-run validation closing the consolidation, mirroring TASK-23.7's role fo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A cyberbrick board provisioned from a generated card reaches REDCON 1 with live video and working motion control, with no ssh session used before the board is up.
+- [ ] #1 A cyberbrick board provisioned from a generated card comes up on the network with no console session, and reaches REDCON 1 with live video and working motion control after the remaining manual runbook steps.
 - [ ] #2 A unit board provisioned the same way reaches the same state, confirming the merged implementation works for both device types.
 - [ ] #3 The board previously running the Debian build is reimaged to Alpine and rejoins service on the unified protocol.
 - [ ] #4 Evidence for every board is recorded in the task's implementation notes.

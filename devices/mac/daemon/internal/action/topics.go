@@ -1,4 +1,4 @@
-// Topic builders copied from devices/unit/daemon/internal/daemon/topics.go.
+// Topic builders copied from devices/common/board/daemon/internal/daemon/topics.go.
 package action
 
 import "fmt"

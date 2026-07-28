@@ -94,8 +94,8 @@ just mac::kvs-build       # real KVS SDK + gRPC bridge; Homebrew deps preflight
 just mac::camera-probe    # foreground capture-only run; grants the camera TCC prompt
 ```
 
-`kvs-build` compiles `devices/unit/board/kvs_master` into
-`devices/unit/board/kvs_master/build-macos/txing-unit-kvs-master` with the
+`kvs-build` compiles `devices/common/board/kvs_master` into
+`devices/common/board/kvs_master/build-macos-unit/txing-unit-kvs-master` with the
 AVFoundation + VideoToolbox capturer (Annex-B H.264, SPS/PPS on keyframes).
 It needs the Homebrew formulas `openssl@3 libwebsockets srtp libusrsctp
 log4cplus protobuf grpc`; the recipe lists anything missing. TLS for the

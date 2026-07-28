@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package txing.cyberbrick.hardware.v1;
 
-service CyberbrickHardware {
+service BoardHardware {
   rpc GetStatus(GetStatusRequest) returns (HardwareStatus);
   rpc ApplyVelocity(ApplyVelocityRequest) returns (ApplyVelocityResponse);
   rpc Stop(StopRequest) returns (StopResponse);
