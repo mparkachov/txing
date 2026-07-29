@@ -232,7 +232,7 @@ release image, installed apk branch, and runtime libraries must move together.
 Publishing a release never upgrades a Cyberbrick automatically. Installation,
 OpenRC service configuration, writable-root maintenance, and the return to a
 read-only root remain explicit operator steps in the Cyberbrick board runbook,
-[components/cyberbrick-board.md](./components/cyberbrick-board.md).
+[components/board.md](./components/board.md).
 
 The root-owned runtime layout is:
 

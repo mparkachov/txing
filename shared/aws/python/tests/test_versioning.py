@@ -811,8 +811,13 @@ class VersionEnvironmentTests(unittest.TestCase):
         removed_installer = "install-" + "systemd.sh"
         removed_mise_env = "MISE_" + "PRERELEASES"
         daemon_dir = REPO_ROOT / "devices" / "common" / "board" / "daemon"
-        board_docs = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
-            encoding="utf-8"
+        # The board documentation split into the current Alpine runbook and the
+        # frozen Debian material during the runbook consolidation. These
+        # assertions guard that content survived the split; which file each
+        # piece landed in is covered by the consolidation tests below.
+        board_docs = "\n".join(
+            (REPO_ROOT / "docs" / "components" / name).read_text(encoding="utf-8")
+            for name in ("board.md", "board-debian-frozen.md")
         )
         installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
             encoding="utf-8"
@@ -888,10 +893,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
             encoding="utf-8"
         )
-        board_docs = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
-            encoding="utf-8"
+        # The board documentation split into the current Alpine runbook and the
+        # frozen Debian material during the runbook consolidation. These
+        # assertions guard that content survived the split; which file each
+        # piece landed in is covered by the consolidation tests below.
+        board_docs = "\n".join(
+            (REPO_ROOT / "docs" / "components" / name).read_text(encoding="utf-8")
+            for name in ("board.md", "board-debian-frozen.md")
         )
-
         self.assertIn("root-owned mise release tools", installation_docs)
         self.assertIn("sudo su -", board_docs)
         self.assertIn(
@@ -899,7 +908,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "txing-unit-kvs-master",
             board_docs,
         )
-        self.assertIn("just common::board::role-policy unit <thing-id>", board_docs)
+        self.assertIn("just unit::board::role-policy <thing-id>", board_docs)
         self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
         self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", artifacts_docs)
@@ -1123,9 +1132,9 @@ class VersionEnvironmentTests(unittest.TestCase):
                     workflow,
                 )
 
-    def test_cyberbrick_board_docs_describe_alpine_openrc_runbook(self) -> None:
+    def test_board_runbook_describes_alpine_openrc_for_both_device_types(self) -> None:
         cyberbrick_board_docs = (
-            REPO_ROOT / "docs" / "components" / "cyberbrick-board.md"
+            REPO_ROOT / "docs" / "components" / "board.md"
         ).read_text(encoding="utf-8")
         installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
             encoding="utf-8"
@@ -1152,28 +1161,28 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("setup-disk -m sys /dev/mmcblk0p2", cyberbrick_board_docs)
         self.assertIn("chronyd", cyberbrick_board_docs)
         self.assertIn(
-            'txing-cyberbrick-daemon = "github:mparkachov/txing"',
+            'txing-<device>-daemon = "github:mparkachov/txing"',
             cyberbrick_board_docs,
         )
         self.assertIn(
-            'txing-cyberbrick-kvs-master = "github:mparkachov/txing"',
+            'txing-<device>-kvs-master = "github:mparkachov/txing"',
             cyberbrick_board_docs,
         )
         self.assertIn(
-            'txing-cyberbrick-hardware-worker = "github:mparkachov/txing"',
+            'txing-<device>-hardware-worker = "github:mparkachov/txing"',
             cyberbrick_board_docs,
         )
-        self.assertIn('version_prefix = "cyberbrick-v"', cyberbrick_board_docs)
+        self.assertIn('version_prefix = "<device>-v"', cyberbrick_board_docs)
         self.assertIn(
-            'asset_pattern = "txing-cyberbrick-daemon-linux-aarch64.tar.gz"',
-            cyberbrick_board_docs,
-        )
-        self.assertIn(
-            'asset_pattern = "txing-cyberbrick-kvs-master-linux-aarch64.tar.gz"',
+            'asset_pattern = "txing-<device>-daemon-linux-aarch64.tar.gz"',
             cyberbrick_board_docs,
         )
         self.assertIn(
-            'asset_pattern = "txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz"',
+            'asset_pattern = "txing-<device>-kvs-master-linux-aarch64.tar.gz"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'asset_pattern = "txing-<device>-hardware-worker-linux-aarch64.tar.gz"',
             cyberbrick_board_docs,
         )
         self.assertIn(
@@ -1181,42 +1190,42 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn("/root/.config/txing/cyberbrick-daemon", cyberbrick_board_docs)
         self.assertIn(
-            "just common::board::role-policy cyberbrick <thing-id>", cyberbrick_board_docs
+            "just <device>::board::role-policy <thing-id>", cyberbrick_board_docs
         )
         self.assertIn(
-            "cat >/etc/init.d/txing-cyberbrick-hardware-worker",
+            "cat >/etc/init.d/txing-<device>-hardware-worker",
             cyberbrick_board_docs,
         )
         self.assertIn(
-            "cat >/etc/init.d/txing-cyberbrick-daemon", cyberbrick_board_docs
+            "cat >/etc/init.d/txing-<device>-daemon", cyberbrick_board_docs
         )
         self.assertIn(
-            "cat >/etc/init.d/txing-cyberbrick-kvs-master", cyberbrick_board_docs
+            "cat >/etc/init.d/txing-<device>-kvs-master", cyberbrick_board_docs
         )
         self.assertIn("supervisor=supervise-daemon", cyberbrick_board_docs)
         self.assertIn(
-            "rc-update add txing-cyberbrick-hardware-worker default",
+            "rc-update add txing-<device>-hardware-worker default",
             cyberbrick_board_docs,
         )
         self.assertIn(
-            "rc-update add txing-cyberbrick-daemon default", cyberbrick_board_docs
+            "rc-update add txing-<device>-daemon default", cyberbrick_board_docs
         )
         self.assertIn(
-            "rc-update add txing-cyberbrick-kvs-master default",
+            "rc-update add txing-<device>-kvs-master default",
             cyberbrick_board_docs,
         )
         self.assertIn(
             "command=/root/.local/share/mise/installs/"
-            "txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon",
+            "txing-<device>-daemon/latest/txing-<device>-daemon",
             cyberbrick_board_docs,
         )
         self.assertIn(
             "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
-            "txing-cyberbrick-daemon/board-video-bridge.sock",
+            "txing-<device>-daemon/board-video-bridge.sock",
             cyberbrick_board_docs,
         )
         self.assertIn(
-            "/run/txing-cyberbrick-hardware-worker/cyberbrick-hardware.sock",
+            "/run/txing-<device>-hardware-worker/<device>-hardware.sock",
             cyberbrick_board_docs,
         )
         self.assertIn("chronyc waitsync", cyberbrick_board_docs)
@@ -1251,7 +1260,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("libcamera-base.so.0.7", cyberbrick_board_docs)
         self.assertIn('minimum_release_age = "0s"', cyberbrick_board_docs)
         self.assertIn(
-            "/root/.config/txing/cyberbrick-daemon/SFSRootCAG2.pem",
+            "/root/.config/txing/<device>-daemon/SFSRootCAG2.pem",
             cyberbrick_board_docs,
         )
         self.assertIn("TXING_KVS_SYSTEM_CA_CERT_PATH", cyberbrick_board_docs)
@@ -1266,8 +1275,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("mount /tmp ; mount /var/tmp", cyberbrick_board_docs)
         self.assertIn("/var/lib/chrony", cyberbrick_board_docs)
         self.assertIn(
-            "/root/.local/bin/mise upgrade txing-cyberbrick-daemon "
-            "txing-cyberbrick-kvs-master txing-cyberbrick-hardware-worker",
+            "/root/.local/bin/mise upgrade txing-<device>-daemon "
+            "txing-<device>-kvs-master txing-<device>-hardware-worker",
             cyberbrick_board_docs,
         )
         self.assertIn(
@@ -1276,15 +1285,26 @@ class VersionEnvironmentTests(unittest.TestCase):
             normalized_cyberbrick_board_docs,
         )
         self.assertIn(
-            "publish a matching cyberbrick release built on that Alpine version",
+            "publish a matching board release built on that Alpine version",
             normalized_cyberbrick_board_docs,
         )
         self.assertNotIn("systemctl", cyberbrick_board_docs)
         self.assertNotIn("apt-get", cyberbrick_board_docs)
-        self.assertNotIn("txing-unit-daemon", cyberbrick_board_docs)
+        # The unified runbook lists both device types in its identifier table,
+        # so unit binaries appear by design. What must not come back is the
+        # per-device duplication: no second board runbook, and no device name
+        # outside that table in the body.
+        self.assertFalse(
+            (REPO_ROOT / "docs" / "components" / "cyberbrick-board.md").exists()
+        )
+        table, _, body = cyberbrick_board_docs.partition("## Local Protocol Contracts")
+        self.assertIn("txing-unit-daemon", table)
+        self.assertIn("txing-cyberbrick-daemon", table)
+        for stale in ("just cyberbrick::daemon::", "just unit::daemon::"):
+            self.assertNotIn(stale, cyberbrick_board_docs)
         self.assertNotIn("libcamera.so.0.6", cyberbrick_board_docs)
 
-        self.assertIn("components/cyberbrick-board.md", installation_docs)
+        self.assertIn("components/board.md", installation_docs)
         self.assertIn("rc-update add <service> default", installation_docs)
         self.assertIn("setup-disk -m sys", installation_docs)
         self.assertIn(
@@ -1294,7 +1314,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             normalized_installation_docs,
         )
 
-        self.assertIn("components/cyberbrick-board.md", artifacts_docs)
+        self.assertIn("components/board.md", artifacts_docs)
         self.assertIn(
             "/root/.config/txing/cyberbrick-daemon/daemon.env", artifacts_docs
         )
@@ -1323,7 +1343,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             normalized_artifacts_docs,
         )
 
-        self.assertIn("components/cyberbrick-board.md", docs_index)
+        self.assertIn("components/board.md", docs_index)
         self.assertIn(
             "`cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`",
             docs_index,

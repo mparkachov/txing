@@ -23,7 +23,7 @@ design notes have been folded into the owning component guides.
 
 - [Rig](./components/rig.md)
 - [Board](./components/board.md)
-- [Cyberbrick board](./components/cyberbrick-board.md)
+- [Board (Debian, frozen)](./components/board-debian-frozen.md)
 - [MCU](./components/mcu.md)
 - [Office](./components/office.md)
 - [Public WWW](./components/www.md)

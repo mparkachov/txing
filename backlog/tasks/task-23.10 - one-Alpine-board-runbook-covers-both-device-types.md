@@ -1,10 +1,11 @@
 ---
 id: TASK-23.10
 title: one Alpine board runbook covers both device types
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-25 17:43'
-updated_date: '2026-07-29 09:38'
+updated_date: '2026-07-29 11:41'
 labels: []
 milestone: m-4
 dependencies:
@@ -34,12 +35,12 @@ The consolidation also has to close a command-surface divergence introduced whil
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A single board runbook covers fresh install, maintenance, and troubleshooting for both device types on Alpine, with device-specific values collected in one place rather than spread through the prose.
-- [ ] #2 The device-agnostic board behavior contract remains available and the device documents that delegate to it still resolve.
-- [ ] #3 Debian and systemd install and maintenance instructions remain available as clearly frozen material and are no longer presented as current practice, consistent with the recorded Alpine-only board OS decision.
-- [ ] #4 Device-scoped board operations are invoked device-owned as `just <device>::board::<recipe>`, matching how device-scoped MCU operations are invoked, while genuinely device-independent board operations stay common-owned with no device argument.
-- [ ] #5 Adding a board component to a new device type needs only its per-device material and the device-owned entry point, with no change to the shared implementation.
-- [ ] #6 The documentation index and all cross-references resolve, every documented board command matches the entry points that exist, and documentation tests reflect the new structure.
+- [x] #1 A single board runbook covers fresh install, maintenance, and troubleshooting for both device types on Alpine, with device-specific values collected in one place rather than spread through the prose.
+- [x] #2 The device-agnostic board behavior contract remains available and the device documents that delegate to it still resolve.
+- [x] #3 Debian and systemd install and maintenance instructions remain available as clearly frozen material and are no longer presented as current practice, consistent with the recorded Alpine-only board OS decision.
+- [x] #4 Device-scoped board operations are invoked device-owned as `just <device>::board::<recipe>`, matching how device-scoped MCU operations are invoked, while genuinely device-independent board operations stay common-owned with no device argument.
+- [x] #5 Adding a board component to a new device type needs only its per-device material and the device-owned entry point, with no change to the shared implementation.
+- [x] #6 The documentation index and all cross-references resolve, every documented board command matches the entry points that exist, and documentation tests reflect the new structure.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -91,3 +92,77 @@ device type should need its `manifest.toml`, its `aws/` and `web/` material, a
 `release/versions/<device>` stream, and one `mod board` line, with nothing added
 under `devices/common/board`.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+`docs/components/board.md` is now the single Alpine runbook for both device
+types, and `docs/components/cyberbrick-board.md` is gone. The Debian and systemd
+install and maintenance steps moved to `docs/components/board-debian-frozen.md`
+under a banner that states they are frozen, that the old local gRPC packages are
+wire-incompatible with the current ones, and that such a board is reimaged rather
+than upgraded.
+
+The runbook opens with a Device Types table holding every value that differs
+between device types - binary names, config directory, hardware socket, adapter
+id, release version file and tag prefix, manifest, shadow directory - and the
+body uses `<device>` throughout. The device-agnostic behaviour contract
+(Responsibilities, REDCON Contract, Retained AWS IoT Topics, Runtime Interfaces,
+Runtime Configuration) stays in this document, so the contracts and component
+docs that delegate to it still resolve. A new Local Protocol Contracts section
+names the two device-independent gRPC packages and links their contract docs.
+
+Command surface, closing the divergence recorded when this task was written.
+Device-scoped board operations are now device-owned and read like the MCU ones:
+
+  just unit::board::docker-build        just unit::mcu::build
+  just cyberbrick::board::docker-smoke  just power-si::mcu::flash
+
+Each device type carries a five-line `board.just` that binds `device` and the
+shared justfile path and imports `devices/common/board/device-recipes.just`,
+which holds the thirteen delegating recipes once. `just` module scope makes the
+imported recipes see the importing file's variables, so the per-device file
+stays a declaration rather than a copy. Delegation routes through the shared
+recipes, so `_require-device` still validates the device against its manifest
+and release stream: `just common::board::docker-build bogus` still fails with
+"unknown board device type". `proto-gen` stays common-owned with no device
+argument, the board counterpart to `mcu::check`.
+
+Verified rather than asserted:
+
+- A sweep of every relative markdown link across `docs/`, `AGENTS.md`, and
+  `devices/common/board/README.md` resolves; no reference to the removed
+  cyberbrick runbook survives.
+- Every board command named in the documentation is backed by a recipe that
+  exists. This caught `just common::board::cert`, which named a recipe that
+  never existed - a stale example in `repository-rules.md` that TASK-23.9's
+  rewrite had propagated. It now uses `role-policy`, which really does take the
+  positional argument the rule is illustrating.
+- No file under `devices/common/board` names a specific device type, so adding a
+  board component to a new device needs only its per-device material and a
+  five-line entry point.
+
+The consolidation also recovered content the merge would otherwise have dropped:
+the forward-only release-model note existed only in the unit runbook's Release
+Artifacts section, which the cyberbrick version did not carry. The documentation
+tests caught it.
+
+Test fallout. Two suites predate the split and asserted against a single
+`board.md`; they now read the board documentation as a whole, because their
+intent is that content survived rather than which file holds it, and placement
+is covered by the consolidation assertions. The former cyberbrick runbook test
+became `test_board_runbook_describes_alpine_openrc_for_both_device_types`, and
+its `assertNotIn("txing-unit-daemon", ...)` inverted: the unified runbook lists
+both device types in its table by design, so it now asserts both appear there,
+that the removed runbook is gone, and that no `just <device>::daemon::` command
+name comes back.
+
+Final state: shared/aws/python 147 passed, release/tests 7 passed, hardware
+worker ctest green for both device types through the new device-owned recipes.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+One Alpine runbook now covers both board device types, with every differing value collected in a Device Types table and the body written against <device>. The Debian and systemd material moved to a clearly frozen document that states those boards cannot reach the current protocol and must be reimaged, and the device-agnostic behaviour contract stayed put so delegating documents still resolve. Board commands also stopped being a special case: device-scoped operations are device-owned as just <device>::board::<recipe>, matching the MCU precedent in doc-7, via a five-line per-device entry point that imports thirteen delegating recipes shared once, while proto-gen stays common-owned as the board counterpart to mcu::check. Verified by resolving every relative documentation link, checking every documented board command against a recipe that exists, and confirming no file under devices/common/board names a device type.
+<!-- SECTION:FINAL_SUMMARY:END -->

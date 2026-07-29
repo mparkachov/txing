@@ -25,8 +25,8 @@ logic, shell scripts, or firmware programming workflows.
 
 - `just` recipe arguments in this repository are positional. Do not invoke
   recipes with `name=value` syntax such as
-  `just common::board::cert unit thing_id=unit-bl95f2`; pass values positionally, for
-  example `just common::board::cert unit unit-bl95f2`.
+  `just unit::board::role-policy thing_id=unit-bl95f2`; pass values
+  positionally, for example `just unit::board::role-policy unit-bl95f2`.
 - Repository shell code must be strictly POSIX `sh` compatible. Use
   `#!/bin/sh`, `set -eu`, and `.` for sourcing.
 - Do not use Bash/Zsh-only features such as arrays, `[[ ... ]]`, `=~`,

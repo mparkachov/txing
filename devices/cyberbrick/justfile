@@ -7,5 +7,7 @@ tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
 
 
+mod board 'board.just'
+
 @default:
     @just --list

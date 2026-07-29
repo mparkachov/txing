@@ -42,8 +42,8 @@ implementation. One implementation, one OS, one protocol version in service.
   `txing.board.hardware.v1` superseded the per-device packages on exactly these
   terms.
 - Debian and systemd instructions remain in the documentation as clearly frozen
-  material, not current practice. `docs/components/board.md` carries that
-  material today; consolidating and freezing it is TASK-23.10.
+  material, not current practice. `docs/components/board-debian-frozen.md`
+  carries that material; the current runbook is `docs/components/board.md`.
 - A Debian board is out of service for the current protocol until it is
   reimaged. Reimaging the last one is gated by TASK-23.13 AC #3.
 - Alpine version moves stay coordinated: the pinned build image, the release

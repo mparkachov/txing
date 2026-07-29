@@ -145,7 +145,7 @@ move together for the camera.
 Canonical cyberbrick board installation, Alpine sys install, OpenRC service
 setup, read-only-root layout, manual maintenance, and validation instructions
 live in
-[components/cyberbrick-board.md](./components/cyberbrick-board.md).
+[components/board.md](./components/board.md).
 
 The short production flow is:
 
