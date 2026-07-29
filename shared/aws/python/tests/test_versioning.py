@@ -107,6 +107,25 @@ def _native_aws_env(bin_dir: Path, *, stack: str | None = "town") -> dict[str, s
     return env
 
 
+def tracked_files_list() -> list[str] | None:
+    """Tracked paths, or None when git cannot answer (e.g. ownership checks)."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.splitlines()
+
+
 class VersionEnvironmentTests(unittest.TestCase):
     def test_project_git_env_reports_dirty_state_without_root_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -971,7 +990,9 @@ class VersionEnvironmentTests(unittest.TestCase):
             # Genuinely per-device material stays with the device.
             self.assertTrue((device_dir / "manifest.toml").is_file())
             self.assertTrue((device_dir / "aws").is_dir())
-            self.assertTrue((device_dir / "proto").is_dir())
+            # The local protocols are device-independent now, so no device owns
+            # a proto package.
+            self.assertFalse((device_dir / "proto").exists())
 
         # The device type is a build input, not a source axis.
         for cmakelists in (
@@ -997,22 +1018,46 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn('"unit"', derived_source)
         self.assertNotIn('"cyberbrick"', derived_source)
 
-        # The hardware service name is device-independent; the proto package is
-        # still per device, which TASK-23.9 collapses.
-        for device_type in ("unit", "cyberbrick"):
-            proto = (
-                REPO_ROOT
-                / "devices"
-                / device_type
-                / "proto"
-                / "txing"
-                / device_type
-                / "hardware"
-                / "v1"
-                / f"{device_type}_hardware.proto"
-            ).read_text(encoding="utf-8")
-            self.assertIn("service BoardHardware {", proto)
-            self.assertIn(f"package txing.{device_type}.hardware.v1;", proto)
+        # Both local contracts live in one device-independent package.
+        proto_root = board_dir / "proto" / "txing" / "board"
+        hardware = (proto_root / "hardware" / "v1" / "hardware.proto").read_text(
+            encoding="utf-8"
+        )
+        board_video = (
+            proto_root / "board_video" / "v1" / "board_video.proto"
+        ).read_text(encoding="utf-8")
+        self.assertIn("package txing.board.hardware.v1;", hardware)
+        self.assertIn("service BoardHardware {", hardware)
+        self.assertIn("package txing.board.board_video.v1;", board_video)
+        self.assertIn("service BoardVideoBridge {", board_video)
+        for text in (hardware, board_video):
+            self.assertNotIn("txing.unit", text)
+            self.assertNotIn("txing.cyberbrick", text)
+
+        # The mac daemon is the other speaker of the bridge contract and follows
+        # the same rule as the board: bindings generated from the shared proto
+        # with pinned plugins, never checked in, so the two ends cannot drift.
+        mac_justfile = (REPO_ROOT / "devices" / "mac" / "justfile").read_text(
+            encoding="utf-8"
+        )
+        board_justfile_text = (board_dir / "justfile").read_text(encoding="utf-8")
+        self.assertIn("proto-gen:", mac_justfile)
+        self.assertIn("devices/common/board/proto", mac_justfile)
+        self.assertIn("txing/board/board_video/v1/board_video.proto", mac_justfile)
+        for pin in ('protoc_gen_go_version := "', 'protoc_gen_go_grpc_version := "'):
+            mac_pin = mac_justfile.split(pin)[1].split('"')[0]
+            board_pin = board_justfile_text.split(pin)[1].split('"')[0]
+            self.assertEqual(board_pin, mac_pin)
+        mac_ignore = (REPO_ROOT / "devices" / "mac" / ".gitignore").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("daemon/internal/proto/", mac_ignore)
+        tracked = tracked_files_list()
+        if tracked is not None:
+            self.assertEqual(
+                [],
+                [f for f in tracked if "devices/mac/daemon/internal/proto/" in f],
+            )
 
     def test_board_kvs_master_selects_the_signaling_trust_anchor_at_runtime(
         self,

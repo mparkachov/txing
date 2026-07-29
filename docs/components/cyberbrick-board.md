@@ -29,8 +29,9 @@ Renamed surfaces relative to unit:
   `/run/txing-cyberbrick-daemon/mcp-webrtc.sock`
 - hardware worker socket:
   `/run/txing-cyberbrick-hardware-worker/cyberbrick-hardware.sock`
-- proto packages: `txing.cyberbrick.hardware.v1` (service
-  `CyberbrickHardware`) and `txing.cyberbrick.board_video.v1`
+- proto packages: `txing.board.hardware.v1` (service `BoardHardware`) and
+  `txing.board.board_video.v1`, both device-independent and shared with every
+  other board device type
 - adapter ID: `dev.txing.cyberbrick.Daemon`
 
 Generic env keys (`TXING_MOTOR_*`, `TXING_BOARD_VIDEO_*`,
@@ -398,7 +399,7 @@ Write the root-owned OpenRC init scripts. There is no OpenRC equivalent of
 unit's `txing-unit.target`; each service is enabled individually and OpenRC
 dependencies order them hardware worker, then daemon, then KVS master. The
 daemon owns the board-video bridge socket; the KVS master connects to it as a
-separate service. The hardware worker owns the CyberbrickHardware socket; the
+separate service. The hardware worker owns the BoardHardware socket; the
 daemon connects to it as a client and degrades if it is unavailable. All
 three services run under `supervise-daemon`, which restarts them on failure
 with bounded respawn limits. The daemons exit cleanly on the default
@@ -856,12 +857,25 @@ symptom is video silently never becoming ready.
 
 Restarting the hardware worker or the KVS master alone is safe and needs no
 daemon restart: the daemon dials the worker per request and does not cache
-failed connections.
+failed connections. *Upgrading* one of them alone is not safe; see
+[Maintenance](#maintenance).
 
 ## Maintenance
 
 Board update during a writable-root maintenance window. Publish a new
 immutable `cyberbrick-vX.Y.Z` release first.
+
+Upgrade the daemon, the hardware worker, and the KVS master together, in one
+window, as the `mise upgrade` below does. They speak the device-independent
+`txing.board.*` gRPC packages to each other over local sockets, and those
+contracts move as a set. A partial upgrade that leaves one binary on an older
+release is the worst failure mode this board has: the mismatched pair never
+connects, so **video stays down and motion control stops responding with no
+local error**. The KVS master retries a bridge that never answers and the
+daemon reports the failure to CloudWatch rather than the console, so `rc-status`
+shows every service running and the board looks healthy from the console while
+being useless. If video or control is missing after an upgrade, confirm all
+three `--version` outputs match before investigating anything else.
 
 Because the KVS master is dynamically linked against musl and the installed
 Alpine libraries, `apk upgrade` and `mise upgrade` happen together in the
@@ -891,6 +905,28 @@ reboot
 Do not reboot if any `ldd` output reports `not found` or the expected
 libcamera sonames are missing; realign the apk branch and the installed
 release first, inside the same window.
+
+Confirm the three binaries speak the current gRPC contracts before rebooting.
+Version numbers alone cannot show this: a board can carry matching versions and
+still run the superseded per-device packages if it was imaged from an old
+release. The package names are embedded in each binary, so `strings` answers it
+directly:
+
+```sh
+for b in daemon kvs-master hardware-worker; do
+  printf '%s: ' "$b"
+  strings "/root/.local/share/mise/installs/txing-cyberbrick-$b/latest/txing-cyberbrick-$b" \
+    | grep -oE 'txing\.(board|unit|cyberbrick)\.(board_video|hardware)\.v1' \
+    | sort -u | tr '\n' ' '
+  echo
+done
+```
+
+Expect `txing.board.board_video.v1` and `txing.board.hardware.v1` from the
+daemon, `txing.board.board_video.v1` from the KVS master, and
+`txing.board.hardware.v1` from the hardware worker. Any `txing.unit.*` or
+`txing.cyberbrick.*` result means that binary predates the unified protocol and
+cannot talk to the others; reinstall from a current release before rebooting.
 
 If `apk upgrade` updated the kernel (`linux-rpi`) or the Raspberry Pi boot
 firmware, sync the refreshed boot files from the kernel package onto the boot

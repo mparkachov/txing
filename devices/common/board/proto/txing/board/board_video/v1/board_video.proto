@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package txing.cyberbrick.board_video.v1;
+package txing.board.board_video.v1;
 
 import "google/protobuf/timestamp.proto";
 

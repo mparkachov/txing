@@ -5,6 +5,19 @@ runs the root-owned Go `txing-unit-daemon` and native
 `txing-unit-kvs-master` plus `txing-unit-hardware-worker` systemd services,
 publishes board-owned runtime state, and exposes board MCP for motion control.
 
+> **Superseded protocol.** The local gRPC packages named in this document,
+> `txing.unit.board_video.v1` and `txing.unit.hardware.v1`, are the per-device
+> contract that Debian-built boards still run. Current builds speak the
+> device-independent `txing.board.board_video.v1` and `txing.board.hardware.v1`
+> described in [the board video bridge contract](../contracts/board-video-bridge.md)
+> and [the hardware worker contract](../contracts/unit-hardware-worker.md).
+> The two are wire-incompatible. A Debian board cannot be moved onto the
+> current protocol by upgrading, because camera builds are Alpine-only and its
+> KVS master cannot be rebuilt; it must be reimaged to Alpine first.
+>
+> Debian receives no further investment; see
+> [Board OS: Alpine only, Debian frozen](../constraints/board-os-alpine-only.md).
+
 ## Responsibilities
 
 - publish the `board` named shadow
@@ -110,7 +123,7 @@ The daemon and native worker communicate through the local
 BoardVideoBridge gRPC contract:
 [docs/contracts/board-video-bridge.md](../contracts/board-video-bridge.md).
 The proto source is
-`devices/unit/proto/txing/unit/board_video/v1/board_video.proto`.
+`txing.unit.board_video.v1` (superseded, see below).
 
 By default the daemon asks the native worker to use KVS dual-stack endpoints
 and IPv6-preferred TURN behavior. `TXING_KVS_DISABLE_IPV4_TURN=true` is a
@@ -138,7 +151,7 @@ domain socket:
 /run/txing-unit-hardware-worker/unit-hardware.sock
 ```
 
-The worker API is `txing.unit.hardware.v1.UnitHardware`:
+The worker API is `txing.unit.hardware.v1.UnitHardware` (superseded, see below):
 
 - `GetStatus`
 - `ApplyVelocity`

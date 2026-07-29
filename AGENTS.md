@@ -40,6 +40,8 @@ unless a shared contract or consistency issue requires coordinated updates.
   `docs/agent-guidance/editing-boundaries.md`
 - Repository-wide development, safety, deployment, and tooling constraints:
   `docs/constraints/repository-rules.md`
+- Board OS baseline (Alpine only, Debian frozen, no Debian build paths):
+  `docs/constraints/board-os-alpine-only.md`
 - Unit device contracts, ownership, board video, power terminology, and runtime
   reliability: `docs/contracts/unit-device-contracts.md`
 - MCU shared stack invariant and firmware reference: `docs/components/mcu.md`

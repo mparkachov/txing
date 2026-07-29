@@ -1,7 +1,7 @@
 #include "hardware_worker/config.hpp"
 #include "hardware_worker/motor.hpp"
 #include "hardware_worker/version.hpp"
-#include "hardware_worker/proto_binding.hpp"
+#include "txing/board/hardware/v1/hardware.grpc.pb.h"
 
 #include <grpcpp/grpcpp.h>
 
@@ -16,7 +16,7 @@
 #include <thread>
 
 namespace hw = txing::board::hardware_worker;
-namespace board_hw_pb = ::txing::board::proto::hardware_v1;
+namespace board_hw_pb = ::txing::board::hardware::v1;
 
 namespace {
 

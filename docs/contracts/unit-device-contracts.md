@@ -70,8 +70,8 @@ Rig, MCU, board, and cloud-facing systems are correctness-critical.
   separate systemd services and communicate through the local BoardVideoBridge
   contract.
 - The repo ships the native hardware worker in-tree. The worker and daemon run
-  as separate systemd services and communicate through the local UnitHardware
-  gRPC contract documented in `docs/contracts/unit-hardware-worker.md`.
+  as separate systemd services and communicate through the local hardware
+  worker gRPC contract documented in `docs/contracts/unit-hardware-worker.md`.
 - Browser-to-board motion control uses board MCP tools with a lease hard gate.
 - The legacy raw `<device_id>/board/cmd_vel` path is removed.
 

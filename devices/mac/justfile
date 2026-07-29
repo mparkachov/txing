@@ -17,17 +17,58 @@ run_dir := env_var_or_default("TXING_MAC_RUN_DIR", "/tmp/txing-mac")
 rig_run_dir := env_var_or_default("TXING_RIG_RUN_DIR", "/tmp/txing-rig")
 default_rig_ipc_socket := rig_run_dir + "/rig-ipc.sock"
 dev_version := "0.0.0-dev"
+# The mac daemon serves the same BoardVideoBridge contract as the board daemon,
+# so it generates its bindings from the shared proto with the same pinned
+# plugins rather than carrying a checked-in copy that can drift.
+board_proto_dir := project_root + "/devices/common/board/proto"
+daemon_module := "github.com/mparkachov/txing/devices/mac/daemon"
+protoc_gen_go_version := "v1.36.10"
+protoc_gen_go_grpc_version := "v1.5.1"
 config_dir := ""
+
+# Regenerate the daemon's BoardVideoBridge bindings (not checked in).
+proto-gen:
+    #!/bin/sh
+    set -eu
+    proto_root="{{board_proto_dir}}"
+    out_dir="{{daemon_dir}}/internal/proto"
+
+    for command in go protoc; do
+      if ! command -v "$command" >/dev/null 2>&1; then
+        echo "mac proto-gen requires '$command'. On macOS: brew install protobuf" >&2
+        exit 1
+      fi
+    done
+
+    plugin_dir="{{tmp_dir}}/go/protoc-plugins"
+    install -d "$plugin_dir"
+    GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@{{protoc_gen_go_version}}"
+    GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@{{protoc_gen_go_grpc_version}}"
+
+    rm -rf "$out_dir"
+    install -d "$out_dir"
+    board_video_proto="txing/board/board_video/v1/board_video.proto"
+    PATH="$plugin_dir:$PATH" protoc \
+      "--proto_path=$proto_root" \
+      "--go_out=$out_dir" \
+      "--go_opt=module={{daemon_module}}/internal/proto" \
+      "--go_opt=M$board_video_proto={{daemon_module}}/internal/proto/boardvideov1" \
+      "--go-grpc_out=$out_dir" \
+      "--go-grpc_opt=module={{daemon_module}}/internal/proto" \
+      "--go-grpc_opt=M$board_video_proto={{daemon_module}}/internal/proto/boardvideov1" \
+      "$board_video_proto"
 
 test:
     #!/bin/sh
     set -eu
+    just --quiet --justfile "{{mac_dir}}/justfile" proto-gen
     cd "{{daemon_dir}}"
     go test ./...
 
 build:
     #!/bin/sh
     set -eu
+    just --quiet --justfile "{{mac_dir}}/justfile" proto-gen
     cd "{{daemon_dir}}"
     install -d -m 755 "{{bin_dir}}"
     go build -ldflags "-X github.com/mparkachov/txing/devices/mac/daemon/internal/version.Version={{dev_version}}" \

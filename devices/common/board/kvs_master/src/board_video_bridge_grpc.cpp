@@ -1,6 +1,6 @@
 #include "kvs_master/board_video_bridge.hpp"
 
-#include "kvs_master/board_video_proto_binding.hpp"
+#include "txing/board/board_video/v1/board_video.grpc.pb.h"
 
 #include <grpcpp/create_channel.h>
 #include <grpcpp/security/credentials.h>
@@ -10,7 +10,7 @@
 namespace txing::board::kvs_master {
 namespace {
 
-namespace pb = ::txing::board::proto::board_video_v1;
+namespace pb = ::txing::board::board_video::v1;
 
 
 std::chrono::system_clock::time_point TimestampToTimePoint(

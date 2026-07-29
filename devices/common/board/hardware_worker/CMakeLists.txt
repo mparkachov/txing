@@ -5,9 +5,10 @@ project(txing_board_hardware_worker LANGUAGES CXX)
 include(GNUInstallDirs)
 include(CTest)
 
-# One implementation serves every board device type; the device profile selects
-# the proto package, the binary name, and the release stream the version comes
-# from. Nothing below may branch on the device type beyond these derivations.
+# One implementation serves every board device type over one device-independent
+# protocol package. The device profile selects only the binary name, the
+# hardware socket path, and the release stream the version comes from. Nothing
+# below may branch on the device type beyond these derivations.
 set(
   TXING_BOARD_DEVICE_TYPE
   ""
@@ -82,12 +83,12 @@ if(TXING_HARDWARE_WORKER_GRPC)
 
   get_filename_component(
     TXING_BOARD_HARDWARE_PROTO_ROOT
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../${_txing_device}/proto"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../proto"
     ABSOLUTE
   )
   set(
     TXING_BOARD_HARDWARE_PROTO_RELATIVE
-    "txing/${_txing_device}/hardware/v1/${_txing_device}_hardware.proto"
+    "txing/board/hardware/v1/hardware.proto"
   )
   set(
     TXING_BOARD_HARDWARE_PROTO
@@ -96,28 +97,19 @@ if(TXING_HARDWARE_WORKER_GRPC)
   if(NOT EXISTS "${TXING_BOARD_HARDWARE_PROTO}")
     message(FATAL_ERROR
       "BoardHardware proto not found at '${TXING_BOARD_HARDWARE_PROTO}'. "
-      "The repository checkout must include devices/${_txing_device}/proto."
+      "The repository checkout must include devices/common/board/proto."
     )
   endif()
   set(TXING_BOARD_HARDWARE_PROTO_GEN_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/generated")
   set(_txing_proto_stem
-      "${TXING_BOARD_HARDWARE_PROTO_GEN_DIR}/txing/${_txing_device}/hardware/v1/${_txing_device}_hardware")
+      "${TXING_BOARD_HARDWARE_PROTO_GEN_DIR}/txing/board/hardware/v1/hardware")
   set(TXING_BOARD_HARDWARE_PROTO_SRCS
       "${_txing_proto_stem}.pb.cc"
       "${_txing_proto_stem}.grpc.pb.cc")
   set(TXING_BOARD_HARDWARE_PROTO_HDRS
       "${_txing_proto_stem}.pb.h"
       "${_txing_proto_stem}.grpc.pb.h")
-
-  # The generated header path and the C++ namespace both carry the device's
-  # proto package, so the shared sources reach them through this generated
-  # binding header rather than naming either directly.
-  configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/hardware_worker/proto_binding.hpp.in"
-    "${TXING_BOARD_HARDWARE_PROTO_GEN_DIR}/hardware_worker/proto_binding.hpp"
-    @ONLY
-  )
 
   add_custom_command(
     OUTPUT ${TXING_BOARD_HARDWARE_PROTO_SRCS} ${TXING_BOARD_HARDWARE_PROTO_HDRS}

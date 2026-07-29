@@ -6,9 +6,10 @@ include(GNUInstallDirs)
 include(CTest)
 include(ExternalProject)
 
-# One implementation serves every board device type; the device profile selects
-# the proto package, the binary name, and the release stream the version comes
-# from. Nothing below may branch on the device type beyond these derivations.
+# One implementation serves every board device type over one device-independent
+# protocol package. The device profile selects only the binary name, the
+# hardware socket path, and the release stream the version comes from. Nothing
+# below may branch on the device type beyond these derivations.
 set(
   TXING_BOARD_DEVICE_TYPE
   ""
@@ -156,12 +157,12 @@ if(TXING_KVS_GRPC_BRIDGE)
 
   get_filename_component(
     TXING_BOARD_VIDEO_PROTO_ROOT
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../${_txing_device}/proto"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../proto"
     ABSOLUTE
   )
   set(
     TXING_BOARD_VIDEO_PROTO_RELATIVE
-    "txing/${_txing_device}/board_video/v1/board_video.proto"
+    "txing/board/board_video/v1/board_video.proto"
   )
   set(
     TXING_BOARD_VIDEO_PROTO
@@ -170,17 +171,17 @@ if(TXING_KVS_GRPC_BRIDGE)
   if(NOT EXISTS "${TXING_BOARD_VIDEO_PROTO}")
     message(FATAL_ERROR
       "BoardVideoBridge proto not found at '${TXING_BOARD_VIDEO_PROTO}'. "
-      "The repository checkout must include devices/${_txing_device}/proto."
+      "The repository checkout must include devices/common/board/proto."
     )
   endif()
   set(TXING_BOARD_VIDEO_PROTO_GEN_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/generated")
   set(TXING_BOARD_VIDEO_PROTO_SRCS
-      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/${_txing_device}/board_video/v1/board_video.pb.cc"
-      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/${_txing_device}/board_video/v1/board_video.grpc.pb.cc")
+      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/board/board_video/v1/board_video.pb.cc"
+      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/board/board_video/v1/board_video.grpc.pb.cc")
   set(TXING_BOARD_VIDEO_PROTO_HDRS
-      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/${_txing_device}/board_video/v1/board_video.pb.h"
-      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/${_txing_device}/board_video/v1/board_video.grpc.pb.h")
+      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/board/board_video/v1/board_video.pb.h"
+      "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/txing/board/board_video/v1/board_video.grpc.pb.h")
 
   add_custom_command(
     OUTPUT ${TXING_BOARD_VIDEO_PROTO_SRCS} ${TXING_BOARD_VIDEO_PROTO_HDRS}
@@ -196,15 +197,6 @@ if(TXING_KVS_GRPC_BRIDGE)
     VERBATIM
   )
   add_library(txing_board_video_bridge_proto OBJECT ${TXING_BOARD_VIDEO_PROTO_SRCS})
-  # The generated header path and the C++ namespace both carry the device's
-  # proto package, so the shared sources reach them through this generated
-  # binding header rather than naming either directly.
-  configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/kvs_master/board_video_proto_binding.hpp.in"
-    "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}/kvs_master/board_video_proto_binding.hpp"
-    @ONLY
-  )
-
   target_include_directories(txing_board_video_bridge_proto PUBLIC "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}")
   target_link_libraries(txing_board_video_bridge_proto PUBLIC protobuf::libprotobuf gRPC::grpc++)
   target_compile_features(txing_board_video_bridge_proto PUBLIC cxx_std_17)

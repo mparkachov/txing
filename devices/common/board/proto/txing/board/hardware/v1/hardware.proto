@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package txing.unit.hardware.v1;
+package txing.board.hardware.v1;
 
 service BoardHardware {
   rpc GetStatus(GetStatusRequest) returns (HardwareStatus);

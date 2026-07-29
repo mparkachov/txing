@@ -16,6 +16,7 @@ daemon_dir := board_dir + "/daemon"
 daemon_module := "github.com/mparkachov/txing/devices/common/board/daemon"
 native_kvs_master_dir := board_dir + "/kvs_master"
 native_hardware_worker_dir := board_dir + "/hardware_worker"
+board_proto_dir := board_dir + "/proto"
 aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
 default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
 
@@ -64,13 +65,11 @@ static_toolchain_dir := board_dir + "/target/alpine-static-toolchain"
     fi
     printf '%s\n' "$version"
 
-# Regenerate the daemon's Go bindings for one device (not checked in).
-proto-gen device:
+# Regenerate the daemon's Go bindings (device-independent, not checked in).
+proto-gen:
     #!/bin/sh
     set -eu
-    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
-    device="{{device}}"
-    proto_root="{{project_root}}/devices/$device/proto"
+    proto_root="{{board_proto_dir}}"
     out_dir="{{daemon_dir}}/internal/proto"
 
     for command in go protoc; do
@@ -87,8 +86,8 @@ proto-gen device:
 
     rm -rf "$out_dir"
     install -d "$out_dir"
-    hardware_proto="txing/$device/hardware/v1/${device}_hardware.proto"
-    board_video_proto="txing/$device/board_video/v1/board_video.proto"
+    hardware_proto="txing/board/hardware/v1/hardware.proto"
+    board_video_proto="txing/board/board_video/v1/board_video.proto"
     PATH="$plugin_dir:$PATH" protoc \
       "--proto_path=$proto_root" \
       "--go_out=$out_dir" \
@@ -157,13 +156,13 @@ role-policy device thing_id='':
 test device:
     #!/bin/sh
     set -eu
-    just --quiet --justfile "{{board_justfile}}" proto-gen "{{device}}"
+    just --quiet --justfile "{{board_justfile}}" proto-gen
     cd "{{daemon_dir}}" && go test ./...
 
 run device:
     #!/bin/sh
     set -eu
-    just --quiet --justfile "{{board_justfile}}" proto-gen "{{device}}"
+    just --quiet --justfile "{{board_justfile}}" proto-gen
     cd "{{daemon_dir}}"
     go run -ldflags="-X {{daemon_module}}/internal/daemon.DeviceType={{device}}" ./cmd/txing-board-daemon
 
@@ -478,10 +477,9 @@ docker-smoke device:
       printf '%s\n' "$ldd_output" | grep -F 'libc.musl-aarch64.so.1'
     }
 
-    # The daemon's Go bindings are generated per device rather than checked in,
-    # because the proto package still carries the device type. The project root
-    # is mounted read-only, so generation lands in a writable copy of the daemon
-    # module and the build runs from there.
+    # The daemon's Go bindings are generated rather than checked in. The project
+    # root is mounted read-only, so generation lands in a writable copy of the
+    # daemon module and the build runs from there.
     daemon_workdir=""
     generate_go_bindings() {
       daemon_workdir="$(mktemp -d /tmp/txing-board-daemon-src.XXXXXX)"
@@ -489,10 +487,10 @@ docker-smoke device:
       plugin_dir="$(mktemp -d /tmp/txing-protoc-plugins.XXXXXX)"
       GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$TXING_PROTOC_GEN_GO_VERSION"
       GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$TXING_PROTOC_GEN_GO_GRPC_VERSION"
-      proto_root="$PWD/devices/$device/proto"
+      proto_root="$PWD/devices/common/board/proto"
       out_dir="$daemon_workdir/internal/proto"
-      hardware_proto="txing/$device/hardware/v1/${device}_hardware.proto"
-      board_video_proto="txing/$device/board_video/v1/board_video.proto"
+      hardware_proto="txing/board/hardware/v1/hardware.proto"
+      board_video_proto="txing/board/board_video/v1/board_video.proto"
       rm -rf "$out_dir"
       install -d "$out_dir"
       PATH="$plugin_dir:$PATH" protoc \

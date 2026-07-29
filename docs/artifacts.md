@@ -201,7 +201,7 @@ distinguish them by ELF interpreter, not by soname.
 The `txing-unit.target` unit groups the daemon, KVS master, and hardware
 worker services for boot. The board systemd units start the root-owned binaries
 under mise's `latest` install paths. The daemon owns the local BoardVideoBridge
-gRPC socket. The hardware worker owns the local UnitHardware gRPC socket. The
+gRPC socket. The hardware worker owns the local hardware worker gRPC socket. The
 KVS master and daemon connect as separate services. All three services declare
 `PartOf=txing-unit.target`, so stopping or restarting the target propagates to
 the services. Restarts do not invoke mise or call GitHub. They do not depend on

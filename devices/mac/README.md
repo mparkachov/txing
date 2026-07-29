@@ -90,9 +90,19 @@ is commanded.
 Video comes from the shared unit KVS worker built natively for macOS:
 
 ```bash
+just mac::proto-gen       # regenerate BoardVideoBridge bindings from the shared proto
 just mac::kvs-build       # real KVS SDK + gRPC bridge; Homebrew deps preflight
 just mac::camera-probe    # foreground capture-only run; grants the camera TCC prompt
 ```
+
+The mac daemon serves the same device-independent `BoardVideoBridge` contract
+as the board daemon, defined once in
+`devices/common/board/proto/txing/board/board_video/v1/board_video.proto`. Its
+Go bindings are generated from that file rather than checked in, with the same
+pinned `protoc-gen-go` and `protoc-gen-go-grpc` versions the board build uses,
+so the two ends cannot drift apart. `just mac::test` and `just mac::build` run
+`proto-gen` first, so there is nothing extra to remember; it needs `protoc`,
+which the `protobuf` formula below already provides.
 
 `kvs-build` compiles `devices/common/board/kvs_master` into
 `devices/common/board/kvs_master/build-macos-unit/txing-unit-kvs-master` with the

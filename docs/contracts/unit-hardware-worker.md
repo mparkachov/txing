@@ -20,8 +20,9 @@ domain socket.
 
 ## gRPC API
 
-The canonical API is `txing.unit.hardware.v1.UnitHardware` in
-`devices/unit/proto/txing/unit/hardware/v1/unit_hardware.proto`.
+The canonical API is `txing.board.hardware.v1.BoardHardware` in
+`devices/common/board/proto/txing/board/hardware/v1/hardware.proto`. The
+package is device-independent: one contract serves every board device type.
 
 RPCs:
 

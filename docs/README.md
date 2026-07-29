@@ -17,6 +17,7 @@ design notes have been folded into the owning component guides.
 - [Spec-driven development workflow](./agent-guidance/spec-driven-development.md)
 - [Editing boundaries extracted from project docs](./agent-guidance/editing-boundaries.md)
 - [Repository rules and operational constraints](./constraints/repository-rules.md)
+- [Board OS: Alpine only, Debian frozen](./constraints/board-os-alpine-only.md)
 
 ## Component Guides
 
