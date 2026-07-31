@@ -30,3 +30,6 @@ __pycache__/
 # tmp for logs and repository-local script scratch files
 /tmp/*
 !/tmp/.gitkeep
+
+# AI staff
+.claude/

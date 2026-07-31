@@ -152,8 +152,14 @@ txing_cert_create_iot_bundle() {
   private_key_path="$output_dir/private.pem.key"
   cert_arn_path="$output_dir/certificate.arn"
   root_ca_path="$output_dir/AmazonRootCA1.pem"
+  signaling_ca_path="$output_dir/SFSRootCAG2.pem"
 
   curl -fsSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$root_ca_path"
+  # Board KVS masters verify the AWS signaling endpoint against this single
+  # anchor: the endpoint presents Amazon Root CA 1 cross-signed by Starfield
+  # Services Root CA G2, and the SDK's TLS layer needs that issuer rather than
+  # a full OS bundle. Provisioned next to AmazonRootCA1.pem; rigs ignore it.
+  curl -fsSL https://www.amazontrust.com/repository/SFSRootCAG2.pem -o "$signaling_ca_path"
   cert_arn="$(
     aws iot create-keys-and-certificate \
       --set-as-active \
@@ -173,7 +179,7 @@ txing_cert_create_iot_bundle() {
     >/dev/null
   printf '%s\n' "$cert_arn" >"$cert_arn_path"
   chmod 600 "$cert_path" "$public_key_path" "$private_key_path" "$cert_arn_path"
-  chmod 644 "$root_ca_path"
+  chmod 644 "$root_ca_path" "$signaling_ca_path"
   printf '%s\n' "$cert_arn"
 }
 
@@ -186,7 +192,8 @@ txing_cert_write_runtime_tarball() {
     public.pem.key \
     private.pem.key \
     certificate.arn \
-    AmazonRootCA1.pem
+    AmazonRootCA1.pem \
+    SFSRootCAG2.pem
   chmod 600 "$tarball_path"
 }
 
@@ -437,7 +444,8 @@ txing_generate_iot_certificate_bundle() {
   thing_id="$1"
   rig_env_template="$2"
   unit_env_template="$3"
-  mac_env_template="$4"
+  cyberbrick_env_template="$4"
+  mac_env_template="$5"
   txing_validate_iot_thing_id "$thing_id" "Use: just aws::cert <thing-id>"
   thing_json="$(aws iot describe-thing --thing-name "$thing_id" --output json)"
   thing_type="$(txing_json_string "$thing_json" '.thingTypeName')"
@@ -458,6 +466,9 @@ txing_generate_iot_certificate_bundle() {
       ;;
     deviceType:unit)
       txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$unit_env_template" "$thing_json" unit-daemon
+      ;;
+    deviceType:cyberbrick)
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$cyberbrick_env_template" "$thing_json" cyberbrick-daemon
       ;;
     deviceType:mac)
       txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$mac_env_template" "$thing_json" mac-daemon

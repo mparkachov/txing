@@ -26,25 +26,11 @@ class TextVersion:
     count: int = 1
 
 
-TEXT_VERSIONS = (
-    TextVersion(
-        Path("devices/unit/daemon/internal/daemon/version.go"),
-        "unit daemon Go version",
-        re.compile(r'const packageVersion = "[^"]+"'),
-        'const packageVersion = "{version}"',
-    ),
-    TextVersion(
-        Path("devices/unit/board/kvs_master/include/kvs_master/version.hpp"),
-        "board native KVS master version",
-        re.compile(r'inline constexpr std::string_view kTxingUnitKvsMasterVersion = "[^"]+";'),
-        'inline constexpr std::string_view kTxingUnitKvsMasterVersion = "{version}";',
-    ),
-    TextVersion(
-        Path("devices/unit/board/hardware_worker/include/hardware_worker/version.hpp"),
-        "unit hardware worker version",
-        re.compile(r'#define TXING_UNIT_HARDWARE_WORKER_VERSION "[^"]+"'),
-        '#define TXING_UNIT_HARDWARE_WORKER_VERSION "{version}"',
-    ),
+# Board release versions are injected at build time from release/versions/<device>
+# rather than mirrored into source literals: one shared implementation serves
+# every device type, so there is no per-device file left to rewrite.
+
+OFFICE_TEXT_VERSIONS = (
     TextVersion(
         Path("office/src/config.ts"),
         "office runtime fallback version",
@@ -74,13 +60,16 @@ COMPONENTS = {
     "unit": Component(
         name="unit",
         version_path=Path("release/versions/unit"),
-        text_versions=TEXT_VERSIONS[:3],
+    ),
+    "cyberbrick": Component(
+        name="cyberbrick",
+        version_path=Path("release/versions/cyberbrick"),
     ),
     "office": Component(
         name="office",
         version_path=Path("release/versions/office"),
         node_packages=NODE_PACKAGES,
-        text_versions=TEXT_VERSIONS[3:],
+        text_versions=OFFICE_TEXT_VERSIONS,
     ),
 }
 

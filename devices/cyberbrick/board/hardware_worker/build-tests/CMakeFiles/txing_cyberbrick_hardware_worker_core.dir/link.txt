@@ -1,2 +1,0 @@
-/usr/bin/ar qc libtxing_cyberbrick_hardware_worker_core.a CMakeFiles/txing_cyberbrick_hardware_worker_core.dir/src/config.cpp.o CMakeFiles/txing_cyberbrick_hardware_worker_core.dir/src/motor.cpp.o
-/usr/bin/ranlib libtxing_cyberbrick_hardware_worker_core.a

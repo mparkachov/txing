@@ -6,6 +6,7 @@ describe('device web adapter registry', () => {
   test('registers installed device detail adapters and returns null for unknown device types', () => {
     const cloudMcuAdapter = getDeviceWebAdapter('cloud-mcu')
     const unitAdapter = getDeviceWebAdapter('unit')
+    const cyberbrickAdapter = getDeviceWebAdapter('cyberbrick')
     const weatherAdapter = getDeviceWebAdapter('weather')
     const powerAdapter = getDeviceWebAdapter('power')
     const powerSiAdapter = getDeviceWebAdapter('power-si')
@@ -20,6 +21,16 @@ describe('device web adapter registry', () => {
     expect(unitAdapter?.canUseDriveControl(1)).toBe(true)
     expect(unitAdapter?.canUseDriveControl(2)).toBe(true)
     expect(unitAdapter?.canUseDriveControl(3)).toBe(false)
+    expect(cyberbrickAdapter?.type).toBe('cyberbrick')
+    expect(cyberbrickAdapter?.displayName).toBe('Cyberbrick')
+    expect(cyberbrickAdapter?.buildVideoChannelName('cyberbrick-a1')).toBe(
+      'cyberbrick-a1-board-video',
+    )
+    expect(cyberbrickAdapter?.canUseBoardVideo(1)).toBe(true)
+    expect(cyberbrickAdapter?.canUseBoardVideo(2)).toBe(false)
+    expect(cyberbrickAdapter?.canUseDriveControl(1)).toBe(true)
+    expect(cyberbrickAdapter?.canUseDriveControl(2)).toBe(true)
+    expect(cyberbrickAdapter?.canUseDriveControl(3)).toBe(false)
     expect(weatherAdapter?.type).toBe('weather')
     expect(weatherAdapter?.canUseDriveControl(1)).toBe(false)
     expect(powerAdapter?.type).toBe('power')
@@ -40,6 +51,7 @@ describe('device web adapter registry', () => {
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
       'cloud-mcu',
       'unit',
+      'cyberbrick',
       'weather',
       'power',
       'power-si',

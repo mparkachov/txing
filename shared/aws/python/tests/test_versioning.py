@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -105,6 +106,25 @@ def _native_aws_env(bin_dir: Path, *, stack: str | None = "town") -> dict[str, s
     else:
         env["TXING_AWS_STACK"] = stack
     return env
+
+
+def tracked_files_list() -> list[str] | None:
+    """Tracked paths, or None when git cannot answer (e.g. ownership checks)."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.splitlines()
 
 
 class VersionEnvironmentTests(unittest.TestCase):
@@ -320,7 +340,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "shared" / "aws" / "scripts" / "aws_lib.sh",
             REPO_ROOT / "rig" / "justfile",
             REPO_ROOT / "devices" / "unit" / "justfile",
-            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile",
+            REPO_ROOT / "devices" / "common" / "board" / "justfile",
             REPO_ROOT / "devices" / "power-si" / "justfile",
             REPO_ROOT / "office" / "justfile",
         ]
@@ -397,14 +417,29 @@ class VersionEnvironmentTests(unittest.TestCase):
         rig_workflow = (workflow_dir / "release-rig.yml").read_text(encoding="utf-8")
         lambda_workflow = (workflow_dir / "release-lambda.yml").read_text(encoding="utf-8")
         unit_workflow = (workflow_dir / "release-unit.yml").read_text(encoding="utf-8")
+        cyberbrick_workflow = (workflow_dir / "release-cyberbrick.yml").read_text(
+            encoding="utf-8"
+        )
+        board_musl_assertion = (
+            REPO_ROOT / "release" / "scripts" / "assert-board-musl.sh"
+        ).read_text(encoding="utf-8")
+        board_smoke_script = (
+            REPO_ROOT / "release" / "scripts" / "smoke-board-cross-distro.sh"
+        ).read_text(encoding="utf-8")
         release_cli = (
             REPO_ROOT / "release" / "src" / "txing_release" / "cli.py"
         ).read_text(encoding="utf-8")
+        release_justfile = (REPO_ROOT / "release" / "justfile").read_text(
+            encoding="utf-8"
+        )
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
-        unit_daemon_justfile = (
-            REPO_ROOT / "devices" / "unit" / "daemon" / "justfile"
+        # Both device types build from the one shared board justfile.
+        board_justfile = (
+            REPO_ROOT / "devices" / "common" / "board" / "justfile"
         ).read_text(encoding="utf-8")
+        unit_daemon_justfile = board_justfile
+        cyberbrick_daemon_justfile = board_justfile
         artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
             encoding="utf-8"
         )
@@ -416,6 +451,11 @@ class VersionEnvironmentTests(unittest.TestCase):
             "rig": rig_workflow,
             "lambda": lambda_workflow,
             "unit": unit_workflow,
+            "cyberbrick": cyberbrick_workflow,
+        }
+        existing_go_workflows = {
+            "rig": rig_workflow,
+            "lambda": lambda_workflow,
         }
         for component, workflow in workflows.items():
             self.assertIn(f"name: Release {component}", workflow)
@@ -494,47 +534,160 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("txing-unit-daemon-linux-aarch64.tar.gz", lambda_workflow)
         self.assertNotIn("txing-enlist-lambda-linux-aarch64.zip", lambda_workflow)
 
-        self.assertIn("build-go-unit-daemon:", unit_workflow)
-        self.assertIn("build-kvs-master:", unit_workflow)
-        self.assertIn("build-hardware-worker:", unit_workflow)
+        self.assertIn("build:", unit_workflow)
+        self.assertIn("matrix:", unit_workflow)
+        self.assertIn("component: daemon", unit_workflow)
+        self.assertIn("component: kvs-master", unit_workflow)
+        self.assertIn("component: hardware-worker", unit_workflow)
         self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
-        self.assertIn("KVS_MASTER_BINARY: txing-unit-kvs-master", unit_workflow)
-        self.assertIn("HARDWARE_WORKER_BINARY: txing-unit-hardware-worker", unit_workflow)
-        self.assertIn("name: Build txing-unit-daemon", unit_workflow)
-        self.assertIn("cd devices/unit/daemon", unit_workflow)
+        self.assertIn("KVS_MASTER_ASSET: txing-unit-kvs-master-linux-aarch64.tar.gz", unit_workflow)
+        self.assertIn("HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz", unit_workflow)
+        self.assertIn("image: docker.io/library/alpine:3.24.1", unit_workflow)
+        self.assertIn('test "$(cat /etc/alpine-release)" = "3.24.1"', unit_workflow)
+        self.assertIn('test "$(uname -m)" = "aarch64"', unit_workflow)
+        self.assertIn("libusrsctp-dev", unit_workflow)
+        self.assertIn("libcamera-dev", unit_workflow)
+        self.assertIn("grpc-plugins", unit_workflow)
+        self.assertIn("cd devices/common/board/daemon", unit_workflow)
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", unit_workflow)
         self.assertIn(
-            "-X github.com/mparkachov/txing/devices/unit/daemon/internal/daemon.DaemonVersion=${{ needs.metadata.outputs.version }}",
+            "github.com/mparkachov/txing/devices/common/board/daemon"
+            "/internal/daemon.DaemonVersion=$VERSION",
             unit_workflow,
         )
-        self.assertIn("Build native KVS master", unit_workflow)
-        self.assertIn("Build txing-unit-hardware-worker", unit_workflow)
-        self.assertIn("image: debian:trixie", unit_workflow)
-        self.assertIn("URIs: https://archive.raspberrypi.com/debian/", unit_workflow)
-        self.assertIn("Trusted: yes", unit_workflow)
-        self.assertIn("apt-cache policy libcamera-dev libcamera0.7", unit_workflow)
+        # The device identity is injected alongside the version: one shared
+        # implementation serves every board device type.
+        self.assertIn(
+            "github.com/mparkachov/txing/devices/common/board/daemon"
+            "/internal/daemon.DeviceType=unit",
+            unit_workflow,
+        )
+        self.assertNotIn("-linkmode=external", unit_workflow)
         self.assertIn("TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG", unit_workflow)
-        self.assertIn('grep -F "libcamera.so.0.7"', unit_workflow)
-        self.assertIn('grep -F "libcamera-base.so.0.7"', unit_workflow)
-        self.assertIn('kvs_master_build_binary="devices/unit/board/kvs_master/build/$KVS_MASTER_BINARY"', unit_workflow)
-        self.assertIn('install -m 755 "$kvs_master_build_binary" "$RUNNER_TEMP/$KVS_MASTER_BINARY"', unit_workflow)
+        self.assertIn(
+            "release/scripts/build-board-static-toolchain.sh", unit_workflow
+        )
+        self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", unit_workflow)
+        self.assertIn("-DBUILD_TESTING=ON", unit_workflow)
+        self.assertIn("ctest --test-dir", unit_workflow)
+        self.assertIn("strip \"$package_dir/$BINARY\"", unit_workflow)
+        self.assertIn("sh release/scripts/assert-board-musl.sh", unit_workflow)
+        self.assertIn("kind: static", unit_workflow)
+        self.assertIn("kind: musl-libcamera", unit_workflow)
+        self.assertIn('archive_listing="$(tar -tzf "$asset_path")"', unit_workflow)
+        self.assertIn('release_asset_paths+=("$asset_path")', unit_workflow)
         self.assertNotIn("build-go-rig-binary:", unit_workflow)
         self.assertNotIn("build-lambda:", unit_workflow)
         self.assertNotIn("txing-sparkplug-manager-linux-aarch64.tar.gz", unit_workflow)
         self.assertNotIn("txing-witness-lambda-linux-aarch64.zip", unit_workflow)
         self.assertNotIn("docker run --rm -i", unit_workflow)
-        self.assertNotIn("just unit::daemon::kvs-submodules", unit_workflow)
+        self.assertNotIn("just common::board::kvs-submodules", unit_workflow)
         self.assertNotIn("just unit::daemon::kvs-build-native", unit_workflow)
         self.assertNotIn("just unit::board::", unit_workflow)
+        self.assertNotIn("image: debian:trixie", unit_workflow)
+        self.assertNotIn("apt-get", unit_workflow)
+        self.assertNotIn("archive.raspberrypi.com", unit_workflow)
         self.assertNotIn("raspberrypi.gpg.key", unit_workflow)
         self.assertNotIn("Signed-By:", unit_workflow)
+        self.assertNotIn("libcamera.so.0.6", unit_workflow)
+        self.assertNotIn("libcamera-base.so.0.6", unit_workflow)
         self.assertNotIn("curl https://mise.run | sh", unit_workflow)
         self.assertNotIn("mise/shims", unit_workflow)
 
-        for workflow in workflows.values():
+        self.assertIn("build:", cyberbrick_workflow)
+        self.assertIn("matrix:", cyberbrick_workflow)
+        self.assertIn("component: daemon", cyberbrick_workflow)
+        self.assertIn("component: kvs-master", cyberbrick_workflow)
+        self.assertIn("component: hardware-worker", cyberbrick_workflow)
+        self.assertIn(
+            "CYBERBRICK_DAEMON_ASSET: txing-cyberbrick-daemon-linux-aarch64.tar.gz",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "KVS_MASTER_ASSET: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "HARDWARE_WORKER_ASSET: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz",
+            cyberbrick_workflow,
+        )
+        self.assertIn("image: docker.io/library/alpine:3.24.1", cyberbrick_workflow)
+        self.assertIn(
+            'test "$(cat /etc/alpine-release)" = "3.24.1"',
+            cyberbrick_workflow,
+        )
+        self.assertIn('test "$(uname -m)" = "aarch64"', cyberbrick_workflow)
+        self.assertIn("libusrsctp-dev", cyberbrick_workflow)
+        self.assertIn("libcamera-dev", cyberbrick_workflow)
+        self.assertIn("grpc-plugins", cyberbrick_workflow)
+        self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0", cyberbrick_workflow)
+        self.assertNotIn("-linkmode=external", cyberbrick_workflow)
+        self.assertIn(
+            "release/scripts/build-board-static-toolchain.sh", cyberbrick_workflow
+        )
+        self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", cyberbrick_workflow)
+        self.assertIn(
+            "github.com/mparkachov/txing/devices/common/board/daemon"
+            "/internal/daemon.DaemonVersion=$VERSION",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "-DTXING_BOARD_KVS_MASTER_VERSION=\"$VERSION\"",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "-DTXING_BOARD_HARDWARE_WORKER_VERSION=\"$VERSION\"",
+            cyberbrick_workflow,
+        )
+        self.assertIn("-DBUILD_TESTING=ON", cyberbrick_workflow)
+        self.assertIn("ctest --test-dir", cyberbrick_workflow)
+        self.assertIn("strip \"$package_dir/$BINARY\"", cyberbrick_workflow)
+        self.assertIn("sh release/scripts/assert-board-musl.sh", cyberbrick_workflow)
+        self.assertIn("kind: static", cyberbrick_workflow)
+        self.assertIn("kind: musl-libcamera", cyberbrick_workflow)
+        self.assertIn('archive_listing="$(tar -tzf "$asset_path")"', cyberbrick_workflow)
+        self.assertIn(
+            'release_asset_paths+=("$asset_path")', cyberbrick_workflow
+        )
+        self.assertIn('"$CYBERBRICK_DAEMON_ASSET"', cyberbrick_workflow)
+        self.assertIn('"$KVS_MASTER_ASSET"', cyberbrick_workflow)
+        self.assertIn('"$HARDWARE_WORKER_ASSET"', cyberbrick_workflow)
+        self.assertNotIn("image: debian:trixie", cyberbrick_workflow)
+        self.assertNotIn("apt-get", cyberbrick_workflow)
+        self.assertNotIn("archive.raspberrypi.com", cyberbrick_workflow)
+
+        self.assertIn("ELF 64-bit LSB.*ARM aarch64", board_musl_assertion)
+        self.assertIn("/lib/ld-musl-aarch64.so.1", board_musl_assertion)
+        self.assertIn("libc.musl-aarch64.so.1", board_musl_assertion)
+        self.assertIn("grep -Fq 'not found'", board_musl_assertion)
+        self.assertIn("libcamera.so.0.7", board_musl_assertion)
+        self.assertIn("libcamera-base.so.0.7", board_musl_assertion)
+        self.assertIn("statically linked|static-pie linked", board_musl_assertion)
+        self.assertIn("grep -Fq 'INTERP'", board_musl_assertion)
+        self.assertIn("static|musl-libcamera", board_musl_assertion)
+
+        self.assertIn('debian_image="debian:trixie"', board_smoke_script)
+        self.assertIn(
+            'alpine_image="docker.io/library/alpine:3.24.1"', board_smoke_script
+        )
+        self.assertIn('platform="linux/arm64"', board_smoke_script)
+        self.assertIn("libcamera-dev", board_smoke_script)
+        self.assertIn("static|musl-libcamera", board_smoke_script)
+        for workflow in (unit_workflow, cyberbrick_workflow):
+            self.assertIn("name: Cross-distro smoke", workflow)
+            self.assertIn(
+                "release/scripts/smoke-board-cross-distro.sh", workflow
+            )
+            self.assertIn("- smoke", workflow)
+        # One shared board justfile serves both device types; the device is the
+        # recipe's first argument.
+        self.assertIn("docker-smoke device:", board_justfile)
+        self.assertIn("release/scripts/smoke-board-cross-distro.sh", board_justfile)
+
+        for workflow in existing_go_workflows.values():
             self.assertIn("for version in 1.26 1.25 1.24", workflow)
             self.assertIn('candidate="golang-${version}-go"', workflow)
             self.assertIn('echo "$go_root/bin" >>"$GITHUB_PATH"', workflow)
@@ -552,11 +705,18 @@ class VersionEnvironmentTests(unittest.TestCase):
             self.assertNotIn("txing-greengrass-lite-payload/root", workflow)
             self.assertNotIn('run_nucleus "$payload_dir', workflow)
 
+        # Board versions are injected at build time from release/versions/<device>,
+        # so the release CLI manages no board source file and there is no
+        # per-device literal left for a bump to drift against.
+        self.assertNotIn('Path("devices/', release_cli)
+        self.assertNotIn("KVS_MASTER_VERSION", release_cli)
+        self.assertNotIn("HARDWARE_WORKER_VERSION", release_cli)
+        self.assertNotIn("packageVersion", release_cli)
         self.assertIn(
-            'Path("devices/unit/daemon/internal/daemon/version.go")',
-            release_cli,
+            'components := "rig lambda unit cyberbrick office"', release_justfile
         )
-        self.assertIn("kTxingUnitKvsMasterVersion", release_cli)
+        self.assertIn('cyberbrick) workflow="release-cyberbrick.yml"', release_justfile)
+        self.assertIn("unit|cyberbrick|office)", release_justfile)
         self.assertNotIn("kTxingBoardKvsMasterVersion", release_cli)
         self.assertNotIn("shared/aws/python/pyproject.toml", release_cli)
         self.assertNotIn("shared/aws/python/uv.lock", release_cli)
@@ -568,11 +728,30 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("mod power-si 'devices/power-si/justfile'", root_justfile)
         self.assertIn("release/versions/rig", rig_justfile)
         self.assertNotIn("/" + "VERSION", rig_justfile)
-        self.assertIn("release/versions/unit", unit_daemon_justfile)
+        # The shared board justfile resolves the release stream from the device
+        # it is invoked with rather than naming one device type.
+        self.assertIn("release/versions/{{device}}", board_justfile)
+        self.assertIn("release/versions/$device", board_justfile)
+        self.assertNotIn("release/versions/unit", board_justfile)
+        self.assertNotIn("release/versions/cyberbrick", board_justfile)
         self.assertNotIn("/" + "VERSION", unit_daemon_justfile)
+        self.assertIn(
+            'alpine_build_image := "docker.io/library/alpine:3.24.1"',
+            cyberbrick_daemon_justfile,
+        )
+        self.assertIn(
+            "GOOS=linux GOARCH=arm64 CGO_ENABLED=0", cyberbrick_daemon_justfile
+        )
+        self.assertNotIn("-linkmode=external", cyberbrick_daemon_justfile)
+        self.assertIn(
+            "release/scripts/build-board-static-toolchain.sh",
+            cyberbrick_daemon_justfile,
+        )
+        self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", cyberbrick_daemon_justfile)
         self.assertIn("release/versions/rig", artifacts_docs)
         self.assertIn("release/versions/lambda", artifacts_docs)
         self.assertIn("release/versions/unit", artifacts_docs)
+        self.assertIn("release/versions/cyberbrick", artifacts_docs)
         self.assertIn("release/versions/office", artifacts_docs)
         self.assertIn("office version metadata only", artifacts_docs)
         self.assertIn("Cloudflare Pages", artifacts_docs)
@@ -586,33 +765,44 @@ class VersionEnvironmentTests(unittest.TestCase):
         removed_publish_recipe = "prerelease-" + "publish"
         removed_version_suffix = "-feature" + "."
         workflow_path = REPO_ROOT / ".github" / "workflows" / removed_workflow
-        daemon_dir = REPO_ROOT / "devices" / "unit" / "daemon"
-        justfile = (daemon_dir / "justfile").read_text(encoding="utf-8")
+        board_dir = REPO_ROOT / "devices" / "common" / "board"
+        daemon_dir = board_dir / "daemon"
+        justfile = (board_dir / "justfile").read_text(encoding="utf-8")
 
         self.assertFalse(workflow_path.exists())
         self.assertFalse((daemon_dir / "Dockerfile.docker-builder").exists())
         self.assertFalse((daemon_dir / removed_dockerfile).exists())
         self.assertIn("go test ./...", justfile)
-        self.assertIn("go run ./cmd/txing-unit-daemon", justfile)
+        self.assertIn("go run -ldflags=", justfile)
+        self.assertIn("./cmd/txing-board-daemon", justfile)
         self.assertNotIn("docker-builder-image", justfile)
         self.assertNotIn("docker-builder-shell", justfile)
-        self.assertIn("docker-build:", justfile)
-        self.assertIn('docker_build_dir := daemon_dir + "/target/docker-build"', justfile)
-        self.assertIn('docker_kvs_master_build_image := "debian:trixie"', justfile)
+        self.assertIn("docker-build device:", justfile)
+        self.assertIn('"{{board_dir}}/target/docker-build-$device"', justfile)
+        self.assertIn(
+            'alpine_build_image := "docker.io/library/alpine:3.24.1"', justfile
+        )
+        self.assertNotIn("debian:trixie", justfile)
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", justfile)
         self.assertIn("DaemonVersion=$version", justfile)
         self.assertNotIn("TXING_DAEMON_BUILD_VERSION", justfile)
-        self.assertNotIn("just unit::daemon::kvs-submodules", justfile)
+        self.assertNotIn("just common::board::kvs-submodules", justfile)
         self.assertNotIn("just unit::daemon::kvs-build-native", justfile)
         self.assertNotIn("just unit::board::", justfile)
-        self.assertIn("URIs: https://archive.raspberrypi.com/debian/", justfile)
-        self.assertIn("apt-cache policy libcamera-dev libcamera0.7", justfile)
-        self.assertIn('grep -F "libcamera.so.0.7"', justfile)
-        self.assertIn('grep -F "libcamera-base.so.0.7"', justfile)
+        self.assertNotIn("archive.raspberrypi.com", justfile)
+        self.assertNotIn("libcamera.so.0.6", justfile)
+        self.assertNotIn("libcamera-base.so.0.6", justfile)
+        self.assertIn("libcamera.so.0.7", justfile)
+        self.assertIn("libcamera-base.so.0.7", justfile)
+        self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", justfile)
+        self.assertIn("statically linked|static-pie linked", justfile)
         self.assertIn("outputs: {", justfile)
-        self.assertIn("txing-unit-daemon", justfile)
-        self.assertIn("txing-unit-kvs-master", justfile)
-        self.assertIn("txing-unit-hardware-worker", justfile)
+        # Binary names are derived from the device the recipe is invoked with.
+        self.assertIn("txing-$device-daemon", justfile)
+        self.assertIn("txing-$device-kvs-master", justfile)
+        self.assertIn("txing-$device-hardware-worker", justfile)
+        self.assertNotIn("txing-unit-daemon", justfile)
+        self.assertNotIn("txing-cyberbrick-daemon", justfile)
         self.assertNotIn("gh release create", justfile)
         self.assertNotIn(removed_cli_flag, justfile)
         self.assertNotIn(removed_publish_recipe, justfile)
@@ -621,9 +811,14 @@ class VersionEnvironmentTests(unittest.TestCase):
     def test_unit_daemon_root_owned_installer_removed(self) -> None:
         removed_installer = "install-" + "systemd.sh"
         removed_mise_env = "MISE_" + "PRERELEASES"
-        daemon_dir = REPO_ROOT / "devices" / "unit" / "daemon"
-        board_docs = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
-            encoding="utf-8"
+        daemon_dir = REPO_ROOT / "devices" / "common" / "board" / "daemon"
+        # The board documentation split into the current Alpine runbook and the
+        # frozen Debian material during the runbook consolidation. These
+        # assertions guard that content survived the split; which file each
+        # piece landed in is covered by the consolidation tests below.
+        board_docs = "\n".join(
+            (REPO_ROOT / "docs" / "components" / name).read_text(encoding="utf-8")
+            for name in ("board.md", "board-debian-frozen.md")
         )
         installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
             encoding="utf-8"
@@ -663,7 +858,11 @@ class VersionEnvironmentTests(unittest.TestCase):
             board_docs,
         )
         self.assertIn(
-            "/root/.local/bin/mise upgrade txing-unit-daemon txing-unit-kvs-master txing-unit-hardware-worker",
+            "/root/.local/bin/mise upgrade txing-unit-daemon txing-unit-hardware-worker",
+            board_docs,
+        )
+        self.assertNotIn(
+            "mise upgrade txing-unit-daemon txing-unit-kvs-master",
             board_docs,
         )
         self.assertIn(
@@ -695,10 +894,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
             encoding="utf-8"
         )
-        board_docs = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
-            encoding="utf-8"
+        # The board documentation split into the current Alpine runbook and the
+        # frozen Debian material during the runbook consolidation. These
+        # assertions guard that content survived the split; which file each
+        # piece landed in is covered by the consolidation tests below.
+        board_docs = "\n".join(
+            (REPO_ROOT / "docs" / "components" / name).read_text(encoding="utf-8")
+            for name in ("board.md", "board-debian-frozen.md")
         )
-
         self.assertIn("root-owned mise release tools", installation_docs)
         self.assertIn("sudo su -", board_docs)
         self.assertIn(
@@ -706,7 +909,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "txing-unit-kvs-master",
             board_docs,
         )
-        self.assertIn("just unit::daemon::role-policy <thing-id>", board_docs)
+        self.assertIn("just unit::board::role-policy <thing-id>", board_docs)
         self.assertIn("dynamic `mcp`", board_docs)
         self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
         self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", artifacts_docs)
@@ -719,12 +922,16 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("TXING_KVS_MASTER_COMMAND", board_docs)
         self.assertIn("daemon.env", installation_docs)
         self.assertIn("daemon.env", artifacts_docs)
-        self.assertIn("Raspberry Pi OS Trixie", board_docs)
+        self.assertIn("static musl binaries that run unchanged", board_docs)
+        self.assertIn("last Debian-built KVS master", board_docs)
+        self.assertIn("reimaged to Alpine", board_docs)
+        self.assertIn("not a dynamic executable", board_docs)
         self.assertIn("libcamera.so.0.7", board_docs)
         self.assertIn("libcamera.so.0.7", artifacts_docs)
-        self.assertIn("libcamera.so.0.2", board_docs)
-        self.assertIn("libcamera.so.0.4", board_docs)
-        self.assertIn("run `ldd` on the installed `latest` binary", artifacts_docs)
+        self.assertNotIn("libcamera.so.0.6", artifacts_docs)
+        self.assertIn("assert-board-musl.sh", artifacts_docs)
+        self.assertIn("last Debian-built KVS master", artifacts_docs)
+        self.assertIn("installed `latest` binaries before rebooting", artifacts_docs)
         self.assertIn("mount /tmp ; mount /var/tmp", board_docs)
         self.assertIn(
             "/root/.local/share/mise/installs/txing-unit-daemon/latest/"
@@ -758,6 +965,738 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("git clone <repo-url>", installation_docs)
         self.assertNotIn("$TXING_HOME", installation_docs)
 
+    def test_release_workflow_containers_receive_every_variable_they_use(self) -> None:
+        # The build steps run a quoted heredoc inside `docker exec`, which only
+        # sees variables forwarded with -e. Under `set -eu` a missing one aborts
+        # the job, and nothing outside CI exercises that path.
+        import re
+
+        for device_type in ("unit", "cyberbrick"):
+            workflow = (
+                REPO_ROOT / ".github" / "workflows" / f"release-{device_type}.yml"
+            ).read_text(encoding="utf-8")
+            blocks = re.findall(
+                r"(docker exec.*?<<'EOF'\n)(.*?)\n\s*EOF\n", workflow, re.S
+            )
+            self.assertTrue(blocks, f"no docker exec heredoc found in {device_type}")
+            for head, body in blocks:
+                forwarded = set(re.findall(r"-e (\w+)=", head))
+                assigned = set(re.findall(r"^\s*(\w+)=", body, re.M))
+                defaulted = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*):-", body))
+                used = set(re.findall(r"\$\{?([A-Z][A-Z0-9_]{2,})\b", body))
+                missing = used - forwarded - assigned - defaulted - {"PWD", "HOME", "PATH"}
+                with self.subTest(device_type=device_type):
+                    self.assertEqual(set(), missing)
+
+    def test_board_card_files_are_base_os_setup_only(self) -> None:
+        # The card is the one place the repository configures a board without an
+        # operator at the console, so what it may contain is a constraint.
+        # These are the files as they land on the FAT partition; nothing is
+        # generated from them.
+        card_dir = REPO_ROOT / "devices" / "common" / "board" / "card"
+        present = {p.name for p in card_dir.iterdir()}
+        self.assertEqual(
+            {"README.md", "wpa_supplicant.conf", "authorized_keys", "interfaces",
+             "opt-out", "unattended.sh"},
+            present,
+        )
+
+        blob = "\n".join(
+            (card_dir / name).read_text(encoding="utf-8")
+            for name in present
+            if (card_dir / name).stat().st_size
+        )
+        for forbidden in (
+            "daemon.env", "AmazonRootCA", "TXING_THING_ID", "aws_access_key",
+            "certificate.pem", "BEGIN OPENSSH PRIVATE KEY",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, blob)
+
+        # The apkovl is used as published; the repository must not carry a copy
+        # to drift from, or instructions to edit inside it.
+        self.assertNotIn("apkovl.tar.gz", present)
+        readme = (card_dir / "README.md").read_text(encoding="utf-8")
+        self.assertIn("alpine-linux-headless-bootstrap", readme)
+        self.assertIn("used unmodified", readme)
+
+        # The failure modes that make a board look dead must stay documented.
+        runbook = (
+            REPO_ROOT / "docs" / "components" / "board.md"
+        ).read_text(encoding="utf-8")
+        for gotcha in ("LF line endings", "authorized_keys", "country="):
+            with self.subTest(gotcha=gotcha):
+                self.assertIn(gotcha, runbook)
+
+        # The privilege exception exists and is bounded at both ends.
+        rules = (
+            REPO_ROOT / "docs" / "constraints" / "repository-rules.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Narrow exception, board initial installation only", rules)
+        self.assertIn("Everything from the mise step", rules)
+
+    def test_board_first_boot_provisioning_stops_at_a_base_os(self) -> None:
+        card_dir = REPO_ROOT / "devices" / "common" / "board" / "card"
+        script = (card_dir / "unattended.sh").read_text(encoding="utf-8")
+        runbook = (
+            REPO_ROOT / "docs" / "components" / "board.md"
+        ).read_text(encoding="utf-8")
+
+        # Base OS setup only. Anything past this belongs in the runbook, over ssh.
+        self.assertIn("apk upgrade", script)
+        self.assertIn("setup-alpine -ef", script)
+        # setup-alpine's disk stage rejects a partition target; setup-disk
+        # called directly accepts one, which is the documented form.
+        # Any question the answer file misses must fail on EOF, not block: a
+        # hang leaves a half-provisioned board with nothing in the log.
+        self.assertIn("</dev/null", script)
+        # The script must never end silently.
+        self.assertIn("trap", script)
+        # Check what the script *does*, not what its comments explain, so the
+        # boundary can stay documented in the file that enforces it.
+        # Comments and operator log messages name the boundary on purpose; the
+        # check is about what the script installs or runs.
+        actions = "\n".join(
+            line
+            for line in script.splitlines()
+            if not line.lstrip().startswith("#") and not line.lstrip().startswith("log ")
+        )
+        # mise is now installed by the card so the board comes up with it on
+        # root's PATH; a read-only root cannot add it later without root-rw.
+        # Everything past it still belongs to the runbook.
+        self.assertIn("mise.run", script)
+        # Installed from inside the new root, so the download stages on the
+        # card rather than the RAM-backed diskless tmpfs, and the bind
+        # mounts are torn down before the final umount.
+        self.assertIn("chroot \"$NEW_ROOT\"", script)
+        self.assertIn("chroot_teardown", script)
+        self.assertIn('export PATH="$HOME/.local/bin:$PATH"', script)
+        for beyond_scope in (
+            "libcamera", "eudev", "kvs-master", "hardware-worker",
+            "daemon.env", ".tar.gz", "txing-unit", "txing-cyberbrick",
+        ):
+            with self.subTest(beyond_scope=beyond_scope):
+                self.assertNotIn(beyond_scope, actions)
+
+        # The overlay is not applied again after the board boots from mmcblk0p2,
+        # so the config is written onto the new root and verified before reboot.
+        # Without this a converted board comes back needing physical recovery.
+        self.assertIn("wpa_supplicant.conf", script)
+        self.assertIn("authorized_keys", script)
+        self.assertIn("runlevels/default", script)
+        verify = script.split("verifying the new root")[1].split("checking the boot")[0]
+        for required in ("wpa_supplicant.conf", "authorized_keys", "networking", "sshd"):
+            with self.subTest(required=required):
+                self.assertIn(required, verify)
+        # Runlevel entries are symlinks into /etc/init.d. -e follows the link and
+        # resolves it against the running system, so it reads a correct link as
+        # missing; the check must be -L plus the init script on the new root.
+        self.assertIn("-L", verify)
+        self.assertIn("/etc/init.d/", verify)
+        # A fresh sys install has neither package, so the links would dangle and
+        # the board would reboot with the right config and nothing running it.
+        self.assertIn('apk --root "$NEW_ROOT"', script)
+        self.assertIn("wpa_supplicant openssh", script)
+
+        # Re-running must not destroy a board that already converted.
+        self.assertIn("refusing to reinstall", script)
+
+        # setup-disk partitions the whole disk itself, which is what the
+        # interactive install does. Pre-partitioning and handing it a partition
+        # is rejected as "not a block device suitable for partitioning".
+        self.assertIn("DISKOPTS=\"-m sys ${DISK}\"", script)
+        self.assertNotIn("sfdisk", script)
+        self.assertNotIn("partx", script)
+        # setup-alpine writes APKREPOSOPTS into /etc/apk/repositories verbatim,
+        # so "none" lands as a literal keyword and every package install fails.
+        self.assertNotIn('APKREPOSOPTS="none"', script)
+        self.assertIn("repositories.txing", script)
+        # setup-disk erases the whole disk, so the card files must be stashed in
+        # the tmpfs root before the install and re-imported from there; reading
+        # them back off the boot partition afterwards finds nothing.
+        self.assertIn("ERASE_DISKS", script)
+        # Nothing repopulates /dev after setup-disk repartitions, so the
+        # partition nodes can be missing and the probe silently finds no root.
+        self.assertIn("mdev -s", script)
+        self.assertIn("mknod", script)
+        self.assertIn("stashing card files before the disk is erased", script)
+        self.assertIn('install -m 600 "$STASH/wpa_supplicant.conf"', script)
+
+        # A diskless boot has no network repositories to enable, only the apks
+        # directory on the boot media, so they are written rather than
+        # uncommented, and the branch tracks the running release.
+        self.assertIn("/etc/alpine-release", script)
+        self.assertIn("dl-cdn.alpinelinux.org", script)
+        self.assertNotIn("setup-apkrepos", script)
+        # Depending on the network without waiting for it turns a Wi-Fi problem
+        # into a confusing apk failure.
+        self.assertIn("waiting for network", script)
+        # A diskless boot has no CA bundle, so the mirror is unreachable over
+        # TLS until ca-certificates is installed from it. Bootstrap over http,
+        # then move to https once the bundle exists, so neither the running
+        # board nor the sys install is left on plain http.
+        self.assertIn("ca-certificates", script)
+        # A Pi has no RTC and boots months behind. TLS validation checks
+        # certificate dates, so a skewed clock presents as an untrusted
+        # certificate regardless of the CA bundle; step it before any TLS.
+        self.assertIn("ntpd -q", script)
+        # The transient diskless root stays on http, which apk verifies by
+        # signature anyway; the sys install that outlives it gets https, and the
+        # script refuses to reboot into a root that did not.
+        self.assertIn("sys install repositories are not on https", script)
+
+        # The board now boots read-only per the runbook, and stays recoverable
+        # through the root-rw alias rather than by leaving the root writable.
+        self.assertIn("ro,noatime", script)
+        self.assertIn("alias root-rw", script)
+        self.assertIn("alias root-ro", script)
+        # A read-only root cannot refresh a regular resolv.conf, and cannot
+        # write logs without the tmpfs mounts.
+        self.assertIn("/run/resolv.conf", script)
+        # sshd generates host keys on first start; on a read-only root that
+        # write fails and the board pings but refuses connections on port 22.
+        self.assertIn("ssh_host_ed25519_key", script)
+        self.assertIn("ssh-keygen", script)
+        self.assertIn("tmpfs  /var/log", script)
+        self.assertIn('NTPOPTS="-c busybox"', script)
+        self.assertIn('TIMEZONE="Europe/Berlin"', script)
+        # The sys install is a fresh base and does not inherit the
+        # timezone setup-alpine applied to the diskless system.
+        self.assertIn("etc/localtime", script)
+        # swclock restores a stale timestamp it can never update on a
+        # read-only root, and a plausible wrong date defeats the clock gate.
+        self.assertIn("runlevels/boot/swclock", script)
+
+        # Script and runbook describe the same install rather than drifting.
+        self.assertIn("unattended.sh", runbook)
+        self.assertIn("refuses to reboot", runbook)
+        self.assertIn("left writable", runbook)
+        # The image ships with an empty root password, so key-only ssh is a
+        # security control and must be verified rather than assumed.
+        self.assertIn("sshd -T", runbook)
+
+    def test_board_components_build_from_one_shared_implementation(self) -> None:
+        board_dir = REPO_ROOT / "devices" / "common" / "board"
+        # There is exactly one copy of each board component.
+        for component in ("daemon", "kvs_master", "hardware_worker"):
+            self.assertTrue((board_dir / component).is_dir())
+        for device_type in ("unit", "cyberbrick"):
+            device_dir = REPO_ROOT / "devices" / device_type
+            self.assertFalse((device_dir / "board").exists())
+            self.assertFalse((device_dir / "daemon").exists())
+            # Genuinely per-device material stays with the device.
+            self.assertTrue((device_dir / "manifest.toml").is_file())
+            self.assertTrue((device_dir / "aws").is_dir())
+            # The local protocols are device-independent now, so no device owns
+            # a proto package.
+            self.assertFalse((device_dir / "proto").exists())
+
+        # The device type is a build input, not a source axis.
+        for cmakelists in (
+            board_dir / "kvs_master" / "CMakeLists.txt",
+            board_dir / "hardware_worker" / "CMakeLists.txt",
+        ):
+            text = cmakelists.read_text(encoding="utf-8")
+            self.assertIn("TXING_BOARD_DEVICE_TYPE", text)
+            self.assertNotIn("txing-unit-", text)
+            self.assertNotIn("txing-cyberbrick-", text)
+
+        device_go = (
+            board_dir / "daemon" / "internal" / "daemon" / "device.go"
+        ).read_text(encoding="utf-8")
+        self.assertIn("var DeviceType", device_go)
+        for derived in (
+            "AdapterID",
+            "DefaultConfigSubdir",
+            "DefaultKVSMasterCommand",
+            "DefaultHardwareSocketPath",
+        ):
+            self.assertIn(derived, derived_source := device_go)
+        self.assertNotIn('"unit"', derived_source)
+        self.assertNotIn('"cyberbrick"', derived_source)
+
+        # Both local contracts live in one device-independent package.
+        proto_root = board_dir / "proto" / "txing" / "board"
+        hardware = (proto_root / "hardware" / "v1" / "hardware.proto").read_text(
+            encoding="utf-8"
+        )
+        board_video = (
+            proto_root / "board_video" / "v1" / "board_video.proto"
+        ).read_text(encoding="utf-8")
+        self.assertIn("package txing.board.hardware.v1;", hardware)
+        self.assertIn("service BoardHardware {", hardware)
+        self.assertIn("package txing.board.board_video.v1;", board_video)
+        self.assertIn("service BoardVideoBridge {", board_video)
+        for text in (hardware, board_video):
+            self.assertNotIn("txing.unit", text)
+            self.assertNotIn("txing.cyberbrick", text)
+
+        # The mac daemon is the other speaker of the bridge contract and follows
+        # the same rule as the board: bindings generated from the shared proto
+        # with pinned plugins, never checked in, so the two ends cannot drift.
+        mac_justfile = (REPO_ROOT / "devices" / "mac" / "justfile").read_text(
+            encoding="utf-8"
+        )
+        board_justfile_text = (board_dir / "justfile").read_text(encoding="utf-8")
+        self.assertIn("proto-gen:", mac_justfile)
+        self.assertIn("devices/common/board/proto", mac_justfile)
+        self.assertIn("txing/board/board_video/v1/board_video.proto", mac_justfile)
+        for pin in ('protoc_gen_go_version := "', 'protoc_gen_go_grpc_version := "'):
+            mac_pin = mac_justfile.split(pin)[1].split('"')[0]
+            board_pin = board_justfile_text.split(pin)[1].split('"')[0]
+            self.assertEqual(board_pin, mac_pin)
+        mac_ignore = (REPO_ROOT / "devices" / "mac" / ".gitignore").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("daemon/internal/proto/", mac_ignore)
+        tracked = tracked_files_list()
+        if tracked is not None:
+            self.assertEqual(
+                [],
+                [f for f in tracked if "devices/mac/daemon/internal/proto/" in f],
+            )
+
+    def test_board_kvs_master_selects_the_signaling_trust_anchor_at_runtime(
+        self,
+    ) -> None:
+        # The KVS SDK's TLS layer verifies against a single trust anchor and
+        # cannot consume a full OS CA bundle, so a board must be able to point
+        # it at a provisioned single-anchor file without a rebuild.
+        kvs_session_real = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "kvs_master"
+            / "src"
+            / "kvs_session_real.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"TXING_KVS_SYSTEM_CA_CERT_PATH"', kvs_session_real)
+        self.assertIn("std::getenv(kSystemCaCertPathEnvVar)", kvs_session_real)
+
+    def test_board_release_versions_are_injected_at_build_time(self) -> None:
+        # Each device type keeps an independent release stream, and with one
+        # shared implementation there is no source literal left to mirror.
+        board_dir = REPO_ROOT / "devices" / "common" / "board"
+        kvs_version = (
+            board_dir / "kvs_master" / "include" / "kvs_master" / "version.hpp"
+        ).read_text(encoding="utf-8")
+        worker_version = (
+            board_dir
+            / "hardware_worker"
+            / "include"
+            / "hardware_worker"
+            / "version.hpp"
+        ).read_text(encoding="utf-8")
+        daemon_version = (
+            board_dir / "daemon" / "internal" / "daemon" / "version.go"
+        ).read_text(encoding="utf-8")
+        self.assertIn("#ifndef TXING_BOARD_KVS_MASTER_VERSION", kvs_version)
+        self.assertIn("#ifndef TXING_BOARD_HARDWARE_WORKER_VERSION", worker_version)
+        self.assertIn("var DaemonVersion", daemon_version)
+        self.assertNotIn("packageVersion", daemon_version)
+
+        for device_type in ("unit", "cyberbrick"):
+            with self.subTest(device_type=device_type):
+                self.assertTrue(
+                    (REPO_ROOT / "release" / "versions" / device_type).is_file()
+                )
+                workflow = (
+                    REPO_ROOT
+                    / ".github"
+                    / "workflows"
+                    / f"release-{device_type}.yml"
+                ).read_text(encoding="utf-8")
+                self.assertIn(
+                    '-DTXING_BOARD_KVS_MASTER_VERSION="$VERSION"', workflow
+                )
+                self.assertIn(
+                    '-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', workflow
+                )
+                self.assertIn(f"-DTXING_BOARD_DEVICE_TYPE={device_type}", workflow)
+                self.assertIn(
+                    "github.com/mparkachov/txing/devices/common/board/daemon"
+                    f"/internal/daemon.DeviceType={device_type}",
+                    workflow,
+                )
+
+    def test_board_runbook_describes_alpine_openrc_for_both_device_types(self) -> None:
+        cyberbrick_board_docs = (
+            REPO_ROOT / "docs" / "components" / "board.md"
+        ).read_text(encoding="utf-8")
+        installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(
+            encoding="utf-8"
+        )
+        artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
+            encoding="utf-8"
+        )
+        docs_index = (REPO_ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+        kvs_session_real = (
+            REPO_ROOT / "devices" / "common" / "board"
+            / "kvs_master"
+            / "src"
+            / "kvs_session_real.cpp"
+        ).read_text(encoding="utf-8")
+        # The signaling CA path must stay runtime-selectable so boards can point
+        # the SDK's TLS layer at a single-anchor file instead of the OS bundle.
+        self.assertIn('"TXING_KVS_SYSTEM_CA_CERT_PATH"', kvs_session_real)
+        self.assertIn("std::getenv(kSystemCaCertPathEnvVar)", kvs_session_real)
+        normalized_cyberbrick_board_docs = " ".join(cyberbrick_board_docs.split())
+        normalized_installation_docs = " ".join(installation_docs.split())
+        normalized_artifacts_docs = " ".join(artifacts_docs.split())
+
+        self.assertIn("setup-alpine", cyberbrick_board_docs)
+        self.assertIn("setup-disk -m sys /dev/mmcblk0p2", cyberbrick_board_docs)
+        self.assertIn("busybox ntpd", cyberbrick_board_docs)
+        self.assertIn(
+            'txing-${TXING_DEVICE}-daemon = "github:mparkachov/txing"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'txing-${TXING_DEVICE}-kvs-master = "github:mparkachov/txing"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'txing-${TXING_DEVICE}-hardware-worker = "github:mparkachov/txing"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn('version_prefix = "${TXING_DEVICE}-v"', cyberbrick_board_docs)
+        self.assertIn(
+            'asset_pattern = "txing-${TXING_DEVICE}-daemon-linux-aarch64.tar.gz"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'asset_pattern = "txing-${TXING_DEVICE}-kvs-master-linux-aarch64.tar.gz"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            'asset_pattern = "txing-${TXING_DEVICE}-hardware-worker-linux-aarch64.tar.gz"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise", cyberbrick_board_docs
+        )
+        self.assertIn("/root/.config/txing/cyberbrick-daemon", cyberbrick_board_docs)
+        self.assertIn(
+            'just ${TXING_DEVICE}::board::role-policy "$THING_ID"',
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "cat >/etc/init.d/txing-${TXING_DEVICE}-hardware-worker",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "cat >/etc/init.d/txing-${TXING_DEVICE}-daemon", cyberbrick_board_docs
+        )
+        self.assertIn(
+            "cat >/etc/init.d/txing-${TXING_DEVICE}-kvs-master", cyberbrick_board_docs
+        )
+        self.assertIn("supervisor=supervise-daemon", cyberbrick_board_docs)
+        self.assertIn(
+            "rc-update add txing-${TXING_DEVICE}-hardware-worker default",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "rc-update add txing-${TXING_DEVICE}-daemon default", cyberbrick_board_docs
+        )
+        self.assertIn(
+            "rc-update add txing-${TXING_DEVICE}-kvs-master default",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "command=/root/.local/share/mise/installs/"
+            "txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
+            "txing-${TXING_DEVICE}-daemon/board-video-bridge.sock",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "/run/txing-<device>-hardware-worker/<device>-hardware.sock",
+            cyberbrick_board_docs,
+        )
+        # A Pi has no RTC and boots far in the past; TLS fails until the
+        # clock is stepped, so the daemon gates on it.
+        self.assertIn("clock is not confirmed synchronized", cyberbrick_board_docs)
+        self.assertIn(
+            "dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4",
+            cyberbrick_board_docs,
+        )
+        # Camera capture needs more than libcamera linkage: the rpi pipeline
+        # handler and IPA, a udev daemon for libcamera's enumerator, firmware
+        # autodetection, and the codec/ISP modules. Every one of these missing
+        # surfaces as the same "configured camera index is not available".
+        self.assertIn(
+            "libcamera-raspberrypi eudev v4l-utils", cyberbrick_board_docs
+        )
+        self.assertIn(
+            "for s in udev udev-trigger udev-settle; do rc-update add $s sysinit; done",
+            cyberbrick_board_docs,
+        )
+        # udev-trigger is what populates the database libcamera reads. Without
+        # it udevd runs, /run/udev exists and rc-service reports started, while
+        # the camera enumerates zero — so `ls -d /run/udev` must not be offered
+        # as the check anywhere in the runbook.
+        self.assertIn("rc-service udev-trigger start", cyberbrick_board_docs)
+        self.assertIn(
+            "udevadm info --export-db | grep -c '^P:'", cyberbrick_board_docs
+        )
+        self.assertNotIn(
+            "\nls -d /run/udev\n", cyberbrick_board_docs
+        )
+        self.assertIn("camera_auto_detect=1", cyberbrick_board_docs)
+        self.assertIn(
+            "for m in bcm2835-codec bcm2835-isp; do", cyberbrick_board_docs
+        )
+        self.assertIn("ipa_rpi_vc4.so", cyberbrick_board_docs)
+        self.assertIn("/usr/share/libcamera/ipa/rpi/vc4/", cyberbrick_board_docs)
+        self.assertIn("--camera-probe", cyberbrick_board_docs)
+        self.assertIn("TXING_KVS_READY", cyberbrick_board_docs)
+        self.assertIn(
+            "configured camera index is not available", cyberbrick_board_docs
+        )
+        self.assertIn("ld-musl-aarch64.so.1", cyberbrick_board_docs)
+        self.assertIn("libcamera.so.0.7", cyberbrick_board_docs)
+        self.assertIn("libcamera-base.so.0.7", cyberbrick_board_docs)
+        # Both mise time settings must be off on a board. minimum_release_age
+        # left at its 24h default resolves `latest` to nothing and warns; a
+        # non-zero fetch_remote_versions_cache is worse because it is silent —
+        # `mise upgrade` reports everything up to date and stays on the old
+        # release. Boards install first-party releases minutes after publish,
+        # so both defaults are tuned against exactly this case. Matches
+        # rig/install-mise-tools.sh, guarded below.
+        self.assertIn('minimum_release_age = "0s"', cyberbrick_board_docs)
+        self.assertIn('fetch_remote_versions_cache = "0s"', cyberbrick_board_docs)
+        self.assertIn(
+            "/root/.config/txing/${TXING_DEVICE}-daemon/SFSRootCAG2.pem",
+            cyberbrick_board_docs,
+        )
+        self.assertIn("TXING_KVS_SYSTEM_CA_CERT_PATH", cyberbrick_board_docs)
+        self.assertIn(
+            "Starfield Services Root Certificate Authority - G2",
+            cyberbrick_board_docs,
+        )
+        self.assertNotIn("/etc/txing/kvs-ca.pem", cyberbrick_board_docs)
+        self.assertIn('RESOLV_CONF="/run/resolv.conf"', cyberbrick_board_docs)
+        self.assertIn("alias root-rw=", cyberbrick_board_docs)
+        self.assertIn("alias root-ro=", cyberbrick_board_docs)
+        self.assertIn("mount /tmp ; mount /var/tmp", cyberbrick_board_docs)
+        self.assertIn("tmpfs  /var/log", cyberbrick_board_docs)
+        # All three binaries move in one command. A partial upgrade leaves the
+        # gRPC contracts mismatched, which takes video and motion control down
+        # with no local error, so the guard is on the single invocation rather
+        # than on the three names appearing somewhere nearby.
+        self.assertIn(
+            "/root/.local/bin/mise upgrade \\\n"
+            "    txing-${TXING_DEVICE}-daemon \\\n"
+            "    txing-${TXING_DEVICE}-kvs-master \\\n"
+            "    txing-${TXING_DEVICE}-hardware-worker\n",
+            cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "`apk upgrade` and `mise upgrade` happen together in the same "
+            "maintenance window",
+            normalized_cyberbrick_board_docs,
+        )
+        self.assertIn(
+            "publish a matching board release built on that Alpine version",
+            normalized_cyberbrick_board_docs,
+        )
+        self.assertNotIn("systemctl", cyberbrick_board_docs)
+        self.assertNotIn("apt-get", cyberbrick_board_docs)
+        # The unified runbook lists both device types in its identifier table,
+        # so unit binaries appear by design. What must not come back is the
+        # per-device duplication: no second board runbook, and no device name
+        # outside that table in the body.
+        self.assertFalse(
+            (REPO_ROOT / "docs" / "components" / "cyberbrick-board.md").exists()
+        )
+        table, _, body = cyberbrick_board_docs.partition("## Local Protocol Contracts")
+        self.assertIn("txing-unit-daemon", table)
+        self.assertIn("txing-cyberbrick-daemon", table)
+        for stale in ("just cyberbrick::daemon::", "just unit::daemon::"):
+            self.assertNotIn(stale, cyberbrick_board_docs)
+        self.assertNotIn("libcamera.so.0.6", cyberbrick_board_docs)
+
+        self.assertIn("components/board.md", installation_docs)
+        self.assertIn("rc-update add <service> default", installation_docs)
+        self.assertIn("setup-disk -m sys", installation_docs)
+        self.assertIn(
+            "installed from `cyberbrick-v*` GitHub Release assets through "
+            "root-owned `mise`, supervised by OpenRC on a read-only root "
+            "filesystem",
+            normalized_installation_docs,
+        )
+
+        self.assertIn("components/board.md", artifacts_docs)
+        self.assertIn(
+            "/root/.config/txing/cyberbrick-daemon/daemon.env", artifacts_docs
+        )
+        self.assertIn(
+            "/root/.config/mise/conf.d/txing-cyberbrick-daemon.toml",
+            artifacts_docs,
+        )
+        self.assertIn(
+            "/root/.local/share/mise/installs/"
+            "txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon",
+            artifacts_docs,
+        )
+        self.assertIn("/etc/init.d/txing-cyberbrick-daemon", artifacts_docs)
+        self.assertIn("/etc/init.d/txing-cyberbrick-kvs-master", artifacts_docs)
+        self.assertIn(
+            "/etc/init.d/txing-cyberbrick-hardware-worker", artifacts_docs
+        )
+        self.assertIn("/lib/ld-musl-aarch64.so.1", artifacts_docs)
+        self.assertIn(
+            "`apk upgrade` and `mise upgrade` happen together",
+            normalized_artifacts_docs,
+        )
+        self.assertIn(
+            "an Alpine release bump requires a matching cyberbrick release "
+            "built on that Alpine version first",
+            normalized_artifacts_docs,
+        )
+
+        self.assertIn("components/board.md", docs_index)
+        self.assertIn(
+            "`cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`",
+            docs_index,
+        )
+
+    def test_board_runbook_enables_hardware_before_starting_services(self) -> None:
+        """The PWM overlay and camera are configured before the services start.
+
+        Both need a reboot to take effect and both are probed at every service
+        start. Configured afterwards, the first start of the hardware worker
+        fails on a missing pwmchip0 and the KVS master on zero enumerated
+        cameras — neither a real fault, but indistinguishable from one in the
+        logs, which is exactly where a bring-up gets read past.
+        """
+        runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
+            encoding="utf-8"
+        )
+
+        pwm = runbook.index("### 5. Enable PWM Overlay And Camera")
+        services = runbook.index("### 6. Install Runtime And OpenRC Services")
+        read_only = runbook.index("### 7. Configure Read-Only Root")
+        self.assertLess(pwm, services)
+        self.assertLess(services, read_only)
+
+        # The overlay step ends by confirming the hardware it just enabled,
+        # so the next step starts against a board that already has it.
+        self.assertIn("ls -d /sys/class/pwm/pwmchip0", runbook[pwm:services])
+        # And the services step treats a missing chip as a fault rather than
+        # as a step still to come.
+        self.assertIn(
+            "`PWM chip path does not exist` is a **failure** here",
+            " ".join(runbook[services:read_only].split()),
+        )
+
+    def test_board_runbook_shell_blocks_are_copy_pasteable(self) -> None:
+        """Every `sh` block in the board runbook must run as pasted.
+
+        The runbook is followed by hand against live hardware, so a block that
+        carries a `<placeholder>` cannot be pasted and a block with unbalanced
+        quoting or an unterminated heredoc fails halfway through, part-applied.
+        The device type is the only thing that varies and it travels in
+        TXING_DEVICE, which the shell expands.
+        """
+        runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
+            encoding="utf-8"
+        )
+
+        blocks: list[tuple[int, str]] = []
+        language: str | None = None
+        start_line = 0
+        current: list[str] = []
+        for number, line in enumerate(runbook.splitlines(), start=1):
+            if line.startswith("```"):
+                if language is None:
+                    language = line[3:].strip()
+                    start_line = number
+                    current = []
+                else:
+                    if language == "sh":
+                        blocks.append((start_line, "\n".join(current) + "\n"))
+                    language = None
+                continue
+            if language is not None:
+                current.append(line)
+
+        self.assertIsNone(language, "unterminated code fence in board.md")
+        self.assertGreater(len(blocks), 20, "board runbook shell blocks not found")
+
+        placeholder = re.compile(r"<[a-z][a-z0-9-]*>")
+        for start_line, block in blocks:
+            with self.subTest(line=start_line):
+                found = placeholder.findall(block)
+                self.assertEqual(
+                    found,
+                    [],
+                    f"board.md:{start_line} shell block has placeholders {found}; "
+                    "use ${TXING_DEVICE} so the block can be pasted as written",
+                )
+                parsed = subprocess.run(
+                    ["sh", "-n"],
+                    input=block,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    parsed.returncode,
+                    0,
+                    f"board.md:{start_line} shell block does not parse: "
+                    f"{parsed.stderr.strip()}",
+                )
+
+    def test_board_runbook_init_scripts_defer_openrc_expansion(self) -> None:
+        """The init-script heredocs expand the device type and nothing else.
+
+        They are unquoted so ${TXING_DEVICE} resolves as the file is written.
+        That makes every other `$` the operator's shell would eat, so the
+        runtime variables OpenRC supplies must stay escaped: an unescaped
+        `$command` writes `test -x ""` into the init script, which fails the
+        service at start with no indication why.
+        """
+        runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
+            encoding="utf-8"
+        )
+
+        for service in ("hardware-worker", "daemon", "kvs-master"):
+            with self.subTest(service=service):
+                self.assertIn(
+                    f"cat >/etc/init.d/txing-${{TXING_DEVICE}}-{service} <<EOF",
+                    runbook,
+                )
+                self.assertNotIn(
+                    f"cat >/etc/init.d/txing-${{TXING_DEVICE}}-{service} <<'EOF'",
+                    runbook,
+                )
+
+        for deferred in (
+            'test -x "\\$command"',
+            'test -r "\\$daemon_env"',
+            'test -r "\\$ca_cert"',
+            '. "\\$daemon_env"',
+            'export TXING_KVS_SYSTEM_CA_CERT_PATH="\\$ca_cert"',
+            '[ "\\$(date -u +%Y)" -lt 2025 ]',
+            "ntp_waited=\\$((ntp_waited + 2))",
+        ):
+            with self.subTest(deferred=deferred):
+                self.assertIn(deferred, runbook)
+
+        # The blocks that write files refuse to run with the device type unset,
+        # rather than writing paths like txing--daemon.
+        self.assertEqual(
+            runbook.count(
+                ': "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"'
+            ),
+            2,
+        )
+
     def test_rig_mise_config_uses_github_assets_without_greengrass(self) -> None:
         installer = (REPO_ROOT / "rig" / "install-mise-tools.sh").read_text(
             encoding="utf-8"
@@ -770,6 +1709,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn('txing-rig-deploy = "github:$owner/$repo"', installer)
         self.assertIn('[settings]', installer)
         self.assertIn('fetch_remote_versions_cache = "0s"', installer)
+        self.assertIn('minimum_release_age = "0s"', installer)
         self.assertIn('version_prefix = "rig-v"', installer)
         self.assertIn('asset_pattern = "txing-sparkplug-manager-linux-aarch64.tar.gz"', installer)
         self.assertIn('asset_pattern = "txing-ble-connectivity-linux-aarch64.tar.gz"', installer)

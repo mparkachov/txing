@@ -1,0 +1,9 @@
+# Copy to the root of the FAT boot partition, then replace this file's contents
+# with your operator public key, one key per line.
+#
+# Read by the headless bootstrap apkovl. Without it the bootstrap leaves root
+# reachable over ssh with no password, which is not acceptable for a board on a
+# deployment network. Supply the key so key authentication replaces it.
+#
+# Public key only. Never put a private key on a card.
+ssh-ed25519 AAAA_REPLACE_WITH_YOUR_OPERATOR_PUBLIC_KEY operator@example

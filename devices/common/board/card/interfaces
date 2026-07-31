@@ -1,0 +1,11 @@
+# Copy to the root of the FAT boot partition. Optional: the headless bootstrap
+# defaults to DHCP on whatever it finds, and this pins the board to wlan0 only.
+#
+# Boards have no wired adapter in service. Leaving eth0 out keeps a board from
+# coming up on a bench cable and then being unreachable once deployed.
+
+auto lo
+iface lo inet loopback
+
+auto wlan0
+iface wlan0 inet dhcp

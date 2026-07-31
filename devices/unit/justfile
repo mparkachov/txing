@@ -5,9 +5,9 @@ unit_dir := source_directory()
 project_root := canonicalize(unit_dir + "/../..")
 tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
-
-mod daemon 'daemon/justfile'
 mod mcu 'mcu/justfile'
+
+mod board 'board.just'
 
 @default:
     @just --list

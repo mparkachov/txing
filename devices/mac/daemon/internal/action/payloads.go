@@ -1,5 +1,5 @@
 // Payload builders copied and trimmed from
-// devices/unit/daemon/internal/daemon/payloads.go. AdapterID and server
+// devices/common/board/daemon/internal/daemon/payloads.go. AdapterID and server
 // name are mac-specific; everything else must keep the unit wire shape.
 package action
 

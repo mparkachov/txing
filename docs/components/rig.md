@@ -263,6 +263,7 @@ install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
 cat >/root/.config/mise/conf.d/txing-rig.toml <<'EOF'
 [settings]
 fetch_remote_versions_cache = "0s"
+minimum_release_age = "0s"
 
 [tool_alias]
 txing-sparkplug-manager = "github:mparkachov/txing"

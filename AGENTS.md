@@ -19,7 +19,9 @@ Keep it short: durable technical details live in focused docs and subproject
 - `devices/unit/mcu/`: stock Zephyr C firmware for the current `unit` device type
   MCU.
 - `rig/`: Raspberry Pi 5 rig runtime for AWS IoT MQTT and BLE communication.
-- `devices/unit/board/`: native board-side KVS worker sources for unit video.
+- `devices/common/board/`: the single board-side implementation (Go daemon, KVS
+  worker, hardware worker) shared by every board device type; the device type is
+  a build input.
 - `devices/cloud-mcu/`: AWS-hosted cloud rig and cloud MCU runtime support.
 - `shared/aws/`: shared AWS CLI helpers, CloudFormation, registry utilities,
   and admin Lambda packaging.
@@ -38,6 +40,8 @@ unless a shared contract or consistency issue requires coordinated updates.
   `docs/agent-guidance/editing-boundaries.md`
 - Repository-wide development, safety, deployment, and tooling constraints:
   `docs/constraints/repository-rules.md`
+- Board OS baseline (Alpine only, Debian frozen, no Debian build paths):
+  `docs/constraints/board-os-alpine-only.md`
 - Unit device contracts, ownership, board video, power terminology, and runtime
   reliability: `docs/contracts/unit-device-contracts.md`
 - MCU shared stack invariant and firmware reference: `docs/components/mcu.md`

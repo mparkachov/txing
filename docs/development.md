@@ -57,13 +57,13 @@ artifacts:
   is uploaded to AWS Lambda from GitHub release assets; see
   [artifacts.md](./artifacts.md).
 - Board and rig binary updates are manual writable-root maintenance actions. The
-  installed systemd service starts offline from root-owned mise shims and does
+  installed init service starts offline from root-owned mise installs and does
   not call GitHub during normal service restart.
 - `latest` is component scoped: rig hosts use `rig-v*`, board hosts use
-  `unit-v*`, and Lambda publishing uses `lambda-v*`. Existing host mise configs
-  are forward-only manual state; replace old configs that do not set
-  `version_prefix = "rig-v"` or `version_prefix = "unit-v"` before relying on
-  `latest`.
+  `unit-v*` or `cyberbrick-v*` according to device type, and Lambda publishing
+  uses `lambda-v*`. Existing host mise configs are forward-only manual state;
+  replace old configs that do not set the matching `version_prefix` before
+  relying on `latest`.
 - The Lambda component version covers Go runtime Lambda artifacts only. Release
   builds inject that semver into the Go Lambda binaries, which emit a structured
   cold-start log with `version=<release-version>`. Python admin Lambdas are
@@ -106,7 +106,7 @@ just rig::build
 just rig::check <config-dir>
 just rig::start
 just rig::stop
-just unit::daemon::run
+just common::board::run unit
 just office::dev
 just office::write-env
 just aws::deploy
@@ -188,14 +188,17 @@ release artifacts with `just release::publish lambda`.
 Board:
 
 ```bash
-just unit::daemon::run
-just unit::daemon::test
-just unit::daemon::kvs-build-native
-just unit::daemon::kvs-test-native
-just unit::daemon::kvs-build-trixie
-just unit::daemon::hardware-build-native
-just unit::daemon::hardware-test-native
-just unit::daemon::hardware-build-trixie
+just common::board::run unit
+just common::board::test unit
+just common::board::kvs-build-native unit
+just common::board::kvs-test-native unit
+just common::board::kvs-build-alpine unit
+just common::board::hardware-build-native unit
+just common::board::hardware-test-native unit
+just common::board::hardware-build-alpine unit
+just common::board::daemon-build-alpine unit
+just common::board::docker-build unit
+just common::board::docker-smoke unit
 ```
 
 The Go unit daemon loads its default config from
@@ -204,7 +207,7 @@ and expects certificate files in the same directory unless explicit certificate
 path overrides are supplied. Provision that directory with
 `just aws::cert <thing-id>` only when AWS resource changes are
 intended; the recipe renders systemd-compatible `daemon.env` content from
-`devices/unit/daemon/daemon.env.template` and refuses to overwrite existing
+`devices/common/board/daemon/daemon.env.template` and refuses to overwrite existing
 daemon env or certificate material.
 
 The deployed board runtime, MCP/video transport contract, and board install

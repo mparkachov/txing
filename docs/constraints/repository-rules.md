@@ -25,8 +25,8 @@ logic, shell scripts, or firmware programming workflows.
 
 - `just` recipe arguments in this repository are positional. Do not invoke
   recipes with `name=value` syntax such as
-  `just unit::daemon::cert thing_id=unit-bl95f2`; pass values positionally, for
-  example `just unit::daemon::cert unit-bl95f2`.
+  `just unit::board::role-policy thing_id=unit-bl95f2`; pass values
+  positionally, for example `just unit::board::role-policy unit-bl95f2`.
 - Repository shell code must be strictly POSIX `sh` compatible. Use
   `#!/bin/sh`, `set -eu`, and `.` for sourcing.
 - Do not use Bash/Zsh-only features such as arrays, `[[ ... ]]`, `=~`,
@@ -62,6 +62,15 @@ logic, shell scripts, or firmware programming workflows.
 - Do not use `sudo` inside repository code intended to run on deployed hosts.
 - When privileged host configuration is required, provide explicit manual steps
   for the user to run in chat or docs.
+- Narrow exception, board initial installation only: the repository may carry
+  board card files that configure a board on its first boot, and those files may
+  assume root, because a freshly imaged board has no other way to be configured
+  and no state to lose. The exception is bounded on both ends. It covers base OS
+  setup only — Wi-Fi, `wlan0` networking, operator ssh access for `root`, apk
+  repositories, and package upgrade — and it applies only to a card an operator
+  writes deliberately. Everything from the mise step onward, and every binary
+  update on a board already in service, stays a manual operator action. Card
+  files carry no AWS credentials, no daemon config, and no release material.
 
 ## Release, deployment, and firmware
 
@@ -76,7 +85,10 @@ logic, shell scripts, or firmware programming workflows.
   immutable GitHub artifacts, but does not bump versions, commit, push back to a
   branch, publish Lambda code to AWS, or publish host binaries.
 - Do not turn manual board, rig, AWS, or release operator steps into automatic
-  scripts unless the user explicitly asks for that exact automation.
+  scripts unless the user explicitly asks for that exact automation. Board
+  initial installation is the one place this was asked for; see the narrow
+  exception under Host runtime and privilege assumptions, which does not extend
+  to updating a board already in service.
 - Flashing/programming firmware onto hardware must only be performed manually by
   the user. Agents may prepare artifacts and commands, but must not run flashing
   steps automatically.

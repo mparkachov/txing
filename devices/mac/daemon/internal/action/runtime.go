@@ -1,6 +1,6 @@
 // Action-layer runtime: the mac daemon's board-style AWS IoT session.
 // Publication shapes and ordering follow the unit daemon
-// (devices/unit/daemon/internal/daemon/runtime.go RunConnectedRuntime),
+// (devices/common/board/daemon/internal/daemon/runtime.go RunConnectedRuntime),
 // trimmed to no hardware worker, no actuator MCP tools, and no
 // CloudWatch logging. The runtime is started when the watch layer
 // enters REDCON 2 or 1 and stopped (with offline publications) when it

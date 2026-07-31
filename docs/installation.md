@@ -100,7 +100,12 @@ Cloud MCU registration and runtime behavior are documented in
 The board is the device-side Raspberry Pi. Production boards run the root-owned
 Go `txing-unit-daemon`, native `txing-unit-kvs-master`, and native
 `txing-unit-hardware-worker` installed from GitHub Release assets through
-`mise`.
+`mise`. Release binaries are built in the pinned Alpine musl container under
+the shared board contract: the daemon and hardware worker are fully static and
+run on both Raspberry Pi OS (Debian) and Alpine boards, while the KVS master
+is musl-dynamic against Alpine libcamera and runs on Alpine boards only —
+existing Debian boards stay pinned to the last Debian-built KVS master until
+reimaged to Alpine.
 
 Canonical board installation, runtime config, root-owned service setup,
 read-only-root layout, manual maintenance, and validation instructions live in
@@ -124,6 +129,42 @@ The short production flow is:
 7. Configure the PWM overlay and read-only-root tmpfs layout.
 8. Reboot and verify all three board services, KVS readiness, hardware-worker
    readiness, and REDCON convergence.
+
+## Cyberbrick Board Host
+
+The cyberbrick board is the device-side Raspberry Pi Zero 2 W running Alpine
+Linux. Production cyberbrick boards run the root-owned Go
+`txing-cyberbrick-daemon`, native `txing-cyberbrick-kvs-master`, and native
+`txing-cyberbrick-hardware-worker` installed from `cyberbrick-v*` GitHub
+Release assets through root-owned `mise`, supervised by OpenRC on a read-only
+root filesystem. The daemon and hardware worker are fully static musl
+binaries; the KVS master is dynamically linked against musl and Alpine
+libcamera, so the installed Alpine `v3.24` packages and the release stream
+move together for the camera.
+
+Canonical cyberbrick board installation, Alpine sys install, OpenRC service
+setup, read-only-root layout, manual maintenance, and validation instructions
+live in
+[components/board.md](./components/board.md).
+
+The short production flow is:
+
+1. Write the Alpine `v3.24` aarch64 Raspberry Pi image, run `setup-alpine`,
+   and convert the card to a persistent install with `setup-disk -m sys`.
+2. Install the runtime apk packages and root-owned `mise`.
+3. Generate the daemon environment/certificate bundle on the operator machine
+   with
+   `just aws::cert <thing-id>`.
+4. Copy and unpack `<thing-id>-daemon-config.tgz` under
+   `/root/.config/txing/cyberbrick-daemon`, including `daemon.env` and
+   certificate files.
+5. Install the root-owned mise release tools from the `cyberbrick-v*` stream
+   and create the `txing-cyberbrick-hardware-worker`,
+   `txing-cyberbrick-daemon`, and `txing-cyberbrick-kvs-master` OpenRC
+   services, enabled with `rc-update add <service> default`.
+6. Configure the PWM overlay and the read-only-root fstab/tmpfs layout.
+7. Reboot and verify all three OpenRC services, KVS readiness,
+   hardware-worker readiness, and REDCON convergence.
 
 ## Web
 

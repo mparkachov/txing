@@ -1,3 +1,25 @@
-*
-!.gitignore
-!README.md
+# Local logs
+*.log
+
+# OS files
+.DS_Store
+
+# Legacy generated AWS KVS WebRTC SDK outputs (see README.md)
+aws-kvs-webrtc-sdk-build/
+aws-kvs-webrtc-sdk-install/
+aws-kvs-webrtc-sdk-system-deps/
+
+# Native worker build artifacts. The shared recipes suffix these with the
+# device type (build-unit, build-tests-cyberbrick, build-macos-unit), so the
+# globs matter: without them a `git add -A` after a build commits object files.
+kvs_master/build/
+kvs_master/build-*/
+hardware_worker/build/
+hardware_worker/build-*/
+
+# Alpine container build outputs, per-device binaries and metadata, and the
+# cached static gRPC toolchain.
+target/
+
+# Generated Go proto bindings, produced at build time rather than checked in
+daemon/internal/proto/

@@ -1,5 +1,5 @@
 // IoT role-alias credential exchange copied from
-// devices/unit/daemon/internal/daemon/runtime.go. Pure stdlib: the mac
+// devices/common/board/daemon/internal/daemon/runtime.go. Pure stdlib: the mac
 // daemon does not use the AWS SDK. The daemon is the credential
 // authority for the KVS worker over the BoardVideoBridge.
 package action

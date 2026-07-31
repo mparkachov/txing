@@ -24,7 +24,7 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_lists_only_loadable_device_types(self) -> None:
         self.assertEqual(
             list_loadable_device_types(repo_root=REPO_ROOT),
-            ["cloud-mcu", "mac", "power", "power-si", "unit", "weather"],
+            ["cloud-mcu", "cyberbrick", "mac", "power", "power-si", "unit", "weather"],
         )
 
     def test_loads_unit_manifest(self) -> None:
@@ -55,6 +55,41 @@ class DeviceCatalogTests(unittest.TestCase):
             REPO_ROOT / "devices" / "unit" / "aws" / "default-board-shadow.json",
         )
         self.assertEqual(manifest.web_adapter, "web/unit-adapter.tsx")
+
+    def test_loads_cyberbrick_manifest_with_unit_parity(self) -> None:
+        manifest = load_device_manifest("cyberbrick", repo_root=REPO_ROOT)
+
+        self.assertEqual(manifest.type, "cyberbrick")
+        self.assertEqual(manifest.device_name, "cyberbrick")
+        self.assertEqual(manifest.display_name, "Cyberbrick")
+        self.assertEqual(
+            manifest.capabilities,
+            ("sparkplug", "ble", "power", "board", "mcp", "video"),
+        )
+        self.assertEqual(manifest.compatible_rig_types, ("raspi",))
+        self.assertEqual(manifest.redcon_command_levels, (4, 3, 2, 1))
+        self.assertEqual(
+            manifest.redcon_rules,
+            {
+                1: ("sparkplug", "ble", "power", "board", "mcp", "video"),
+                2: ("sparkplug", "ble", "power", "board", "mcp"),
+                3: ("sparkplug", "ble", "power"),
+                4: ("sparkplug", "ble"),
+            },
+        )
+        self.assertEqual(
+            [contract.name for contract in manifest.shadows.values()],
+            ["sparkplug", "ble", "power", "board", "mcp", "video"],
+        )
+        self.assertEqual(
+            manifest.render_board_video_channel_name(device_id="cyberbrick-a1"),
+            "cyberbrick-a1-board-video",
+        )
+        self.assertEqual(manifest.web_adapter, "web/cyberbrick-adapter.tsx")
+        for shadow_name in manifest.capabilities:
+            contract = manifest.shadow_contract(shadow_name)
+            self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
+            self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
 
     def test_loads_cloud_mcu_manifest(self) -> None:
         manifest = load_device_manifest("cloud-mcu", repo_root=REPO_ROOT)
@@ -163,6 +198,10 @@ class DeviceCatalogTests(unittest.TestCase):
             capabilities["unit"],
             ("sparkplug", "ble", "power", "board", "mcp", "video"),
         )
+        self.assertEqual(
+            capabilities["cyberbrick"],
+            ("sparkplug", "ble", "power", "board", "mcp", "video"),
+        )
         self.assertEqual(capabilities["cloud-mcu"], ("sparkplug", "sqs", "power", "ecs"))
         self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "power", "weather"))
         self.assertEqual(capabilities["power"], ("sparkplug", "ble", "power"))
@@ -173,6 +212,10 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
+            ("sparkplug", "ble", "power", "board", "mcp", "video"),
+        )
+        self.assertEqual(
+            capabilities_for_thing_type("cyberbrick", repo_root=REPO_ROOT),
             ("sparkplug", "ble", "power", "board", "mcp", "video"),
         )
         self.assertEqual(

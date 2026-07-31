@@ -4,7 +4,7 @@
 versioned gRPC contract. The proto source is:
 
 ```text
-devices/unit/proto/txing/unit/board_video/v1/board_video.proto
+devices/common/board/proto/txing/board/board_video/v1/board_video.proto
 ```
 
 The daemon is the gRPC server. The native KVS master is the client. Both
@@ -18,7 +18,7 @@ domain socket, normally:
 
 ## Surface
 
-The v1 service is `txing.unit.board_video.v1.BoardVideoBridge`.
+The v1 service is `txing.board.board_video.v1.BoardVideoBridge`. The package is device-independent: one contract serves every board device type.
 
 - `GetWorkerConfig(WorkerHello) -> WorkerConfig`
 - `RefreshCredentials(RefreshCredentialsRequest) -> KvsCredentials`

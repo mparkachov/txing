@@ -1,0 +1,373 @@
+export type TrackIndicatorPresentation = {
+  toneClass: 'status-track-forward' | 'status-track-reverse' | 'status-track-idle'
+  intensity: number
+  ariaLabel: string
+}
+
+export type CyberbrickReportedPowerInputs = {
+  isSparkplugDeviceUnavailable?: boolean
+  reportedRedcon: number | null
+  reportedMcuPower: boolean | null
+  reportedBoardPower: boolean | null
+  reportedBoardWifiOnline: boolean | null
+}
+
+export type CyberbrickPowerTransitionInputs = {
+  targetRedcon: number | null
+  reportedRedcon: number | null
+}
+
+export type CyberbrickTargetRedconInputs = {
+  targetRedcon: number | null
+  reportedRedcon: number | null
+}
+
+export type PendingTargetResolutionInputs = {
+  pendingTargetRedcon: number | null
+  reportedRedcon: number | null
+  isSparkplugDeviceUnavailable: boolean
+}
+
+type RedconDescriptor = {
+  colorName: string
+  postureName: string
+  toneClass: string
+}
+
+const redconDescriptors: Record<1 | 2 | 3 | 4, RedconDescriptor> = {
+  1: {
+    colorName: 'Red',
+    postureName: 'Hot Rig',
+    toneClass: 'status-txing-redcon-1',
+  },
+  2: {
+    colorName: 'Orange',
+    postureName: 'Ember Watch',
+    toneClass: 'status-txing-redcon-2',
+  },
+  3: {
+    colorName: 'Yellow',
+    postureName: 'Torch-Up',
+    toneClass: 'status-txing-redcon-3',
+  },
+  4: {
+    colorName: 'Green',
+    postureName: 'Cold Camp',
+    toneClass: 'status-txing-redcon-4',
+  },
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
+
+const extractReportedState = (shadow: unknown): Record<string, unknown> | null => {
+  if (!isRecord(shadow)) {
+    return null
+  }
+  const state = shadow.state
+  if (!isRecord(state)) {
+    return null
+  }
+  const reported = state.reported
+  return isRecord(reported) ? reported : null
+}
+
+const extractNamedShadowReportedState = (
+  shadow: unknown,
+  shadowName: 'sparkplug' | 'ble' | 'power' | 'board' | 'video',
+): Record<string, unknown> | null => {
+  if (!isRecord(shadow) || !isRecord(shadow.namedShadows)) {
+    return null
+  }
+  const namedShadow = shadow.namedShadows[shadowName]
+  if (!isRecord(namedShadow) || !isRecord(namedShadow.state)) {
+    return null
+  }
+  const reported = namedShadow.state.reported
+  return isRecord(reported) ? reported : null
+}
+
+export const extractReportedDevice = (shadow: unknown): Record<string, unknown> | null => {
+  const reported = extractReportedState(shadow)
+  if (!reported) {
+    return null
+  }
+  const device = reported.device
+  return isRecord(device) ? device : null
+}
+
+export const extractReportedBoard = (shadow: unknown): Record<string, unknown> | null => {
+  const namedBoard = extractNamedShadowReportedState(shadow, 'board')
+  if (namedBoard) {
+    return namedBoard
+  }
+  const device = extractReportedDevice(shadow)
+  if (!device) {
+    return null
+  }
+  const board = device.board
+  return isRecord(board) ? board : null
+}
+
+const extractSparkplugReportedState = (shadow: unknown): Record<string, unknown> | null =>
+  extractNamedShadowReportedState(shadow, 'sparkplug') ?? extractReportedState(shadow)
+
+const extractSparkplugTopic = (shadow: unknown): Record<string, unknown> | null => {
+  const reported = extractSparkplugReportedState(shadow)
+  if (!reported) {
+    return null
+  }
+  const topic = reported.topic
+  return isRecord(topic) ? topic : null
+}
+
+const extractSparkplugPayload = (shadow: unknown): Record<string, unknown> | null => {
+  const reported = extractSparkplugReportedState(shadow)
+  if (!reported) {
+    return null
+  }
+  const payload = reported.payload
+  return isRecord(payload) ? payload : null
+}
+
+const extractSparkplugMetrics = (shadow: unknown): Record<string, unknown> | null => {
+  const payload = extractSparkplugPayload(shadow)
+  if (!payload) {
+    return null
+  }
+  const metrics = payload.metrics
+  return isRecord(metrics) ? metrics : null
+}
+
+const extractSparkplugCapabilityAvailability = (
+  shadow: unknown,
+  capabilityName: string,
+): boolean | null => {
+  if (extractIsSparkplugUnavailable(shadow)) {
+    return false
+  }
+  const metrics = extractSparkplugMetrics(shadow)
+  if (!metrics) {
+    return null
+  }
+  if (isRecord(metrics.capability)) {
+    const availability = metrics.capability[capabilityName]
+    if (typeof availability === 'boolean') {
+      return availability
+    }
+  }
+  if (capabilityName !== 'sparkplug') {
+    return null
+  }
+  return coerceRedcon(metrics.redcon) === null ? null : true
+}
+
+const coerceRedcon = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return null
+  }
+  return value >= 1 && value <= 4 ? value : null
+}
+
+export const extractSparkplugMessageType = (shadow: unknown): string | null => {
+  const topic = extractSparkplugTopic(shadow)
+  return topic && typeof topic.messageType === 'string' ? topic.messageType : null
+}
+
+const extractSparkplugDeviceMessageType = (shadow: unknown): string | null => {
+  const topic = extractSparkplugTopic(shadow)
+  if (!topic || typeof topic.deviceId !== 'string' || topic.deviceId.length === 0) {
+    return null
+  }
+  return typeof topic.messageType === 'string' ? topic.messageType : null
+}
+
+export const extractIsSparkplugDeviceUnavailable = (shadow: unknown): boolean =>
+  extractSparkplugDeviceMessageType(shadow) === 'DDEATH'
+
+export const extractIsSparkplugUnavailable = (shadow: unknown): boolean => {
+  const messageType = extractSparkplugMessageType(shadow)
+  return messageType === 'NDEATH' || messageType === 'DDEATH'
+}
+
+export const extractReportedRedcon = (shadow: unknown): number | null => {
+  if (extractIsSparkplugUnavailable(shadow)) {
+    return null
+  }
+  const metrics = extractSparkplugMetrics(shadow)
+  if (metrics) {
+    const redcon = coerceRedcon(metrics.redcon)
+    if (redcon !== null) {
+      return redcon
+    }
+  }
+  return null
+}
+
+export const getCyberbrickRedconToneClass = (redcon: number | null): string => {
+  if (redcon === null) {
+    return 'status-txing-redcon-unknown'
+  }
+
+  const descriptor = redconDescriptors[redcon as 1 | 2 | 3 | 4]
+  return descriptor?.toneClass ?? 'status-txing-redcon-unknown'
+}
+
+export const describeRedcon = (redcon: number | null): string => {
+  if (redcon === null) {
+    return 'REDCON unavailable'
+  }
+
+  const descriptor = redconDescriptors[redcon as 1 | 2 | 3 | 4]
+  if (!descriptor) {
+    return 'REDCON unavailable'
+  }
+  return `REDCON ${redcon} · ${descriptor.postureName} · ${descriptor.colorName}`
+}
+
+export const deriveCyberbrickPoweredOn = ({
+  isSparkplugDeviceUnavailable,
+  reportedRedcon,
+  reportedMcuPower,
+  reportedBoardPower,
+  reportedBoardWifiOnline,
+}: CyberbrickReportedPowerInputs): boolean => {
+  if (isSparkplugDeviceUnavailable) {
+    return false
+  }
+  if (reportedRedcon !== null) {
+    return reportedRedcon < 4
+  }
+  return (
+    reportedMcuPower === true ||
+    reportedBoardPower === true ||
+    reportedBoardWifiOnline === true
+  )
+}
+
+export const deriveCyberbrickPowerTransitionPending = ({
+  targetRedcon,
+  reportedRedcon,
+}: CyberbrickPowerTransitionInputs): boolean => {
+  if (targetRedcon === null) {
+    return false
+  }
+  return !hasReachedTargetRedcon({
+    targetRedcon,
+    reportedRedcon,
+  })
+}
+
+export const shouldClearPendingTargetRedcon = ({
+  pendingTargetRedcon,
+  reportedRedcon,
+  isSparkplugDeviceUnavailable,
+}: PendingTargetResolutionInputs): boolean => {
+  if (pendingTargetRedcon === null) {
+    return false
+  }
+  if (pendingTargetRedcon < 4) {
+    return false
+  }
+  if (isSparkplugDeviceUnavailable) {
+    return true
+  }
+  return hasReachedTargetRedcon({
+    targetRedcon: pendingTargetRedcon,
+    reportedRedcon,
+  })
+}
+
+export const hasReachedTargetRedcon = ({
+  targetRedcon,
+  reportedRedcon,
+}: CyberbrickTargetRedconInputs): boolean => {
+  if (targetRedcon === null) {
+    return false
+  }
+  if (reportedRedcon === null) {
+    return false
+  }
+  if (targetRedcon === 4) {
+    return reportedRedcon === 4
+  }
+  return reportedRedcon <= targetRedcon
+}
+
+export const extractReportedBoardPower = (shadow: unknown): boolean | null => {
+  const board = extractReportedBoard(shadow)
+  if (!board) {
+    return null
+  }
+  return typeof board.power === 'boolean' ? board.power : null
+}
+
+export const extractReportedMcuPower = (shadow: unknown): boolean | null => {
+  const reportedRedcon = extractReportedRedcon(shadow)
+  if (reportedRedcon !== null) {
+    return reportedRedcon < 4
+  }
+  const reportedPower = extractSparkplugCapabilityAvailability(shadow, 'power')
+  if (reportedPower !== null) {
+    return reportedPower
+  }
+  return null
+}
+
+export const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
+  const reportedBle = extractSparkplugCapabilityAvailability(shadow, 'ble')
+  if (reportedBle !== null) {
+    return reportedBle
+  }
+  return null
+}
+
+export const extractReportedBatteryMv = (shadow: unknown): number | null => {
+  if (extractIsSparkplugDeviceUnavailable(shadow)) {
+    return null
+  }
+  const power = extractNamedShadowReportedState(shadow, 'power')
+  if (!power) {
+    return null
+  }
+  return typeof power.batteryMv === 'number' ? power.batteryMv : null
+}
+
+export const extractReportedBoardWifiOnline = (shadow: unknown): boolean | null => {
+  const board = extractReportedBoard(shadow)
+  if (!board) {
+    return null
+  }
+  const wifi = board.wifi
+  return isRecord(wifi) && typeof wifi.online === 'boolean' ? wifi.online : null
+}
+
+export const getTrackIndicatorPresentation = (
+  speed: number | null,
+  sideLabel: 'Left' | 'Right',
+): TrackIndicatorPresentation => {
+  if (speed === null) {
+    return {
+      toneClass: 'status-track-idle',
+      intensity: 0,
+      ariaLabel: `${sideLabel} track speed unavailable`,
+    }
+  }
+
+  if (speed === 0) {
+    return {
+      toneClass: 'status-track-idle',
+      intensity: 0,
+      ariaLabel: `${sideLabel} track idle`,
+    }
+  }
+
+  const magnitude = Math.abs(speed)
+  return {
+    toneClass: speed > 0 ? 'status-track-forward' : 'status-track-reverse',
+    intensity: magnitude / 100,
+    ariaLabel: `${sideLabel} track ${speed > 0 ? 'forward' : 'reverse'} ${magnitude} percent`,
+  }
+}
+
+export const buildBoardVideoChannelName = (deviceId: string): string => `${deviceId}-board-video`

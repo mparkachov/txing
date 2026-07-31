@@ -17,11 +17,13 @@ design notes have been folded into the owning component guides.
 - [Spec-driven development workflow](./agent-guidance/spec-driven-development.md)
 - [Editing boundaries extracted from project docs](./agent-guidance/editing-boundaries.md)
 - [Repository rules and operational constraints](./constraints/repository-rules.md)
+- [Board OS: Alpine only, Debian frozen](./constraints/board-os-alpine-only.md)
 
 ## Component Guides
 
 - [Rig](./components/rig.md)
 - [Board](./components/board.md)
+- [Board (Debian, frozen)](./components/board-debian-frozen.md)
 - [MCU](./components/mcu.md)
 - [Office](./components/office.md)
 - [Public WWW](./components/www.md)
@@ -46,6 +48,7 @@ capabilities for each AWS IoT ThingType:
 - `cloud`: `sparkplug`
 - `local`: `sparkplug`
 - `unit`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
+- `cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
 - `cloud-mcu`: `sparkplug`, `sqs`, `power`, `ecs`
 - `weather`: `sparkplug`, `ble`, `power`, `weather`
 - `power`: `sparkplug`, `ble`, `power`

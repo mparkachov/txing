@@ -258,7 +258,7 @@ Validate runtime access:
 
 ```bash
 just rig::check <rig-id>
-just unit::daemon::run
+just common::board::run unit
 ```
 
 Production `raspi` rig services run as standalone systemd daemons. Production

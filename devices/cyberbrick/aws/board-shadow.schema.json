@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-board-shadow.schema.json",
+  "title": "Txing Board Named Shadow Contract v1",
+  "description": "Named shadow 'board' board state for a txing device.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["power", "wifi"],
+          "properties": {
+            "power": {
+              "type": "boolean"
+            },
+            "wifi": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["online"],
+              "properties": {
+                "online": {
+                  "type": "boolean"
+                },
+                "ipv4": {
+                  "type": ["string", "null"],
+                  "format": "ipv4"
+                },
+                "ipv6": {
+                  "type": ["string", "null"],
+                  "format": "ipv6"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
