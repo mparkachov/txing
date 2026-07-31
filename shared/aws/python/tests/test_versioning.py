@@ -1435,6 +1435,17 @@ class VersionEnvironmentTests(unittest.TestCase):
             "for s in udev udev-trigger udev-settle; do rc-update add $s sysinit; done",
             cyberbrick_board_docs,
         )
+        # udev-trigger is what populates the database libcamera reads. Without
+        # it udevd runs, /run/udev exists and rc-service reports started, while
+        # the camera enumerates zero — so `ls -d /run/udev` must not be offered
+        # as the check anywhere in the runbook.
+        self.assertIn("rc-service udev-trigger start", cyberbrick_board_docs)
+        self.assertIn(
+            "udevadm info --export-db | grep -c '^P:'", cyberbrick_board_docs
+        )
+        self.assertNotIn(
+            "\nls -d /run/udev\n", cyberbrick_board_docs
+        )
         self.assertIn("camera_auto_detect=1", cyberbrick_board_docs)
         self.assertIn(
             "for m in bcm2835-codec bcm2835-isp; do", cyberbrick_board_docs
@@ -1449,7 +1460,15 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("ld-musl-aarch64.so.1", cyberbrick_board_docs)
         self.assertIn("libcamera.so.0.7", cyberbrick_board_docs)
         self.assertIn("libcamera-base.so.0.7", cyberbrick_board_docs)
+        # Both mise time settings must be off on a board. minimum_release_age
+        # left at its 24h default resolves `latest` to nothing and warns; a
+        # non-zero fetch_remote_versions_cache is worse because it is silent —
+        # `mise upgrade` reports everything up to date and stays on the old
+        # release. Boards install first-party releases minutes after publish,
+        # so both defaults are tuned against exactly this case. Matches
+        # rig/install-mise-tools.sh, guarded below.
         self.assertIn('minimum_release_age = "0s"', cyberbrick_board_docs)
+        self.assertIn('fetch_remote_versions_cache = "0s"', cyberbrick_board_docs)
         self.assertIn(
             "/root/.config/txing/${TXING_DEVICE}-daemon/SFSRootCAG2.pem",
             cyberbrick_board_docs,

@@ -691,13 +691,24 @@ more on the *operator* machine.
 hand the root is not read-only yet, so it reports `not found` and the rest of the
 block runs unaffected.
 
-The card already configured `main` and `community` on https, so the `sed` below
-changes nothing on a card-provisioned board. It matters for a board brought up by
-hand, where `setup-alpine` enables only `main` while libcamera, grpc, and re2
-ship in `community`:
+First, the `community` repository. This one line is needed only on a board
+brought up by hand, where `setup-alpine` enables `main` alone while libcamera,
+grpc, and re2 ship in `community`. On a card-provisioned board `unattended.sh`
+already wrote both over https, so it changes nothing — run it anyway, it is
+harmless either way:
 
 ```sh
 sed -i 's|^#\(http.*/community\)$|\1|' /etc/apk/repositories
+```
+
+Now the runtime packages. **This part runs on every board, however it was
+built.** The card installs no runtime packages at all — it stops at a base OS
+with `mise` — so a freshly provisioned board has no libcamera, no grpc and no
+`libstdc++`, and the release KVS master cannot start. Skipping this surfaces
+much later as a wall of `Error loading shared library` from a binary that is
+perfectly correct:
+
+```sh
 apk update
 apk upgrade
 apk add \
@@ -707,6 +718,15 @@ apk add \
   protobuf-dev grpc-dev \
   libcamera-raspberrypi eudev v4l-utils
 ```
+
+Confirm before moving on, because everything downstream assumes it:
+
+```sh
+apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf \
+  | sort | tr '\n' ' '; echo
+```
+
+All six must be listed.
 
 The dev packages are the proven runtime superset from the pinned Alpine build
 container: installing them guarantees every shared library the musl-dynamic
@@ -758,9 +778,17 @@ rc-service udev-trigger start
 Verify:
 
 ```sh
-ls -d /run/udev
 rc-status sysinit | grep -i udev
+udevadm info --export-db | grep -c '^P:'
 ```
+
+All three services must show `started`, and the device count must be in the
+hundreds. `udev-trigger` is the one that matters and the one easiest to skip:
+`udevd` alone starts happily with an **empty database**, and libcamera reads the
+database rather than the devices, so it enumerates zero cameras while
+`/run/udev` exists, `rc-service udev status` says `started`, and `/dev/media0`
+behaves perfectly. Do not use `ls -d /run/udev` as the check — see
+[Camera Does Not Enumerate](#camera-does-not-enumerate).
 
 The three services must land in **`sysinit`**, not `default`: device
 enumeration has to complete before the txing services start, and `sysinit`
@@ -942,20 +970,78 @@ pipeline in order; a missing `pwmchip0` means the overlay line did not land in
 the file the firmware actually reads, which is the other one of
 `config.txt`/`usercfg.txt`.
 
+The reboot also reseals the root filesystem read-only on a card-provisioned
+board, so the next step starts by making it writable again.
+
 ### 6. Install Runtime And OpenRC Services
 
-Install the release tools through root-owned `mise`.
-`minimum_release_age = "0s"` opts out of mise's default 24-hour release-age
-filter: boards install first-party releases minutes after they are
-published, and with the default filter `latest` resolves to nothing.
+Everything above this point is a prerequisite of what follows, and each one fails
+later and confusingly if skipped: missing apk packages surface as a wall of
+`Error loading shared library` from a binary that is actually correct, and an
+untriggered udev surfaces as `configured camera index is not available` from a
+camera that is actually working. Confirm all of it in one paste first:
+
+```sh
+printf 'step 2  packages: '
+apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf \
+  | sort | tr '\n' ' '; echo
+
+printf 'step 2a runlevel: '
+rc-status sysinit | grep -c -E 'udev|udev-trigger|udev-settle'
+
+printf 'step 2a database: '
+command -v udevadm >/dev/null \
+  && udevadm info --export-db | grep -c '^P:' \
+  || echo 'udevadm absent - eudev not installed, do step 2 first'
+
+printf 'step 5  hardware: '
+ls -d /sys/class/pwm/pwmchip0 /dev/video0 2>&1 | tr '\n' ' '; echo
+
+printf 'step 2  device:   %s\n' "${TXING_DEVICE:?run step 2 first}"
+```
+
+Each line names the step that fixes it:
+
+| Line | Expected |
+| --- | --- |
+| `step 2 packages` | all six named |
+| `step 2a runlevel` | `3` |
+| `step 2a database` | hundreds, not `0` |
+| `step 5 hardware` | both paths present |
+| `step 2 device` | `unit` or `cyberbrick` |
+
+These fail in a chain, so fix them in step order: without step 2 there is no
+`eudev`, so step 2a's `rc-update add udev sysinit` fails too and one missed
+`apk add` shows up as three broken lines. Fixing it here costs minutes; found
+later it is a wall of `Error loading shared library` from a correct binary, or
+`configured camera index is not available` from a working camera.
+
+Install the release tools through root-owned `mise`. Both `"0s"` settings exist
+because a board installs first-party releases minutes after they are published,
+which is exactly the case each default is tuned against:
+
+- `minimum_release_age` opts out of mise's 24-hour supply-chain filter. Left at
+  the default, `latest` resolves to nothing and mise warns about a date filter.
+- `fetch_remote_versions_cache` opts out of caching the remote version list. Left
+  at a non-zero window, a release published inside that window is invisible:
+  `mise upgrade` reports *All tools are up to date* and stays on the old
+  version, with no warning and nothing in `mise ls-remote` to suggest a newer
+  release exists. This matches `rig/install-mise-tools.sh`. On a board still
+  carrying a cached window, `mise cache clear` forces the re-read.
+
+The reboot at the end of the previous step brought the root back up **read-only**
+on a card-provisioned board, so make it writable again before anything here
+writes a file. `root-rw` covers the rest of this step and step 7; it is
+idempotent, so running it on an already-writable root is harmless.
 
 ```sh
 : "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
+root-rw
 
 install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
 cat >/root/.config/mise/conf.d/txing-${TXING_DEVICE}-daemon.toml <<EOF
 [settings]
-fetch_remote_versions_cache = "10m"
+fetch_remote_versions_cache = "0s"
 minimum_release_age = "0s"
 
 [tool_alias]
@@ -1394,8 +1480,8 @@ ls /dev/video* /dev/media*
 for d in /sys/class/video4linux/*; do echo "$(basename $d) -> $(cat $d/name)"; done
 ls /usr/lib/libcamera/ipa/ | grep rpi
 ls /usr/share/libcamera/ipa/rpi/vc4/ | head
-ls -d /run/udev
 rc-status sysinit | grep -i udev
+udevadm info --export-db | grep -c '^P:'
 LIBCAMERA_LOG_LEVELS=*:DEBUG \
   "/root/.local/share/mise/installs/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master" \
   --camera-probe 2>&1 | tail -40
@@ -1407,13 +1493,27 @@ LIBCAMERA_LOG_LEVELS=*:DEBUG \
 | `/dev/video0` present, no `/dev/video11` | `bcm2835-codec` not loaded | add to `/etc/modules` ([step 5](#5-enable-pwm-overlay-and-camera)) |
 | Only `unicam` + `bcm2835-codec` media devices | `bcm2835-isp` not loaded | add to `/etc/modules` ([step 5](#5-enable-pwm-overlay-and-camera)) |
 | No `ipa_rpi_vc4.so`, no `vc4/` tuning dir | `libcamera-raspberrypi` missing | `apk add libcamera-raspberrypi` ([step 2](#2-install-os-packages)) |
-| All of the above present, `/run/udev` missing | no udev daemon | `apk add eudev` + [step 2a](#2a-enable-udev) |
+| All of the above present, no udev services in `sysinit` | no udev daemon, or a daemon with an empty database | `apk add eudev` + [step 2a](#2a-enable-udev) |
+
+**Do not test udev with `ls -d /run/udev`.** It is a false negative: the
+directory exists as soon as `udevd` starts, and `rc-service udev status` reports
+`started`, while the *database* stays empty until `udev-trigger` replays the
+existing devices as uevents. libcamera reads the database, so in that state it
+enumerates zero cameras on a board where every check above passes and udev
+looks healthy. This is why [Enable Udev](#2a-enable-udev) starts `udev-trigger`
+as well as `udev`, and why all three services belong in `sysinit`. The two
+checks that do not lie are the runlevel listing — `udev`, `udev-trigger`, and
+`udev-settle` all `started` — and the device count from
+`udevadm info --export-db`, which is zero or near-zero on an untriggered
+database and in the hundreds on a populated one. `rc-service udev-trigger start`
+repopulates it immediately, and its `Populating /dev with existing devices
+through uevents` line is the fix taking effect.
 
 The debug trace is decisive. `Unable to acquire a Unicam instance` from
 `rpi/vc4` means the pipeline handler ran but matched no Unicam media device —
 either the ISP/tuning pieces are missing, or the enumerator itself is empty
-because udev is not running. `Unable to acquire a CFE instance` from
-`rpi/pisp` immediately above it is expected and harmless: that is the Pi 5
+because udev never populated its database. `Unable to acquire a CFE instance`
+from `rpi/pisp` immediately above it is expected and harmless: that is the Pi 5
 pipeline handler correctly declining a Pi Zero 2 W.
 
 Confirm the media device layer independently of libcamera with `media-ctl`,

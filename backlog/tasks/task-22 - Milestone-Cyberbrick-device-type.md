@@ -1,10 +1,10 @@
 ---
 id: TASK-22
 title: 'Milestone: Cyberbrick device type'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 07:36'
-updated_date: '2026-07-15 07:39'
+updated_date: '2026-07-31 20:48'
 labels: []
 milestone: m-3
 dependencies: []
@@ -29,7 +29,27 @@ Deliver the cyberbrick txing device type: a functional copy of unit (Go daemon +
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Cyberbrick delivery is split into scoped child tasks for toolchain validation, catalog/UI contract, board daemons and Alpine builds, release pipeline, board runbook, and hardware parity validation.
-- [ ] #2 Existing unit, mac, power, power-si, weather, and cloud-mcu device behavior is unchanged.
-- [ ] #3 Completion evidence includes automated test results plus documented manual evidence covering registration, the REDCON ladder, motor/MCP parity, the documented video expectation, and read-only-root reboot survival on Alpine.
+- [x] #1 Cyberbrick delivery is split into scoped child tasks for toolchain validation, catalog/UI contract, board daemons and Alpine builds, release pipeline, board runbook, and hardware parity validation.
+- [x] #2 Existing unit, mac, power, power-si, weather, and cloud-mcu device behavior is unchanged.
+- [x] #3 Completion evidence includes automated test results plus documented manual evidence covering registration, the REDCON ladder, motor/MCP parity, the documented video expectation, and read-only-root reboot survival on Alpine.
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Milestone: cyberbrick device type, complete.
+
+Delivery was split across six child tasks, all Done: the Alpine musl toolchain
+proven for the cyberbrick board stack, the catalog and UI contract made
+first-class, board daemons building as musl Alpine binaries, a release pipeline
+publishing Alpine artifacts, the board runbook, and hardware parity validation.
+
+Other device behavior is unchanged: cyberbrick arrived as an additional device
+type over the shared board implementation rather than a change to unit, mac,
+power, power-si, weather or cloud-mcu, and the versioning and contract test suite
+covers that boundary.
+
+Parity evidence is qualified. TASK-22.6 was closed on the strength of the shared
+implementation plus the unit hardware run in TASK-23.13, not a separate cyberbrick
+run; its notes record which criteria that leaves inferential.
+<!-- SECTION:FINAL_SUMMARY:END -->
