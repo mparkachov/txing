@@ -8,8 +8,25 @@ control.
 One implementation serves every board device type. The daemon, KVS master, and
 hardware worker are built once from `devices/common/board/`, with the device type
 supplied as a build input that selects the binary names, the hardware socket
-path, and the release stream. This runbook therefore covers every device type;
-`<device>` below stands for the device type you are working on.
+path, and the release stream. This runbook therefore covers every device type.
+
+Every command block in this document is written to be pasted verbatim, with no
+placeholders to substitute by hand. The one value that varies is the device
+type, carried in `TXING_DEVICE`. Set it once in the shell you are pasting into:
+
+```sh
+export TXING_DEVICE=cyberbrick      # or: unit
+```
+
+[Install OS Packages](#2-install-os-packages) writes it into the board's
+`/root/.profile`, so board shells keep it across the reboots the install
+performs. On the operator machine, set it in the shell you work from.
+[Generate And Copy Daemon Config](#4-generate-and-copy-daemon-config) adds
+`THING_ID` and `BOARD_HOST` for the two commands that need them.
+
+`<device>` still appears in the reference listings above the install steps, where
+the blocks describe the *shape* of a path or an artifact name rather than
+something to run. Nothing in a `sh` block uses it.
 
 Boards run Alpine Linux with OpenRC. Debian receives no further investment and a
 Debian board is reimaged rather than upgraded, per
@@ -43,9 +60,9 @@ device's release stream.
 Operator commands are device-owned, matching the MCU commands:
 
 ```sh
-just <device>::board::docker-build      # for example: just unit::board::docker-build
-just <device>::board::docker-smoke
-just <device>::board::hardware-test-native
+just ${TXING_DEVICE}::board::docker-build
+just ${TXING_DEVICE}::board::docker-smoke
+just ${TXING_DEVICE}::board::hardware-test-native
 ```
 
 Board operations that do not depend on the device type stay common-owned, the
@@ -400,7 +417,7 @@ env file.
 - Alpine Linux aarch64 on Raspberry Pi Zero 2 W, **sys install**
   (`setup-disk -m sys`), device apk repositories on the Alpine `v3.24` branch.
 - Default Alpine stack: apk, ifupdown-ng + wpa_supplicant + udhcpc
-  networking, chronyd time sync, OpenRC init. No systemd and no
+  networking, busybox ntpd time sync, OpenRC init. No systemd and no
   NetworkManager on the board.
 - The daemon and hardware worker are fully static musl binaries that depend
   only on the kernel: a healthy install shows no shared-library dependencies
@@ -422,7 +439,7 @@ env file.
   `configured camera index is not available`. See
   [Install OS Packages](#2-install-os-packages),
   [Enable Udev](#2a-enable-udev), and
-  [Enable PWM Overlay And Camera](#6-enable-pwm-overlay-and-camera).
+  [Enable PWM Overlay And Camera](#5-enable-pwm-overlay-and-camera).
 - The KVS master verifies the AWS signaling endpoint against a single trust
   anchor and cannot use Alpine's full `/etc/ssl/certs/ca-certificates.crt`
   bundle: the SDK's TLS layer follows the server-presented chain and a
@@ -491,12 +508,121 @@ Assumptions:
 
 ### 1. Create The Card And Sys Install
 
-Prepare the SD card on the operator machine with the Alpine `v3.24`
-Raspberry Pi aarch64 image (`alpine-rpi-<version>-aarch64`) following the
-Alpine Raspberry Pi imaging instructions, boot the board from it, and log in
-on the console as `root` (empty password).
+Prepare the card so the board comes up on Wi-Fi with ssh reachable, and drive
+the rest of the install remotely. Nothing here is generated: the files in
+`devices/common/board/card/` are the files as they land on the card.
 
-Run the interactive base setup:
+Write the card with Raspberry Pi Imager. Choose the Alpine `v3.24` Raspberry Pi
+**aarch64** image; if it is not in the OS list, download it from
+[alpinelinux.org/downloads](https://alpinelinux.org/downloads/) and use *Use
+custom*. Alpine has supported image files with resizable partitions since 3.23,
+so the pinned `v3.24` works with Imager directly.
+
+Two things to get right in Imager:
+
+- **Skip the OS customisation prompt.** Its hostname, Wi-Fi, and ssh settings are
+  written in a Raspberry Pi OS format that Alpine ignores. Answer no; the files
+  below do that job.
+- **Use a card larger than the image.** `unattended.sh` creates the root
+  partition in the free space that is left, so a card with nothing spare cannot
+  convert to a sys install.
+
+Re-insert the card. The FAT boot partition mounts on its own; everything below
+goes in its root.
+
+Then copy these onto the root of the FAT boot partition:
+
+| File | Where from | Edit |
+| --- | --- | --- |
+| `headless.apkovl.tar.gz` | [macmpi/alpine-linux-headless-bootstrap](https://github.com/macmpi/alpine-linux-headless-bootstrap) | no, used unmodified |
+| `wpa_supplicant.conf` | `devices/common/board/card/` | SSID, passphrase, `country=` |
+| `authorized_keys` | `devices/common/board/card/` | your operator public key |
+| `interfaces` | `devices/common/board/card/` | no, pins the board to `wlan0` |
+| `unattended.sh` | `devices/common/board/card/` | `HOSTNAME`; `TIMEZONE` defaults to `Europe/Berlin` |
+| `opt-out` | `devices/common/board/card/` | no, empty by design |
+
+The apkovl is a standard Alpine overlay tarball and there is nothing to change
+inside it. The rest of the configuration is supplied by the plain files beside
+it, which it reads off the boot partition on first boot: it brings up
+networking, starts sshd, and installs the operator key.
+
+Three things that bite, all of which produce a board that looks dead in the same
+way:
+
+- `wpa_supplicant.conf` must have **LF line endings**. Saved with CRLF it is
+  silently ignored and the board comes up with no Wi-Fi, which is
+  indistinguishable from a wrong passphrase.
+- Supply `authorized_keys`. Without it the bootstrap leaves root reachable over
+  ssh with **no password**, which is not acceptable on a deployment network.
+- `country=` must match where the board runs, or the regulatory domain can
+  disable the channel the access point is on.
+
+Keep your edited copies outside the repository: they carry the Wi-Fi passphrase.
+They carry base OS setup only, so a lost card carries no device identity and no
+cloud access; AWS credentials, daemon config, and release material stay in the
+manual steps below.
+
+Boot the board. `unattended.sh` runs as root once networking is up and takes the
+board the rest of the way on its own: it enables the community repository,
+upgrades packages, creates the root partition in the free space after the boot
+FAT, runs `setup-alpine` for the sys install, and reboots into it. No console
+login and no interactive setup.
+
+It stops there, at a base OS. Everything from the mise step onward — runtime
+packages, udev, camera support, release binaries, device configuration, and
+services — remains a manual step below, performed over ssh.
+
+Two properties worth knowing, because they decide whether a bad run is
+recoverable:
+
+- **The Wi-Fi configuration and operator key are written onto the new root
+  explicitly**, and the script refuses to reboot unless they are present along
+  with the `networking`, `wpa_supplicant`, and `sshd` runlevel links. The overlay
+  is applied to the tmpfs root of the diskless boot and is *not* applied again
+  once the board boots from `mmcblk0p2`, so anything that existed only because
+  the overlay was unpacked would otherwise be gone. A board that fails this check
+  stays up on the diskless boot, which is reachable; one that rebooted without it
+  would need physical recovery.
+- **The root filesystem is left writable.** A board that provisioned incorrectly
+  has to be fixable over ssh. Sealing it read-only is a later, deliberate step.
+
+Re-running is safe: if `/dev/mmcblk0p2` already holds a filesystem the script
+refuses to repartition and exits, so an interrupted attempt cannot destroy a
+board that already converted.
+
+Once the board comes back on the network, confirm it landed where it should
+before continuing:
+
+```sh
+mount | grep ' / '        # /dev/mmcblk0p2 ... rw   (sys install, writable)
+rc-status default | grep -E 'networking|wpa_supplicant|sshd'
+sshd -T | grep -iE 'passwordauth|permitrootlogin'
+mise --version             # installed by the card, on root's PATH
+```
+
+`sshd -T` prints the *effective* configuration. It must show
+`permitrootlogin prohibit-password` and `passwordauthentication no`: the image
+ships with an empty root password, so a board that accepts password logins over
+Wi-Fi is open.
+
+`mise` is installed by the card and already on `root`'s `PATH`, because a
+read-only root cannot install it afterwards without `root-rw` first. Everything
+past it -- runtime packages, camera support, release binaries, daemon config and
+services -- is still a manual step below.
+
+The board boots **read-only**, with `/tmp`, `/var/tmp`, `/var/log`, and
+on tmpfs, `/etc/resolv.conf` pointed at udhcpc's runtime
+output, and the `root-rw` / `root-ro` aliases installed for `root`. Run
+`root-rw` before the steps below: apk installs, mise installs, daemon config,
+and OpenRC changes all need a writable root. `root-ro` puts it back, and
+[Final Reboot Check](#8-final-reboot-check) is the last step.
+
+`/root/txing-unattended.log` on the board records how it was provisioned. It is
+in `/root` rather than `/var/log` because the tmpfs mount would shadow it.
+
+Continue over ssh from [Install OS Packages](#2-install-os-packages).
+
+If you would rather drive base setup by hand instead, the same answers are:
 
 ```sh
 setup-alpine
@@ -509,7 +635,8 @@ Answers that matter for a board:
 - interface: `wlan0` with the deployment Wi-Fi SSID and passphrase
   (setup-alpine configures ifupdown-ng + wpa_supplicant + udhcpc), or `eth0`
   with a wired adapter
-- NTP client: `chronyd` (the default)
+- NTP client: `busybox` ntpd
+- timezone: `Europe/Berlin`
 - SSH server: `openssh`, with the operator public key installed for `root` so
   the remaining steps can run over SSH
 - disk mode: `none` (the sys install target partition is created next)
@@ -538,13 +665,36 @@ reboot
 All remaining steps run as `root` on the sys install while the root
 filesystem is still writable. `setup-disk -m sys` writes a UUID-based
 `/etc/fstab` and mounts the boot FAT at `/boot` (not `/media/mmcblk0p1`, which
-only existed during the diskless boot above); steps 6 and 7 use `/boot` and
+only existed during the diskless boot above); steps 5 and 7 use `/boot` and
 those UUIDs.
 
 ### 2. Install OS Packages
 
-`setup-alpine` enables only the `main` apk repository, but libcamera, grpc,
-and re2 ship in `community`; uncomment it first:
+This is the first step over ssh. Make the root writable and record the device
+type, so every later block on this board pastes as written — including after the
+reboots below, because `/root/.profile` survives them:
+
+```sh
+root-rw
+export TXING_DEVICE=cyberbrick      # or: unit
+grep -qxF "export TXING_DEVICE=$TXING_DEVICE" /root/.profile \
+  || echo "export TXING_DEVICE=$TXING_DEVICE" >> /root/.profile
+echo "device type: $TXING_DEVICE"
+```
+
+This is the only value you edit by hand on the board; every block below reads it,
+so a typo surfaces immediately as a wrong binary name rather than quietly later.
+[Generate And Copy Daemon Config](#4-generate-and-copy-daemon-config) sets two
+more on the *operator* machine.
+
+`root-rw` is an alias the card installed in `/root/.profile`. On a board built by
+hand the root is not read-only yet, so it reports `not found` and the rest of the
+block runs unaffected.
+
+The card already configured `main` and `community` on https, so the `sed` below
+changes nothing on a card-provisioned board. It matters for a board brought up by
+hand, where `setup-alpine` enables only `main` while libcamera, grpc, and re2
+ship in `community`:
 
 ```sh
 sed -i 's|^#\(http.*/community\)$|\1|' /etc/apk/repositories
@@ -621,6 +771,11 @@ wrong runlevel.
 
 ### 3. Install Mise
 
+The card's `unattended.sh` already installed `mise` into `/root/.local/bin` and
+added it to `/root/.profile`, so `mise --version` works on a freshly provisioned
+board. This section is the reference for what it did, and for boards being
+brought up by hand.
+
 `mise` ships as a static musl binary and installs on Alpine unchanged:
 
 ```sh
@@ -634,28 +789,44 @@ fi
 
 ### 4. Generate And Copy Daemon Config
 
-On the operator machine:
+On the operator machine, set the thing id and the board's ssh host once, then
+paste:
 
 ```sh
-just aws::cert <thing-id>
-scp certs/<thing-id>/<thing-id>-daemon-config.tgz root@<board-host>:/tmp/<thing-id>-daemon-config.tgz
+export TXING_DEVICE=cyberbrick      # or: unit
+export THING_ID=...                 # the AWS IoT thing id for this board
+export BOARD_HOST=...               # hostname or address you ssh to
+
+just aws::cert "$THING_ID"
+scp "certs/${THING_ID}/${THING_ID}-daemon-config.tgz" \
+  "root@${BOARD_HOST}:/tmp/${THING_ID}-daemon-config.tgz"
 ```
 
-On the board:
+On the board, `TXING_DEVICE` is already set from step 2. `THING_ID` is not — it
+is needed only to name the archive that was just copied in, so read it off the
+file rather than typing it a second time into a second shell:
 
 ```sh
-install -d -m 700 "$HOME/.config/txing/<device>-daemon"
-tar --no-same-owner -xzf /tmp/<thing-id>-daemon-config.tgz -C "$HOME/.config/txing/<device>-daemon"
-chmod 700 "$HOME/.config/txing/<device>-daemon"
-chmod 600 "$HOME/.config/txing/<device>-daemon/daemon.env"
-chmod 600 "$HOME/.config/txing/<device>-daemon/certificate.arn"
-chmod 600 "$HOME/.config/txing/<device>-daemon/certificate.pem.crt"
-chmod 600 "$HOME/.config/txing/<device>-daemon/private.pem.key"
-chmod 600 "$HOME/.config/txing/<device>-daemon/public.pem.key"
-chmod 644 "$HOME/.config/txing/<device>-daemon/AmazonRootCA1.pem"
-chmod 644 "$HOME/.config/txing/<device>-daemon/SFSRootCAG2.pem"
-rm -f /tmp/<thing-id>-daemon-config.tgz
+CONFIG_DIR="$HOME/.config/txing/${TXING_DEVICE}-daemon"
+CONFIG_TGZ="$(ls -1t /tmp/*-daemon-config.tgz | head -1)"
+echo "installing $CONFIG_TGZ into $CONFIG_DIR"
+
+install -d -m 700 "$CONFIG_DIR"
+tar --no-same-owner -xzf "$CONFIG_TGZ" -C "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+chmod 600 "$CONFIG_DIR/daemon.env"
+chmod 600 "$CONFIG_DIR/certificate.arn"
+chmod 600 "$CONFIG_DIR/certificate.pem.crt"
+chmod 600 "$CONFIG_DIR/private.pem.key"
+chmod 600 "$CONFIG_DIR/public.pem.key"
+chmod 644 "$CONFIG_DIR/AmazonRootCA1.pem"
+chmod 644 "$CONFIG_DIR/SFSRootCAG2.pem"
+rm -f "$CONFIG_TGZ"
 ```
+
+The `echo` before the install is deliberate: `ls -1t` picks the newest matching
+archive, so on a board that has been reprovisioned it is worth seeing which one
+was chosen before it is unpacked over the live config.
 
 `AmazonRootCA1.pem` is the daemon's MQTT trust root; `SFSRootCAG2.pem` is the
 Starfield Services Root CA G2 that the KVS master's signaling TLS verifies
@@ -668,7 +839,7 @@ lines so both the daemon and the hardware worker init script can consume the
 same root-owned file. Certificate paths are omitted by default; the daemon
 derives colocated paths from the loaded `daemon.env` directory. For manual
 shell export, use
-`set -a; . /root/.config/txing/<device>-daemon/daemon.env; set +a`.
+`set -a; . /root/.config/txing/${TXING_DEVICE}-daemon/daemon.env; set +a`.
 Motor calibration, including
 `TXING_MOTOR_LEFT_TRACK_POWER_PERCENT`/`TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT`
 track trim, follows the board contract above.
@@ -677,234 +848,19 @@ If the device daemon role policy needs to be refreshed later (for example
 after policy changes on the operator side), run this on the operator machine:
 
 ```sh
-just <device>::board::role-policy <thing-id>
+just ${TXING_DEVICE}::board::role-policy "$THING_ID"
 ```
 
-### 5. Install Runtime And OpenRC Services
+### 5. Enable PWM Overlay And Camera
 
-Install the release tools through root-owned `mise`.
-`minimum_release_age = "0s"` opts out of mise's default 24-hour release-age
-filter: boards install first-party releases minutes after they are
-published, and with the default filter `latest` resolves to nothing.
-
-```sh
-install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
-cat >/root/.config/mise/conf.d/txing-<device>-daemon.toml <<'EOF'
-[settings]
-fetch_remote_versions_cache = "10m"
-minimum_release_age = "0s"
-
-[tool_alias]
-txing-<device>-daemon = "github:mparkachov/txing"
-txing-<device>-kvs-master = "github:mparkachov/txing"
-txing-<device>-hardware-worker = "github:mparkachov/txing"
-
-[tools.txing-<device>-daemon]
-version = "latest"
-version_prefix = "<device>-v"
-asset_pattern = "txing-<device>-daemon-linux-aarch64.tar.gz"
-
-[tools.txing-<device>-kvs-master]
-version = "latest"
-version_prefix = "<device>-v"
-asset_pattern = "txing-<device>-kvs-master-linux-aarch64.tar.gz"
-
-[tools.txing-<device>-hardware-worker]
-version = "latest"
-version_prefix = "<device>-v"
-asset_pattern = "txing-<device>-hardware-worker-linux-aarch64.tar.gz"
-EOF
-
-MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise install txing-<device>-daemon@latest txing-<device>-kvs-master@latest txing-<device>-hardware-worker@latest
-```
-
-Check the resolved binaries before writing the services. Every binary must
-report the release version; the static daemon and hardware worker must show
-no shared-library dependencies (musl `ldd` refuses them or lists only the
-loader), and the musl-dynamic KVS master must use the musl interpreter and
-resolve all shared libraries:
-
-```sh
-/root/.local/bin/mise list
-/root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon --version
-/root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master --version
-/root/.local/share/mise/installs/txing-<device>-hardware-worker/latest/txing-<device>-hardware-worker --version
-ldd /root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon || true
-ldd /root/.local/share/mise/installs/txing-<device>-hardware-worker/latest/txing-<device>-hardware-worker || true
-ldd /root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master
-ldd /root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master | grep -F "libcamera.so.0.7"
-ldd /root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master | grep -F "libcamera-base.so.0.7"
-```
-
-Confirm the KVS signaling anchor provisioned with the daemon config is
-present and names the expected root:
-
-```sh
-openssl x509 -in /root/.config/txing/<device>-daemon/SFSRootCAG2.pem -noout -subject
-```
-
-The subject must name `Starfield Services Root Certificate Authority - G2`.
-The KVS service points its TLS at this file through
-`TXING_KVS_SYSTEM_CA_CERT_PATH` (set in the init script below), because the
-SDK cannot verify the signaling chain against the full OS bundle. This anchor
-is stable (valid to 2037).
-
-Write the root-owned OpenRC init scripts. There is no OpenRC equivalent of
-unit's `txing-unit.target`; each service is enabled individually and OpenRC
-dependencies order them hardware worker, then daemon, then KVS master. The
-daemon owns the board-video bridge socket; the KVS master connects to it as a
-separate service. The hardware worker owns the BoardHardware socket; the
-daemon connects to it as a client and degrades if it is unavailable. All
-three services run under `supervise-daemon`, which restarts them on failure
-with bounded respawn limits. The daemons exit cleanly on the default
-supervise-daemon stop signal.
-
-```sh
-cat >/etc/init.d/txing-<device>-hardware-worker <<'EOF'
-#!/sbin/openrc-run
-
-description="Txing Board Hardware Worker"
-
-supervisor=supervise-daemon
-command=/root/.local/share/mise/installs/txing-<device>-hardware-worker/latest/txing-<device>-hardware-worker
-directory=/root
-respawn_delay=2
-respawn_max=5
-respawn_period=600
-output_log=/var/log/txing-<device>-hardware-worker.log
-error_log=/var/log/txing-<device>-hardware-worker.log
-
-daemon_env=/root/.config/txing/<device>-daemon/daemon.env
-
-depend() {
-    need localmount
-    before txing-<device>-daemon
-}
-
-start_pre() {
-    test -x "$command" || return 1
-    test -r "$daemon_env" || return 1
-    checkpath --directory --mode 0755 --owner root:root /run/txing-<device>-hardware-worker
-    set -a
-    . "$daemon_env"
-    set +a
-    export HOME=/root
-}
-EOF
-
-cat >/etc/init.d/txing-<device>-daemon <<'EOF'
-#!/sbin/openrc-run
-
-description="Txing Board Daemon"
-
-supervisor=supervise-daemon
-command=/root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon
-directory=/root
-respawn_delay=5
-respawn_max=5
-respawn_period=600
-output_log=/var/log/txing-<device>-daemon.log
-error_log=/var/log/txing-<device>-daemon.log
-
-depend() {
-    need net
-    use dns chronyd
-    after txing-<device>-hardware-worker
-}
-
-start_pre() {
-    test -x "$command" || return 1
-    checkpath --directory --mode 0755 --owner root:root /run/txing-<device>-daemon
-    if ! chronyc waitsync 60 0 0 3 >/dev/null 2>&1; then
-        ewarn "clock is not confirmed synchronized; AWS TLS setup may retry"
-    fi
-    export HOME=/root
-    export TXING_DAEMON_CONFIG_DIR=/root/.config/txing/<device>-daemon
-}
-EOF
-
-cat >/etc/init.d/txing-<device>-kvs-master <<'EOF'
-#!/sbin/openrc-run
-
-description="Txing Board KVS Master"
-
-supervisor=supervise-daemon
-command=/root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master
-directory=/root
-respawn_delay=5
-respawn_max=5
-respawn_period=600
-output_log=/var/log/txing-<device>-kvs-master.log
-error_log=/var/log/txing-<device>-kvs-master.log
-
-ca_cert=/root/.config/txing/<device>-daemon/SFSRootCAG2.pem
-
-depend() {
-    need net
-    use dns
-    after txing-<device>-daemon
-}
-
-start_pre() {
-    test -x "$command" || return 1
-    test -r "$ca_cert" || return 1
-    export HOME=/root
-    export TXING_KVS_SYSTEM_CA_CERT_PATH="$ca_cert"
-    export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-<device>-daemon/board-video-bridge.sock
-}
-EOF
-
-chmod 755 /etc/init.d/txing-<device>-hardware-worker
-chmod 755 /etc/init.d/txing-<device>-daemon
-chmod 755 /etc/init.d/txing-<device>-kvs-master
-
-rc-update add txing-<device>-hardware-worker default
-rc-update add txing-<device>-daemon default
-rc-update add txing-<device>-kvs-master default
-rc-service txing-<device>-hardware-worker restart
-rc-service txing-<device>-daemon restart
-rc-service txing-<device>-kvs-master restart
-```
-
-Verify:
-
-```sh
-rc-status default
-rc-service txing-<device>-hardware-worker status
-rc-service txing-<device>-daemon status
-rc-service txing-<device>-kvs-master status
-tail -n 160 /var/log/txing-<device>-hardware-worker.log
-tail -n 160 /var/log/txing-<device>-daemon.log
-tail -n 160 /var/log/txing-<device>-kvs-master.log
-```
-
-Expected:
-
-- all three services are `started` and stay up under `supervise-daemon`
-- the daemon's local OpenRC log
-  (`/var/log/txing-<device>-daemon.log`) is empty by design: the Go daemon
-  ships logs to CloudWatch (`txing/<town>/<rig>/<thing>`), not stdout. Confirm
-  it locally by a stable single daemon PID that is not respawning and by the
-  bound bridge socket; version, MQTT connect, and state publishes appear in
-  CloudWatch
-- the daemon binds `/run/txing-<device>-daemon/board-video-bridge.sock`
-- the hardware worker binds
-  `/run/txing-<device>-hardware-worker/<device>-hardware.sock`
-- the worker logs version and local actuator readiness or a clear hardware
-  error (a missing `/sys/class/pwm/pwmchip0` before the PWM overlay in
-  [Enable PWM Overlay And Camera](#6-enable-pwm-overlay-and-camera) is
-  expected)
-- MQTT connects and retained `board`, dynamic `mcp`, and `video` state is
-  published (visible in CloudWatch)
-- the KVS master service reaches READY over the bridge when camera and
-  signaling are available; with no camera attached it completes signaling and
-  then exits on `configured camera index is not available` and
-  supervise-daemon retires it to `failed` — expected until a camera is present
-- REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
-  and `video` capability state
-
-### 6. Enable PWM Overlay And Camera
+Both of these need a reboot to take effect, so they come before the services
+rather than after. The hardware worker looks for `/sys/class/pwm/pwmchip0` at
+every start and the KVS master enumerates cameras at every start; if the
+services come up first, both fail on hardware that is merely not configured yet,
+and the logs from that first start have to be read past rather than trusted.
+With this step done first, [Install Runtime And OpenRC
+Services](#6-install-runtime-and-openrc-services) is verified against the
+hardware the board will actually run.
 
 After `setup-disk -m sys`, the boot FAT partition is mounted at `/boot` (the
 `/media/mmcblk0p1` mount only exists during the diskless boot in step 1). Add
@@ -922,9 +878,10 @@ grep -q 'pwm-2chan' /boot/config.txt /boot/usercfg.txt 2>/dev/null || {
 ```
 
 The `pwm-2chan.dtbo` overlay ships in Alpine's `raspberrypi-bootloader`
-content already present on the boot FAT partition. Reboot after changing the
-overlay so `/sys/class/pwm/pwmchip0` exists; without it the hardware worker
-logs `PWM chip path does not exist` on every start.
+content already present on the boot FAT partition. `/sys/class/pwm/pwmchip0`
+appears only after a reboot; until then the hardware worker logs `PWM chip path
+does not exist` on every start. The camera changes below need a reboot too, so
+the single one at the end of this step covers both.
 
 The camera is off by default and needs firmware autodetection plus two kernel
 modules. Nothing in the base Alpine image enables either:
@@ -972,7 +929,310 @@ Expect the sensor subdev named for the attached module (for example
 `imx708_wide`), `unicam-image` on `/dev/video0`, `/dev/video11` present, and
 four media devices: `unicam`, `bcm2835-codec`, and two `bcm2835-isp`.
 
+Confirm the PWM chip appeared as well, since the services in the next step
+depend on it:
+
+```sh
+ls -d /sys/class/pwm/pwmchip0
+```
+
+Resolve anything missing here before continuing.
+[Camera Does Not Enumerate](#camera-does-not-enumerate) works down the video
+pipeline in order; a missing `pwmchip0` means the overlay line did not land in
+the file the firmware actually reads, which is the other one of
+`config.txt`/`usercfg.txt`.
+
+### 6. Install Runtime And OpenRC Services
+
+Install the release tools through root-owned `mise`.
+`minimum_release_age = "0s"` opts out of mise's default 24-hour release-age
+filter: boards install first-party releases minutes after they are
+published, and with the default filter `latest` resolves to nothing.
+
+```sh
+: "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
+
+install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
+cat >/root/.config/mise/conf.d/txing-${TXING_DEVICE}-daemon.toml <<EOF
+[settings]
+fetch_remote_versions_cache = "10m"
+minimum_release_age = "0s"
+
+[tool_alias]
+txing-${TXING_DEVICE}-daemon = "github:mparkachov/txing"
+txing-${TXING_DEVICE}-kvs-master = "github:mparkachov/txing"
+txing-${TXING_DEVICE}-hardware-worker = "github:mparkachov/txing"
+
+[tools.txing-${TXING_DEVICE}-daemon]
+version = "latest"
+version_prefix = "${TXING_DEVICE}-v"
+asset_pattern = "txing-${TXING_DEVICE}-daemon-linux-aarch64.tar.gz"
+
+[tools.txing-${TXING_DEVICE}-kvs-master]
+version = "latest"
+version_prefix = "${TXING_DEVICE}-v"
+asset_pattern = "txing-${TXING_DEVICE}-kvs-master-linux-aarch64.tar.gz"
+
+[tools.txing-${TXING_DEVICE}-hardware-worker]
+version = "latest"
+version_prefix = "${TXING_DEVICE}-v"
+asset_pattern = "txing-${TXING_DEVICE}-hardware-worker-linux-aarch64.tar.gz"
+EOF
+
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise install \
+    txing-${TXING_DEVICE}-daemon@latest \
+    txing-${TXING_DEVICE}-kvs-master@latest \
+    txing-${TXING_DEVICE}-hardware-worker@latest
+```
+
+The `: "${TXING_DEVICE:?...}"` guard is the first line of every block from here
+on that writes files. With `TXING_DEVICE` unset these heredocs would otherwise
+expand to paths like `txing--daemon` and write plausible-looking rubbish, so the
+blocks refuse to start instead.
+
+Check the resolved binaries before writing the services. Every binary must
+report the release version; the static daemon and hardware worker must show
+no shared-library dependencies (musl `ldd` refuses them or lists only the
+loader), and the musl-dynamic KVS master must use the musl interpreter and
+resolve all shared libraries:
+
+```sh
+INSTALLS=/root/.local/share/mise/installs
+DAEMON="$INSTALLS/txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon"
+KVS="$INSTALLS/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master"
+WORKER="$INSTALLS/txing-${TXING_DEVICE}-hardware-worker/latest/txing-${TXING_DEVICE}-hardware-worker"
+
+/root/.local/bin/mise list
+"$DAEMON" --version
+"$KVS" --version
+"$WORKER" --version
+ldd "$DAEMON" || true
+ldd "$WORKER" || true
+ldd "$KVS"
+ldd "$KVS" | grep -F "libcamera.so.0.7"
+ldd "$KVS" | grep -F "libcamera-base.so.0.7"
+```
+
+`INSTALLS`, `DAEMON`, `KVS`, and `WORKER` are plain shell variables, not
+exported: nothing the daemon reads may leak in from an operator shell, for the
+reason given in [Video Never Reaches READY](#video-never-reaches-ready). Every
+later block that needs them redeclares them, so each stays self-contained after
+a reconnect.
+
+Confirm the KVS signaling anchor provisioned with the daemon config is
+present and names the expected root:
+
+```sh
+openssl x509 -in "/root/.config/txing/${TXING_DEVICE}-daemon/SFSRootCAG2.pem" \
+  -noout -subject
+```
+
+The subject must name `Starfield Services Root Certificate Authority - G2`.
+The KVS service points its TLS at this file through
+`TXING_KVS_SYSTEM_CA_CERT_PATH` (set in the init script below), because the
+SDK cannot verify the signaling chain against the full OS bundle. This anchor
+is stable (valid to 2037).
+
+Write the root-owned OpenRC init scripts. There is no OpenRC equivalent of
+unit's `txing-unit.target`; each service is enabled individually and OpenRC
+dependencies order them hardware worker, then daemon, then KVS master. The
+daemon owns the board-video bridge socket; the KVS master connects to it as a
+separate service. The hardware worker owns the BoardHardware socket; the
+daemon connects to it as a client and degrades if it is unavailable. All
+three services run under `supervise-daemon`, which restarts them on failure
+with bounded respawn limits. The daemons exit cleanly on the default
+supervise-daemon stop signal.
+
+These heredocs are **unquoted**, so `${TXING_DEVICE}` expands as the file is
+written, while every `\$` stays literal and is resolved by OpenRC at service
+start. The distinction is the whole reason the block is paste-able; the
+verification below catches a mistake in either direction.
+
+```sh
+: "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
+
+cat >/etc/init.d/txing-${TXING_DEVICE}-hardware-worker <<EOF
+#!/sbin/openrc-run
+
+description="Txing Board Hardware Worker"
+
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-${TXING_DEVICE}-hardware-worker/latest/txing-${TXING_DEVICE}-hardware-worker
+directory=/root
+respawn_delay=2
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-${TXING_DEVICE}-hardware-worker.log
+error_log=/var/log/txing-${TXING_DEVICE}-hardware-worker.log
+
+daemon_env=/root/.config/txing/${TXING_DEVICE}-daemon/daemon.env
+
+depend() {
+    need localmount
+    before txing-${TXING_DEVICE}-daemon
+}
+
+start_pre() {
+    test -x "\$command" || return 1
+    test -r "\$daemon_env" || return 1
+    checkpath --directory --mode 0755 --owner root:root /run/txing-${TXING_DEVICE}-hardware-worker
+    set -a
+    . "\$daemon_env"
+    set +a
+    export HOME=/root
+}
+EOF
+
+cat >/etc/init.d/txing-${TXING_DEVICE}-daemon <<EOF
+#!/sbin/openrc-run
+
+description="Txing Board Daemon"
+
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon
+directory=/root
+respawn_delay=5
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-${TXING_DEVICE}-daemon.log
+error_log=/var/log/txing-${TXING_DEVICE}-daemon.log
+
+depend() {
+    need net
+    use dns ntpd
+    after txing-${TXING_DEVICE}-hardware-worker
+}
+
+start_pre() {
+    test -x "\$command" || return 1
+    checkpath --directory --mode 0755 --owner root:root /run/txing-${TXING_DEVICE}-daemon
+    # busybox ntpd has no waitsync equivalent, so the gate is the clock
+    # itself: a Pi has no RTC and boots far in the past, which fails TLS
+    # certificate validation. Anything past 2025 means ntpd has stepped it.
+    ntp_waited=0
+    while [ "\$(date -u +%Y)" -lt 2025 ] && [ "\$ntp_waited" -lt 60 ]; do
+        sleep 2
+        ntp_waited=\$((ntp_waited + 2))
+    done
+    if [ "\$(date -u +%Y)" -lt 2025 ]; then
+        ewarn "clock is not confirmed synchronized; AWS TLS setup may retry"
+    fi
+    export HOME=/root
+    export TXING_DAEMON_CONFIG_DIR=/root/.config/txing/${TXING_DEVICE}-daemon
+}
+EOF
+
+cat >/etc/init.d/txing-${TXING_DEVICE}-kvs-master <<EOF
+#!/sbin/openrc-run
+
+description="Txing Board KVS Master"
+
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master
+directory=/root
+respawn_delay=5
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-${TXING_DEVICE}-kvs-master.log
+error_log=/var/log/txing-${TXING_DEVICE}-kvs-master.log
+
+ca_cert=/root/.config/txing/${TXING_DEVICE}-daemon/SFSRootCAG2.pem
+
+depend() {
+    need net
+    use dns
+    after txing-${TXING_DEVICE}-daemon
+}
+
+start_pre() {
+    test -x "\$command" || return 1
+    test -r "\$ca_cert" || return 1
+    export HOME=/root
+    export TXING_KVS_SYSTEM_CA_CERT_PATH="\$ca_cert"
+    export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-${TXING_DEVICE}-daemon/board-video-bridge.sock
+}
+EOF
+
+chmod 755 /etc/init.d/txing-${TXING_DEVICE}-hardware-worker
+chmod 755 /etc/init.d/txing-${TXING_DEVICE}-daemon
+chmod 755 /etc/init.d/txing-${TXING_DEVICE}-kvs-master
+```
+
+Check the written files before enabling anything. Every `command=` must name an
+executable that exists, and `$command`, `$daemon_env`, and `$ca_cert` must have
+survived as literals for OpenRC to expand at start:
+
+```sh
+for s in hardware-worker daemon kvs-master; do
+  f=/etc/init.d/txing-${TXING_DEVICE}-$s
+  sh -n "$f" || echo "SYNTAX ERROR in $f"
+  grep -q 'test -x "$command"' "$f" || echo "OVER-EXPANDED in $f"
+  test -x "$(sed -n 's/^command=//p' "$f")" || echo "NO SUCH BINARY in $f"
+done
+```
+
+Silence means all three are correct. `OVER-EXPANDED` means a `\$` was lost and
+the shell resolved a runtime variable at write time; `NO SUCH BINARY` usually
+means `TXING_DEVICE` does not match what `mise` installed.
+
+Then enable and start them, dependencies first:
+
+```sh
+rc-update add txing-${TXING_DEVICE}-hardware-worker default
+rc-update add txing-${TXING_DEVICE}-daemon default
+rc-update add txing-${TXING_DEVICE}-kvs-master default
+rc-service txing-${TXING_DEVICE}-hardware-worker restart
+rc-service txing-${TXING_DEVICE}-daemon restart
+rc-service txing-${TXING_DEVICE}-kvs-master restart
+```
+
+Verify:
+
+```sh
+rc-status default
+for s in hardware-worker daemon kvs-master; do
+  rc-service txing-${TXING_DEVICE}-$s status
+done
+for s in hardware-worker daemon kvs-master; do
+  echo "== $s"
+  tail -n 160 /var/log/txing-${TXING_DEVICE}-$s.log
+done
+```
+
+Expected:
+
+- all three services are `started` and stay up under `supervise-daemon`
+- the daemon's local OpenRC log
+  (`/var/log/txing-<device>-daemon.log`) is empty by design: the Go daemon
+  ships logs to CloudWatch (`txing/<town>/<rig>/<thing>`), not stdout. Confirm
+  it locally by a stable single daemon PID that is not respawning and by the
+  bound bridge socket; version, MQTT connect, and state publishes appear in
+  CloudWatch
+- the daemon binds `/run/txing-<device>-daemon/board-video-bridge.sock`
+- the hardware worker binds
+  `/run/txing-<device>-hardware-worker/<device>-hardware.sock`
+- the worker logs version and local actuator readiness. `PWM chip path does not
+  exist` is a **failure** here, not a pending step: the overlay went in at
+  [Enable PWM Overlay And Camera](#5-enable-pwm-overlay-and-camera) and the
+  board has rebooted since
+- MQTT connects and retained `board`, dynamic `mcp`, and `video` state is
+  published (visible in CloudWatch)
+- the KVS master reaches READY over the bridge, because the camera was enabled
+  in the previous step. `configured camera index is not available` followed by
+  supervise-daemon retiring it to `failed` is expected only when no camera is
+  physically attached; with one attached it is a fault, and
+  [Camera Does Not Enumerate](#camera-does-not-enumerate) works down the
+  pipeline
+- REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
+  and `video` capability state
+
 ### 7. Configure Read-Only Root
+
+The card's `unattended.sh` already applied everything in this section: the
+read-only fstab, the tmpfs mounts, the `resolv.conf` handling, and the aliases.
+It is kept here as the reference for what that configuration is and why, and for
+boards being brought up by hand.
 
 The runtime is compatible with read-only root as long as these paths stay
 writable on tmpfs:
@@ -980,11 +1240,10 @@ writable on tmpfs:
 - `/tmp`
 - `/var/tmp`
 - `/var/log`
-- `/var/lib/chrony`
 
 The native KVS worker keeps the signaling cache in memory and does not depend
-on the SDK default `.SignalingCache_v1` file. chronyd tolerates a missing
-drift file on the `/var/lib/chrony` tmpfs; it only costs a warning at boot.
+on the SDK default `.SignalingCache_v1` file. busybox ntpd keeps no drift file,
+so it needs no writable state of its own on a read-only root.
 
 Make `/etc/resolv.conf` point at udhcpc's runtime resolver output before
 switching root to read-only. With a regular file on read-only root, udhcpc
@@ -1000,23 +1259,35 @@ rc-service networking restart
 getent hosts example.com
 ```
 
-`setup-disk -m sys` writes a UUID-based fstab with the root ext4 at `/` and
-the boot FAT at `/boot`. Read the two UUIDs from `blkid` (root is the ext4
-partition, boot is the vfat partition) and set both to `ro`, adding the
-tmpfs mounts:
+`setup-disk -m sys` already wrote a UUID-based fstab with the root ext4 at `/`
+and the boot FAT at `/boot`. Reuse those two lines rather than reading `blkid`
+and retyping UUIDs: device names change with layout, and the specs already in
+the file are known to match the disk the board booted from. Set both to `ro` and
+add the tmpfs mounts:
 
 ```sh
-blkid   # note the ext4 (root) and vfat (boot) UUIDs
-```
+ROOT_SPEC="$(awk '$2 == "/" && $1 !~ /^#/ { print $1; exit }' /etc/fstab)"
+BOOT_SPEC="$(awk '$2 == "/boot" && $1 !~ /^#/ { print $1; exit }' /etc/fstab)"
+test -n "$ROOT_SPEC" || echo "no / entry in /etc/fstab"
+test -n "$BOOT_SPEC" || echo "no /boot entry in /etc/fstab"
+printf 'root=%s\nboot=%s\n' "$ROOT_SPEC" "$BOOT_SPEC"
 
-```fstab
-UUID=<root-ext4-uuid>  /      ext4  ro,noatime  0 1
-UUID=<boot-vfat-uuid>  /boot  vfat  ro,noatime  0 2
+cp /etc/fstab /etc/fstab.before-ro
+cat >/etc/fstab <<EOF
+${ROOT_SPEC}  /      ext4  ro,noatime  0 1
+${BOOT_SPEC}  /boot  vfat  ro,noatime  0 2
 tmpfs  /tmp             tmpfs  nosuid,nodev,mode=1777,size=32M      0 0
 tmpfs  /var/tmp         tmpfs  nosuid,nodev,exec,mode=1777,size=96M 0 0
 tmpfs  /var/log         tmpfs  nosuid,nodev,mode=0755,size=16M      0 0
-tmpfs  /var/lib/chrony  tmpfs  nosuid,nodev,mode=0755,size=4M       0 0
+EOF
+cat /etc/fstab
 ```
+
+This is the same derivation `unattended.sh` performs, so a board provisioned by
+the card and one sealed by hand end up with byte-identical fstabs. Check the
+printed `root=` and `boot=` are both `UUID=`-prefixed before continuing: an empty
+one means the fstab was not written by `setup-disk` and the new file would mount
+nothing.
 
 The RPi firmware reads `config.txt`/`cmdline.txt` from the FAT before Linux
 mounts it, so a read-only `/boot` does not affect boot; `root-rw` remounts it
@@ -1053,18 +1324,21 @@ reboot
 After reconnecting:
 
 ```sh
+INSTALLS=/root/.local/share/mise/installs
+
 mount | grep ' / '
 rc-status default
-rc-service txing-<device>-hardware-worker status
-rc-service txing-<device>-daemon status
-rc-service txing-<device>-kvs-master status
-tail -n 160 /var/log/txing-<device>-hardware-worker.log
-tail -n 160 /var/log/txing-<device>-daemon.log
-tail -n 160 /var/log/txing-<device>-kvs-master.log
+for s in hardware-worker daemon kvs-master; do
+  rc-service txing-${TXING_DEVICE}-$s status
+done
+for s in hardware-worker daemon kvs-master; do
+  echo "== $s"
+  tail -n 160 /var/log/txing-${TXING_DEVICE}-$s.log
+done
 /root/.local/bin/mise list
-/root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon --version
-/root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master --version
-/root/.local/share/mise/installs/txing-<device>-hardware-worker/latest/txing-<device>-hardware-worker --version
+for b in daemon kvs-master hardware-worker; do
+  "$INSTALLS/txing-${TXING_DEVICE}-$b/latest/txing-${TXING_DEVICE}-$b" --version
+done
 readlink /etc/resolv.conf
 getent hosts example.com
 ```
@@ -1087,11 +1361,12 @@ Expected:
 With a camera attached, confirm the full video path end to end:
 
 ```sh
-rc-service txing-<device>-kvs-master stop
-/root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master \
-  --camera-probe
-rc-service txing-<device>-kvs-master start
-grep -E 'TXING_KVS_READY|TXING_KVS_ERROR' /var/log/txing-<device>-kvs-master.log
+KVS="/root/.local/share/mise/installs/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master"
+
+rc-service txing-${TXING_DEVICE}-kvs-master stop
+"$KVS" --camera-probe
+rc-service txing-${TXING_DEVICE}-kvs-master start
+grep -E 'TXING_KVS_READY|TXING_KVS_ERROR' /var/log/txing-${TXING_DEVICE}-kvs-master.log
 ```
 
 `--camera-probe` is capture-only: it exercises camera enumeration, capture,
@@ -1122,15 +1397,15 @@ ls /usr/share/libcamera/ipa/rpi/vc4/ | head
 ls -d /run/udev
 rc-status sysinit | grep -i udev
 LIBCAMERA_LOG_LEVELS=*:DEBUG \
-  /root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master \
+  "/root/.local/share/mise/installs/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master" \
   --camera-probe 2>&1 | tail -40
 ```
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| No `/dev/video0`, no sensor in `dmesg` | firmware camera autodetection off | `camera_auto_detect=1` ([step 6](#6-enable-pwm-overlay-and-camera)) |
-| `/dev/video0` present, no `/dev/video11` | `bcm2835-codec` not loaded | add to `/etc/modules` ([step 6](#6-enable-pwm-overlay-and-camera)) |
-| Only `unicam` + `bcm2835-codec` media devices | `bcm2835-isp` not loaded | add to `/etc/modules` ([step 6](#6-enable-pwm-overlay-and-camera)) |
+| No `/dev/video0`, no sensor in `dmesg` | firmware camera autodetection off | `camera_auto_detect=1` ([step 5](#5-enable-pwm-overlay-and-camera)) |
+| `/dev/video0` present, no `/dev/video11` | `bcm2835-codec` not loaded | add to `/etc/modules` ([step 5](#5-enable-pwm-overlay-and-camera)) |
+| Only `unicam` + `bcm2835-codec` media devices | `bcm2835-isp` not loaded | add to `/etc/modules` ([step 5](#5-enable-pwm-overlay-and-camera)) |
 | No `ipa_rpi_vc4.so`, no `vc4/` tuning dir | `libcamera-raspberrypi` missing | `apk add libcamera-raspberrypi` ([step 2](#2-install-os-packages)) |
 | All of the above present, `/run/udev` missing | no udev daemon | `apk add eudev` + [step 2a](#2a-enable-udev) |
 
@@ -1161,9 +1436,9 @@ as far as the camera. The daemon binds the bridge socket at startup and only
 when `video` is in `TXING_DAEMON_CAPABILITIES`:
 
 ```sh
-grep -E 'CAPABILITIES|SOCKET_PATH' /root/.config/txing/<device>-daemon/daemon.env
-ls -l /run/txing-<device>-daemon/ /run/txing-<device>-hardware-worker/
-pid=$(pgrep -f txing-<device>-daemon | head -1)
+grep -E 'CAPABILITIES|SOCKET_PATH' "/root/.config/txing/${TXING_DEVICE}-daemon/daemon.env"
+ls -l /run/txing-${TXING_DEVICE}-daemon/ /run/txing-${TXING_DEVICE}-hardware-worker/
+pid=$(pgrep -f "txing-${TXING_DEVICE}-daemon" | head -1)
 tr '\0' '\n' < /proc/$pid/environ | grep SOCKET_PATH
 ```
 
@@ -1196,9 +1471,9 @@ expected and is not evidence of either problem.
 Service restarts have a required order, dependencies first:
 
 ```sh
-rc-service txing-<device>-hardware-worker restart
-rc-service txing-<device>-daemon restart
-rc-service txing-<device>-kvs-master restart
+rc-service txing-${TXING_DEVICE}-hardware-worker restart
+rc-service txing-${TXING_DEVICE}-daemon restart
+rc-service txing-${TXING_DEVICE}-kvs-master restart
 ```
 
 **Restarting the daemon always requires restarting the KVS master after it.**
@@ -1240,19 +1515,49 @@ Alpine branch than the device runs. Device apk repositories stay on Alpine
 `v3.24` until a coordinated bump. The static daemon and hardware worker
 depend only on the kernel and are unaffected by apk upgrades.
 
+The **reverse** direction bites on a fresh install rather than an upgrade, and
+is the more likely one: a board imaged to current Alpine, installing a release
+stream that has not been rebuilt since the last Alpine bump. `latest` resolves
+happily and the binary is unrunnable, because the sonames it wants no longer
+exist in the branch the board runs. It shows as a wall of
+`Error loading shared library` naming *older* sonames than this document
+records — a libcamera one revision back on a `v3.24` board that ships
+`libcamera.so.0.7`, alongside older grpc, protobuf and abseil revisions.
+Retargeting the Alpine contract therefore means publishing on **every** stream,
+not only the one being worked on; a stream left behind is silently broken for
+new installs while existing boards keep running. Check the newest tag on the
+stream predates nothing you care about before installing:
+
 ```sh
+gh release list --limit 5 | grep "^${TXING_DEVICE}-v"
+```
+
+`libstdc++.so.6` or `libgcc_s.so.1` among the missing libraries means something
+else: those sonames are stable across Alpine branches, so their absence is
+[Install OS Packages](#2-install-os-packages) never having run on the board,
+not a release mismatch.
+
+```sh
+INSTALLS=/root/.local/share/mise/installs
+DAEMON="$INSTALLS/txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon"
+KVS="$INSTALLS/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master"
+WORKER="$INSTALLS/txing-${TXING_DEVICE}-hardware-worker/latest/txing-${TXING_DEVICE}-hardware-worker"
+
 root-rw
 apk update
 apk upgrade
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise upgrade txing-<device>-daemon txing-<device>-kvs-master txing-<device>-hardware-worker
-/root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon --version
-/root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master --version
-/root/.local/share/mise/installs/txing-<device>-hardware-worker/latest/txing-<device>-hardware-worker --version
-ldd /root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon
-ldd /root/.local/share/mise/installs/txing-<device>-hardware-worker/latest/txing-<device>-hardware-worker
-ldd /root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master | grep -F "libcamera.so.0.7"
-ldd /root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master | grep -F "libcamera-base.so.0.7"
+  /root/.local/bin/mise upgrade \
+    txing-${TXING_DEVICE}-daemon \
+    txing-${TXING_DEVICE}-kvs-master \
+    txing-${TXING_DEVICE}-hardware-worker
+"$DAEMON" --version
+"$KVS" --version
+"$WORKER" --version
+ldd "$DAEMON"
+ldd "$WORKER"
+ldd "$KVS" | grep -F "libcamera.so.0.7"
+ldd "$KVS" | grep -F "libcamera-base.so.0.7"
 sync
 reboot
 ```
@@ -1270,7 +1575,7 @@ directly:
 ```sh
 for b in daemon kvs-master hardware-worker; do
   printf '%s: ' "$b"
-  strings "/root/.local/share/mise/installs/txing-<device>-$b/latest/txing-<device>-$b" \
+  strings "/root/.local/share/mise/installs/txing-${TXING_DEVICE}-$b/latest/txing-${TXING_DEVICE}-$b" \
     | grep -oE 'txing\.(board|unit|cyberbrick)\.(board_video|hardware)\.v1' \
     | sort -u | tr '\n' ' '
   echo
@@ -1300,20 +1605,22 @@ coupled `apk upgrade` + `mise upgrade` window above.
 Daemon and native board worker commands:
 
 ```sh
-just <device>::board::test
-just <device>::board::run
-just <device>::board::kvs-test-native
-just <device>::board::hardware-test-native
-just <device>::board::daemon-build-alpine
-just <device>::board::kvs-build-alpine
-just <device>::board::hardware-build-alpine
-just <device>::board::docker-build
-just <device>::board::docker-smoke
+export TXING_DEVICE=cyberbrick      # or: unit
+
+just ${TXING_DEVICE}::board::test
+just ${TXING_DEVICE}::board::run
+just ${TXING_DEVICE}::board::kvs-test-native
+just ${TXING_DEVICE}::board::hardware-test-native
+just ${TXING_DEVICE}::board::daemon-build-alpine
+just ${TXING_DEVICE}::board::kvs-build-alpine
+just ${TXING_DEVICE}::board::hardware-build-alpine
+just ${TXING_DEVICE}::board::docker-build
+just ${TXING_DEVICE}::board::docker-smoke
 ```
 
 The local daemon uses
-`${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/<device>-daemon}`.
-Provision that directory with `just aws::cert <thing-id>` only when AWS
+`${TXING_DAEMON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/txing/${TXING_DEVICE}-daemon}`.
+Provision that directory with `just aws::cert "$THING_ID"` only when AWS
 resource changes are intended.
 
 The `*-build-alpine`, `docker-build`, and `docker-smoke` recipes build and
