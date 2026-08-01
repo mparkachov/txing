@@ -146,6 +146,45 @@ func TestRuntimePublishesStateAndShadows(t *testing.T) {
 	assertPublishedTopic(t, publisher, "$aws/things/power-si-001/shadow/name/power/update")
 }
 
+func TestPowerShadowPublishesValidUnavailableAndFailedBatteryValues(t *testing.T) {
+	battery := 3011
+	testCases := []struct {
+		name  string
+		value *int
+		want  any
+	}{
+		{name: "valid", value: &battery, want: float64(3011)},
+		{name: "unavailable", value: nil, want: nil},
+		{name: "failed", value: nil, want: nil},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			updates, err := ShadowUpdatesFromState(DeviceState{
+				ThingName: "power-nrf-001",
+				BatteryMV: testCase.value,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(updates) != 2 || !strings.HasSuffix(updates[1].Topic, "/shadow/name/power/update") {
+				t.Fatalf("updates = %#v", updates)
+			}
+			var payload struct {
+				State struct {
+					Reported map[string]any `json:"reported"`
+				} `json:"state"`
+			}
+			if err := json.Unmarshal(updates[1].Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if got := payload.State.Reported["batteryMv"]; got != testCase.want {
+				t.Fatalf("batteryMv = %#v, want %#v", got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestRuntimeDoesNotRepublishUnchangedShadows(t *testing.T) {
 	publisher := &recordingPublisher{}
 	runtime := NewRuntime(

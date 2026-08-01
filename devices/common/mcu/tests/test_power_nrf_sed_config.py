@@ -91,6 +91,19 @@ class PowerNrfSedConfigTests(unittest.TestCase):
         self.assertIn("restart_thread_mode_locked(ot, false)", source)
         self.assertIn("restart_thread_mode_locked(ot, true)", source)
 
+    def test_npm1300_battery_reading_is_on_demand_and_null_safe(self) -> None:
+        values = read_conf(POWER_NRF_MCU / "zephyr" / "prj.conf")
+        source = (POWER_NRF_MCU / "src" / "main.c").read_text(encoding="ascii")
+
+        self.assertEqual(values.get("CONFIG_SENSOR"), "y")
+        self.assertIn("DT_NODELABEL(pmic_charger)", source)
+        self.assertIn("sensor_sample_fetch_chan(battery_sensor, SENSOR_CHAN_GAUGE_VOLTAGE)", source)
+        self.assertIn("sensor_channel_get(battery_sensor, SENSOR_CHAN_GAUGE_VOLTAGE", source)
+        self.assertIn("sensor_value_to_milli(&voltage)", source)
+        self.assertIn('"batteryMv\\\":%u}', source)
+        self.assertIn('"batteryMv\\\":null}', source)
+        self.assertIn("nPM1300 battery measurement unavailable", source)
+
     def test_matter_chip_and_ble_redcon_are_absent(self) -> None:
         contents = "\n".join(
             path.read_text(encoding="ascii").lower()

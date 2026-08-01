@@ -200,15 +200,15 @@ func ShadowUpdatesFromState(state DeviceState) ([]ShadowUpdate, error) {
 		return nil, err
 	}
 	updates = append(updates, threadUpdate)
+	powerReported := map[string]any{"batteryMv": nil}
 	if state.BatteryMV != nil {
-		powerUpdate, err := BuildShadowUpdate(state.ThingName, PowerShadowName, map[string]any{
-			"batteryMv": *state.BatteryMV,
-		})
-		if err != nil {
-			return nil, err
-		}
-		updates = append(updates, powerUpdate)
+		powerReported["batteryMv"] = *state.BatteryMV
 	}
+	powerUpdate, err := BuildShadowUpdate(state.ThingName, PowerShadowName, powerReported)
+	if err != nil {
+		return nil, err
+	}
+	updates = append(updates, powerUpdate)
 	return updates, nil
 }
 

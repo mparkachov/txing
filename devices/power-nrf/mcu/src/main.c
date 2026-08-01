@@ -4,7 +4,9 @@
 #include <string.h>
 
 #include <zephyr/data/json.h>
+#include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/openthread.h>
@@ -49,6 +51,11 @@ BUILD_ASSERT(!(IS_ENABLED(CONFIG_TXING_POWER_NRF_SED_RECOVERY) &&
 
 static const struct gpio_dt_spec power_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(power), gpios);
 static const struct gpio_dt_spec led_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+#if DT_NODE_EXISTS(DT_NODELABEL(pmic_charger))
+#define BATTERY_NODE DT_NODELABEL(pmic_charger)
+static const struct device *const battery_sensor = DEVICE_DT_GET(BATTERY_NODE);
+static bool battery_available;
+#endif
 
 struct factory_data {
 	char thing_name[TXN1_THING_NAME_SIZE + 1];
@@ -255,8 +262,53 @@ static int init_outputs(void)
 	return set_outputs_for_redcon(TXING_REDCON_OFF);
 }
 
+static int init_battery(void)
+{
+#if DT_NODE_EXISTS(DT_NODELABEL(pmic_charger))
+	if (!device_is_ready(battery_sensor)) {
+		return -ENODEV;
+	}
+	battery_available = true;
+	return 0;
+#else
+	return -ENODEV;
+#endif
+}
+
+static bool sample_battery_mv(uint16_t *battery_mv)
+{
+#if DT_NODE_EXISTS(DT_NODELABEL(pmic_charger))
+	struct sensor_value voltage;
+	int64_t millivolts;
+
+	if (!battery_available ||
+	    sensor_sample_fetch_chan(battery_sensor, SENSOR_CHAN_GAUGE_VOLTAGE) != 0 ||
+	    sensor_channel_get(battery_sensor, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage) != 0) {
+		return false;
+	}
+
+	/* The nPM1300 charger sensor supplies the battery voltage directly. */
+	millivolts = sensor_value_to_milli(&voltage);
+	if (millivolts < 0 || millivolts > UINT16_MAX) {
+		return false;
+	}
+	*battery_mv = (uint16_t)millivolts;
+	return true;
+#else
+	ARG_UNUSED(battery_mv);
+	return false;
+#endif
+}
+
 static int format_state(char *buffer, size_t size)
 {
+	uint16_t battery_mv;
+
+	if (sample_battery_mv(&battery_mv)) {
+		return snprintk(buffer, size,
+				"{\"version\":%d,\"thingName\":\"%s\",\"redcon\":%d,\"batteryMv\":%u}",
+				TXING_PROTOCOL_VERSION, factory.thing_name, redcon_level, battery_mv);
+	}
 	return snprintk(buffer, size,
 			"{\"version\":%d,\"thingName\":\"%s\",\"redcon\":%d,\"batteryMv\":null}",
 			TXING_PROTOCOL_VERSION, factory.thing_name, redcon_level);
@@ -697,6 +749,10 @@ int main(void)
 	if (rc != 0) {
 		LOG_ERR("TXN1 factory data load failed: %d", rc);
 		return rc;
+	}
+	rc = init_battery();
+	if (rc != 0) {
+		LOG_WRN("nPM1300 battery measurement unavailable: %d", rc);
 	}
 	ot = openthread_get_default_instance();
 	if (ot == NULL) {
