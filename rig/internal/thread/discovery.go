@@ -51,7 +51,7 @@ func (d Discoverer) Discover(ctx context.Context) ([]Endpoint, error) {
 			continue
 		}
 		txt := ParseTXT(txtStrings)
-		if txt["type"] != DeviceType {
+		if !IsSupportedDeviceType(txt["type"]) {
 			continue
 		}
 		srvRecords, err := resolver.LookupSRV(ctx, instance)

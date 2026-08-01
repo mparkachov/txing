@@ -13,13 +13,14 @@ import (
 )
 
 const (
-	AdapterID       = "dev.txing.rig.ThreadConnectivity"
-	DeviceType      = "power-si"
-	ServiceName     = "_txing-coap._udp"
-	DefaultDomain   = "default.service.arpa"
-	DefaultCoAPPort = uint16(5683)
-	ProtocolVersion = "1"
-	RequestVersion  = 1
+	AdapterID          = "dev.txing.rig.ThreadConnectivity"
+	DeviceTypePowerSI  = "power-si"
+	DeviceTypePowerNRF = "power-nrf"
+	ServiceName        = "_txing-coap._udp"
+	DefaultDomain      = "default.service.arpa"
+	DefaultCoAPPort    = uint16(5683)
+	ProtocolVersion    = "1"
+	RequestVersion     = 1
 
 	SparkplugCapability = "sparkplug"
 	ThreadCapability    = "thread"
@@ -34,6 +35,7 @@ const (
 
 type DeviceSpec struct {
 	ThingName string
+	ThingType string
 }
 
 type Endpoint struct {
@@ -83,13 +85,20 @@ func SEDDebugLinkModeForRedcon(redcon uint8) string {
 }
 
 func DeviceSpecFromInventory(device protocol.InventoryDevice) *DeviceSpec {
-	if device.ThingType != DeviceType {
+	if !IsSupportedDeviceType(device.ThingType) {
 		return nil
 	}
 	if !device.HasCapability(ThreadCapability) || !device.HasCapability(PowerCapability) {
 		return nil
 	}
-	return &DeviceSpec{ThingName: device.ThingName}
+	return &DeviceSpec{ThingName: device.ThingName, ThingType: device.ThingType}
+}
+
+// IsSupportedDeviceType reports whether a DNS-SD endpoint type is operated by
+// this Thread adapter. Keep this list deliberately closed: other Thread
+// services must not be mistaken for a managed power device.
+func IsSupportedDeviceType(thingType string) bool {
+	return thingType == DeviceTypePowerSI || thingType == DeviceTypePowerNRF
 }
 
 func BuildServiceFQDN(domain string) string {
@@ -105,7 +114,7 @@ func NewEndpoint(instanceFQDN string, host string, port uint16, txt map[string]s
 		return Endpoint{}, false
 	}
 	thingName := ServiceInstanceThingName(instanceFQDN)
-	if thingName == "" || txt["type"] != DeviceType || len(addresses) == 0 {
+	if thingName == "" || !IsSupportedDeviceType(txt["type"]) || len(addresses) == 0 {
 		return Endpoint{}, false
 	}
 	return Endpoint{

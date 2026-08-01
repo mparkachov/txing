@@ -61,8 +61,9 @@ func (r *Runtime) ReconcileInventory(inventory protocol.Inventory) int {
 	}
 	r.mu.Lock()
 	r.specs = next
-	for thingName := range r.endpoints {
-		if _, ok := next[thingName]; !ok {
+	for thingName, endpoint := range r.endpoints {
+		spec, ok := next[thingName]
+		if !ok || endpoint.TXT["type"] != spec.ThingType {
 			delete(r.endpoints, thingName)
 		}
 	}
@@ -274,7 +275,7 @@ func (r *Runtime) recordEndpoints(endpoints []Endpoint) {
 	defer r.mu.Unlock()
 	next := map[string]Endpoint{}
 	for _, endpoint := range endpoints {
-		if _, ok := r.specs[endpoint.ThingName]; ok {
+		if spec, ok := r.specs[endpoint.ThingName]; ok && endpoint.TXT["type"] == spec.ThingType {
 			next[endpoint.ThingName] = endpoint
 		}
 	}

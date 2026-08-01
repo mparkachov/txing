@@ -128,7 +128,7 @@ func otctlServiceEndpoint(service otctlSRPService, observedAtMS uint64, seq uint
 	if err != nil {
 		return Endpoint{}, false, fmt.Errorf("parse SRP TXT for %s: %w", service.instance, err)
 	}
-	if txt["type"] != DeviceType {
+	if !IsSupportedDeviceType(txt["type"]) {
 		return Endpoint{}, false, nil
 	}
 	port, err := strconv.ParseUint(service.fields["port"], 10, 16)
