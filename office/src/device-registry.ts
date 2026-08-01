@@ -4,6 +4,7 @@ import cyberbrickDeviceAdapter from '../../devices/cyberbrick/web/cyberbrick-ada
 import weatherDeviceAdapter from '../../devices/weather/web/weather-adapter'
 import powerDeviceAdapter from '../../devices/power/web/power-adapter'
 import powerSiDeviceAdapter from '../../devices/power-si/web/power-si-adapter'
+import powerNrfDeviceAdapter from '../../devices/power-nrf/web/power-nrf-adapter'
 import macDeviceAdapter from '../../devices/mac/web/mac-adapter'
 import type { DeviceWebAdapter } from './device-adapter'
 
@@ -14,6 +15,7 @@ const installedDeviceAdapters: readonly DeviceWebAdapter[] = [
   weatherDeviceAdapter,
   powerDeviceAdapter,
   powerSiDeviceAdapter,
+  powerNrfDeviceAdapter,
   macDeviceAdapter,
 ]
 

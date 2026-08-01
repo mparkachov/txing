@@ -1,0 +1,12 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet := true
+
+power_nrf_dir := source_directory()
+project_root := canonicalize(power_nrf_dir + "/../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+
+mod mcu 'mcu/justfile'
+
+@default:
+    @just --list

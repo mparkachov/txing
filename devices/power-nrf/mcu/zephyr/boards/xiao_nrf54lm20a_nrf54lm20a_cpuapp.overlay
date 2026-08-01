@@ -1,0 +1,37 @@
+/ {
+	aliases {
+		power = &power_out;
+	};
+
+	power_outputs {
+		compatible = "gpio-leds";
+
+		power_out: power_out {
+			gpios = <&xiao_d 1 GPIO_ACTIVE_HIGH>;
+			label = "Power output D1";
+		};
+	};
+
+	chosen {
+		zephyr,settings-partition = &txing_ot_settings_partition;
+	};
+};
+
+&cpuapp_rram {
+	partitions {
+		/delete-node/ partition@1f4000;
+
+		txing_factory_partition: partition@1f4000 {
+			compatible = "zephyr,mapped-partition";
+			label = "txing-factory";
+			reg = <0x001f4000 DT_SIZE_K(8)>;
+			read-only;
+		};
+
+		txing_ot_settings_partition: partition@1f6000 {
+			compatible = "zephyr,mapped-partition";
+			label = "storage";
+			reg = <0x001f6000 DT_SIZE_K(28)>;
+		};
+	};
+};

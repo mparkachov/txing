@@ -24,7 +24,7 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_lists_only_loadable_device_types(self) -> None:
         self.assertEqual(
             list_loadable_device_types(repo_root=REPO_ROOT),
-            ["cloud-mcu", "cyberbrick", "mac", "power", "power-si", "unit", "weather"],
+            ["cloud-mcu", "cyberbrick", "mac", "power", "power-nrf", "power-si", "unit", "weather"],
         )
 
     def test_loads_unit_manifest(self) -> None:
@@ -148,6 +148,33 @@ class DeviceCatalogTests(unittest.TestCase):
             self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
             self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
 
+    def test_loads_power_nrf_manifest(self) -> None:
+        manifest = load_device_manifest("power-nrf", repo_root=REPO_ROOT)
+
+        self.assertEqual(manifest.type, "power-nrf")
+        self.assertEqual(manifest.device_name, "power-nrf")
+        self.assertEqual(manifest.display_name, "Power nRF")
+        self.assertEqual(manifest.capabilities, ("sparkplug", "thread", "power"))
+        self.assertEqual(manifest.compatible_rig_types, ("raspi",))
+        self.assertEqual(manifest.redcon_command_levels, (4, 3))
+        self.assertEqual(
+            manifest.redcon_rules,
+            {
+                3: ("sparkplug", "thread", "power"),
+                4: ("sparkplug", "thread"),
+            },
+        )
+        self.assertEqual(
+            [contract.name for contract in manifest.shadows.values()],
+            ["sparkplug", "thread", "power"],
+        )
+        self.assertEqual(manifest.render_board_video_channel_name(device_id="power-nrf-a1"), None)
+        self.assertEqual(manifest.web_adapter, "web/power-nrf-adapter.tsx")
+        for shadow_name in ("sparkplug", "thread", "power"):
+            contract = manifest.shadow_contract(shadow_name)
+            self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
+            self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
+
     def test_loads_mac_manifest(self) -> None:
         manifest = load_device_manifest("mac", repo_root=REPO_ROOT)
 
@@ -205,6 +232,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(capabilities["cloud-mcu"], ("sparkplug", "sqs", "power", "ecs"))
         self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "power", "weather"))
         self.assertEqual(capabilities["power"], ("sparkplug", "ble", "power"))
+        self.assertEqual(capabilities["power-nrf"], ("sparkplug", "thread", "power"))
         self.assertEqual(capabilities["power-si"], ("sparkplug", "thread", "power"))
         self.assertEqual(
             capabilities["mac"],
@@ -225,6 +253,10 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(
             capabilities_for_thing_type("weather", repo_root=REPO_ROOT),
             ("sparkplug", "ble", "power", "weather"),
+        )
+        self.assertEqual(
+            capabilities_for_thing_type("power-nrf", repo_root=REPO_ROOT),
+            ("sparkplug", "thread", "power"),
         )
         self.assertEqual(
             capabilities_for_thing_type("power-si", repo_root=REPO_ROOT),

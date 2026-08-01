@@ -25,6 +25,69 @@ def test_power_si_debug_build_dir_is_separate_from_release() -> None:
         mcu.build_dir("power-si", profile="sed-debug").name
         == "zephyr-xiao_mg24-sed-debug"
     )
+
+
+def test_power_nrf_uses_dedicated_lm20a_build_profiles_and_stock_openocd() -> None:
+    mcu = load_stock_zephyr_mcu()
+
+    config = mcu.device_config("power-nrf")
+    assert config.board == "xiao_nrf54lm20a/nrf54lm20a/cpuapp"
+    assert config.flash_runner == "openocd-nrf54lm20a"
+    assert mcu.build_dir("power-nrf").name == "zephyr-xiao_nrf54lm20a_nrf54lm20a_cpuapp"
+    assert (
+        mcu.build_dir("power-nrf", profile="debug").name
+        == "zephyr-xiao_nrf54lm20a_nrf54lm20a_cpuapp-debug"
+    )
+    assert (
+        mcu.build_dir("power-nrf", profile="sed-debug").name
+        == "zephyr-xiao_nrf54lm20a_nrf54lm20a_cpuapp-sed-debug"
+    )
+
+    release_profile = mcu.build_profile("power-nrf")
+    debug_profile = mcu.build_profile("power-nrf", profile="debug")
+    sed_debug_profile = mcu.build_profile("power-nrf", profile="sed-debug")
+    assert release_profile.release_conf
+    assert debug_profile.debug_conf
+    assert sed_debug_profile.debug_conf and sed_debug_profile.sed_debug_conf
+    assert mcu.isolated_patches_for_device("power-nrf") == ()
+
+    command = [str(part) for part in mcu.openocd_command("power-nrf", Path("factory.hex"))]
+    assert str(mcu.POWER_NRF_OPENOCD_CFG) in command
+    assert "targets nrf54lm20a.cpu" in command
+    assert "nrf54lm20a-load factory.hex" in command
+    assert "verify_image factory.hex" in command
+
+
+def test_power_nrf_factory_command_uses_txn1_writer(monkeypatch) -> None:
+    mcu = load_stock_zephyr_mcu()
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append([str(arg) for arg in args])
+        return None
+
+    monkeypatch.setattr(mcu, "run", fake_run)
+    mcu.build_power_nrf_factory_hex(
+        "power-nrf-001",
+        Path("dataset.hex"),
+        Path("output.hex"),
+        5683,
+    )
+
+    assert calls == [
+        [
+            str(mcu.sys.executable),
+            str(mcu.POWER_NRF_FACTORY_SCRIPT),
+            "write-hex",
+            "power-nrf-001",
+            "--dataset-tlvs",
+            "dataset.hex",
+            "--port",
+            "5683",
+            "--output",
+            "output.hex",
+        ]
+    ]
     assert mcu.ACTIVE_BUILD_PROFILES == (
         "release",
         "debug",

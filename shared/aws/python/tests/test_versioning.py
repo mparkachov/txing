@@ -342,6 +342,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "devices" / "unit" / "justfile",
             REPO_ROOT / "devices" / "common" / "board" / "justfile",
             REPO_ROOT / "devices" / "power-si" / "justfile",
+            REPO_ROOT / "devices" / "power-nrf" / "justfile",
             REPO_ROOT / "office" / "justfile",
         ]
         for path in operator_files:
@@ -726,6 +727,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("export_line " + removed_version_env, root_justfile)
         self.assertIn("_project-git-env", root_justfile)
         self.assertIn("mod power-si 'devices/power-si/justfile'", root_justfile)
+        self.assertIn("mod power-nrf 'devices/power-nrf/justfile'", root_justfile)
         self.assertIn("release/versions/rig", rig_justfile)
         self.assertNotIn("/" + "VERSION", rig_justfile)
         # The shared board justfile resolves the release stream from the device

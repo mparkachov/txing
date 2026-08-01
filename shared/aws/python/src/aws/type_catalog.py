@@ -222,6 +222,7 @@ def build_type_records(*, repo_root: Path | None = None) -> dict[str, dict[str, 
         "weather",
         "power",
         "power-si",
+        "power-nrf",
         "mac",
     ):
         manifest = load_device_manifest(device_type, repo_root=root)

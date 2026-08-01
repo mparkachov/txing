@@ -10,6 +10,7 @@ describe('device web adapter registry', () => {
     const weatherAdapter = getDeviceWebAdapter('weather')
     const powerAdapter = getDeviceWebAdapter('power')
     const powerSiAdapter = getDeviceWebAdapter('power-si')
+    const powerNrfAdapter = getDeviceWebAdapter('power-nrf')
 
     expect(cloudMcuAdapter?.type).toBe('cloud-mcu')
     expect(cloudMcuAdapter?.canUseBoardVideo(1)).toBe(false)
@@ -40,6 +41,10 @@ describe('device web adapter registry', () => {
     expect(powerSiAdapter?.displayName).toBe('Power SI')
     expect(powerSiAdapter?.canUseBoardVideo(1)).toBe(false)
     expect(powerSiAdapter?.canUseDriveControl(1)).toBe(false)
+    expect(powerNrfAdapter?.type).toBe('power-nrf')
+    expect(powerNrfAdapter?.displayName).toBe('Power nRF')
+    expect(powerNrfAdapter?.canUseBoardVideo(1)).toBe(false)
+    expect(powerNrfAdapter?.canUseDriveControl(1)).toBe(false)
     const macAdapter = getDeviceWebAdapter('mac')
     expect(macAdapter?.type).toBe('mac')
     expect(macAdapter?.buildVideoChannelName('mac-a1')).toBe('mac-a1-board-video')
@@ -55,6 +60,7 @@ describe('device web adapter registry', () => {
       'weather',
       'power',
       'power-si',
+      'power-nrf',
       'mac',
     ])
   })
@@ -141,6 +147,15 @@ describe('device web adapter registry', () => {
       },
       {
         type: 'power-si',
+        shadow: {
+          namedShadows: {
+            power: { state: { reported: { batteryMv: 3890 } } },
+            thread: { state: { reported: { serviceType: '_txing-coap._udp' } } },
+          },
+        },
+      },
+      {
+        type: 'power-nrf',
         shadow: {
           namedShadows: {
             power: { state: { reported: { batteryMv: 3890 } } },

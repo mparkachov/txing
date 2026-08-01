@@ -568,6 +568,46 @@ Resources:
         shadows/power/defaultPayload: '{"state":{"reported":{}}}'
         web/adapter: web/power-si-adapter.tsx
 
+  PowerNrfTypeCatalogV2:
+    Type: Custom::TxingTypeCatalog
+    DependsOn:
+      - RaspiTypeCatalogV2
+    Properties:
+      ServiceToken: !Ref AwsCleanStackFunctionArn
+      CleanupType: TypeCatalog
+      PhysicalResourceId: !Sub ${AWS::StackName}-type-catalog-power-nrf
+      ThingTypeName: power-nrf
+      ThingTypeDescription: txing power-nrf device type
+      SearchableAttributes:
+        - name
+        - townId
+        - rigId
+      CatalogBasePath: /txing/town/raspi/power-nrf
+      CatalogParameters:
+        kind: deviceType
+        schemaVersion: "1.0"
+        thingType: power-nrf
+        deviceType: power-nrf
+        rigType: raspi
+        displayName: Power nRF
+        defaultName: power-nrf
+        capabilities: sparkplug,thread,power
+        redconCommandLevels: 4,3
+        redconRules/4: sparkplug,thread
+        redconRules/3: sparkplug,thread,power
+        requiredAttributes: name,shortId,townId,rigId
+        searchableAttributes: name,townId,rigId
+        shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
+        shadows/sparkplug/default: aws/default-sparkplug-shadow.json
+        shadows/sparkplug/defaultPayload: '{"state":{"reported":{"topic":{"namespace":"spBv1.0","groupId":"town","messageType":"DDEATH","edgeNodeId":"rig","deviceId":"power-nrf-local"},"payload":{"metrics":{}}}}}'
+        shadows/thread/schema: aws/thread-shadow.schema.json
+        shadows/thread/default: aws/default-thread-shadow.json
+        shadows/thread/defaultPayload: '{"state":{"reported":{}}}'
+        shadows/power/schema: aws/power-shadow.schema.json
+        shadows/power/default: aws/default-power-shadow.json
+        shadows/power/defaultPayload: '{"state":{"reported":{}}}'
+        web/adapter: web/power-nrf-adapter.tsx
+
   MacTypeCatalogV2:
     Type: Custom::TxingTypeCatalog
     DependsOn:

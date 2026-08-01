@@ -32,11 +32,19 @@ CCACHE_DIR = COMMON_MCU_DIR / ".ccache"
 NVE_SCRIPT = COMMON_MCU_DIR / "xiao_nrf54l15" / "scripts" / "redcon_nve.py"
 BOARD_CONF = COMMON_MCU_DIR / "xiao_nrf54l15" / "board.conf"
 THREAD_FACTORY_SCRIPT = COMMON_MCU_DIR / "xiao_mg24" / "scripts" / "thread_factory.py"
+POWER_NRF_FACTORY_SCRIPT = (
+    COMMON_MCU_DIR / "xiao_nrf54lm20a" / "scripts" / "thread_factory.py"
+)
 COMMON_BUILD_DIR = COMMON_MCU_DIR / "build"
 NVE_HEX = COMMON_BUILD_DIR / "redcon-factory-nve.hex"
 POWER_SI_FACTORY_HEX = COMMON_BUILD_DIR / "power-si-thread-factory.hex"
+POWER_NRF_FACTORY_HEX = COMMON_BUILD_DIR / "power-nrf-thread-factory.hex"
 NRF_OPENOCD_SUPPORT_DIR = ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54l15" / "support"
 NRF_OPENOCD_CFG = NRF_OPENOCD_SUPPORT_DIR / "openocd.cfg"
+POWER_NRF_OPENOCD_SUPPORT_DIR = (
+    ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54lm20a" / "support"
+)
+POWER_NRF_OPENOCD_CFG = POWER_NRF_OPENOCD_SUPPORT_DIR / "openocd.cfg"
 PYOCD_REQUIRED_TARGETS = ("EFR32MG24B220F1536IM48",)
 PYOCD_PACK_TARGETS = PYOCD_REQUIRED_TARGETS
 HAL_SILABS_DIR = WORKSPACE_DIR / "modules" / "hal" / "silabs"
@@ -118,6 +126,20 @@ POWER_SI_RELEASE_PROFILE = BuildProfile(
     force_pristine=True,
 )
 
+POWER_NRF_RELEASE_PROFILE = BuildProfile(
+    "release",
+    release_conf=True,
+    force_pristine=True,
+)
+
+POWER_NRF_SED_DEBUG_PROFILE = BuildProfile(
+    "sed-debug",
+    build_suffix="-sed-debug",
+    debug_conf=True,
+    sed_debug_conf=True,
+    force_pristine=True,
+)
+
 
 @dataclass(frozen=True)
 class DeviceConfig:
@@ -166,6 +188,30 @@ DEVICE_CONFIGS = {
         / "zephyr"
         / "release.conf",
         flash_runner="west-pyocd",
+    ),
+    "power-nrf": DeviceConfig(
+        board="xiao_nrf54lm20a/nrf54lm20a/cpuapp",
+        build_name="zephyr-xiao_nrf54lm20a_nrf54lm20a_cpuapp",
+        overlay_name="xiao_nrf54lm20a_nrf54lm20a_cpuapp.overlay",
+        debug_conf=PROJECT_ROOT
+        / "devices"
+        / "power-nrf"
+        / "mcu"
+        / "zephyr"
+        / "debug.conf",
+        sed_debug_conf=PROJECT_ROOT
+        / "devices"
+        / "power-nrf"
+        / "mcu"
+        / "zephyr"
+        / "sed-debug.conf",
+        release_conf=PROJECT_ROOT
+        / "devices"
+        / "power-nrf"
+        / "mcu"
+        / "zephyr"
+        / "release.conf",
+        flash_runner="openocd-nrf54lm20a",
     ),
 }
 ACTIVE_DEVICES = tuple(DEVICE_CONFIGS)
@@ -392,6 +438,10 @@ def build_profile(device: str, *, profile: str = "release", debug: bool = False)
         )
     if device == "power-si" and selected.name == "release":
         selected = POWER_SI_RELEASE_PROFILE
+    if device == "power-nrf" and selected.name == "release":
+        selected = POWER_NRF_RELEASE_PROFILE
+    if device == "power-nrf" and selected.name == "sed-debug":
+        selected = POWER_NRF_SED_DEBUG_PROFILE
     if selected.use_silabs_ccm_candidate and device != "power-si":
         fail(f"{selected.name} is only supported for power-si")
     return selected
@@ -531,12 +581,22 @@ def check() -> None:
         fail(f"missing REDCON NVE script: {NVE_SCRIPT}")
     if not THREAD_FACTORY_SCRIPT.exists():
         fail(f"missing power-si TXT1 factory script: {THREAD_FACTORY_SCRIPT}")
+    if not POWER_NRF_FACTORY_SCRIPT.exists():
+        fail(f"missing power-nrf TXN1 factory script: {POWER_NRF_FACTORY_SCRIPT}")
     if not (ZEPHYR_BASE / "boards" / "seeed" / "xiao_mg24").is_dir():
         fail("missing stock Zephyr Seeed XIAO MG24 board support. Run: just mcu::install")
+    if not (ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54lm20a").is_dir():
+        fail("missing stock Zephyr XIAO nRF54LM20A board support. Run: just mcu::install")
+    if not POWER_NRF_OPENOCD_CFG.exists():
+        fail(
+            "missing stock Zephyr XIAO nRF54LM20A OpenOCD config: "
+            f"{POWER_NRF_OPENOCD_CFG}. Run: just mcu::install"
+        )
     log(
         "ok: shared MCU toolchain, Zephyr workspace, nRF OpenOCD config, "
         "pyOCD packs, board config, NVE script, XIAO MG24 board support, "
-        "and TXT1 factory script are available"
+        "XIAO nRF54LM20A board support, TXT1 factory script, and TXN1 factory script "
+        "are available"
     )
 
 
@@ -708,7 +768,7 @@ def build(device: str, *, debug: bool = False, profile: str = "release") -> None
 
 def clean(device: str) -> None:
     for profile in ACTIVE_BUILD_PROFILES:
-        if BUILD_PROFILES[profile].use_silabs_ccm_candidate and device != "power-si":
+        if profile == "sed-debug" and device not in ("power-si", "power-nrf"):
             continue
         path = build_dir(device, profile=profile)
         if path.exists():
@@ -775,10 +835,36 @@ def nrf_openocd_command(hex_file: Path) -> list[str | Path]:
     ]
 
 
+def power_nrf_openocd_command(hex_file: Path) -> list[str | Path]:
+    return [
+        openocd_program(),
+        "-s",
+        POWER_NRF_OPENOCD_SUPPORT_DIR,
+        "-f",
+        POWER_NRF_OPENOCD_CFG,
+        "-c",
+        "init",
+        "-c",
+        "targets nrf54lm20a.cpu",
+        "-c",
+        "reset init",
+        "-c",
+        f"nrf54lm20a-load {hex_file}",
+        "-c",
+        f"verify_image {hex_file}",
+        "-c",
+        "reset run",
+        "-c",
+        "shutdown",
+    ]
+
+
 def openocd_command(device: str, hex_file: Path) -> list[str | Path]:
     runner = device_config(device).flash_runner
     if runner == "openocd-nrf54l15":
         return nrf_openocd_command(hex_file)
+    if runner == "openocd-nrf54lm20a":
+        return power_nrf_openocd_command(hex_file)
     fail(f"{device} does not have an automated OpenOCD flash recipe")
 
 
@@ -788,6 +874,11 @@ def require_openocd(device: str) -> None:
     require_host_openocd()
     if runner == "openocd-nrf54l15" and not NRF_OPENOCD_CFG.exists():
         fail(f"missing stock Zephyr Seeed OpenOCD config: {NRF_OPENOCD_CFG}. Run: just mcu::install")
+    if runner == "openocd-nrf54lm20a" and not POWER_NRF_OPENOCD_CFG.exists():
+        fail(
+            "missing stock Zephyr XIAO nRF54LM20A OpenOCD config: "
+            f"{POWER_NRF_OPENOCD_CFG}. Run: just mcu::install"
+        )
 
 
 def run_openocd(device: str, hex_file: Path) -> None:
@@ -842,6 +933,9 @@ def flash(device: str, *, debug: bool = False, profile: str = "release") -> None
     hex_file = require_firmware_hex(device, profile=selected.name)
     runner = device_config(device).flash_runner
     if runner == "openocd-nrf54l15":
+        run_openocd(device, hex_file)
+        return
+    if runner == "openocd-nrf54lm20a":
         run_openocd(device, hex_file)
         return
     if runner == "west-pyocd":
@@ -905,7 +999,44 @@ def power_si_nve(thing_name: str, dataset_tlvs: Path, port: int) -> None:
     run_west_flash("power-si", POWER_SI_FACTORY_HEX)
 
 
-def nve(thing_name: str, dataset_tlvs: Path | None, port: int) -> None:
+def build_power_nrf_factory_hex(
+    thing_name: str, dataset_tlvs: Path, output: Path | None, port: int
+) -> None:
+    if not POWER_NRF_FACTORY_SCRIPT.exists():
+        fail(f"missing power-nrf TXN1 factory script: {POWER_NRF_FACTORY_SCRIPT}")
+    factory_hex = output or POWER_NRF_FACTORY_HEX
+    factory_hex.parent.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            sys.executable,
+            POWER_NRF_FACTORY_SCRIPT,
+            "write-hex",
+            thing_name,
+            "--dataset-tlvs",
+            dataset_tlvs,
+            "--port",
+            str(port),
+            "--output",
+            factory_hex,
+        ],
+        cwd=PROJECT_ROOT,
+        env=local_env(),
+    )
+
+
+def power_nrf_nve(thing_name: str, dataset_tlvs: Path, port: int) -> None:
+    build_power_nrf_factory_hex(thing_name, dataset_tlvs, POWER_NRF_FACTORY_HEX, port)
+    run_openocd("power-nrf", POWER_NRF_FACTORY_HEX)
+
+
+def nve(device: str | None, thing_name: str, dataset_tlvs: Path | None, port: int) -> None:
+    if device == "power-nrf":
+        if dataset_tlvs is None:
+            fail("power-nrf nve requires <thing-name> <dataset-tlvs-file>")
+        power_nrf_nve(thing_name, dataset_tlvs, port)
+        return
+    if device not in (None, "power-si"):
+        fail("nve supports power-nrf or the existing TXR1/TXT1 command forms")
     if dataset_tlvs is None:
         nrf_nve(thing_name)
         return
@@ -924,7 +1055,7 @@ def main() -> None:
     )
     parser.add_argument("--device", choices=ACTIVE_DEVICES)
     parser.add_argument("--output", type=Path, help="output path for generated factory HEX")
-    parser.add_argument("--port", type=int, default=5683, help="CoAP port for power-si TXT1 data")
+    parser.add_argument("--port", type=int, default=5683, help="CoAP port for Thread factory data")
     parser.add_argument(
         "--profile",
         choices=ACTIVE_BUILD_PROFILES,
@@ -981,22 +1112,31 @@ def main() -> None:
         if args.thing_name is None:
             fail("nve requires <thing-name>")
         nve(
+            args.device,
             args.thing_name,
             Path(args.dataset_tlvs) if args.dataset_tlvs is not None else None,
             args.port,
         )
     elif args.command == "thread-factory-hex":
         device = require_device(args.command, args.device)
-        if device != "power-si":
-            fail("thread-factory-hex is only supported for --device power-si")
+        if device not in ("power-si", "power-nrf"):
+            fail("thread-factory-hex is only supported for --device power-si or power-nrf")
         if args.thing_name is None or args.dataset_tlvs is None:
             fail("thread-factory-hex requires <thing-name> <dataset-tlvs-file>")
-        build_thread_factory_hex(
-            args.thing_name,
-            Path(args.dataset_tlvs),
-            args.output,
-            args.port,
-        )
+        if device == "power-si":
+            build_thread_factory_hex(
+                args.thing_name,
+                Path(args.dataset_tlvs),
+                args.output,
+                args.port,
+            )
+        else:
+            build_power_nrf_factory_hex(
+                args.thing_name,
+                Path(args.dataset_tlvs),
+                args.output,
+                args.port,
+            )
 
 
 if __name__ == "__main__":

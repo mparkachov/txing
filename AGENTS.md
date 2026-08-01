@@ -72,6 +72,17 @@ unless a shared contract or consistency issue requires coordinated updates.
   `backlog task <id> --plain`. Do not search the repository to discover what
   the Backlog task means.
 
+## Backlog CLI in sandboxed environments
+
+- Create and update milestones, tasks, and acceptance criteria only through the
+  `backlog` CLI. Never create, edit, or delete Backlog lock or mirror files
+  directly, including anything under `.git`.
+- If a Backlog operation fails because its Git-backed lock cannot be created,
+  temporarily run `backlog config set filesystemOnly true`, perform the single
+  required Backlog CLI operation, then restore `backlog config set filesystemOnly false`
+  and `backlog config set checkActiveBranches true`.
+- Treat restoration of those settings as mandatory before completing the task.
+
 ## Non-negotiable gates
 
 - Do not perform `git commit` automatically. Create commits only when explicitly
