@@ -4,12 +4,10 @@ title: board docs reflect the Alpine musl build contract
 status: Done
 assignee: []
 created_date: '2026-07-21 09:01'
-updated_date: '2026-07-21 20:07'
+updated_date: '2026-08-02 12:55'
 labels: []
 milestone: m-4
-dependencies:
-  - TASK-23.3
-  - TASK-23.4
+dependencies: []
 references:
   - docs/components/board.md
   - docs/artifacts.md

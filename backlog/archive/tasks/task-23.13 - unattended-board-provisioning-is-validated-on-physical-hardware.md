@@ -4,12 +4,10 @@ title: unattended board provisioning is validated on physical hardware
 status: Done
 assignee: []
 created_date: '2026-07-25 17:44'
-updated_date: '2026-07-31 20:41'
+updated_date: '2026-08-02 12:56'
 labels: []
 milestone: m-4
-dependencies:
-  - TASK-23.9
-  - TASK-23.12
+dependencies: []
 documentation:
   - >-
     backlog/docs/milestones/board-musl-static-builds/doc-31 -

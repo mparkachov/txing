@@ -66,3 +66,21 @@ flash it manually, and enable the existing Thread daemon on the colocated OTBR
 rig. Hardware acceptance verifies SRP registration, SED mode and poll period,
 OTBR child role, REDCON output/mode changes, PMIC telemetry, and Office-visible
 Thread and Power state.
+
+### Hardware acceptance result — blocked (2026-08-02)
+
+The target enclosure cannot accommodate the external IPEX4 antenna documented
+for the XIAO nRF54LM20A Sense.  In the target RF environment, the device
+attached and registered SRP only at very short range while receiver-on (`rn`).
+After the specified transition to sleepy MTD mode (`n`), no reliable indirect
+delivery/reachability was validated, including at very short range.  Runtime
+radio transmit-power adjustment did not change this result and does not persist
+over reset.  The same OTBR and environment work with `power-si`.
+
+The product is therefore blocked on a board/enclosure-compatible RF design.
+Do not deploy, enlist, or release `power-nrf` for this enclosure.  REDCON,
+nPM1300, and Office hardware acceptance remain unproven because their CoAP
+path depends on the failed SED delivery requirement.  A successor hardware
+trial must use an enclosure-compatible external antenna, a suitable integrated
+antenna, or a validated custom antenna design, and repeat the full acceptance
+matrix in `devices/power-nrf/README.md`.

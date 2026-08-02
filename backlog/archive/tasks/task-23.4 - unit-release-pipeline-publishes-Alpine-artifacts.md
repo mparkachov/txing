@@ -4,11 +4,10 @@ title: unit release pipeline publishes Alpine artifacts
 status: Done
 assignee: []
 created_date: '2026-07-21 09:01'
-updated_date: '2026-07-21 19:53'
+updated_date: '2026-08-02 12:55'
 labels: []
 milestone: m-4
-dependencies:
-  - TASK-23.2
+dependencies: []
 references:
   - .github/workflows/release-unit.yml
   - release/scripts/assert-cyberbrick-musl.sh

@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-15 07:38'
-updated_date: '2026-07-21 07:19'
+updated_date: '2026-08-02 12:55'
 labels: []
 milestone: m-3
-dependencies:
-  - TASK-22.3
+dependencies: []
 references:
   - docs/components/board.md
   - docs/installation.md

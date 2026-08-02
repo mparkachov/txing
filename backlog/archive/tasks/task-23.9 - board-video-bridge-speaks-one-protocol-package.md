@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 17:43'
-updated_date: '2026-07-29 09:11'
+updated_date: '2026-08-02 12:55'
 labels: []
 milestone: m-4
-dependencies:
-  - TASK-23.8
+dependencies: []
 references:
   - docs/contracts/board-video-bridge.md
 documentation:

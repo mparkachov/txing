@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:01'
-updated_date: '2026-07-21 14:40'
+updated_date: '2026-08-02 12:55'
 labels: []
 milestone: m-4
-dependencies:
-  - TASK-23.1
+dependencies: []
 references:
   - devices/unit/daemon/justfile
   - devices/unit/board/kvs_master/CMakeLists.txt

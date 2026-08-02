@@ -4,13 +4,10 @@ title: cyberbrick board reaches unit parity on hardware
 status: Done
 assignee: []
 created_date: '2026-07-15 07:38'
-updated_date: '2026-07-31 20:48'
+updated_date: '2026-08-02 12:55'
 labels: []
 milestone: m-3
-dependencies:
-  - TASK-22.2
-  - TASK-22.4
-  - TASK-22.5
+dependencies: []
 references:
   - docs/components/board.md
   - docs/sparkplug-lifecycle.md

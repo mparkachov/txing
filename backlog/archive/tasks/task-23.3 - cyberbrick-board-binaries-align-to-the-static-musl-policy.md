@@ -4,11 +4,10 @@ title: cyberbrick board binaries align to the static-musl policy
 status: Done
 assignee: []
 created_date: '2026-07-21 09:01'
-updated_date: '2026-07-21 19:44'
+updated_date: '2026-08-02 12:55'
 labels: []
 milestone: m-4
-dependencies:
-  - TASK-23.1
+dependencies: []
 references:
   - devices/cyberbrick/daemon/justfile
   - .github/workflows/release-cyberbrick.yml

@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 17:44'
-updated_date: '2026-07-29 19:39'
+updated_date: '2026-08-02 12:56'
 labels: []
 milestone: m-4
-dependencies:
-  - TASK-23.10
+dependencies: []
 references:
   - release/scripts
   - docs/components/cyberbrick-board.md

@@ -5,11 +5,10 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-15 07:37'
-updated_date: '2026-07-16 06:55'
+updated_date: '2026-08-02 12:55'
 labels: []
 milestone: m-3
-dependencies:
-  - TASK-22.3
+dependencies: []
 references:
   - .github/workflows/release-unit.yml
   - release/src/txing_release/cli.py
