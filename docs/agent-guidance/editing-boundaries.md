@@ -1,9 +1,9 @@
-# Editing boundaries extracted from project docs
+# Repository editing and operational boundaries
 
 This file holds agent-facing edit boundaries that are easy to miss when they
 live inside user-facing component, install, or operations documentation. Read it
-before broad refactors, dependency cleanup, release/deploy work, web hosting
-changes, or future-work implementation.
+before broad refactors, dependency cleanup, release/deploy work, web hosting,
+tooling, shell, infrastructure, or future-work implementation.
 
 ## Keep product docs and agent rules separate
 
@@ -15,6 +15,45 @@ changes, or future-work implementation.
   scope, do not implement the out-of-scope behavior unless the user selects it
   as a goal or approves a new milestone.
 
+## Repository and build rules
+
+- Treat the repository as a monorepo and keep changes in the relevant
+  subproject unless a shared contract or consistency issue requires a
+  coordinated change.
+- Do not read from, copy from, execute from, or depend on files outside this
+  repository unless the user provides their content or explicitly asks to vendor
+  them into the repository.
+- `just` recipe arguments are positional. For example, use
+  `just unit::board::role-policy unit-bl95f2`, not
+  `just unit::board::role-policy thing_id=unit-bl95f2`.
+- Repository shell code and Just recipes must be POSIX `sh`: use `#!/bin/sh`,
+  `set -eu`, and `.` for sourcing. Do not use Bash/Zsh-only syntax.
+- Justfiles export `TMPDIR` to the repository-local `./tmp` directory. Other
+  repository scripts create and use `./tmp`; do not use host temporary
+  directories as their default scratch location.
+
+## AWS, host, and generated-material safety
+
+- Do not run AWS commands that create, update, or delete resources. Read-only
+  inspection is allowed only when needed.
+- Do not add CloudFormation, custom-resource, migration, rollback, or cleanup
+  logic that mutates manually rolled-in resources. Explain required manual
+  cleanup and use CloudFormation-forward changes instead.
+- Do not write deployed host code, installer scripts, release assets, or
+  generated commands that assume `root`, and do not put `sudo` in deployed
+  repository code. Describe privileged work as explicit manual operator steps.
+- Narrow exception, board initial installation only: the board's first-boot
+  card may configure base Alpine OS setup (Wi-Fi, `wlan0`, root SSH access, apk
+  repositories, and package upgrade). Everything from the mise step onward,
+  and every update on a board already in service, is a manual operator action.
+  Card files carry no AWS credentials, daemon configuration, or release
+  material.
+- IAM roles, managed policies, IoT role aliases, and IoT policies use
+  CloudFormation-generated physical names. Use `/txing/stack/...` parameters or
+  AWS API lookups; do not depend on historical fixed names.
+- Never commit generated certificates or daemon configuration tarballs from
+  `certs/`.
+
 ## Release and deployment boundaries
 
 - Do not turn manual operator install, release, AWS, board, or rig maintenance
@@ -22,10 +61,15 @@ changes, or future-work implementation.
   automation.
 - Release artifacts are immutable for each exact component version; do not add
   deploy bypasses around release versioning.
+- When a change requires a new release artifact, tell the user which component
+  version must be bumped before publishing it.
 - The release workflow does not bump versions, commit, push, publish Lambda
   code to AWS, or publish host binaries. Preserve that separation.
 - Production board and rig binary updates remain manual writable-root
   maintenance actions through root-owned `mise`.
+- Do not add deploy bypasses or automated component-version enforcement checks.
+- Flashing or programming firmware is a manual operator action; agents may only
+  prepare artifacts and commands.
 
 ## AWS and Cloudflare editing boundaries
 

@@ -1032,7 +1032,7 @@ class VersionEnvironmentTests(unittest.TestCase):
 
         # The privilege exception exists and is bounded at both ends.
         rules = (
-            REPO_ROOT / "docs" / "constraints" / "repository-rules.md"
+            REPO_ROOT / "docs" / "agent-guidance" / "editing-boundaries.md"
         ).read_text(encoding="utf-8")
         self.assertIn("Narrow exception, board initial installation only", rules)
         self.assertIn("Everything from the mise step", rules)
@@ -1735,10 +1735,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         milestone_docs = (
             REPO_ROOT
-            / "backlog"
             / "docs"
+            / "history"
             / "milestones"
-            / "rig-idle-cost-parity"
             / "doc-26 - Milestone-rig-idle-cost-parity.md"
         ).read_text(encoding="utf-8")
         installation_docs = (REPO_ROOT / "docs" / "installation.md").read_text(

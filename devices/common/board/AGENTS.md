@@ -21,7 +21,7 @@
 
 ## Notes
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
-- Read `../../../docs/constraints/repository-rules.md` before changing board
+- Read `../../../docs/agent-guidance/editing-boundaries.md` before changing board
   tooling, deployment, host runtime, AWS, or shell behavior.
 - Read `../../../docs/contracts/unit-device-contracts.md` before changing board
   video, shadow ownership, retained MQTT topics, or runtime failure semantics.

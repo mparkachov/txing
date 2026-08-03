@@ -8,7 +8,7 @@
 ## Rules
 
 - Follow the repository-level workflow in `../../AGENTS.md`.
-- Read `../../docs/constraints/repository-rules.md` before changing AWS,
+- Read `../../docs/agent-guidance/editing-boundaries.md` before changing AWS,
   CloudFormation, SSM, IoT, release publishing, certificate, or cleanup
   behavior.
 - Read `../../docs/aws-lambda-boundary.md` before changing Lambda language,

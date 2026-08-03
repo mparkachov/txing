@@ -6,7 +6,7 @@
 ## Notes
 - Run frontend package manager, build, and test commands from `office/`.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
-- Read `../docs/constraints/repository-rules.md` before changing office build,
+- Read `../docs/agent-guidance/editing-boundaries.md` before changing office build,
   hosting, deployment, Cognito, or AWS configuration behavior.
 - Read `../docs/contracts/unit-device-contracts.md` before changing unit
   shadow, capability, video, MCP, or active-control UI behavior.

@@ -7,7 +7,7 @@ These boards run the root-owned Go `txing-unit-daemon` plus the native
 > install that predates the move to Alpine. It is kept so the boards not yet
 > reimaged remain serviceable and so their history is legible. It is not current
 > practice and receives no further investment; see
-> [Board OS: Alpine only, Debian frozen](../constraints/board-os-alpine-only.md).
+> [Board operating-system baseline](./board.md#operating-system-baseline).
 >
 > A board described here cannot be upgraded onto the current protocol. Camera
 > builds are Alpine-only, so its KVS master cannot be rebuilt, and its local gRPC

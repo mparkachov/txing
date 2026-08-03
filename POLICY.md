@@ -262,7 +262,9 @@ over:
 - transitional abstractions
 - automated cleanup tooling
 
-The agent should prefer direct replacement over compatibility preservation unless the user explicitly requests backward compatibility.
+The agent should prefer direct replacement once the user has explicitly
+approved removing the compatibility it replaces. Before removing or ignoring
+existing backward compatibility, ask the user whether that is acceptable.
 
 When replacing an existing pattern or contract:
 - update the repository to the new model directly
@@ -291,7 +293,7 @@ When cleanup of old resources, infrastructure, configuration, or generated artif
 - explain the required manual cleanup steps clearly
 - do not generate automated cleanup systems unless explicitly requested
 
-Compatibility preservation is required only for:
-- explicitly versioned protocols
-- externally deployed device contracts
-- protocol compatibility explicitly identified by the repository documentation
+Compatibility preservation remains mandatory for explicitly versioned protocols,
+externally deployed device contracts, and any compatibility requirement named in
+repository documentation. Other compatibility removal still requires the user's
+explicit approval before a direct replacement is made.

@@ -12,7 +12,7 @@ tags:
 ---
 # Constraints: board musl static builds
 
-Durable rules for building and shipping board binaries after the m-4 migration. These extend, and never relax, the repository-wide rules in `docs/constraints/repository-rules.md`. They supersede the "dynamically linked against musl" ABI clause of `doc-29 - Constraints-cyberbrick-Alpine-board.md` (TASK-23.3 amends that text); doc-29's unit-parity and operations rules (OpenRC, read-only root, manual mise updates) remain in force for cyberbrick.
+Durable rules for building and shipping board binaries after the m-4 migration. These extend, and never relax, the repository-wide rules in `docs/agent-guidance/editing-boundaries.md`. They supersede the "dynamically linked against musl" ABI clause of `doc-29 - Constraints-cyberbrick-Alpine-board.md` (TASK-23.3 amends that text); doc-29's unit-parity and operations rules (OpenRC, read-only root, manual mise updates) remain in force for cyberbrick.
 
 ## ABI and toolchain
 

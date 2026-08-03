@@ -11,7 +11,7 @@ tags:
 ---
 # Constraints: cyberbrick Alpine board
 
-Durable rules for building, shipping, and operating cyberbrick board software. These extend, and never relax, the repository-wide rules in `docs/constraints/repository-rules.md` and unit's board contracts.
+Durable rules for building, shipping, and operating cyberbrick board software. These extend, and never relax, the repository-wide rules in `docs/agent-guidance/editing-boundaries.md` and unit's board contracts.
 
 ## ABI and toolchain
 

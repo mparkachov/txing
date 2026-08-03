@@ -28,11 +28,27 @@ performs. On the operator machine, set it in the shell you work from.
 the blocks describe the *shape* of a path or an artifact name rather than
 something to run. Nothing in a `sh` block uses it.
 
-Boards run Alpine Linux with OpenRC. Debian receives no further investment and a
-Debian board is reimaged rather than upgraded, per
-[Board OS: Alpine only, Debian frozen](../constraints/board-os-alpine-only.md).
-The superseded Debian and systemd steps are kept in
-[Board (Debian, frozen)](./board-debian-frozen.md) for boards not yet reimaged.
+Boards run Alpine Linux with OpenRC. The operating-system baseline below covers
+the current and frozen board paths.
+
+## Operating-system baseline
+
+Boards run Alpine Linux with OpenRC. Debian receives no further investment: do
+not add Debian or systemd build paths, packages, release artifacts, fixes,
+compatibility work, containers, or CI lanes. A board that remains on Debian is
+reimaged to Alpine rather than upgraded.
+
+The KVS master is musl-dynamic against stock Alpine libcamera, so camera updates
+are Alpine-only. A Debian board stays pinned to its last Debian-built KVS master
+and cannot receive a current board release or local gRPC contract update. The
+static daemon and hardware worker do not change that rule. Alpine version moves
+remain coordinated across the pinned build image, release artifact, and board
+apk branch because the KVS master depends on installed Alpine libraries.
+
+The Debian/systemd material in [Board (Debian, frozen)](./board-debian-frozen.md)
+is retained solely for existing boards. It is not a supported path for the
+current protocol. This decision applies only to the board; the rig and macOS
+development paths have independent OS baselines.
 
 ## Device Types
 
@@ -1735,7 +1751,7 @@ same gates the release workflow enforces.
 - [Board video bridge contract](../contracts/board-video-bridge.md)
 - [Hardware worker contract](../contracts/unit-hardware-worker.md)
 - [Unit device contracts](../contracts/unit-device-contracts.md)
-- [Board OS: Alpine only, Debian frozen](../constraints/board-os-alpine-only.md)
+- [Board operating-system baseline](#operating-system-baseline)
 - [Board (Debian, frozen)](./board-debian-frozen.md)
 - [Release artifacts](../artifacts.md)
 - [Installation](../installation.md)

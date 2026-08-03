@@ -12,7 +12,7 @@
 - Run rig Go and `just` commands from `rig/` or through the repository root
   aliases.
 - Follow repository-level rule: do not create commits unless explicitly requested by the user.
-- Read `../docs/constraints/repository-rules.md` before changing rig tooling,
+- Read `../docs/agent-guidance/editing-boundaries.md` before changing rig tooling,
   deployment, host runtime, AWS, or shell behavior.
 - Read `../docs/contracts/unit-device-contracts.md` before changing rig MQTT,
   BLE, shadow ownership, REDCON, or runtime failure semantics.

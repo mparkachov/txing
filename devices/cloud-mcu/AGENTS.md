@@ -10,7 +10,7 @@
 - Follow the repository-level workflow in `../../AGENTS.md`.
 - Read `../../docs/aws-lambda-boundary.md` before changing Lambda language,
   packaging, deployment, or release boundaries.
-- Read `../../docs/constraints/repository-rules.md` before changing AWS,
+- Read `../../docs/agent-guidance/editing-boundaries.md` before changing AWS,
   CloudFormation, release, or deployment behavior.
 - Runtime Lambdas remain Go static `linux/arm64` `provided.al2023` bootstrap
   executables published from release artifacts.
