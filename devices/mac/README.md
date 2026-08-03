@@ -170,7 +170,7 @@ status outlives the daemon.
 
 Design and milestone context:
 
-- `backlog/docs/architecture/mac-device-type/`
-- `backlog/docs/milestones/mac-device-type/`
+- [Mac device type architecture](../../docs/history/architecture/doc-23%20-%20Mac-device-type-architecture.md)
+- [Mac device type milestone history](../../docs/history/milestones/doc-24%20-%20Milestone-Mac-device-type.md)
 
 This device type is dev-only: no systemd units and no release packaging.

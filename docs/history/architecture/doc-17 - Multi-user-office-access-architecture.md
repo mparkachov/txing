@@ -44,3 +44,9 @@ This milestone does not add role separation, read-only users, invite flows, self
 ## Validation
 
 Validation for the completed milestone includes office source tests, office production build, and shared AWS Python tests covering template, versioning, and docs expectations. Manual rollout requires rebuilding/redeploying office through Cloudflare Pages and adding users in the existing Cognito User Pool.
+
+## GitHub issue references
+
+- [#39 — Milestone: multi-user office access](https://github.com/mparkachov/txing/issues/39) (migrated from `TASK-19`)
+- [#40 — Office accepts all authenticated Cognito users](https://github.com/mparkachov/txing/issues/40) (migrated from `TASK-19.1`)
+- [#41 — Document Cognito-console office enrollment](https://github.com/mparkachov/txing/issues/41) (migrated from `TASK-19.2`)

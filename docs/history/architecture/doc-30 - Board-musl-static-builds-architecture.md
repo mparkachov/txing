@@ -67,3 +67,9 @@ Spike executed 2026-07-21 on `docker.io/library/alpine:3.23.5` (`linux/arm64`), 
 - **Cross-distro smoke.** All three binaries executed `--version` successfully in bare `debian:trixie` and `alpine:3.23.5` containers with zero packages installed — the static artifacts depend only on the kernel.
 - **KVS master unaffected.** The spike changed no shared sources, CMake files, justfiles, or workflows; the static stack lives in an isolated prefix selected purely by external flags, so the musl-dynamic KVS master build contract from doc-27 is untouched.
 - **Assertion recipe** (per static binary): `file` matches `ELF 64-bit LSB.*ARM aarch64` and `statically linked|static-pie linked`; `readelf -l` contains no `INTERP`; the binary executes `--version` in bare `debian:trixie` and pinned Alpine containers.
+
+## GitHub issue references
+
+- [#78 — Static musl toolchain is proven for the board stack](https://github.com/mparkachov/txing/issues/78) (migrated from `TASK-23.1`)
+- [#84 — unit board daemons build as Alpine musl binaries](https://github.com/mparkachov/txing/issues/84) (migrated from `TASK-23.2`)
+- [#88 — unit release pipeline publishes Alpine artifacts](https://github.com/mparkachov/txing/issues/88) (migrated from `TASK-23.4`)

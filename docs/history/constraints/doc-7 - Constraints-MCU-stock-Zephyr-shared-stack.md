@@ -42,3 +42,10 @@ updated_date: '2026-05-24 18:48'
   for a different stock Zephyr revision.
 - REDCON protocol, UUIDs, payloads, NVE layout, BLE identity behavior, Thing Shadow schemas, and Sparkplug semantics are unchanged.
 - Existing unit/weather BLE TX-power settings should be preserved initially; only change them if physical stock-Zephyr validation shows connection instability, and record the reason.
+
+## GitHub issue references
+
+- [#24 — Milestone: MCU shared stock Zephyr tooling and power flash](https://github.com/mparkachov/txing/issues/24) (migrated from `TASK-13`)
+- [#25 — Milestone: Weather MCU stock Zephyr migration](https://github.com/mparkachov/txing/issues/25) (migrated from `TASK-14`)
+- [#26 — Milestone: Unit MCU stock Zephyr migration](https://github.com/mparkachov/txing/issues/26) (migrated from `TASK-15`)
+- [#27 — Milestone: MCU NCS cleanup](https://github.com/mparkachov/txing/issues/27) (migrated from `TASK-16`)

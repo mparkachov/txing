@@ -30,3 +30,12 @@ updated_date: '2026-05-23 14:30'
 - Port the Rust daemon coverage before removing the Rust daemon from active build/release paths.
 - Keep test acceptance outcome-based: behavior parity matters more than matching old internal Rust symbol names.
 - Release/versioning tests must assert the new KVS asset/service/target names and absence of old active names.
+
+## GitHub issue references
+
+- [#14 — Milestone: Go unit board daemon replacement](https://github.com/mparkachov/txing/issues/14) (migrated from `TASK-11`)
+- [#15 — Port unit daemon contracts and configuration to Go](https://github.com/mparkachov/txing/issues/15) (migrated from `TASK-11.1`)
+- [#16 — Implement Go daemon runtime parity](https://github.com/mparkachov/txing/issues/16) (migrated from `TASK-11.2`)
+- [#17 — Rename unit KVS worker and board runtime target](https://github.com/mparkachov/txing/issues/17) (migrated from `TASK-11.3`)
+- [#18 — Switch release and docs to Go unit daemon](https://github.com/mparkachov/txing/issues/18) (migrated from `TASK-11.4`)
+- [#19 — Retire Rust unit daemon build surface](https://github.com/mparkachov/txing/issues/19) (migrated from `TASK-11.5`)

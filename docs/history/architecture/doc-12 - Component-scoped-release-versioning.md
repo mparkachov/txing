@@ -68,3 +68,12 @@ This is a forward-only release model change. No migration code or compatibility 
 - Do not add deployment automation for Cloudflare, AWS, rig, board, or firmware.
 - Do not change firmware release behavior or include MCU firmware in the `unit` stream.
 - Do not preserve automatic compatibility with mixed old/new component release layouts beyond allowing explicit legacy Lambda rollback references.
+
+## GitHub issue references
+
+- [#28 — Milestone: component-scoped release versioning](https://github.com/mparkachov/txing/issues/28) (migrated from `TASK-17`)
+- [#29 — Create component version records and bump flow](https://github.com/mparkachov/txing/issues/29) (migrated from `TASK-17.1`)
+- [#30 — Publish artifacts through component release workflows](https://github.com/mparkachov/txing/issues/30) (migrated from `TASK-17.2`)
+- [#31 — Resolve latest releases by component](https://github.com/mparkachov/txing/issues/31) (migrated from `TASK-17.3`)
+- [#32 — Track office as a versioned component](https://github.com/mparkachov/txing/issues/32) (migrated from `TASK-17.4`)
+- [#33 — Retire root VERSION references from release docs and tests](https://github.com/mparkachov/txing/issues/33) (migrated from `TASK-17.5`)

@@ -26,3 +26,11 @@ Out of scope: MQTT topic renames, payload schema changes, Sparkplug metric chang
 - Descriptor retained topics remain unexpired.
 - Exact board capability-state subscriptions allow AWS IoT retained replay per inventoried device.
 - Tests and rollout notes cover stale retained messages from prior releases.
+
+## GitHub issue references
+
+- [#34 — Milestone: MQTT5 retained message expiry](https://github.com/mparkachov/txing/issues/34) (migrated from `TASK-18`)
+- [#35 — Make unit daemon MQTT5 retained expiry explicit](https://github.com/mparkachov/txing/issues/35) (migrated from `TASK-18.1`)
+- [#36 — Migrate rig MQTT and retained board subscriptions to MQTT5](https://github.com/mparkachov/txing/issues/36) (migrated from `TASK-18.2`)
+- [#37 — Remove unused shared AWS Python MQTT helper](https://github.com/mparkachov/txing/issues/37) (migrated from `TASK-18.3`)
+- [#38 — Verify office MQTT5 path and retention docs](https://github.com/mparkachov/txing/issues/38) (migrated from `TASK-18.4`)

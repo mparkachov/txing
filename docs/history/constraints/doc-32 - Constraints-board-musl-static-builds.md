@@ -31,3 +31,11 @@ Durable rules for building and shipping board binaries after the m-4 migration. 
 
 - Install and update remain manual and operator-driven (mise pull from immutable `unit-v*`/`cyberbrick-v*` GitHub releases); no auto-update mechanisms.
 - Repository-wide gates apply unchanged: no automatic `git commit`, no mutating AWS commands from agents, no firmware flashing by agents.
+
+## GitHub issue references
+
+- [#78 — Static musl toolchain is proven for the board stack](https://github.com/mparkachov/txing/issues/78) (migrated from `TASK-23.1`)
+- [#84 — unit board daemons build as Alpine musl binaries](https://github.com/mparkachov/txing/issues/84) (migrated from `TASK-23.2`)
+- [#85 — cyberbrick board binaries align to the static-musl policy](https://github.com/mparkachov/txing/issues/85) (migrated from `TASK-23.3`)
+- [#88 — unit release pipeline publishes Alpine artifacts](https://github.com/mparkachov/txing/issues/88) (migrated from `TASK-23.4`)
+- [#90 — board docs reflect the Alpine musl build contract](https://github.com/mparkachov/txing/issues/90) (migrated from `TASK-23.6`)

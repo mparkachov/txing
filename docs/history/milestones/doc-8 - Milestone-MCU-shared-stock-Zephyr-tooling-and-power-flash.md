@@ -33,3 +33,7 @@ The repository has one shared stock Zephyr v4.4.0 MCU workspace under `devices/c
 
 ## Exit Criteria
 The user can manually run `just power::mcu::flash` and `just mcu::nve <thing-name>` using already-built shared-stack artifacts.
+
+## GitHub issue references
+
+- [#24 — Milestone: MCU shared stock Zephyr tooling and power flash](https://github.com/mparkachov/txing/issues/24) (migrated from `TASK-13`)

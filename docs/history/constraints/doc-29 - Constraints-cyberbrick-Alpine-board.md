@@ -33,3 +33,11 @@ Durable rules for building, shipping, and operating cyberbrick board software. T
 - Read-only root is the steady state (fstab `ro` + tmpfs for volatile paths). All package, mise, config, and service changes happen inside an explicit writable-root window that ends with a return to read-only.
 - Install and update remain **manual and operator-driven** (mise pull from immutable `cyberbrick-v*` GitHub releases); no auto-update mechanisms.
 - Repository-wide gates apply unchanged: no automatic `git commit`, no mutating AWS commands from agents, no firmware flashing by agents.
+
+## GitHub issue references
+
+- [#62 — Alpine musl toolchain is proven for the cyberbrick board stack](https://github.com/mparkachov/txing/issues/62) (migrated from `TASK-22.1`)
+- [#66 — cyberbrick board daemons build as musl-dynamic Alpine binaries](https://github.com/mparkachov/txing/issues/66) (migrated from `TASK-22.3`)
+- [#70 — cyberbrick Alpine board runbook is complete](https://github.com/mparkachov/txing/issues/70) (migrated from `TASK-22.5`)
+- [#72 — cyberbrick board reaches unit parity on hardware](https://github.com/mparkachov/txing/issues/72) (migrated from `TASK-22.6`)
+- [#85 — cyberbrick board binaries align to the static-musl policy](https://github.com/mparkachov/txing/issues/85) (migrated from `TASK-23.3`)

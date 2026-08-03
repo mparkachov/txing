@@ -28,3 +28,11 @@ updated_date: '2026-05-30 09:24'
 
 ## Operational Note
 Existing retained AWS IoT messages without expiry are replaced only when a publisher writes the same topic again. Operators may need to delete orphaned retained messages manually during rollout if the publishing device will not republish them.
+
+## GitHub issue references
+
+- [#34 — Milestone: MQTT5 retained message expiry](https://github.com/mparkachov/txing/issues/34) (migrated from `TASK-18`)
+- [#35 — Make unit daemon MQTT5 retained expiry explicit](https://github.com/mparkachov/txing/issues/35) (migrated from `TASK-18.1`)
+- [#36 — Migrate rig MQTT and retained board subscriptions to MQTT5](https://github.com/mparkachov/txing/issues/36) (migrated from `TASK-18.2`)
+- [#37 — Remove unused shared AWS Python MQTT helper](https://github.com/mparkachov/txing/issues/37) (migrated from `TASK-18.3`)
+- [#38 — Verify office MQTT5 path and retention docs](https://github.com/mparkachov/txing/issues/38) (migrated from `TASK-18.4`)

@@ -48,3 +48,11 @@ Make all real MQTT client sessions explicit MQTT 5 clients and attach MQTT5 mess
 - Shared AWS Python tests cover the removal by passing without any MQTT helper,
   `awsiotsdk`, or `awscrt` dependency.
 - Office tests confirm the existing MQTT5 browser path remains intact.
+
+## GitHub issue references
+
+- [#34 — Milestone: MQTT5 retained message expiry](https://github.com/mparkachov/txing/issues/34) (migrated from `TASK-18`)
+- [#35 — Make unit daemon MQTT5 retained expiry explicit](https://github.com/mparkachov/txing/issues/35) (migrated from `TASK-18.1`)
+- [#36 — Migrate rig MQTT and retained board subscriptions to MQTT5](https://github.com/mparkachov/txing/issues/36) (migrated from `TASK-18.2`)
+- [#37 — Remove unused shared AWS Python MQTT helper](https://github.com/mparkachov/txing/issues/37) (migrated from `TASK-18.3`)
+- [#38 — Verify office MQTT5 path and retention docs](https://github.com/mparkachov/txing/issues/38) (migrated from `TASK-18.4`)

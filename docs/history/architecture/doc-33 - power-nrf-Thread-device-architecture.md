@@ -84,3 +84,12 @@ path depends on the failed SED delivery requirement.  A successor hardware
 trial must use an enclosure-compatible external antenna, a suitable integrated
 antenna, or a validated custom antenna design, and repeat the full acceptance
 matrix in `devices/power-nrf/README.md`.
+
+## GitHub issue references
+
+- [#95 — Integrate power-nrf contracts and control plane](https://github.com/mparkachov/txing/issues/95) (migrated from `TASK-24`)
+- [#96 — Add power-nrf stock-Zephyr builds and factory provisioning](https://github.com/mparkachov/txing/issues/96) (migrated from `TASK-25`)
+- [#98 — Implement power-nrf Thread SED CoAP firmware](https://github.com/mparkachov/txing/issues/98) (migrated from `TASK-26`)
+- [#100 — Publish power-nrf nPM1300 battery telemetry](https://github.com/mparkachov/txing/issues/100) (migrated from `TASK-27`)
+- [#101 — Generalize rig Thread discovery for power-nrf](https://github.com/mparkachov/txing/issues/101) (migrated from `TASK-28`)
+- [#102 — Validate and document power-nrf rollout](https://github.com/mparkachov/txing/issues/102) (migrated from `TASK-29`)

@@ -37,3 +37,9 @@ Out of scope:
 ## Rollout
 
 After implementation, rebuild and redeploy office through the existing Cloudflare Pages Git flow. No AWS template redeploy should be required for existing pools unless docs-only CloudFormation wording changes are included in a normal stack update. Operators add additional users directly in the configured Cognito User Pool.
+
+## GitHub issue references
+
+- [#39 — Milestone: multi-user office access](https://github.com/mparkachov/txing/issues/39) (migrated from `TASK-19`)
+- [#40 — Office accepts all authenticated Cognito users](https://github.com/mparkachov/txing/issues/40) (migrated from `TASK-19.1`)
+- [#41 — Document Cognito-console office enrollment](https://github.com/mparkachov/txing/issues/41) (migrated from `TASK-19.2`)

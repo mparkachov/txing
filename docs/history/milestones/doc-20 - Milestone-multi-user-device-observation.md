@@ -38,3 +38,11 @@ Office supports multiple simultaneous observers for every device type while pres
 - Office changes roll out through the normal Cloudflare Pages Git deployment.
 - Daemon/schema/doc changes require the normal release and manual board runtime update flow.
 - No AWS infrastructure deployment is expected unless future implementation discovers an existing policy gap.
+
+## GitHub issue references
+
+- [#43 — Milestone: multi-user device observation](https://github.com/mparkachov/txing/issues/43) (migrated from `TASK-20`)
+- [#44 — Office supports multi-user observation across device types](https://github.com/mparkachov/txing/issues/44) (migrated from `TASK-20.1`)
+- [#45 — Office exposes single active MCP controller state](https://github.com/mparkachov/txing/issues/45) (migrated from `TASK-20.2`)
+- [#46 — Daemon active-control behavior is covered for multiple MCP sessions](https://github.com/mparkachov/txing/issues/46) (migrated from `TASK-20.3`)
+- [#47 — Video-capable devices support simultaneous viewers on the existing KVS path](https://github.com/mparkachov/txing/issues/47) (migrated from `TASK-20.4`)

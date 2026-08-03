@@ -57,8 +57,13 @@ The milestone is complete when a counted soak shows idle-awake recurring operati
 
 ## Required references
 
-- Architecture spec: `backlog/docs/architecture/rig-idle-cost-parity/doc-25 - Rig-REDCON-1-idle-cost-parity-architecture.md`
-- Parent milestone task: `TASK-23`
+- Architecture spec: [Rig REDCON 1 idle cost parity architecture](../architecture/doc-25%20-%20Rig-REDCON-1-idle-cost-parity-architecture.md)
+- Parent tracking issue: [#76 — TASK-23](https://github.com/mparkachov/txing/issues/76)
 - `rig/internal/registry/registry.go`, `rig/internal/rigconfig/config.go`
 - `devices/cloud-mcu/lambda/internal/cloudmcu/cloudmcu.go`
 - `docs/sparkplug-lifecycle.md`, `docs/components/rig.md`
+
+## GitHub issue references
+
+- [#76 — Milestone: rig REDCON 1 idle cost parity](https://github.com/mparkachov/txing/issues/76) (migrated from `TASK-23`)
+- [#87 — rig daemons are enabled from daemon.env](https://github.com/mparkachov/txing/issues/87) (migrated from `TASK-23.4`)

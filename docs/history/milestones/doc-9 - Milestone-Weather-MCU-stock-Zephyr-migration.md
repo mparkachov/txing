@@ -34,3 +34,7 @@ The `weather` MCU builds on the shared stock Zephyr v4.4.0 stack and is physical
 
 ## Exit Criteria
 Weather is no longer dependent on the NCS workspace for active builds, and physical validation confirms expected weather MCU functionality on stock Zephyr.
+
+## GitHub issue references
+
+- [#25 — Milestone: Weather MCU stock Zephyr migration](https://github.com/mparkachov/txing/issues/25) (migrated from `TASK-14`)

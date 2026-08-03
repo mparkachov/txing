@@ -55,3 +55,10 @@ just unit::mcu::flash
 
 ## Validation Strategy
 Each milestone must end with local build validation and `just mcu::check` preflight validation. Physical firmware and NVE flashing remain manual user actions. Manual hardware validation records BLE identity, REDCON service behavior, battery reporting, and device-specific behavior before the next milestone starts.
+
+## GitHub issue references
+
+- [#24 — Milestone: MCU shared stock Zephyr tooling and power flash](https://github.com/mparkachov/txing/issues/24) (migrated from `TASK-13`)
+- [#25 — Milestone: Weather MCU stock Zephyr migration](https://github.com/mparkachov/txing/issues/25) (migrated from `TASK-14`)
+- [#26 — Milestone: Unit MCU stock Zephyr migration](https://github.com/mparkachov/txing/issues/26) (migrated from `TASK-15`)
+- [#27 — Milestone: MCU NCS cleanup](https://github.com/mparkachov/txing/issues/27) (migrated from `TASK-16`)

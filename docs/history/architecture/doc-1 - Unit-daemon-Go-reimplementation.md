@@ -37,3 +37,10 @@ Replace the current Rust `txing-unit-daemon` with a Go implementation while pres
 - Runtime parity is high-risk because the daemon owns board, MCP, video, and shadow publication contracts.
 - Release/install rename is operationally sensitive because deployed boards must remove or replace old systemd units manually.
 - AWS and board hardware actions are not part of implementation; validation is repo-local unless a future task explicitly adds manual field validation.
+
+## GitHub issue references
+
+- [#14 — Milestone: Go unit board daemon replacement](https://github.com/mparkachov/txing/issues/14) (migrated from `TASK-11`)
+- [#15 — Port unit daemon contracts and configuration to Go](https://github.com/mparkachov/txing/issues/15) (migrated from `TASK-11.1`)
+- [#16 — Implement Go daemon runtime parity](https://github.com/mparkachov/txing/issues/16) (migrated from `TASK-11.2`)
+- [#18 — Switch release and docs to Go unit daemon](https://github.com/mparkachov/txing/issues/18) (migrated from `TASK-11.4`)

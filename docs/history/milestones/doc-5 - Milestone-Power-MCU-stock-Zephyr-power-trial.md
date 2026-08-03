@@ -37,3 +37,10 @@ The power MCU can be evaluated on stock Zephyr latest stable in three reviewable
 - Task 1 proves stock Zephyr compilation and flash-command readiness.
 - Task 2 records known-good-board baseline power measurements using the stock Zephyr firmware.
 - Task 3 records before/after measurements for any stock-Zephyr power-reduction customizations.
+
+## GitHub issue references
+
+- [#20 — Milestone: Power MCU stock Zephyr power trial](https://github.com/mparkachov/txing/issues/20) (migrated from `TASK-12`)
+- [#21 — Power MCU builds with stock Zephyr stable](https://github.com/mparkachov/txing/issues/21) (migrated from `TASK-12.1`)
+- [#22 — Power MCU stock Zephyr baseline flash and measurement](https://github.com/mparkachov/txing/issues/22) (migrated from `TASK-12.2`)
+- [#23 — Power MCU stock Zephyr power reduction pass](https://github.com/mparkachov/txing/issues/23) (migrated from `TASK-12.3`)

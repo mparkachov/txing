@@ -35,3 +35,7 @@ The `unit` MCU builds on the shared stock Zephyr v4.4.0 stack and is physically 
 
 ## Exit Criteria
 Unit is no longer dependent on the NCS workspace for active builds, and physical validation confirms expected REDCON and rig-facing behavior on stock Zephyr.
+
+## GitHub issue references
+
+- [#26 — Milestone: Unit MCU stock Zephyr migration](https://github.com/mparkachov/txing/issues/26) (migrated from `TASK-15`)

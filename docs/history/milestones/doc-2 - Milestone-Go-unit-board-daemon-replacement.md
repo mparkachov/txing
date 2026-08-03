@@ -37,3 +37,11 @@ The unit board daemon is implemented in Go, shipped under the existing `txing-un
 - Release artifacts include `txing-unit-daemon-linux-aarch64.tar.gz`, `txing-unit-kvs-master-linux-aarch64.tar.gz`, and `txing-unit-hardware-worker-linux-aarch64.tar.gz`.
 - Active docs and tests describe `txing-unit.target` and `txing-unit-kvs-master`.
 - Rust daemon code and Cargo-based unit daemon release paths are no longer active.
+
+## GitHub issue references
+
+- [#14 — Milestone: Go unit board daemon replacement](https://github.com/mparkachov/txing/issues/14) (migrated from `TASK-11`)
+- [#16 — Implement Go daemon runtime parity](https://github.com/mparkachov/txing/issues/16) (migrated from `TASK-11.2`)
+- [#17 — Rename unit KVS worker and board runtime target](https://github.com/mparkachov/txing/issues/17) (migrated from `TASK-11.3`)
+- [#18 — Switch release and docs to Go unit daemon](https://github.com/mparkachov/txing/issues/18) (migrated from `TASK-11.4`)
+- [#19 — Retire Rust unit daemon build surface](https://github.com/mparkachov/txing/issues/19) (migrated from `TASK-11.5`)

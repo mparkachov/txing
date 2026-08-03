@@ -38,9 +38,13 @@ The milestone is complete when a cyberbrick board installed from the documented 
 
 ## Required references
 
-- Architecture spec: `backlog/docs/architecture/cyberbrick-device-type/doc-27 - Cyberbrick-device-type-architecture.md`
-- Constraints: `backlog/docs/constraints/cyberbrick-alpine-board/doc-29 - Constraints-cyberbrick-Alpine-board.md`
-- Parent milestone task: `TASK-22` (milestone `m-3`; note the archived mac milestone task in `backlog/archive/tasks/` also carries the id task-22)
+- Architecture spec: [Cyberbrick device type architecture](../architecture/doc-27%20-%20Cyberbrick-device-type-architecture.md)
+- Constraints: [Cyberbrick Alpine board constraints](../constraints/doc-29%20-%20Constraints-cyberbrick-Alpine-board.md)
+- Parent tracking issue: [#60 — TASK-22](https://github.com/mparkachov/txing/issues/60). The separate Mac tracking issue that reused `TASK-22` is [#61](https://github.com/mparkachov/txing/issues/61).
 - Unit board runbook (structural template): `docs/components/board.md`
 - Unit build/release surfaces: `devices/unit/daemon/justfile`, `.github/workflows/release-unit.yml`
-- Device type precedent: `backlog/docs/architecture/mac-device-type/doc-23 - Mac-device-type-architecture.md`
+- Device type precedent: [Mac device type architecture](../architecture/doc-23%20-%20Mac-device-type-architecture.md)
+
+## GitHub issue references
+
+- [#60 — Milestone: Cyberbrick device type](https://github.com/mparkachov/txing/issues/60) (migrated from `TASK-22`)

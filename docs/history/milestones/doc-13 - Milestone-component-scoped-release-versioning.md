@@ -45,3 +45,12 @@ Out of scope:
 - A unit release can produce unit artifacts at a version such as `0.13.0` without building rig, Lambda, or office artifacts.
 - Office can carry its own tracked version and Cloudflare builds inject that office version into the SPA.
 - Root `VERSION` is gone and tests/docs no longer require it.
+
+## GitHub issue references
+
+- [#28 — Milestone: component-scoped release versioning](https://github.com/mparkachov/txing/issues/28) (migrated from `TASK-17`)
+- [#29 — Create component version records and bump flow](https://github.com/mparkachov/txing/issues/29) (migrated from `TASK-17.1`)
+- [#30 — Publish artifacts through component release workflows](https://github.com/mparkachov/txing/issues/30) (migrated from `TASK-17.2`)
+- [#31 — Resolve latest releases by component](https://github.com/mparkachov/txing/issues/31) (migrated from `TASK-17.3`)
+- [#32 — Track office as a versioned component](https://github.com/mparkachov/txing/issues/32) (migrated from `TASK-17.4`)
+- [#33 — Retire root VERSION references from release docs and tests](https://github.com/mparkachov/txing/issues/33) (migrated from `TASK-17.5`)

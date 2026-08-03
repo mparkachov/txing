@@ -54,3 +54,9 @@ The Thread daemon queries the colocated OTBR SRP registry through `ot-ctl`; it d
 - Product operations: `devices/power-si/README.md`
 - Rig operations: `docs/components/rig.md`
 - MCU implementation: `docs/components/mcu.md`
+
+## GitHub issue references
+
+- [#48 — Milestone: power-si Thread device type](https://github.com/mparkachov/txing/issues/48) (migrated from `TASK-21`)
+- [#54 — power-si release docs and hardware acceptance are complete](https://github.com/mparkachov/txing/issues/54) (migrated from `TASK-21.4`)
+- [#55 — power-si runs as a bounded-latency Thread SED](https://github.com/mparkachov/txing/issues/55) (migrated from `TASK-21.5`)

@@ -74,3 +74,11 @@ No redesign. Witness cost is proportional to messages published; fixing publicat
 - `devices/cloud-mcu/lambda/internal/cloudmcu/cloudmcu.go` (HandleScheduleWithNow, HandleTickWithNow, TickOffsetsSeconds)
 - `docs/sparkplug-lifecycle.md` (liveness/NBIRTH contract), `docs/components/rig.md`
 - Pricing: AWS IoT Core (messaging/shadow/registry/rules), IoT Device Management (fleet indexing), CloudWatch Logs
+
+## GitHub issue references
+
+- [#76 — Milestone: rig REDCON 1 idle cost parity](https://github.com/mparkachov/txing/issues/76) (migrated from `TASK-23`)
+- [#77 — raspi and local rigs idle at REDCON 1 for pennies](https://github.com/mparkachov/txing/issues/77) (migrated from `TASK-23.1`)
+- [#83 — cloud rig ticks are change-aware and redcon-paced](https://github.com/mparkachov/txing/issues/83) (migrated from `TASK-23.2`)
+- [#86 — rig cost posture is documented and measured](https://github.com/mparkachov/txing/issues/86) (migrated from `TASK-23.3`)
+- [#87 — rig daemons are enabled from daemon.env](https://github.com/mparkachov/txing/issues/87) (migrated from `TASK-23.4`)

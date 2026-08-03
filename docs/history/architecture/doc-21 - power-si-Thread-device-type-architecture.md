@@ -66,3 +66,11 @@ Validated hardware evidence covers fresh SRP registration, SED `n` mode with `R=
 ## Non-Goals
 
 This design does not automate OTBR installation, firmware flashing, factory provisioning, or cloud deployment. It does not migrate the existing nRF and BLE `power` device and does not introduce Matter.
+
+## GitHub issue references
+
+- [#48 — Milestone: power-si Thread device type](https://github.com/mparkachov/txing/issues/48) (migrated from `TASK-21`)
+- [#49 — power-si catalog and UI contract is first-class](https://github.com/mparkachov/txing/issues/49) (migrated from `TASK-21.1`)
+- [#52 — power-si XIAO MG24 firmware and factory provisioning are buildable](https://github.com/mparkachov/txing/issues/52) (migrated from `TASK-21.2`)
+- [#53 — rig Thread connectivity drives power-si over CoAP](https://github.com/mparkachov/txing/issues/53) (migrated from `TASK-21.3`)
+- [#55 — power-si runs as a bounded-latency Thread SED](https://github.com/mparkachov/txing/issues/55) (migrated from `TASK-21.5`)

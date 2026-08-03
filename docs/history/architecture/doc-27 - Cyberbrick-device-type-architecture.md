@@ -102,3 +102,11 @@ Once per stack: `just aws::deploy` (ships the cyberbrick thing type and SSM cata
 ## Non-goals
 
 Cyberbrick-specific MCU firmware (watch layer stays unit's Zephyr firmware), any behavior change relative to unit beyond the OS/ABI/init swap, changes to unit/rig/office internals, consolidation of shared daemon code into `devices/common/`, and automated fleet updates (workflow stays manual by design).
+
+## GitHub issue references
+
+- [#62 — Alpine musl toolchain is proven for the cyberbrick board stack](https://github.com/mparkachov/txing/issues/62) (migrated from `TASK-22.1`)
+- [#64 — cyberbrick catalog and UI contract is first-class](https://github.com/mparkachov/txing/issues/64) (migrated from `TASK-22.2`)
+- [#66 — cyberbrick board daemons build as musl-dynamic Alpine binaries](https://github.com/mparkachov/txing/issues/66) (migrated from `TASK-22.3`)
+- [#70 — cyberbrick Alpine board runbook is complete](https://github.com/mparkachov/txing/issues/70) (migrated from `TASK-22.5`)
+- [#72 — cyberbrick board reaches unit parity on hardware](https://github.com/mparkachov/txing/issues/72) (migrated from `TASK-22.6`)

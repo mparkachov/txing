@@ -37,3 +37,7 @@ After all active MCU targets build and validate on the shared stock Zephyr stack
 
 ## Exit Criteria
 The active MCU build and flash documentation describes only the shared stock Zephyr stack, and the repository no longer tracks the NCS submodule for active MCU firmware.
+
+## GitHub issue references
+
+- [#27 — Milestone: MCU NCS cleanup](https://github.com/mparkachov/txing/issues/27) (migrated from `TASK-16`)

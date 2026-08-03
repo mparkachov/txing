@@ -40,9 +40,22 @@ The milestone is complete when no CI or justfile build path uses Debian containe
 
 ## Required references
 
-- Architecture spec: `backlog/docs/architecture/board-musl-static-builds/doc-30 - Board-musl-static-builds-architecture.md`
-- Constraints: `backlog/docs/constraints/board-musl-static-builds/doc-32 - Constraints-board-musl-static-builds.md` (supersedes the musl-dynamic-only ABI clause of doc-29)
-- Parent milestone task: `TASK-23` (milestone `m-4`; note the archived rig milestone task in `backlog/archive/tasks/` also carries the id task-23)
+- Architecture spec: [Board musl static builds architecture](../architecture/doc-30%20-%20Board-musl-static-builds-architecture.md)
+- Constraints: [Board musl static builds constraints](../constraints/doc-32%20-%20Constraints-board-musl-static-builds.md) (supersedes the musl-dynamic-only ABI clause of doc-29)
+- Parent tracking issue: [#75 — TASK-23](https://github.com/mparkachov/txing/issues/75). The separate rig tracking issue that reused `TASK-23` is [#76](https://github.com/mparkachov/txing/issues/76).
 - Alpine reference implementation: `.github/workflows/release-cyberbrick.yml`, `devices/cyberbrick/daemon/justfile`, `release/scripts/assert-board-musl.sh` (generalized from the cyberbrick-only assert script by TASK-23.4)
 - Debian surfaces being retired: `.github/workflows/release-unit.yml`, `devices/unit/daemon/justfile`
-- Toolchain proof precedent: `backlog/tasks/task-22.1 - Alpine-musl-toolchain-is-proven-for-the-cyberbrick-board-stack.md` and `backlog/docs/architecture/cyberbrick-device-type/doc-27 - Cyberbrick-device-type-architecture.md`
+- Toolchain proof precedent: [#62 — TASK-22.1](https://github.com/mparkachov/txing/issues/62) and the [Cyberbrick device type architecture](../architecture/doc-27%20-%20Cyberbrick-device-type-architecture.md)
+
+## GitHub issue references
+
+- [#75 — Milestone: Board musl static builds](https://github.com/mparkachov/txing/issues/75) (migrated from `TASK-23`)
+- [#79 — one Alpine board runbook covers both device types](https://github.com/mparkachov/txing/issues/79) (migrated from `TASK-23.10`)
+- [#80 — board cards are generated from a board config file](https://github.com/mparkachov/txing/issues/80) (migrated from `TASK-23.11`)
+- [#81 — a freshly imaged card brings the board up to a reachable base OS](https://github.com/mparkachov/txing/issues/81) (migrated from `TASK-23.12`)
+- [#82 — unattended board provisioning is validated on physical hardware](https://github.com/mparkachov/txing/issues/82) (migrated from `TASK-23.13`)
+- [#89 — board artifacts run on both Debian and Alpine hosts](https://github.com/mparkachov/txing/issues/89) (migrated from `TASK-23.5`)
+- [#90 — board docs reflect the Alpine musl build contract](https://github.com/mparkachov/txing/issues/90) (migrated from `TASK-23.6`)
+- [#91 — board musl artifacts are validated on physical hardware](https://github.com/mparkachov/txing/issues/91) (migrated from `TASK-23.7`)
+- [#92 — board components build from one shared implementation](https://github.com/mparkachov/txing/issues/92) (migrated from `TASK-23.8`)
+- [#93 — board video bridge speaks one protocol package](https://github.com/mparkachov/txing/issues/93) (migrated from `TASK-23.9`)

@@ -54,3 +54,11 @@ Allow multiple signed-in Office users to open the same device and observe the sa
 - First manual validation: two browsers on the same computer, two different users, same AWS device, both observing the same state.
 - Final manual validation: two browsers see the same bot video, one browser controls the bot, observer cannot control until explicit takeover.
 - Automated validation should cover Office UI state, daemon active-control enforcement, and unchanged REDCON command behavior.
+
+## GitHub issue references
+
+- [#43 — Milestone: multi-user device observation](https://github.com/mparkachov/txing/issues/43) (migrated from `TASK-20`)
+- [#44 — Office supports multi-user observation across device types](https://github.com/mparkachov/txing/issues/44) (migrated from `TASK-20.1`)
+- [#45 — Office exposes single active MCP controller state](https://github.com/mparkachov/txing/issues/45) (migrated from `TASK-20.2`)
+- [#46 — Daemon active-control behavior is covered for multiple MCP sessions](https://github.com/mparkachov/txing/issues/46) (migrated from `TASK-20.3`)
+- [#47 — Video-capable devices support simultaneous viewers on the existing KVS path](https://github.com/mparkachov/txing/issues/47) (migrated from `TASK-20.4`)

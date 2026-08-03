@@ -105,3 +105,14 @@ Run: `just rig::start <rig-config-dir> true`, then `just mac::start <mac-config-
 ## Non-goals
 
 Actuator MCP tools and the command-line control surface, systemd/release packaging for the mac client, changes to rig/witness/office video internals, and consolidation of shared daemon code into `devices/common/`.
+
+## GitHub issue references
+
+- [#61 — Milestone: Mac end-device client](https://github.com/mparkachov/txing/issues/61) (migrated from `TASK-22`)
+- [#63 — mac catalog and UI contract is first-class](https://github.com/mparkachov/txing/issues/63) (migrated from `TASK-22.1`)
+- [#65 — txing-mac-daemon joins the rig and converges REDCON 4-3](https://github.com/mparkachov/txing/issues/65) (migrated from `TASK-22.2`)
+- [#67 — mac daemon action layer reaches REDCON 2 with board and MCP stub](https://github.com/mparkachov/txing/issues/67) (migrated from `TASK-22.3`)
+- [#69 — KVS worker streams the Mac camera on macOS](https://github.com/mparkachov/txing/issues/69) (migrated from `TASK-22.4`)
+- [#71 — mac device reaches REDCON 1 with office-visible video](https://github.com/mparkachov/txing/issues/71) (migrated from `TASK-22.5`)
+- [#73 — mac devices belong to a new local rig type](https://github.com/mparkachov/txing/issues/73) (migrated from `TASK-22.6`)
+- [#74 — local rig start defaults to manager-only with implicit config dir](https://github.com/mparkachov/txing/issues/74) (migrated from `TASK-22.7`)

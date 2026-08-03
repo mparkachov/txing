@@ -37,9 +37,14 @@ The milestone is complete when a mac device can be registered through the docume
 
 ## Required references
 
-- Architecture spec: `backlog/docs/architecture/mac-device-type/doc-23 - Mac-device-type-architecture.md`
-- Parent milestone task: `TASK-22`
+- Architecture spec: [Mac device type architecture](../architecture/doc-23%20-%20Mac-device-type-architecture.md)
+- Parent tracking issue: [#61 — TASK-22](https://github.com/mparkachov/txing/issues/61)
 - Lifecycle contract: `docs/sparkplug-lifecycle.md`
 - Rig IPC contract: `rig/internal/protocol/protocol.go`
 - Unit daemon contracts: `devices/unit/daemon`, `devices/unit/docs/board-video.md`, `docs/contracts/board-video-bridge.md`
 - KVS worker: `devices/unit/board/kvs_master`
+
+## GitHub issue references
+
+- [#61 — Milestone: Mac end-device client](https://github.com/mparkachov/txing/issues/61) (migrated from `TASK-22`)
+- [#71 — mac device reaches REDCON 1 with office-visible video](https://github.com/mparkachov/txing/issues/71) (migrated from `TASK-22.5`)

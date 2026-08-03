@@ -26,3 +26,10 @@ The power MCU command surface remains: `install`, `paths`, `check`, `build`, `ch
 
 ## Validation Strategy
 First prove unmodified stock Zephyr compilation and flash-command readiness. Then manually flash and measure baseline power on known-good hardware. Only after the baseline is recorded, apply targeted stock-Zephyr power customizations and re-measure.
+
+## GitHub issue references
+
+- [#20 — Milestone: Power MCU stock Zephyr power trial](https://github.com/mparkachov/txing/issues/20) (migrated from `TASK-12`)
+- [#21 — Power MCU builds with stock Zephyr stable](https://github.com/mparkachov/txing/issues/21) (migrated from `TASK-12.1`)
+- [#22 — Power MCU stock Zephyr baseline flash and measurement](https://github.com/mparkachov/txing/issues/22) (migrated from `TASK-12.2`)
+- [#23 — Power MCU stock Zephyr power reduction pass](https://github.com/mparkachov/txing/issues/23) (migrated from `TASK-12.3`)
