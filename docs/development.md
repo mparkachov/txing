@@ -15,13 +15,54 @@ For the system overview, see [../README.md](../README.md). For the documentation
 
 ## Base Tooling
 
-Repo-wide tooling:
+The supported development host is a current Ubuntu LTS release. Use APT for
+system packages, native build dependencies, and Go. Use Mise for the remaining
+developer and Codex command-line tools so they stay on current releases. In
+particular, Ubuntu's `awscli` package can be v1 while this repository requires
+AWS CLI v2.
 
-- `uv`
-- `just`
-- `jq`
-- AWS CLI v2
-- GitHub CLI (`gh`) for dispatching release workflows
+Install the shared system and build prerequisites:
+
+```bash
+sudo apt update
+sudo apt install --yes \
+  build-essential git ca-certificates cmake curl device-tree-compiler \
+  docker.io file gcc-arm-none-eabi golang-go gperf ninja-build openocd \
+  pkg-config protobuf-compiler python3 python3-venv unzip
+```
+
+This provides Docker, the native C/C++ build chain, `protoc`, and the Zephyr
+MCU host toolchain. The shared MCU recipes require `python3`, `cmake`, `ninja`,
+`dtc`, `arm-none-eabi-gcc`, `git`, and Go; the board proto and native-worker
+paths require `protoc`. Generated Go protobuf plugins are pinned and installed
+into the repository temporary directory by
+`just common::board::proto-gen`, so they are not global prerequisites.
+
+Install Mise from its upstream installer, add its activation command to the
+shell startup file, then use it for the versioned developer tools:
+
+```bash
+curl https://mise.run | sh
+echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc
+source ~/.bashrc
+mise use --global aws-cli bun codex gh jq just node ripgrep uv
+```
+
+Every tool uses `@latest`; upgrade them with `mise upgrade`.
+Mise supplies the Codex CLI and its workflow tools 
+(`gh`, `jq`, and Ripgrep's `rg`), AWS CLI v2, Node.js, Bun,
+`just`, and `uv`. Go is installed from Ubuntu as `golang-go`. `just` is the
+repository task runner and `uv` manages the Python tooling.
+
+To build the board KVS master natively on Ubuntu rather than in the pinned
+Alpine container, install its additional system libraries with APT:
+
+```bash
+sudo apt install --yes \
+  libcurl4-openssl-dev libgrpc++-dev liblog4cplus-dev libprotobuf-dev \
+  libsrtp2-dev libssl-dev libusrsctp-dev libwebsockets-dev \
+  protobuf-compiler-grpc zlib1g-dev
+```
 
 Host-specific setup starts in [installation.md](./installation.md). Detailed
 board runtime setup, including read-only rootfs, lives in

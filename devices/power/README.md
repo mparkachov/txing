@@ -39,11 +39,9 @@ Firmware/NVE flashing remains a manual hardware step.
 
 ## MCU Setup
 
-Install host tools manually:
-
-```sh
-brew install cmake ninja dtc open-ocd arm-none-eabi-gcc
-```
+The supported development host is Ubuntu LTS. Install the shared MCU APT
+prerequisites from [Base Tooling](../../docs/development.md#base-tooling): they
+include `cmake`, `ninja`, `dtc`, `openocd`, and `gcc-arm-none-eabi`.
 
 Create the repo-local Python environment and stock Zephyr west workspace:
 

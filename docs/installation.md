@@ -26,19 +26,36 @@ component that owns the host behavior.
 
 ## Development Machine
 
-Repo-wide developer tooling:
+Ubuntu LTS is the default development environment. Install Ubuntu-packaged
+system and native-build tools with APT, then use Mise for developer and Codex
+tools: Codex CLI, Ripgrep, AWS CLI v2, GitHub CLI, `jq`, Node.js, Bun, `just`,
+and `uv`. Go is installed from Ubuntu as `golang-go`. The canonical package
+lists, Mise bootstrap, and
+component-specific native build dependencies are in
+[Base Tooling](./development.md#base-tooling).
 
-- `uv`
-- `just`
-- `jq`
-- AWS CLI v2
-- GitHub CLI (`gh`) for dispatching release workflows
-
-Install operator CLIs with the package manager you use for the development
-machine. `mise` is acceptable for missing or stale CLI versions:
+After that setup, confirm the shared commands resolve:
 
 ```bash
-mise use --global uv@latest just@latest aws-cli@latest jq@latest
+aws --version
+codex --version
+gh --version
+go version
+git --version
+protoc --version
+rg --version
+just --version
+uv --version
+bun --version
+node --version
+docker --version
+```
+
+The AWS CLI version must be v2. Add your user to the `docker` group and start a
+new login session before running Docker-backed board builds without `sudo`:
+
+```bash
+sudo usermod -aG docker "$USER"
 ```
 
 Day-to-day development commands live in [development.md](./development.md).

@@ -8,11 +8,9 @@ Prefer the AWS CLI for control-plane work. The `just aws-town ...`,
 `just aws-rig ...`, and `just aws-device ...` recipes are thin wrappers around
 plain `aws` calls. Txing identifiers come from environment variables or explicit
 positional recipe arguments.
-Install operator CLIs with mise if they are not already available:
-
-```bash
-mise use --global aws-cli@latest jq@latest
-```
+On the supported Ubuntu LTS development host, install AWS CLI v2 and `jq` with
+Mise; see [Base Tooling](./development.md#base-tooling). Ubuntu's `awscli`
+package can provide v1 and does not meet the v2 requirement.
 
 ## Native AWS Config
 
