@@ -23,7 +23,7 @@ first argument:
 ```sh
 just common::board::hardware-test-native unit
 just common::board::kvs-test-native cyberbrick
-just common::board::docker-build unit
+just common::board::nerdctl-build unit
 ```
 
 ## Legacy generated content

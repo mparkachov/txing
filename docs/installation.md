@@ -48,15 +48,12 @@ just --version
 uv --version
 bun --version
 node --version
-docker --version
+nerdctl --version
 ```
 
-The AWS CLI version must be v2. Add your user to the `docker` group and start a
-new login session before running Docker-backed board builds without `sudo`:
-
-```bash
-sudo usermod -aG docker "$USER"
-```
+The AWS CLI version must be v2. Board Alpine builds and cross-distro smoke
+tests require a locally installed `nerdctl` connected to a native Linux/arm64
+containerd environment; no Docker group membership is required.
 
 Day-to-day development commands live in [development.md](./development.md).
 AWS bring-up and teardown live in [aws.md](./aws.md).

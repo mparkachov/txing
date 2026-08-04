@@ -374,6 +374,7 @@ jobs:
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_ASSETS_DIR: ${{ runner.temp }}/release-assets
+          TXING_CONTAINER_CLI: docker
         shell: bash
         run: |
           set -euo pipefail

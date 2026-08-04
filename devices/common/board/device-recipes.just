@@ -4,7 +4,7 @@
 # `board_justfile` bound, and exposes it as `mod board`, so a device-scoped board
 # operation reads the same as a device-scoped MCU operation:
 #
-#   just unit::board::docker-build      just unit::mcu::build
+#   just unit::board::nerdctl-build     just unit::mcu::build
 #
 # Everything here delegates into the shared implementation in
 # devices/common/board/justfile with the device pre-bound, including its
@@ -42,11 +42,11 @@
 @hardware-build-alpine:
     just --justfile "{{board_justfile}}" hardware-build-alpine "{{device}}"
 
-@docker-build:
-    just --justfile "{{board_justfile}}" docker-build "{{device}}"
+@nerdctl-build:
+    just --justfile "{{board_justfile}}" nerdctl-build "{{device}}"
 
-@docker-smoke:
-    just --justfile "{{board_justfile}}" docker-smoke "{{device}}"
+@nerdctl-smoke:
+    just --justfile "{{board_justfile}}" nerdctl-smoke "{{device}}"
 
 @clean:
     just --justfile "{{board_justfile}}" clean "{{device}}"

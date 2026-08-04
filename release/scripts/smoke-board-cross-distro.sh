@@ -4,7 +4,8 @@
 # (kernel-only dependency), while the musl-dynamic KVS master runs on Alpine
 # only, against the documented runtime package superset. The last output line
 # of each run must equal the expected version line. Requires a native
-# linux/arm64 Docker daemon.
+# linux/arm64 container runtime. Local development uses nerdctl; the release
+# workflows set TXING_CONTAINER_CLI=docker for GitHub-hosted runners.
 set -eu
 
 if [ "$#" -ne 3 ]; then
@@ -20,6 +21,7 @@ debian_image="debian:trixie"
 alpine_image="docker.io/library/alpine:3.24.1"
 platform="linux/arm64"
 alpine_runtime_packages="ca-certificates curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev libwebsockets-dev zlib-dev libcamera-dev protobuf-dev grpc-dev"
+container_cli="${TXING_CONTAINER_CLI:-nerdctl}"
 
 if [ ! -x "$binary" ]; then
   echo "Board smoke binary is missing or not executable: $binary" >&2
@@ -28,20 +30,39 @@ fi
 bin_dir="$(cd "$(dirname "$binary")" && pwd)"
 bin_name="$(basename "$binary")"
 
-command -v docker >/dev/null 2>&1 || {
-  echo "docker is required for the board cross-distro smoke." >&2
-  exit 1
-}
-server_platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')"
-if [ "$server_platform" != "linux/arm64" ]; then
-  echo "Board cross-distro smoke requires a native linux/arm64 Docker daemon, got: $server_platform" >&2
-  exit 1
-fi
+case "$container_cli" in
+  nerdctl)
+    command -v nerdctl >/dev/null 2>&1 || {
+      echo "nerdctl is required for the board cross-distro smoke." >&2
+      exit 1
+    }
+    server_platform="$(nerdctl info --format '{{.OSType}}/{{.Architecture}}')"
+    ;;
+  docker)
+    command -v docker >/dev/null 2>&1 || {
+      echo "docker is required for the board cross-distro smoke in this environment." >&2
+      exit 1
+    }
+    server_platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')"
+    ;;
+  *)
+    echo "Unsupported TXING_CONTAINER_CLI: $container_cli (expected nerdctl or docker)." >&2
+    exit 2
+    ;;
+esac
+
+case "$server_platform" in
+  linux/aarch64|linux/arm64) ;;
+  *)
+    echo "Board cross-distro smoke requires a native linux/arm64 container runtime, got: $server_platform" >&2
+    exit 1
+    ;;
+esac
 
 run_smoke() {
   smoke_image="$1"
   smoke_setup="$2"
-  output="$(docker run --rm \
+  output="$("$container_cli" run --rm \
     --platform "$platform" \
     --mount "type=bind,source=$bin_dir,target=/smoke,readonly" \
     "$smoke_image" \

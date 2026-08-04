@@ -26,17 +26,22 @@ Install the shared system and build prerequisites:
 ```bash
 sudo apt update
 sudo apt install --yes \
-  build-essential git ca-certificates cmake curl device-tree-compiler \
-  docker.io file gcc-arm-none-eabi golang-go gperf ninja-build openocd \
+  build-essential ccache git ca-certificates cmake curl device-tree-compiler \
+  file gcc-arm-none-eabi golang-go gperf ninja-build openocd \
   pkg-config protobuf-compiler python3 python3-venv unzip
 ```
 
-This provides Docker, the native C/C++ build chain, `protoc`, and the Zephyr
+This provides the native C/C++ build chain, `protoc`, and the Zephyr
 MCU host toolchain. The shared MCU recipes require `python3`, `cmake`, `ninja`,
 `dtc`, `arm-none-eabi-gcc`, `git`, and Go; the board proto and native-worker
 paths require `protoc`. Generated Go protobuf plugins are pinned and installed
 into the repository temporary directory by
 `just common::board::proto-gen`, so they are not global prerequisites.
+
+Board Alpine builds and cross-distro smoke tests use a locally installed
+`nerdctl` connected to a native Linux/arm64 containerd environment. Verify it
+with `nerdctl info --format '{{.OSType}}/{{.Architecture}}'`; it must report
+`linux/aarch64` or `linux/arm64`.
 
 Install Mise from its upstream installer, add its activation command to the
 shell startup file, then use it for the versioned developer tools:
@@ -238,8 +243,8 @@ just common::board::hardware-build-native unit
 just common::board::hardware-test-native unit
 just common::board::hardware-build-alpine unit
 just common::board::daemon-build-alpine unit
-just common::board::docker-build unit
-just common::board::docker-smoke unit
+just common::board::nerdctl-build unit
+just common::board::nerdctl-smoke unit
 ```
 
 The Go unit daemon loads its default config from

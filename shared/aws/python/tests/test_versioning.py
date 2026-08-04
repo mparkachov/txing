@@ -675,17 +675,22 @@ class VersionEnvironmentTests(unittest.TestCase):
             'alpine_image="docker.io/library/alpine:3.24.1"', board_smoke_script
         )
         self.assertIn('platform="linux/arm64"', board_smoke_script)
+        self.assertIn(
+            'container_cli="${TXING_CONTAINER_CLI:-nerdctl}"', board_smoke_script
+        )
+        self.assertIn('nerdctl info --format', board_smoke_script)
         self.assertIn("libcamera-dev", board_smoke_script)
         self.assertIn("static|musl-libcamera", board_smoke_script)
         for workflow in (unit_workflow, cyberbrick_workflow):
             self.assertIn("name: Cross-distro smoke", workflow)
+            self.assertIn("TXING_CONTAINER_CLI: docker", workflow)
             self.assertIn(
                 "release/scripts/smoke-board-cross-distro.sh", workflow
             )
             self.assertIn("- smoke", workflow)
         # One shared board justfile serves both device types; the device is the
         # recipe's first argument.
-        self.assertIn("docker-smoke device:", board_justfile)
+        self.assertIn("nerdctl-smoke device:", board_justfile)
         self.assertIn("release/scripts/smoke-board-cross-distro.sh", board_justfile)
 
         for workflow in existing_go_workflows.values():
@@ -760,7 +765,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("component-scoped under `release/versions/`", development_docs)
         self.assertIn("Office tracks its version for Cloudflare Pages", development_docs)
 
-    def test_unit_daemon_manual_docker_build_replaces_release_channel(self) -> None:
+    def test_unit_daemon_manual_nerdctl_build_replaces_release_channel(self) -> None:
         removed_workflow = "unit-daemon-feature-" + "prerelease.yml"
         removed_dockerfile = "Dockerfile." + "prerelease-" + "builder"
         removed_cli_flag = "--" + "prerelease"
@@ -779,8 +784,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("./cmd/txing-board-daemon", justfile)
         self.assertNotIn("docker-builder-image", justfile)
         self.assertNotIn("docker-builder-shell", justfile)
-        self.assertIn("docker-build device:", justfile)
-        self.assertIn('"{{board_dir}}/target/docker-build-$device"', justfile)
+        self.assertIn("nerdctl-build device:", justfile)
+        self.assertIn(
+            '"{{board_dir}}/target/nerdctl-build-$device"', justfile
+        )
+        self.assertIn("nerdctl run --rm -i", justfile)
+        self.assertIn("nerdctl info --format", justfile)
         self.assertIn(
             'alpine_build_image := "docker.io/library/alpine:3.24.1"', justfile
         )

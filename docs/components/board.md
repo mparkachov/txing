@@ -76,8 +76,8 @@ device's release stream.
 Operator commands are device-owned, matching the MCU commands:
 
 ```sh
-just ${TXING_DEVICE}::board::docker-build
-just ${TXING_DEVICE}::board::docker-smoke
+just ${TXING_DEVICE}::board::nerdctl-build
+just ${TXING_DEVICE}::board::nerdctl-smoke
 just ${TXING_DEVICE}::board::hardware-test-native
 ```
 
@@ -1730,8 +1730,8 @@ just ${TXING_DEVICE}::board::hardware-test-native
 just ${TXING_DEVICE}::board::daemon-build-alpine
 just ${TXING_DEVICE}::board::kvs-build-alpine
 just ${TXING_DEVICE}::board::hardware-build-alpine
-just ${TXING_DEVICE}::board::docker-build
-just ${TXING_DEVICE}::board::docker-smoke
+just ${TXING_DEVICE}::board::nerdctl-build
+just ${TXING_DEVICE}::board::nerdctl-smoke
 ```
 
 The local daemon uses
@@ -1739,11 +1739,12 @@ The local daemon uses
 Provision that directory with `just aws::cert "$THING_ID"` only when AWS
 resource changes are intended.
 
-The `*-build-alpine`, `docker-build`, and `docker-smoke` recipes build and
-verify inside pinned aarch64 containers and require a native `linux/arm64`
-Docker daemon. They assert the linkage contract per binary — static daemon
-and hardware worker (no ELF interpreter), musl-dynamic KVS master with the
-expected libcamera sonames — and `docker-smoke` executes the static pair on
+The `*-build-alpine`, `nerdctl-build`, and `nerdctl-smoke` recipes build and
+verify inside pinned aarch64 containers and require `nerdctl` connected to a
+native `linux/arm64` containerd environment. They assert the linkage contract
+per binary — static daemon and hardware worker (no ELF interpreter),
+musl-dynamic KVS master with the
+expected libcamera sonames — and `nerdctl-smoke` executes the static pair on
 both `debian:trixie` and pinned Alpine and the KVS master on Alpine, the
 same gates the release workflow enforces.
 ## References

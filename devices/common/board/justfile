@@ -291,13 +291,13 @@ hardware-test-native device:
 @hardware-build-alpine device:
     just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" hardware-worker
 
-docker-build device:
+nerdctl-build device:
     #!/bin/sh
     set -eu
 
     for command in git jq; do
       if ! command -v "$command" >/dev/null 2>&1; then
-        echo "board docker-build requires '$command'." >&2
+        echo "board nerdctl-build requires '$command'." >&2
         exit 1
       fi
     done
@@ -306,7 +306,7 @@ docker-build device:
 
     device="{{device}}"
     project_root="{{project_root}}"
-    output_root="{{board_dir}}/target/docker-build-$device"
+    output_root="{{board_dir}}/target/nerdctl-build-$device"
     metadata_path="$output_root/metadata.json"
     bin_dir="$output_root/bin"
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
@@ -350,23 +350,23 @@ docker-build device:
     printf '  hardware worker binary: %s\n' "$bin_dir/txing-$device-hardware-worker"
     printf '  metadata: %s\n' "$metadata_path"
 
-docker-smoke device:
+nerdctl-smoke device:
     #!/bin/sh
     set -eu
     device="{{device}}"
-    bin_dir="{{board_dir}}/target/docker-build-$device/bin"
+    bin_dir="{{board_dir}}/target/nerdctl-build-$device/bin"
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
     for binary in "txing-$device-daemon" "txing-$device-kvs-master" "txing-$device-hardware-worker"; do
       if [ ! -x "$bin_dir/$binary" ]; then
-        echo "Missing $bin_dir/$binary. Run just common::board::docker-build $device first." >&2
+        echo "Missing $bin_dir/$binary. Run just common::board::nerdctl-build $device first." >&2
         exit 1
       fi
     done
-    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+    TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/txing-$device-daemon" static "txing-$device-daemon $version"
-    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+    TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/txing-$device-hardware-worker" static "txing-$device-hardware-worker $version"
-    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+    TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/txing-$device-kvs-master" musl-libcamera "txing-$device-kvs-master $version"
 
 [private]
@@ -378,7 +378,7 @@ docker-smoke device:
     device="{{device}}"
     component="{{component}}"
     project_root="{{project_root}}"
-    output_root="{{board_dir}}/target/docker-build-$device"
+    output_root="{{board_dir}}/target/nerdctl-build-$device"
     output_stage="$output_root/alpine-out"
     toolchain_dir="{{static_toolchain_dir}}"
     image="{{alpine_build_image}}"
@@ -393,15 +393,18 @@ docker-smoke device:
         ;;
     esac
 
-    command -v docker >/dev/null 2>&1 || {
-      echo "docker is required to build board projects in Alpine." >&2
+    command -v nerdctl >/dev/null 2>&1 || {
+      echo "nerdctl is required to build board projects in Alpine." >&2
       exit 1
     }
-    server_platform="$(docker version --format '{{"{{"}}.Server.Os{{"}}"}}/{{"{{"}}.Server.Arch{{"}}"}}')"
-    if [ "$server_platform" != "linux/arm64" ]; then
-      echo "board Alpine builds require a native linux/arm64 Docker daemon, got: $server_platform" >&2
-      exit 1
-    fi
+    server_platform="$(nerdctl info --format '{{"{{"}}.OSType{{"}}"}}/{{"{{"}}.Architecture{{"}}"}}')"
+    case "$server_platform" in
+      linux/aarch64|linux/arm64) ;;
+      *)
+        echo "board Alpine builds require a native linux/arm64 nerdctl environment, got: $server_platform" >&2
+        exit 1
+        ;;
+    esac
 
     if [ "$component" = "all" ]; then
       rm -rf "$output_root"
@@ -409,7 +412,7 @@ docker-smoke device:
     rm -rf "$output_stage"
     install -d "$output_stage" "$output_root/bin" "$toolchain_dir"
 
-    docker run --rm -i \
+    nerdctl run --rm -i \
       --platform "$platform" \
       --mount "type=bind,source=$project_root,target=$project_root,readonly" \
       --mount "type=bind,source=$output_stage,target=/out" \
@@ -624,11 +627,13 @@ clean device='':
         "{{native_kvs_master_dir}}/build-tests-$device" \
         "{{native_hardware_worker_dir}}/build-$device" \
         "{{native_hardware_worker_dir}}/build-tests-$device" \
+        "{{board_dir}}/target/nerdctl-build-$device" \
         "{{board_dir}}/target/docker-build-$device"
     else
       rm -rf \
         "{{native_kvs_master_dir}}"/build-* \
         "{{native_hardware_worker_dir}}"/build-* \
+        "{{board_dir}}"/target/nerdctl-build-* \
         "{{board_dir}}"/target/docker-build-* \
         "{{board_dir}}/aws-kvs-webrtc-sdk-build" \
         "{{board_dir}}/aws-kvs-webrtc-sdk-install" \
