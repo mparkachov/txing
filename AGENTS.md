@@ -34,7 +34,7 @@ unless a shared contract or consistency issue requires coordinated updates.
 
 ## Required references
 
-- Spec-driven planning and Backlog.md workflow:
+- Spec-driven planning and GitHub Issues workflow:
   `docs/agent-guidance/spec-driven-development.md`
 - Extracted component editing boundaries from project docs:
   `docs/agent-guidance/editing-boundaries.md`
@@ -58,30 +58,34 @@ unless a shared contract or consistency issue requires coordinated updates.
   code during architecture planning.
 - Plan Mode must end with durable planning output, not implementation. When the
   user leaves Plan Mode, presses Implement, or otherwise approves a plan, create
-  or update one Backlog.md milestone doc for the approved plan and create
-  separate goal-oriented Backlog.md tasks for the plan's implementation steps
-  under that single milestone, then stop.
-- Tasks must describe outcomes and acceptance criteria, not implementation
-  steps. If meaningful ambiguity remains, ask for clarification instead of
-  creating speculative tasks.
+  exactly one GitHub Milestone with no due date. Put the high-level plan overview
+  in that milestone's description, then create separate goal-oriented GitHub
+  Issues for the implementation steps and assign them to that milestone. Stop
+  after creating the tracking items.
+- Issues must describe outcomes and acceptance criteria, not implementation
+  steps. Do not set priority fields or add priority labels. If meaningful
+  ambiguity remains, ask for clarification instead of creating speculative
+  issues.
 - Implementation starts only when the user invokes `/goal <milestone>` or
-  explicitly asks to implement a specific Backlog task. During `/goal`, execute
+  explicitly asks to implement a specific GitHub Issue. During `/goal`, execute
   exactly one milestone at a time. Stop after milestone completion and wait for
   the user to choose or approve the next milestone.
-- If a goal or prompt names a Backlog task ID, load that task first with
-  `backlog task <id> --plain`. Do not search the repository to discover what
-  the Backlog task means.
+- If a goal or prompt names a GitHub Issue number, load it first with
+  `gh issue view <number> --comments`. Do not search the repository to discover
+  what the Issue means.
 
-## Backlog CLI in sandboxed environments
+## GitHub Issue workflow
 
-- Create and update milestones, tasks, and acceptance criteria only through the
-  `backlog` CLI. Never create, edit, or delete Backlog lock or mirror files
-  directly, including anything under `.git`.
-- If a Backlog operation fails because its Git-backed lock cannot be created,
-  temporarily run `backlog config set filesystemOnly true`, perform the single
-  required Backlog CLI operation, then restore `backlog config set filesystemOnly false`
-  and `backlog config set checkActiveBranches true`.
-- Treat restoration of those settings as mandatory before completing the task.
+- The GitHub CLI (`gh`) is installed, authenticated, and authorized to create
+  and maintain Issues and Milestones for this repository. Use it for all tracker
+  operations.
+- Create Milestones without a due date. Their descriptions hold the approved
+  plan's outcome, scope, dependencies, validation strategy, risks, non-goals,
+  and exit criteria.
+- Assign every implementation Issue to its Milestone. Use native sub-issues when
+  a parent/child relationship improves the work breakdown; keep both Issues in
+  the same Milestone.
+- Do not create priority labels, priority fields, or other priority metadata.
 
 ## Non-negotiable gates
 
@@ -90,9 +94,9 @@ unless a shared contract or consistency issue requires coordinated updates.
 - Do not run AWS commands that create, update, or delete cloud resources.
   Read-only AWS inspection commands are allowed only when needed.
 - Do not implement a planned feature directly from the chat plan or the Plan
-  Mode Implement action. That action closes planning by creating Backlog.md
-  milestone/task records; it does not authorize code changes unless the user
-  explicitly says to skip Backlog and implement immediately.
+  Mode Implement action. That action closes planning by creating the GitHub
+  Milestone and Issues; it does not authorize code changes unless the user
+  explicitly says to implement immediately.
 - Do not run firmware flashing/programming steps. Prepare artifacts and commands
   for the user to run manually.
 - Do not read from, copy from, execute from, or depend on files outside this
@@ -106,7 +110,7 @@ unless a shared contract or consistency issue requires coordinated updates.
 - Keep root `AGENTS.md` limited to routing, workflow, and critical gates.
 - Put durable technical contracts in `docs/contracts/`.
 - Put operational and tooling constraints in `docs/constraints/`.
-- Put active planning artifacts created during Plan Mode in Backlog.md docs
-  unless they should become permanent repository documentation.
+- Put durable planning artifacts in `docs/`; keep the approved plan overview in
+  the GitHub Milestone description rather than duplicating it in a tracker doc.
 - Use nested `AGENTS.md` files only for local instructions an agent must know
   before editing that subtree.

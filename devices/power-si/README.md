@@ -158,8 +158,8 @@ The factory record is stored at `0x0817a000`. Zephyr/OpenThread settings use
 erase blocks and Zephyr NVS requires at least two sectors. This uses one erase
 block from the board's unused secondary image slot.
 
-Real Thread dataset TLVs are credentials. Do not commit them, paste them into
-Backlog tasks, or store them under version control. Use a local ignored path
+Real Thread dataset TLVs are credentials. Do not commit them or store them
+under version control. Use a local ignored path
 such as `tmp/power-si-dataset.hex` or another operator-controlled secret
 location. Recording a short non-secret source label, timestamp, or OTBR/network
 name in acceptance notes is fine; recording the TLVs is not.
@@ -688,8 +688,8 @@ zero-voltage reading.
 
 ## Hardware Acceptance
 
-Record manual acceptance in the Backlog task or linked lab notes without
-including dataset TLVs. A complete `power-si` hardware acceptance record should
+Record manual acceptance in linked lab notes without including dataset TLVs. A
+complete `power-si` hardware acceptance record should
 include:
 
 ```text

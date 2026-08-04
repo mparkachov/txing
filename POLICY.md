@@ -32,21 +32,24 @@ infrastructure, or configuration changes directly from the chat plan.
 In this repository, the Plan Mode Implement action is a planning closeout
 signal. It means:
 1. create or update the architecture/design doc
-2. create exactly one Backlog.md milestone doc for the approved plan
-3. create separate goal-oriented Backlog.md tasks under that milestone for the
-   plan's implementation steps, including smaller follow-up tasks when needed
-   to keep work reviewable
-4. report the milestone doc and task IDs
-5. stop without changing code
+2. create exactly one GitHub Milestone for the approved plan, with no due date
+   and a description containing the high-level plan overview
+3. create separate goal-oriented GitHub Issues assigned to that Milestone for
+   the plan's implementation steps, including smaller follow-up Issues when
+   needed to keep work reviewable
+4. do not assign priority metadata to the Milestone or its Issues
+5. report the Milestone and Issue numbers
+6. stop without changing code
 
 Implementation may begin only after the user invokes `/goal <milestone>` or
-explicitly asks to implement a specific Backlog task. Before implementation,
-the agent must set exactly one task to `In Progress`, assign it to itself, and
-record an implementation plan in the task.
+explicitly asks to implement a specific GitHub Issue. Before implementation,
+the agent must select exactly one Issue, assign it to itself, and record an
+implementation plan in an Issue comment.
 
-If Backlog.md is unavailable, task creation fails, or the selected milestone is
-ambiguous, the agent must stop and ask for confirmation. The only exception is
-an explicit user instruction to skip Backlog and implement immediately.
+If `gh` is unavailable or unauthorized, Issue or Milestone creation fails, or
+the selected milestone is ambiguous, the agent must stop and ask for
+confirmation. The only exception is an explicit user instruction to implement
+immediately.
 
 ---
 

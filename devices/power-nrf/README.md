@@ -53,8 +53,7 @@ approval to enlist or ship a `power-nrf` device.
    Thread-connectivity services.  Confirm both services and `otbr-agent` are
    active before flashing a device.
 3. Obtain the active dataset as raw TLVs on the OTBR.  The TLVs are credentials:
-   keep them in an ignored local file and never commit or paste them into a
-   Backlog task.
+   keep them in an ignored local file and never commit them.
 
    ```bash
    mkdir -p tmp

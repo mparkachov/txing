@@ -1,6 +1,6 @@
 # Future Work
 
-This document records backlog items and technical debt that should not block the
+This document records future work and technical debt that should not block the
 current implementation track, but should be kept visible for later cleanup or
 larger dependency work.
 

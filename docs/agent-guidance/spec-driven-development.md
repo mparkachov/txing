@@ -11,13 +11,15 @@ code changes begin.
    implementation during architecture planning.
 2. Refine the plan into a design document. Capture intended behavior, ownership
    boundaries, alternatives considered, operational impact, and rollout notes.
-3. Create one milestone document for the approved plan. It should describe one
-   outcome, scope boundaries, dependencies, validation, and exit criteria.
+3. Create one GitHub Milestone for the approved plan. Its description holds the
+   high-level plan overview: one outcome, scope boundaries, dependencies,
+   validation strategy, risks, non-goals, and exit criteria. Do not set a due
+   date.
 4. Create or update a constraints/rules document. Keep durable constraints,
    terminology, safety rules, and cross-cutting decisions there instead of
    burying them in tasks.
-5. End Plan Mode by materializing the plan into one Backlog.md milestone doc
-   and implementation-step tasks under that milestone, then stop.
+5. End Plan Mode by materializing the plan into the undated GitHub Milestone
+   and implementation-step GitHub Issues assigned to it, then stop.
 6. `/goal <one milestone>`: execute exactly one milestone at a time. Stay within
    the selected milestone and do not continue into later milestones without the
    user's explicit instruction.
@@ -28,13 +30,12 @@ code changes begin.
 
 ## Planning artifacts
 
-- Use Backlog.md docs for active planning artifacts created during Plan Mode.
-  Useful paths are `architecture/<topic>`, `milestones/<milestone>`, and
-  `constraints/<topic>`.
 - Promote planning content into repository docs under `docs/` when it becomes a
   durable project contract, operational rule, or design reference.
 - Keep architecture docs goal-oriented. Avoid turning them into implementation
   logs.
+- Keep the high-level approved plan in the GitHub Milestone description; do not
+  duplicate it in an active tracker document.
 
 ## End of Plan Mode
 
@@ -44,95 +45,108 @@ When the user approves the architecture/design direction, presses Implement, or
 otherwise approves a plan:
 
 - Create or update the architecture/design doc.
-- Create exactly one Backlog.md milestone doc for the approved plan.
-- Create separate goal-oriented Backlog.md tasks under that milestone for the
+- Create exactly one GitHub Milestone for the approved plan, leaving its due
+  date unset. Its description must contain the high-level plan overview:
+  outcome, scope, dependencies, validation strategy, risks, non-goals, and exit
+  criteria.
+- Create separate goal-oriented GitHub Issues assigned to that Milestone for the
   plan's implementation steps. If an implementation step is too large for one
-  reviewable change, split it into smaller follow-up tasks under the same
-  milestone.
-- Assign tasks to their milestone with `-m` where the CLI supports it.
-- Make each task atomic and verifiable.
-- Use outcome-based acceptance criteria. Avoid criteria that merely name a
+  reviewable change, split it into smaller follow-up Issues under the same
+  Milestone. Use native sub-issues where a parent/child relationship clarifies
+  the work breakdown.
+- Make each Issue atomic and verifiable.
+- Use outcome-based acceptance criteria in each Issue description. Avoid criteria that merely name a
   function, file, class, or implementation technique.
-- Link each task to relevant design, milestone, and constraints docs with
-  `--doc`; link important source files or external references with `--ref`.
-- Do not add an implementation plan during task creation. Implementation plans
-  are added only after a task is selected for execution.
+- Link each Issue to relevant design and constraints docs in its description,
+  with direct links to important source files or external references where
+  useful.
+- Do not add an implementation plan during Issue creation. Implementation plans
+  are added only after an Issue is selected for execution.
+- Do not use priority labels, priority fields, or priority metadata.
 - If ambiguity remains, ask for clarification instead of creating speculative
-  tasks.
-- After creating the doc and tasks, report the milestone doc and task IDs,
+  Issues.
+- After creating the Milestone and Issues, report their numbers,
   then stop. Do not start code changes from the Plan Mode Implement action.
 
 ## Goal-to-implementation gate
 
 Do not implement a planned feature directly from the chat plan or from the Plan
-Mode Implement action. The chat plan is not a substitute for Backlog.md, and
+Mode Implement action. The chat plan is not a substitute for the GitHub
+Milestone and Issues, and
 Implement is treated as a planning closeout signal in this repository.
 
 Before the first code, firmware, infrastructure, or configuration change for a
 planned feature:
 
 1. Confirm the user invoked `/goal <milestone>` or explicitly asked to implement
-   a specific Backlog task.
-2. If the user named a Backlog task ID, run `backlog task <id> --plain` before
-   any repository-wide search. Treat the task's Documentation and References
-   fields as the starting context.
-3. Check whether Backlog.md already has task coverage for that milestone/task.
-4. If suitable tasks do not exist, stop and create the missing tasks instead of
+   a specific GitHub Issue.
+2. If the user named a GitHub Issue number, run
+   `gh issue view <number> --comments` before any repository-wide search. Treat
+   the Issue description and comments as the starting context.
+3. Check whether the selected GitHub Milestone already has Issue coverage for
+   that work.
+4. If suitable Issues do not exist, stop and create the missing Issues instead of
    implementing.
-5. Report the selected task ID.
-6. Start exactly one task by moving it to `In Progress`, assigning it to
-   yourself, and adding its implementation plan.
-7. Implement only that task's acceptance criteria.
+5. Report the selected Issue number.
+6. Start exactly one Issue by assigning it to yourself and adding its
+   implementation plan as a comment.
+7. Implement only that Issue's acceptance criteria.
 
-If the Backlog.md CLI is unavailable or task creation fails, stop and report the
-blocker instead of continuing from the chat plan. The only exception is an
-explicit user instruction such as "skip Backlog for this change".
+If `gh` is unavailable or unauthorized, or GitHub Issue or Milestone creation
+fails, stop and report the blocker instead of continuing from the chat plan. The
+only exception is an explicit user instruction to implement the change directly.
 
-## Backlog.md rules
+## GitHub Issue rules
 
-- Use the `backlog` CLI for all Backlog.md task, draft, document, decision, and
-  milestone operations. Do not manually edit files under `backlog/tasks/`,
-  `backlog/drafts/`, `backlog/docs/`, or `backlog/decisions/`.
-- Use `--plain` when reading tasks or search output for agent consumption:
-  `backlog task <id> --plain`, `backlog task list --plain`, and
-  `backlog search "topic" --plain`.
-- When a prompt includes a Backlog task ID, do not enumerate the repository to
-  infer the task. Load the task directly with `backlog task <id> --plain`, then
-  follow its Documentation and References fields.
-- Express dependencies only on existing tasks. Do not reference future task IDs.
+- The GitHub CLI (`gh`) is installed, authenticated, and authorized to create
+  and maintain Issues and Milestones for this repository. Use it for all tracker
+  operations.
+- Create and maintain Issues with `gh issue`. Read a named Issue directly with
+  `gh issue view <number> --comments` rather than inferring it from repository
+  search.
+- Create and maintain Milestones with `gh api`; omit the `due_on` field when
+  creating or updating a Milestone. Express the approved high-level plan in its
+  description.
+- Assign every implementation Issue to exactly one current Milestone. Express
+  dependencies only on existing Issues; do not reference future Issue numbers.
+- Do not use priority labels, priority fields, or priority metadata.
 
 Typical Plan Mode closeout shape:
 
 ```sh
-backlog doc create "Unit video architecture" -p architecture/unit-video -t specification
-backlog doc update doc-1 --content "..."
-backlog doc create "Milestone: board video readiness" -p milestones/board-video-readiness -t guide
-backlog doc create "Constraints: board video" -p constraints/board-video -t guide
-backlog task create "Milestone: board video readiness" \
-  -m "board video readiness" \
-  --doc backlog/docs/milestones/board-video-readiness.md \
-  --doc backlog/docs/constraints/board-video.md \
-  --ac "Rig can derive REDCON state from retained video readiness topics" \
-  --ac "The milestone has reviewable implementation tasks with validation notes"
-backlog task create "Publish board video readiness status" \
-  -m "board video readiness" \
-  --doc backlog/docs/milestones/board-video-readiness.md \
-  --ac "Status publication tolerates transient sender failures without resource churn"
+REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+
+# Omit due_on: this Milestone intentionally has no finish date.
+gh api --method POST "repos/$REPO/milestones" \
+  -f title="Board video readiness" \
+  -f description="High-level plan: outcome, scope, dependencies, validation, risks, non-goals, and exit criteria."
+
+gh issue create --repo "$REPO" \
+  --title "Publish board video readiness status" \
+  --milestone "Board video readiness" \
+  --body "## Outcome
+...
+
+## Acceptance criteria
+- [ ] Status publication tolerates transient sender failures without resource churn.
+
+## References
+- docs/contracts/board-video-bridge.md"
 ```
 
-## Implementing Backlog tasks
+## Implementing GitHub Issues
 
-When implementing an existing task:
+When implementing an existing Issue:
 
-1. Read it with `backlog task <id> --plain`.
-2. Move it to `In Progress` and assign it to yourself:
-   `backlog task edit <id> -s "In Progress" -a @<agent>`.
-3. Review its references and documentation.
-4. Add the implementation plan with `backlog task edit <id> --plan "..."`.
+1. Read it with `gh issue view <number> --comments`.
+2. Assign it to yourself: `gh issue edit <number> --add-assignee @me`.
+3. Review its references, description, and comments.
+4. Add the implementation plan with
+   `gh issue comment <number> --body "Implementation plan: ..."`.
 5. Share the plan with the user and wait for approval unless the user has
    explicitly asked to skip plan review.
-6. Append progress notes with `--append-notes` as decisions, blockers, or
+6. Add progress comments as decisions, blockers, or
    meaningful implementation steps occur.
-7. Mark acceptance criteria and Definition of Done items complete via the CLI.
-8. Add a PR-quality final summary with `--final-summary`.
-9. Set the task to `Done` only after validation is complete.
+7. Update acceptance criteria in the Issue description as they are satisfied.
+8. Add a PR-quality final summary as an Issue comment.
+9. Close the Issue only after validation is complete.

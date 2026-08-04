@@ -21,6 +21,6 @@
   `VITE_SPARKPLUG_EDGE_NODE_ID` to office Cloudflare configuration.
 
 ## Shared workflow
-- Follow the repository-level Backlog.md workflow in `../AGENTS.md`.
-- If an office-specific task is created under a shared milestone, mention
-  `office/` in the Backlog task title or description so ownership is obvious.
+- Follow the repository-level GitHub Issues workflow in `../AGENTS.md`.
+- If an office-specific Issue is created under a shared Milestone, mention
+  `office/` in the Issue title or description so ownership is obvious.
