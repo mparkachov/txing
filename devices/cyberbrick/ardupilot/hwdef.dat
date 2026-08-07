@@ -1,0 +1,19 @@
+# Cyberbrick's minimal generic-Linux ArduPilot configuration.
+#
+# PWM outputs map to /sys/class/pwm/pwmchip0/pwm0 and pwm1. The board's
+# operating system and device tree expose these channels.
+define CONFIG_HAL_BOARD_SUBTYPE HAL_BOARD_SUBTYPE_LINUX_SYSFS_PWM
+
+env TOOLCHAIN native
+env OPTIMIZE -O2 -fomit-frame-pointer
+
+define HAL_RCOUT_SYSFS_CHIP 0
+define HAL_RCOUT_SYSFS_CHANNEL_BASE 0
+define HAL_RCOUT_SYSFS_CHANNEL_COUNT 2
+
+define HAL_INS_DEFAULT HAL_INS_NONE
+define AP_INERTIALSENSOR_ALLOW_NO_SENSORS 1
+define HAL_BARO_ALLOW_INIT_NO_BARO 1
+
+define AP_HAL_LINUX_SET_HW_RTC_ENABLED 0
+define APM_LINUX_RCIN_RATE 500

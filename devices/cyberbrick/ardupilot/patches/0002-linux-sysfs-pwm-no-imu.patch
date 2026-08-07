@@ -1,0 +1,54 @@
+diff --git a/libraries/AP_InertialSensor/AP_InertialSensor.cpp b/libraries/AP_InertialSensor/AP_InertialSensor.cpp
+index a454e19fc60d9..56309008847d5 100644
+--- a/libraries/AP_InertialSensor/AP_InertialSensor.cpp
++++ b/libraries/AP_InertialSensor/AP_InertialSensor.cpp
+@@ -1308,7 +1308,8 @@ AP_InertialSensor::detect_backends(void)
+     if (_backend_count == 0) {
+ 
+         // no real INS backends avail, lets use an empty substitute to boot ok and get to mavlink
+-        #if CONFIG_HAL_BOARD == HAL_BOARD_ESP32
++        #if CONFIG_HAL_BOARD == HAL_BOARD_ESP32 || \
++            CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_SYSFS_PWM
+         ADD_BACKEND(AP_InertialSensor_NONE::detect(*this, INS_NONE_SENSOR_A));
+         #else
+         DEV_PRINTF("INS: unable to initialise driver\n");
+diff --git a/libraries/AP_InertialSensor/AP_InertialSensor_NONE.cpp b/libraries/AP_InertialSensor/AP_InertialSensor_NONE.cpp
+index 8b7fdcf9f2e82..d302c170f9c20 100644
+--- a/libraries/AP_InertialSensor/AP_InertialSensor_NONE.cpp
++++ b/libraries/AP_InertialSensor/AP_InertialSensor_NONE.cpp
+@@ -4,7 +4,8 @@
+ #include <stdio.h>
+ #include <GCS_MAVLink/GCS.h>
+ 
+-#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32
++#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32 || \
++    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_SYSFS_PWM
+ 
+ 
+ static float sim_rand_float(void)
+@@ -317,4 +318,4 @@ void AP_InertialSensor_NONE::start()
+ 
+ }
+ 
+-#endif // CONFIG_HAL_BOARD == HAL_BOARD_ESP32
++#endif
+diff --git a/libraries/AP_InertialSensor/AP_InertialSensor_NONE.h b/libraries/AP_InertialSensor/AP_InertialSensor_NONE.h
+index 715e3491f9d3f..26addde79c0cb 100644
+--- a/libraries/AP_InertialSensor/AP_InertialSensor_NONE.h
++++ b/libraries/AP_InertialSensor/AP_InertialSensor_NONE.h
+@@ -7,7 +7,8 @@
+  Its a rip-off of _SITL with all the sitl stuff removed or replaced with constants.
+ */
+ 
+-#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32
++#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32 || \
++    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_SYSFS_PWM
+ #include "AP_InertialSensor.h"
+ #include "AP_InertialSensor_Backend.h"
+ 
+@@ -52,4 +53,4 @@ class AP_InertialSensor_NONE : public AP_InertialSensor_Backend
+ 
+     static uint8_t bus_id;
+ };
+-#endif // CONFIG_HAL_BOARD
++#endif

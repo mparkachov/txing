@@ -8,6 +8,7 @@ export TMPDIR := tmp_dir
 
 
 mod board 'board.just'
+mod ardupilot 'ardupilot.just'
 
 @default:
     @just --list

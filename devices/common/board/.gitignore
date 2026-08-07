@@ -23,3 +23,6 @@ target/
 
 # Generated Go proto bindings, produced at build time rather than checked in
 daemon/internal/proto/
+
+# Disposable live-upstream ArduPilot checkout for the Cyberbrick build flow.
+ardupilot/
