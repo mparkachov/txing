@@ -17,6 +17,10 @@ env:
   CYBERBRICK_DAEMON_ASSET: txing-cyberbrick-daemon-linux-aarch64.tar.gz
   KVS_MASTER_ASSET: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
   HARDWARE_WORKER_ASSET: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+  ARDUPILOT_BINARY: txing-cyberbrick-ardupilot
+  ARDUPILOT_ASSET: txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
+  ARDUPILOT_SOURCE_ASSET: txing-cyberbrick-ardupilot-source.tar.gz
+  ARDUPILOT_SOURCE_ROOT: txing-cyberbrick-ardupilot-source
 
 jobs:
   metadata:
@@ -353,12 +357,136 @@ jobs:
           path: ${{ runner.temp }}/${{ matrix.asset }}
           if-no-files-found: error
 
+  ardupilot:
+    name: Build Cyberbrick ArduPilot
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+    outputs:
+      upstream_sha: ${{ steps.upstream.outputs.sha }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Start pinned Alpine build container
+        shell: bash
+        run: |
+          docker run -d --name ardupilot-build \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" \
+            docker.io/library/alpine:3.24.1 \
+            tail -f /dev/null
+
+      - name: Build and package ArduPilot
+        shell: bash
+        run: |
+          docker exec -i \
+            -e ARDUPILOT_BINARY="$ARDUPILOT_BINARY" \
+            -e ARDUPILOT_ASSET="$ARDUPILOT_ASSET" \
+            -e ARDUPILOT_SOURCE_ASSET="$ARDUPILOT_SOURCE_ASSET" \
+            -e ARDUPILOT_SOURCE_ROOT="$ARDUPILOT_SOURCE_ROOT" \
+            -e GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            -e RUNNER_TEMP="$RUNNER_TEMP" \
+            ardupilot-build sh <<'EOF'
+          set -eu
+
+          test "$(cat /etc/alpine-release)" = "3.24.1"
+          test "$(uname -m)" = "aarch64"
+          apk add --no-cache ca-certificates file binutils git tar
+
+          source_dir="$RUNNER_TEMP/ardupilot"
+          source_package_dir="$RUNNER_TEMP/$ARDUPILOT_SOURCE_ROOT"
+          binary_package_dir="$RUNNER_TEMP/package-$ARDUPILOT_BINARY"
+          source_asset="$RUNNER_TEMP/$ARDUPILOT_SOURCE_ASSET"
+          binary_asset="$RUNNER_TEMP/$ARDUPILOT_ASSET"
+
+          test ! -e "$source_dir"
+          test ! -e "$source_package_dir"
+          test ! -e "$binary_package_dir"
+          git clone --recurse-submodules --single-branch --branch master \
+            https://github.com/ArduPilot/ardupilot.git "$source_dir"
+          cd "$source_dir"
+          git apply \
+            "$GITHUB_WORKSPACE/devices/cyberbrick/ardupilot/patches/0001-linux-sysfs-pwm-subtype.patch" \
+            "$GITHUB_WORKSPACE/devices/cyberbrick/ardupilot/patches/0002-linux-sysfs-pwm-no-imu.patch"
+          git rev-parse HEAD >"$RUNNER_TEMP/ardupilot-upstream-sha"
+          if git submodule status --recursive | grep -E '^[+-]' >/dev/null; then
+            echo "ArduPilot checkout has uninitialized or mismatched submodules." >&2
+            exit 1
+          fi
+          test -f COPYING.txt
+          test -f BUILD.md
+
+          install -d "$source_package_dir"
+          cp -a "$source_dir/." "$source_package_dir/"
+          rm -rf "$source_package_dir/.git"
+          find "$source_package_dir" -type f -name .git -delete
+          tar -C "$RUNNER_TEMP" -czf "$source_asset" "$ARDUPILOT_SOURCE_ROOT"
+          if tar -tzf "$source_asset" | grep -Ev "^$ARDUPILOT_SOURCE_ROOT/" >/dev/null; then
+            echo "$ARDUPILOT_SOURCE_ASSET contains an unexpected archive root." >&2
+            exit 1
+          fi
+          tar -tzf "$source_asset" | grep -Fx "$ARDUPILOT_SOURCE_ROOT/COPYING.txt"
+          tar -tzf "$source_asset" | grep -Fx "$ARDUPILOT_SOURCE_ROOT/BUILD.md"
+          tar -tzf "$source_asset" | grep -F "$ARDUPILOT_SOURCE_ROOT/modules/ChibiOS/" >/dev/null
+
+          ./Tools/environment_install/install-prereqs-alpine.sh
+          ./waf configure --board linux \
+            --extra-hwdef "$GITHUB_WORKSPACE/devices/cyberbrick/ardupilot/hwdef.dat" \
+            --static --define CANARD_64_BIT=1
+          ./waf rover
+
+          install -d "$binary_package_dir"
+          install -m 755 build/linux/bin/ardurover \
+            "$binary_package_dir/$ARDUPILOT_BINARY"
+          strip "$binary_package_dir/$ARDUPILOT_BINARY"
+          sh "$GITHUB_WORKSPACE/release/scripts/assert-board-musl.sh" \
+            "$binary_package_dir/$ARDUPILOT_BINARY" static
+          "$binary_package_dir/$ARDUPILOT_BINARY" --help >/dev/null
+          tar -C "$binary_package_dir" -czf "$binary_asset" "$ARDUPILOT_BINARY"
+          archive_listing="$(tar -tzf "$binary_asset")"
+          if [ "$archive_listing" != "$ARDUPILOT_BINARY" ]; then
+            echo "Expected $ARDUPILOT_ASSET to contain only root-level $ARDUPILOT_BINARY, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
+          EOF
+
+      - name: Resolve ArduPilot upstream SHA
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          upstream_sha="$(tr -d '[:space:]' < "$RUNNER_TEMP/ardupilot-upstream-sha")"
+          if ! printf '%s\n' "$upstream_sha" | grep -E -q '^[0-9a-f]{40}$'; then
+            echo "Expected a 40-character ArduPilot upstream SHA, got: $upstream_sha" >&2
+            exit 1
+          fi
+          echo "sha=$upstream_sha" >>"$GITHUB_OUTPUT"
+
+      - name: Upload ${{ env.ARDUPILOT_ASSET }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARDUPILOT_ASSET }}
+          path: ${{ runner.temp }}/${{ env.ARDUPILOT_ASSET }}
+          if-no-files-found: error
+
+      - name: Upload ${{ env.ARDUPILOT_SOURCE_ASSET }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARDUPILOT_SOURCE_ASSET }}
+          path: ${{ runner.temp }}/${{ env.ARDUPILOT_SOURCE_ASSET }}
+          if-no-files-found: error
+
   smoke:
     name: Cross-distro smoke
     runs-on: ubuntu-24.04-arm
     needs:
       - metadata
       - build
+      - ardupilot
 
     steps:
       - name: Check out repository
@@ -393,12 +521,56 @@ jobs:
           sh release/scripts/smoke-board-cross-distro.sh \
             "$smoke_dir/txing-cyberbrick-kvs-master" musl-libcamera "txing-cyberbrick-kvs-master $VERSION"
 
+      - name: Run Alpine ArduPilot smoke
+        env:
+          RELEASE_ASSETS_DIR: ${{ runner.temp }}/release-assets
+        shell: bash
+        run: |
+          docker run --rm -i \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" \
+            -e ARDUPILOT_BINARY="$ARDUPILOT_BINARY" \
+            -e ARDUPILOT_ASSET="$ARDUPILOT_ASSET" \
+            -e ARDUPILOT_SOURCE_ASSET="$ARDUPILOT_SOURCE_ASSET" \
+            -e ARDUPILOT_SOURCE_ROOT="$ARDUPILOT_SOURCE_ROOT" \
+            -e RELEASE_ASSETS_DIR="$RELEASE_ASSETS_DIR" \
+            -e RUNNER_TEMP="$RUNNER_TEMP" \
+            docker.io/library/alpine:3.24.1 \
+            sh <<'EOF'
+          set -eu
+
+          test "$(cat /etc/alpine-release)" = "3.24.1"
+          test "$(uname -m)" = "aarch64"
+          apk add --no-cache file binutils
+          smoke_dir="$RUNNER_TEMP/smoke-ardupilot"
+          test ! -e "$smoke_dir"
+          install -d "$smoke_dir"
+          tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$ARDUPILOT_ASSET"
+          sh release/scripts/assert-board-musl.sh \
+            "$smoke_dir/$ARDUPILOT_BINARY" static
+          "$smoke_dir/$ARDUPILOT_BINARY" --help >/dev/null
+
+          if tar -tzf "$RELEASE_ASSETS_DIR/$ARDUPILOT_SOURCE_ASSET" | \
+            grep -Ev "^$ARDUPILOT_SOURCE_ROOT/" >/dev/null; then
+            echo "$ARDUPILOT_SOURCE_ASSET contains an unexpected archive root." >&2
+            exit 1
+          fi
+          tar -tzf "$RELEASE_ASSETS_DIR/$ARDUPILOT_SOURCE_ASSET" | \
+            grep -Fx "$ARDUPILOT_SOURCE_ROOT/COPYING.txt"
+          tar -tzf "$RELEASE_ASSETS_DIR/$ARDUPILOT_SOURCE_ASSET" | \
+            grep -Fx "$ARDUPILOT_SOURCE_ROOT/BUILD.md"
+          tar -tzf "$RELEASE_ASSETS_DIR/$ARDUPILOT_SOURCE_ASSET" | \
+            grep -F "$ARDUPILOT_SOURCE_ROOT/modules/ChibiOS/" >/dev/null
+          EOF
+
   publish:
     name: Publish release
     runs-on: ubuntu-24.04-arm
     needs:
       - metadata
       - build
+      - ardupilot
       - smoke
 
     steps:
@@ -415,6 +587,7 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_TARGET: ${{ needs.metadata.outputs.release_target }}
           RELEASE_ASSETS_DIR: ${{ runner.temp }}/release-assets
+          ARDUPILOT_UPSTREAM_SHA: ${{ needs.ardupilot.outputs.upstream_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -423,6 +596,8 @@ jobs:
             "$CYBERBRICK_DAEMON_ASSET"
             "$KVS_MASTER_ASSET"
             "$HARDWARE_WORKER_ASSET"
+            "$ARDUPILOT_ASSET"
+            "$ARDUPILOT_SOURCE_ASSET"
           )
 
           release_asset_paths=()
@@ -445,6 +620,7 @@ jobs:
             echo "- Tag: $TAG"
             echo "- Commit: $RELEASE_TARGET"
             echo "- Build image: docker.io/library/alpine:3.24.1"
+            echo "- ArduPilot upstream SHA: $ARDUPILOT_UPSTREAM_SHA"
             echo "- Assets:"
             for asset in "${release_assets[@]}"; do
               echo "  - $asset"

@@ -58,6 +58,13 @@ Cyberbrick releases publish these Alpine Linux `aarch64` assets:
 txing-cyberbrick-daemon-linux-aarch64.tar.gz
 txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
 txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
+```
+
+Cyberbrick releases also publish the corresponding patched ArduPilot source:
+
+```text
+txing-cyberbrick-ardupilot-source.tar.gz
 ```
 
 Lambda releases publish these Linux `aarch64` assets:
