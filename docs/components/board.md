@@ -430,7 +430,7 @@ by `txing-<device>-hardware-worker` when its OpenRC service loads the same root-
 env file.
 ## OS And ABI Contract
 
-- Alpine Linux aarch64 on Raspberry Pi Zero 2 W, **sys install**
+- Alpine Linux aarch64 on a supported Raspberry Pi board, **sys install**
   (`setup-disk -m sys`), device apk repositories on the Alpine `v3.24` branch.
 - Default Alpine stack: apk, ifupdown-ng + wpa_supplicant + udhcpc
   networking, busybox ntpd time sync, OpenRC init. No systemd and no
@@ -444,14 +444,17 @@ env file.
   `libcamera-base.so.0.7`). If its `ldd` reports `not found` libraries or a
   non-musl interpreter, the release asset was built for the wrong OS or the
   wrong Alpine branch and must be replaced.
-- Linking the KVS master against libcamera is necessary but not sufficient for
-  video. Camera capture additionally requires the Raspberry Pi pipeline
-  handler, IPA module, and sensor tuning files (`libcamera-raspberrypi`), a
-  running udev daemon for libcamera's device enumerator (`eudev`), firmware
-  camera autodetection in `config.txt`, and the `bcm2835-codec` and
-  `bcm2835-isp` kernel modules. None of these are implied by the build
-  container's package set or by `ldd` linkage checks, and every one of them
-  fails as the same KVS master error,
+- A supported video board exposes the Raspberry Pi `rpi/vc4` libcamera
+  pipeline for an attached supported CSI camera and the BCM2835 H.264 encoder
+  at `/dev/video11`. Alpine aarch64 alone does not imply those capabilities.
+  Linking the KVS master against libcamera is therefore necessary but not
+  sufficient for video. Camera capture additionally requires the Raspberry Pi
+  pipeline handler, IPA module, and sensor tuning files
+  (`libcamera-raspberrypi`), a running udev daemon for libcamera's enumerator
+  (`eudev`), camera configuration in `/boot/usercfg.txt`, and the
+  `bcm2835-codec` and `bcm2835-isp` kernel modules. None of these are implied
+  by the build container's package set or by `ldd` linkage checks, and every
+  one of them fails as the same KVS master error,
   `configured camera index is not available`. See
   [Install OS Packages](#2-install-os-packages),
   [Enable Udev](#2a-enable-udev), and
@@ -499,6 +502,18 @@ restarting an OpenRC service does not install or upgrade tools, invoke mise,
 or call GitHub. If a board needs new binaries, follow
 [Maintenance](#maintenance).
 
+Cyberbrick additionally installs the static ArduRover executable from the
+matching `cyberbrick-v*` release:
+
+```text
+txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
+```
+
+Its corresponding patched source archive is published with the release, but is
+not installed on the board. ArduPilot is a manually selected alternative PWM
+owner to the Cyberbrick hardware worker; see
+[Cyberbrick ArduPilot](#cyberbrick-ardupilot).
+
 The release gates bound what these artifacts prove. `assert-board-musl.sh`
 checks linkage kinds and `smoke-board-cross-distro.sh` runs each binary in
 `debian:trixie` and pinned Alpine containers asserting only `--version`.
@@ -514,7 +529,8 @@ with a camera attached.
 
 Assumptions:
 
-- Raspberry Pi Zero 2 W
+- A supported Raspberry Pi board (for example a Pi Zero 2 W or Pi 3) with an
+  attached supported CSI camera when KVS video is required
 - Alpine Linux aarch64 Raspberry Pi image from the `v3.24` branch
 - AWS resources and the target thing already exist
   (`just aws::deploy` once per stack, then
@@ -907,37 +923,38 @@ Services](#6-install-runtime-and-openrc-services) is verified against the
 hardware the board will actually run.
 
 After `setup-disk -m sys`, the boot FAT partition is mounted at `/boot` (the
-`/media/mmcblk0p1` mount only exists during the diskless boot in step 1). Add
-the overlay while `/boot` is writable. If `config.txt` includes `usercfg.txt`,
-append to `usercfg.txt`; otherwise append to `config.txt` directly:
+`/media/mmcblk0p1` mount only exists during the diskless boot in step 1).
+Alpine's managed `/boot/config.txt` explicitly says not to modify it because a
+bootloader upgrade replaces it. Its `include usercfg.txt` line makes
+`/boot/usercfg.txt` the persistent operator configuration file. Refuse to
+continue if that include is absent rather than writing to managed `config.txt`:
 
 ```sh
-grep -q 'pwm-2chan' /boot/config.txt /boot/usercfg.txt 2>/dev/null || {
-  if grep -q 'include usercfg.txt' /boot/config.txt; then
-    printf 'dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4\n' >> /boot/usercfg.txt
-  else
-    printf 'dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4\n' >> /boot/config.txt
-  fi
+grep -qxF 'include usercfg.txt' /boot/config.txt || {
+  echo '/boot/config.txt must include usercfg.txt; do not modify config.txt' >&2
+  exit 1
 }
+
+grep -qxF 'dtoverlay=pwm-2chan' /boot/usercfg.txt ||
+  echo 'dtoverlay=pwm-2chan' >> /boot/usercfg.txt
 ```
 
 The `pwm-2chan.dtbo` overlay ships in Alpine's `raspberrypi-bootloader`
-content already present on the boot FAT partition. `/sys/class/pwm/pwmchip0`
-appears only after a reboot; until then the hardware worker logs `PWM chip path
-does not exist` on every start. The camera changes below need a reboot too, so
-the single one at the end of this step covers both.
+content already present on the boot FAT partition. Its standard two-channel
+mapping is GPIO 18 for PWM0 and GPIO 19 for PWM1; the patched ArduPilot target
+uses the corresponding `pwmchip0` channels 0 and 1, so it needs no extra
+`usercfg.txt` parameters. `/sys/class/pwm/pwmchip0` appears only after a reboot;
+until then the hardware worker logs `PWM chip path does not exist` on every
+start. The camera changes below need a reboot too, so the single one at the end
+of this step covers both.
 
-The camera is off by default and needs firmware autodetection plus two kernel
-modules. Nothing in the base Alpine image enables either:
+Enable firmware autodetection for the connected supported CSI camera and the
+two kernel modules needed by the current KVS video path. These settings belong
+in `usercfg.txt`; nothing in the base Alpine image enables them:
 
 ```sh
-grep -q 'camera_auto_detect' /boot/config.txt /boot/usercfg.txt 2>/dev/null || {
-  if grep -q 'include usercfg.txt' /boot/config.txt; then
-    printf 'camera_auto_detect=1\n' >> /boot/usercfg.txt
-  else
-    printf 'camera_auto_detect=1\n' >> /boot/config.txt
-  fi
-}
+grep -qxF 'camera_auto_detect=1' /boot/usercfg.txt ||
+  echo 'camera_auto_detect=1' >> /boot/usercfg.txt
 
 for m in bcm2835-codec bcm2835-isp; do
   grep -qx "$m" /etc/modules || echo "$m" >> /etc/modules
@@ -945,9 +962,12 @@ done
 ```
 
 `camera_auto_detect=1` makes the firmware probe the CSI sensor over I²C and
-insert the matching overlay; without it no sensor, `unicam`, or `/dev/video0`
-appears at all. A non-standard sensor needs an explicit `dtoverlay=` line
-instead.
+load the matching overlay. A successful boot exposes the sensor and a
+`unicam-image` node; its `/dev/videoN` number is not a contract. If the known
+supported camera is not detected after this reboot, add that camera's explicit
+`dtoverlay=` line to `usercfg.txt` and reboot again. For example, the Raspberry
+Pi Camera Module v2.1 uses `dtoverlay=imx219`. Do not add an overlay for an
+unknown sensor: reseat the CSI cable and identify the camera first.
 
 The two modules cover the rest of the pipeline and neither autoloads:
 
@@ -970,8 +990,10 @@ dmesg | grep -iE 'imx|ov5647|unicam|codec'
 ```
 
 Expect the sensor subdev named for the attached module (for example
-`imx708_wide`), `unicam-image` on `/dev/video0`, `/dev/video11` present, and
-four media devices: `unicam`, `bcm2835-codec`, and two `bcm2835-isp`.
+`imx219` or `ov5647`), one `unicam-image` node at any `/dev/videoN`, and the
+BCM2835 H.264 encoder at `/dev/video11`. Expect a `unicam` media controller
+plus codec and ISP media controllers; their count and numbering vary by
+Raspberry Pi model and kernel probe order.
 
 Confirm the PWM chip appeared as well, since the services in the next step
 depend on it:
@@ -983,8 +1005,7 @@ ls -d /sys/class/pwm/pwmchip0
 Resolve anything missing here before continuing.
 [Camera Does Not Enumerate](#camera-does-not-enumerate) works down the video
 pipeline in order; a missing `pwmchip0` means the overlay line did not land in
-the file the firmware actually reads, which is the other one of
-`config.txt`/`usercfg.txt`.
+the firmware-read `usercfg.txt`.
 
 The reboot also reseals the root filesystem read-only on a card-provisioned
 board, so the next step starts by making it writable again.
@@ -1011,7 +1032,10 @@ command -v udevadm >/dev/null \
   || echo 'udevadm absent - eudev not installed, do step 2 first'
 
 printf 'step 5  hardware: '
-ls -d /sys/class/pwm/pwmchip0 /dev/video0 2>&1 | tr '\n' ' '; echo
+ls -d /sys/class/pwm/pwmchip0 /dev/video11 2>&1 | tr '\n' ' '; echo
+for d in /sys/class/video4linux/video*; do
+  [ "$(cat "$d/name")" = unicam-image ] && echo "camera: /dev/$(basename "$d")"
+done
 
 printf 'step 2  device:   %s\n' "${TXING_DEVICE:?run step 2 first}"
 ```
@@ -1023,7 +1047,7 @@ Each line names the step that fixes it:
 | `step 2 packages` | all six named |
 | `step 2a runlevel` | `3` |
 | `step 2a database` | hundreds, not `0` |
-| `step 5 hardware` | both paths present |
+| `step 5 hardware` | `pwmchip0`, the H.264 encoder at `video11`, and one `camera:` line |
 | `step 2 device` | `unit` or `cyberbrick` |
 
 These fail in a chain, so fix them in step order: without step 2 there is no
@@ -1329,6 +1353,127 @@ Expected:
 - REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
   and `video` capability state
 
+#### Cyberbrick ArduPilot
+
+This optional Cyberbrick-only service installs ArduRover from the same release
+stream as the daemon, KVS master, and hardware worker. It does not need an
+ArduPilot source checkout or a GitHub connection at service start.
+
+ArduPilot and `txing-cyberbrick-hardware-worker` both own PWM chip 0 channels
+0 and 1. There is deliberately no automatic guard, failover, or recovery
+logic: the operator must stop and remove the hardware worker before enabling
+ArduPilot, and reverse that sequence to return to the worker. Keep motor power
+physically isolated throughout installation and acceptance.
+
+Install the fourth mise tool in a Cyberbrick-specific config fragment:
+
+```sh
+test "${TXING_DEVICE:?run step 2 first}" = cyberbrick || {
+  echo 'ArduPilot is only a Cyberbrick board component' >&2
+  exit 1
+}
+
+cat >/root/.config/mise/conf.d/txing-cyberbrick-ardupilot.toml <<'EOF'
+[tool_alias]
+txing-cyberbrick-ardupilot = "github:mparkachov/txing"
+
+[tools.txing-cyberbrick-ardupilot]
+version = "latest"
+version_prefix = "cyberbrick-v"
+asset_pattern = "txing-cyberbrick-ardupilot-linux-aarch64.tar.gz"
+EOF
+
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise install txing-cyberbrick-ardupilot@latest
+
+ARDUPILOT=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
+test -x "$ARDUPILOT"
+"$ARDUPILOT" --help >/dev/null
+/root/.local/bin/mise list
+```
+
+Write the root-owned OpenRC service. The `--serial0` option is ArduPilot's
+Linux `SERIAL0`; `udpin` listens on every interface at UDP port 14550. MAVLink
+there is unauthenticated, so expose the board only on a trusted LAN.
+
+```sh
+cat >/etc/init.d/txing-cyberbrick-ardupilot <<'EOF'
+#!/sbin/openrc-run
+
+description="Cyberbrick ArduPilot ArduRover"
+
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
+command_args="--serial0 udpin:0.0.0.0:14550 --storage-directory /var/tmp/txing-cyberbrick-ardupilot/storage --terrain-directory /var/tmp/txing-cyberbrick-ardupilot/terrain --log-directory /var/log/txing-cyberbrick-ardupilot"
+directory=/var/tmp/txing-cyberbrick-ardupilot
+respawn_delay=5
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
+error_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
+
+depend() {
+    need localmount
+    need net
+}
+
+start_pre() {
+    test -x "$command" || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/storage
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/terrain
+    checkpath --directory --mode 0755 --owner root:root /var/log/txing-cyberbrick-ardupilot
+    export HOME=/root
+}
+EOF
+
+chmod 755 /etc/init.d/txing-cyberbrick-ardupilot
+sh -n /etc/init.d/txing-cyberbrick-ardupilot
+```
+
+The OpenRC output log records only ArduPilot stdout and stderr, so an empty
+`ardupilot.log` is normal for a healthy idle process. ArduPilot's binary
+DataFlash logs are written under `/var/log/txing-cyberbrick-ardupilot/` when
+there is loggable vehicle activity. Do not arm merely to create a log.
+
+Perform the manual PWM ownership switch in this order:
+
+```sh
+rc-service txing-cyberbrick-hardware-worker stop
+rc-update del txing-cyberbrick-hardware-worker default
+
+rc-update add txing-cyberbrick-ardupilot default
+rc-service txing-cyberbrick-ardupilot start
+
+rc-service txing-cyberbrick-ardupilot status
+netstat -patun | grep -F ':14550'
+tail -n 100 /var/log/txing-cyberbrick-ardupilot/ardupilot.log
+for s in daemon kvs-master; do
+  rc-service "txing-cyberbrick-$s" status
+done
+```
+
+Expected results are a stable ArduPilot process with UDP port 14550, a stopped
+and disabled hardware worker, and still-healthy daemon/KVS services. Before a
+MAVLink peer sends a packet, `netstat` can show `0.0.0.0:14550`; after one does,
+`udpin` selects that peer and Linux displays the UDP socket as `ESTABLISHED`
+between the board address and the peer. Both are healthy states. The daemon
+remains enabled but reports motion hardware unavailable; this is the intended
+manual ownership state and does not change gRPC, MQTT, Shadow, MCP, video, or
+REDCON contracts.
+
+To return PWM ownership to the hardware worker, reverse the handoff:
+
+```sh
+rc-service txing-cyberbrick-ardupilot stop
+rc-update del txing-cyberbrick-ardupilot default
+
+rc-update add txing-cyberbrick-hardware-worker default
+rc-service txing-cyberbrick-hardware-worker start
+```
+
+Never enable or start both PWM owners together.
+
 ### 7. Configure Read-Only Root
 
 The card's `unattended.sh` already applied everything in this section: the
@@ -1415,11 +1560,20 @@ Operational rules:
   validation does not race NTP
 - the hardware worker neutralizes motors internally; supervise-daemon restart
   latency is supervision only, not the motion-control safety layer
+- ArduPilot storage, terrain, and logs are under `/var/tmp/txing-cyberbrick-ardupilot/`
+  and `/var/log/txing-cyberbrick-ardupilot/`. Both are tmpfs-backed, so content
+  from a previous boot does not survive; persistent ArduPilot state is out of
+  scope.
 
 ### 8. Final Reboot Check
 
 ```sh
 root-ro
+if rc-update show default | grep -q 'txing-cyberbrick-ardupilot'; then
+  mkdir -p /var/tmp/txing-cyberbrick-ardupilot
+  : >/var/tmp/txing-cyberbrick-ardupilot/.pre-reboot-sentinel
+  test -e /var/tmp/txing-cyberbrick-ardupilot/.pre-reboot-sentinel
+fi
 reboot
 ```
 
@@ -1445,14 +1599,33 @@ readlink /etc/resolv.conf
 getent hosts example.com
 ```
 
+If Cyberbrick ArduPilot owns PWM, use this additional check instead of checking
+the hardware worker as started:
+
+```sh
+rc-service txing-cyberbrick-hardware-worker status
+rc-service txing-cyberbrick-ardupilot status
+netstat -patun | grep -F ':14550'
+test -d /var/tmp/txing-cyberbrick-ardupilot
+test -d /var/log/txing-cyberbrick-ardupilot
+test ! -e /var/tmp/txing-cyberbrick-ardupilot/.pre-reboot-sentinel
+```
+
+The hardware worker must be stopped, ArduPilot must be started, and the
+sentinel must be absent after reboot. `start_pre()` recreates the volatile
+directories before ArduPilot starts, so their presence does not imply state
+survived the reboot.
+
 Expected:
 
 - root filesystem is read-only
 - `/etc/resolv.conf` points at `/run/resolv.conf` and DNS resolves through
   udhcpc
-- the daemon and hardware worker start under OpenRC and stay up without a
-  source checkout and without network access to GitHub; the KVS master also
-  autostarts and completes signaling but stays up only with a camera attached
+- the daemon and KVS master start under OpenRC and stay up without a source
+  checkout and without network access to GitHub; the KVS master also autostarts
+  and completes signaling but stays up only with a camera attached
+- exactly one PWM owner is enabled: normally the hardware worker, or ArduPilot
+  when the explicit Cyberbrick handoff above selected it
 - the daemon reports version, MQTT connect, and retained board/MCP/video state
   to CloudWatch (its local OpenRC log is empty by design); confirm locally by a
   stable daemon PID and the bound bridge socket
@@ -1505,9 +1678,9 @@ LIBCAMERA_LOG_LEVELS=*:DEBUG \
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| No `/dev/video0`, no sensor in `dmesg` | firmware camera autodetection off | `camera_auto_detect=1` ([step 5](#5-enable-pwm-overlay-and-camera)) |
-| `/dev/video0` present, no `/dev/video11` | `bcm2835-codec` not loaded | add to `/etc/modules` ([step 5](#5-enable-pwm-overlay-and-camera)) |
-| Only `unicam` + `bcm2835-codec` media devices | `bcm2835-isp` not loaded | add to `/etc/modules` ([step 5](#5-enable-pwm-overlay-and-camera)) |
+| No sensor in `dmesg`, no `unicam-image` node | camera is not configured or detected | confirm `usercfg.txt` is included, enable `camera_auto_detect=1`, then use the connected camera's explicit overlay if needed ([step 5](#5-enable-pwm-overlay-and-camera)) |
+| `unicam-image` at any number, no `/dev/video11` | `bcm2835-codec` not loaded or board lacks the required encoder | add to `/etc/modules`; a board without `bcm2835-codec-encode` at `video11` is not supported by the current KVS worker |
+| Unicam and codec media controllers, no ISP media controller | `bcm2835-isp` not loaded | add to `/etc/modules` ([step 5](#5-enable-pwm-overlay-and-camera)) |
 | No `ipa_rpi_vc4.so`, no `vc4/` tuning dir | `libcamera-raspberrypi` missing | `apk add libcamera-raspberrypi` ([step 2](#2-install-os-packages)) |
 | All of the above present, no udev services in `sysinit` | no udev daemon, or a daemon with an empty database | `apk add eudev` + [step 2a](#2a-enable-udev) |
 
@@ -1527,10 +1700,11 @@ through uevents` line is the fix taking effect.
 
 The debug trace is decisive. `Unable to acquire a Unicam instance` from
 `rpi/vc4` means the pipeline handler ran but matched no Unicam media device —
-either the ISP/tuning pieces are missing, or the enumerator itself is empty
-because udev never populated its database. `Unable to acquire a CFE instance`
-from `rpi/pisp` immediately above it is expected and harmless: that is the Pi 5
-pipeline handler correctly declining a Pi Zero 2 W.
+either the sensor/overlay or ISP/tuning pieces are missing, or the enumerator
+is empty because udev never populated its database. libcamera may also probe
+other pipeline handlers; treat their decline messages as diagnostic noise. The
+supported-path test is a successful `--camera-probe`, not a particular
+Raspberry Pi model's handler message.
 
 Confirm the media device layer independently of libcamera with `media-ctl`,
 which reads the devices directly and does not use udev:
@@ -1539,10 +1713,11 @@ which reads the devices directly and does not use udev:
 for m in /dev/media*; do echo "== $m"; media-ctl -d $m -p | head -8; done
 ```
 
-A healthy Pi Zero 2 W shows four media devices — `unicam`, `bcm2835-codec`,
-and two `bcm2835-isp`. If `media-ctl` shows a working `unicam` while
-libcamera still enumerates nothing, the fault is in libcamera's enumeration
-(udev or `libcamera-raspberrypi`), not in the kernel or the sensor.
+A healthy supported board shows a `unicam` media controller plus codec and ISP
+media controllers. Their device numbers and count vary by board and kernel. If
+`media-ctl` shows a working `unicam` while libcamera still enumerates nothing,
+the fault is in libcamera's enumeration (`udev` or `libcamera-raspberrypi`),
+not in the kernel or the sensor.
 
 ### Video Never Reaches READY
 
@@ -1681,6 +1856,27 @@ reboot
 Do not reboot if any `ldd` output reports `not found` or the expected
 libcamera sonames are missing; realign the apk branch and the installed
 release first, inside the same window.
+
+Cyberbrick ArduPilot is independent of those local gRPC contracts. Upgrade it
+only after a newer `cyberbrick-v*` release has been published, while the root
+is writable and with its PWM ownership selected:
+
+```sh
+root-rw
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise upgrade txing-cyberbrick-ardupilot
+ARDUPILOT=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
+test -x "$ARDUPILOT"
+"$ARDUPILOT" --help >/dev/null
+rc-service txing-cyberbrick-ardupilot restart
+root-ro
+reboot
+```
+
+The board never clones or patches ArduPilot. If upstream `master` or a tracked
+patch breaks the checkout, build, or release job, it fails normally with no
+fallback. Refresh the tracked patch in the source workflow, publish a later
+Cyberbrick release, then repeat this manual mise upgrade.
 
 Confirm the three binaries speak the current gRPC contracts before rebooting.
 Version numbers alone cannot show this: a board can carry matching versions and

@@ -16,11 +16,13 @@ adapter under [web/](web/).
 
 ## Board runtime
 
-Cyberbrick runs on a Raspberry Pi Zero 2 W board host using Alpine Linux,
+Cyberbrick runs on a supported Raspberry Pi board host using Alpine Linux,
 OpenRC services, and the `cyberbrick-v*` release stream. Its board runtime is
 the `txing-cyberbrick-daemon`, `txing-cyberbrick-kvs-master`, and
-`txing-cyberbrick-hardware-worker` binaries. The shared board implementation is
-in [../common/board/README.md](../common/board/README.md).
+`txing-cyberbrick-hardware-worker` binaries. The static
+`txing-cyberbrick-ardupilot` ArduRover binary is an optional fourth component;
+it manually replaces the hardware worker as the PWM owner. The shared board
+implementation is in [../common/board/README.md](../common/board/README.md).
 
 ## References
 

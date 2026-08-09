@@ -146,15 +146,17 @@ The short production flow is:
 
 ## Cyberbrick Board Host
 
-The cyberbrick board is the device-side Raspberry Pi Zero 2 W running Alpine
-Linux. Production cyberbrick boards run the root-owned Go
+The cyberbrick board is a supported device-side Raspberry Pi board running
+Alpine Linux aarch64. Production cyberbrick boards run the root-owned Go
 `txing-cyberbrick-daemon`, native `txing-cyberbrick-kvs-master`, and native
 `txing-cyberbrick-hardware-worker` installed from `cyberbrick-v*` GitHub
 Release assets through root-owned `mise`, supervised by OpenRC on a read-only
 root filesystem. The daemon and hardware worker are fully static musl
 binaries; the KVS master is dynamically linked against musl and Alpine
 libcamera, so the installed Alpine `v3.24` packages and the release stream
-move together for the camera.
+move together for the camera. Cyberbrick can additionally install the static
+`txing-cyberbrick-ardupilot` ArduRover release asset; it manually replaces the
+hardware worker as PWM owner and is also supervised by OpenRC.
 
 Canonical cyberbrick board installation, Alpine sys install, OpenRC service
 setup, read-only-root layout, manual maintenance, and validation instructions
@@ -176,9 +178,12 @@ The short production flow is:
    and create the `txing-cyberbrick-hardware-worker`,
    `txing-cyberbrick-daemon`, and `txing-cyberbrick-kvs-master` OpenRC
    services, enabled with `rc-update add <service> default`.
-6. Configure the PWM overlay and the read-only-root fstab/tmpfs layout.
-7. Reboot and verify all three OpenRC services, KVS readiness,
-   hardware-worker readiness, and REDCON convergence.
+6. Optionally install `txing-cyberbrick-ardupilot`, create its OpenRC service,
+   stop/remove the hardware worker, and enable ArduPilot as the manual PWM
+   owner. Never enable both services together.
+7. Configure the PWM overlay and the read-only-root fstab/tmpfs layout.
+8. Reboot and verify daemon/KVS readiness, REDCON convergence, and the one
+   selected PWM owner.
 
 ## Web
 
