@@ -28,6 +28,16 @@ func TestCommandRequiresRedconTarget(t *testing.T) {
 	}
 }
 
+func TestRedconOneWakeRequestDoesNotEncodeAnArmCommand(t *testing.T) {
+	normalized, err := NormalizeBleTargetRedcon(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized != 3 {
+		t.Fatalf("REDCON 1 wake request encodes %d, want power-on REDCON 3", normalized)
+	}
+}
+
 func TestTopicParsingUsesV2Root(t *testing.T) {
 	stateTopic, err := BuildCapabilityStateTopic("weather-1", "dev.txing.rig.BleConnectivity")
 	if err != nil {

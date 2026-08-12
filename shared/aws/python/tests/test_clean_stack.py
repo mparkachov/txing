@@ -11,6 +11,7 @@ class FakeSsm:
     def __init__(self, parameters: dict[str, str]):
         self.parameters = dict(parameters)
         self.delete_batches: list[list[str]] = []
+        self.put_requests: list[dict[str, str]] = []
 
     def get_parameters_by_path(
         self,
@@ -40,6 +41,24 @@ class FakeSsm:
             else:
                 invalid.append(name)
         return {"DeletedParameters": deleted, "InvalidParameters": invalid}
+
+    def delete_parameter(self, *, Name: str) -> dict[str, object]:
+        self.parameters.pop(Name, None)
+        return {}
+
+    def put_parameter(
+        self,
+        *,
+        Name: str,
+        Type: str,
+        Value: str,
+        Overwrite: bool,
+    ) -> dict[str, object]:
+        self.put_requests.append(
+            {"Name": Name, "Type": Type, "Value": Value, "Overwrite": str(Overwrite)}
+        )
+        self.parameters[Name] = Value
+        return {}
 
 
 class CleanStackTests(unittest.TestCase):
@@ -87,6 +106,45 @@ class CleanStackTests(unittest.TestCase):
         self.assertEqual(len(fake_ssm.delete_batches), 3)
         self.assertTrue(all(len(batch) <= 10 for batch in fake_ssm.delete_batches))
         self.assertEqual(fake_ssm.parameters, {})
+
+    def test_type_catalog_update_removes_obsolete_leaves(self) -> None:
+        base_path = "/txing/town/raspi/cyberbrick"
+        fake_ssm = FakeSsm(
+            {
+                f"{base_path}/capabilities": "sparkplug,ble,power,board,mcp,video",
+                f"{base_path}/shadows/mcp/schema": "aws/mcp-shadow.schema.json",
+                f"{base_path}/resources/boardVideo/channelName": "{device_id}-board-video",
+            }
+        )
+
+        with patch.object(clean_stack, "ssm", fake_ssm):
+            clean_stack._put_type_catalog_parameters(
+                {
+                    "CatalogBasePath": base_path,
+                    "CatalogParameters": {
+                        "capabilities": "sparkplug,ble,power,board,mavlink,video",
+                        "shadows/mavlink/schema": "aws/mavlink-shadow.schema.json",
+                        "resources/boardVideo/channelName": "{device_id}-board-video",
+                        "resources/mavlink/channelName": "{device_id}-mavlink",
+                    },
+                }
+            )
+
+        self.assertEqual(
+            fake_ssm.parameters,
+            {
+                f"{base_path}/capabilities": "sparkplug,ble,power,board,mavlink,video",
+                f"{base_path}/shadows/mavlink/schema": "aws/mavlink-shadow.schema.json",
+                f"{base_path}/resources/boardVideo/channelName": "{device_id}-board-video",
+                f"{base_path}/resources/mavlink/channelName": "{device_id}-mavlink",
+            },
+        )
+        self.assertIn(
+            [
+                f"{base_path}/shadows/mcp/schema",
+            ],
+            fake_ssm.delete_batches,
+        )
 
     def test_lambda_delete_skips_cleanup_during_stack_update(self) -> None:
         event = {

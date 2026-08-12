@@ -354,6 +354,33 @@ class DeviceRegistryTests(unittest.TestCase):
         )
         self.assertEqual(runtime.ssm.put_requests, [])
 
+    def test_register_cyberbrick_initializes_mavlink_shadow_and_both_signaling_channels(self) -> None:
+        runtime = _FakeRuntime()
+        registry = AwsDeviceRegistry(
+            runtime,
+            repo_root=REPO_ROOT,
+            random_source=_SequenceRandom("cybrik"),
+        )
+
+        registration = registry.register_device(
+            rig_id="raspi-ras001",
+            device_type="cyberbrick",
+        )
+
+        self.assertEqual(registration.thing_name, "cyberbrick-cybrik")
+        self.assertEqual(
+            sorted(shadow_name for _thing_name, shadow_name in runtime.iot_data.shadows),
+            ["ble", "board", "mavlink", "power", "sparkplug", "video"],
+        )
+        self.assertEqual(
+            runtime.kinesisvideo.channels,
+            {"cyberbrick-cybrik-board-video", "cyberbrick-cybrik-mavlink"},
+        )
+        self.assertEqual(
+            [request["ChannelName"] for request in runtime.kinesisvideo.create_requests],
+            ["cyberbrick-cybrik-board-video", "cyberbrick-cybrik-mavlink"],
+        )
+
     def test_assign_device_validates_target_rig_type_before_updating_parent_ids(self) -> None:
         runtime = _FakeRuntime()
         runtime.iot._things["raspi-ras002"] = {

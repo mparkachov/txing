@@ -67,6 +67,26 @@ Schemas and example payloads live in
 builders are in
 [`shared/aws/python/src/aws/mavlink_topics.py`](../../shared/aws/python/src/aws/mavlink_topics.py).
 
+## Cloud provisioning and forward-only rollout
+
+Provision cloud state before any Cyberbrick board cutover:
+
+1. Apply the shared AWS stack and current enlistment Lambda, then enlist or
+   re-enlist the Cyberbrick with its existing rig and device name. Enlistment
+   validates and creates both `<thing>-board-video` and `<thing>-mavlink`, and
+   initializes missing capability shadows without replacing existing ones.
+2. Generate a fresh Cyberbrick certificate bundle after that provisioning so
+   its device credential role authorizes those two exact signaling channels.
+   The Office role remains a KVS viewer; it is never granted `ConnectAsMaster`.
+3. In a writable-root maintenance window, install the coordinated Cyberbrick
+   board/runtime release, then reboot with the root read-only. Deploy Office
+   only after the board cutover succeeds.
+4. After the successful cutover, manually remove the obsolete Cyberbrick `mcp`
+   named shadow and its retained descriptor/status messages.
+
+There is no automatic cleanup, dual publication, compatibility shim, or
+rollback to the former Cyberbrick MCP control path.
+
 ## Bindings
 
 Pinned MAVLink 2 `common` C/C++ and TypeScript generated bindings, their

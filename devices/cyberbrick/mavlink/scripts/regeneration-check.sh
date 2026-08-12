@@ -60,12 +60,12 @@ import sys
 
 generated = Path(sys.argv[1])
 for path in generated.rglob("*.ts"):
-    source = re.sub(r"(?m)^(?:\t+ +| +|\t{2,}(?!\[))", "// ", path.read_text())
+    contents = re.sub(r"(?m)^(?:\t+ +| +|\t{2,}(?!\[))", "// ", path.read_text())
     if path.parent.name == "messages":
-        source = source.replace(
+        contents = contents.replace(
             "'@ifrunistuttgart/node-mavlink'", "'../../runtime'"
         )
-    path.write_text(source)
+    path.write_text(contents)
 registry = generated / "message-registry.ts"
 registry.write_text(registry.read_text().replace(
     "'@ifrunistuttgart/node-mavlink'", "'../runtime'"

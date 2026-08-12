@@ -359,6 +359,32 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertTrue(board_video["created"])
         self.assertIn(board_video["channelName"], self.runtime.kinesisvideo.channels)
 
+    def test_enlist_cyberbrick_creates_mavlink_shadow_and_independent_signaling_channels(self) -> None:
+        town = self._enlist_town()
+        raspi = self._enlist_rig(town["thingName"], "raspi", "server")
+
+        result = self._enlist_device(raspi["thingName"], "cyberbrick", "rover")
+
+        self.assertEqual(result["thingTypeName"], "cyberbrick")
+        self.assertEqual(
+            result["attributes"]["capabilities"],
+            "sparkplug,ble,power,board,mavlink,video",
+        )
+        self.assertEqual(
+            result["initializedShadows"],
+            ["sparkplug", "ble", "power", "board", "mavlink", "video"],
+        )
+        board_video = result["auxiliaryResources"]["boardVideo"]
+        mavlink = result["auxiliaryResources"]["mavlink"]
+        self.assertEqual(board_video["channelName"], f"{result['thingName']}-board-video")
+        self.assertEqual(mavlink["channelName"], f"{result['thingName']}-mavlink")
+        self.assertTrue(board_video["created"])
+        self.assertTrue(mavlink["created"])
+        self.assertEqual(
+            self.runtime.kinesisvideo.channels,
+            {board_video["channelName"], mavlink["channelName"]},
+        )
+
     def test_enlist_mac_creates_all_shadows_and_board_video_channel(self) -> None:
         town = self._enlist_town()
         local = self._enlist_rig(town["thingName"], "local", "dev")

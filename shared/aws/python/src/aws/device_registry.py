@@ -562,9 +562,12 @@ class AwsDeviceRegistry:
         self._iot_client.update_thing(**request)
 
     def ensure_auxiliary_resources(self, thing_name: str, *, manifest: DeviceManifest) -> None:
-        channel_name = manifest.render_board_video_channel_name(device_id=thing_name)
-        if channel_name:
-            self.ensure_signaling_channel(channel_name)
+        for channel_name in (
+            manifest.render_board_video_channel_name(device_id=thing_name),
+            manifest.render_mavlink_channel_name(device_id=thing_name),
+        ):
+            if channel_name:
+                self.ensure_signaling_channel(channel_name)
 
     def ensure_signaling_channel(self, channel_name: str) -> None:
         client = self._runtime.client("kinesisvideo", region_name=self._runtime.region_name)

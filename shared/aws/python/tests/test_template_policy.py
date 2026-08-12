@@ -265,7 +265,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("logs:CreateLogGroup", aws_lib)
         self.assertIn("logs:CreateLogStream", aws_lib)
         self.assertIn("logs:DescribeLogStreams", aws_lib)
-        self.assertIn("DaemonBoardVideoMaster", aws_lib)
+        self.assertIn("DaemonKvsMaster", aws_lib)
         self.assertIn("kinesisvideo:ConnectAsMaster", aws_lib)
         self.assertIn("arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-board-video/*", aws_lib)
         self.assertIn('role-policy device thing_id=', daemon_justfile)
@@ -387,13 +387,19 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("deviceType:cyberbrick)", aws_lib)
         self.assertIn('"$cyberbrick_env_template"', aws_lib)
         self.assertIn("cyberbrick-daemon", aws_lib)
-        self.assertIn("DaemonBoardVideoMaster", aws_lib)
+        self.assertIn("DaemonKvsMaster", aws_lib)
         self.assertIn("kinesisvideo:ConnectAsMaster", aws_lib)
         self.assertIn(
             "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:"
             "channel/${thing_id}-board-video/*",
             aws_lib,
         )
+        self.assertIn(
+            "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:"
+            "channel/${thing_id}-mavlink/*",
+            aws_lib,
+        )
+        self.assertIn('if $thingType == "cyberbrick" then [$mavlinkChannelArn]', aws_lib)
         self.assertIn(
             "TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}",
             daemon_env_template,
@@ -406,6 +412,23 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         )
         self.assertNotIn("TXING_HARDWARE_WORKER_SOCKET_PATH=", daemon_env_template)
         self.assertNotIn("txing-unit", daemon_env_template)
+
+    def test_device_kvs_master_permissions_do_not_change_office_viewer_permissions(self) -> None:
+        template = _template_text()
+
+        viewer_statement = template.split("Sid: BoardVideoViewer", 1)[1].split(
+            "TxingAdminIdentityPoolRoleAttachment:",
+            1,
+        )[0]
+        self.assertIn("kinesisvideo:ConnectAsViewer", viewer_statement)
+        self.assertNotIn("kinesisvideo:ConnectAsMaster", viewer_statement)
+
+        device_statement = template.split("Sid: DeviceKvsMaster", 1)[1].split(
+            "TxingRuntimeRole:",
+            1,
+        )[0]
+        self.assertIn("kinesisvideo:ConnectAsMaster", device_statement)
+        self.assertNotIn("kinesisvideo:ConnectAsViewer", device_statement)
 
     def test_template_defines_rig_daemon_credential_resources(self) -> None:
         template = _template_text()
@@ -718,7 +741,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         ):
             self.assertIn(action, enlist_template)
         self.assertNotIn("cloudformation:DescribeStacks", enlist_template)
-        self.assertIn("EnlistBoardVideoChannels", enlist_template)
+        self.assertIn("EnlistSignalingChannels", enlist_template)
 
     def test_rig_runtime_can_connect_with_managed_device_client_ids(self) -> None:
         template = _template_text()

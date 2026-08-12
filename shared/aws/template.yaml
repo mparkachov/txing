@@ -921,7 +921,7 @@ Resources:
             Effect: Allow
             Action: iot:DescribeEndpoint
             Resource: "*"
-          - Sid: DeviceBoardVideoMaster
+          - Sid: DeviceKvsMaster
             Effect: Allow
             Action:
               - kinesisvideo:DescribeSignalingChannel

@@ -320,6 +320,10 @@ def _put_type_catalog_parameters(properties):
             raise
 
     existing_parameters = _catalog_existing_parameters(base_path)
+    expected_parameters = {
+        _catalog_parameter_name(base_path, leaf_name)
+        for leaf_name in catalog_parameters
+    }
     written = []
     for leaf_name, value in sorted(catalog_parameters.items()):
         name = _catalog_parameter_name(base_path, leaf_name)
@@ -336,6 +340,16 @@ def _put_type_catalog_parameters(properties):
             Overwrite=True,
         )
         written.append(name)
+
+    stale_parameters = sorted(set(existing_parameters) - expected_parameters, reverse=True)
+    for offset in range(0, len(stale_parameters), SSM_DELETE_BATCH_SIZE):
+        _ssm_call(
+            "delete stale type catalog parameters",
+            _ssm().delete_parameters,
+            Names=stale_parameters[offset : offset + SSM_DELETE_BATCH_SIZE],
+        )
+        if offset + SSM_DELETE_BATCH_SIZE < len(stale_parameters):
+            time.sleep(SSM_DELETE_BATCH_DELAY_SECONDS)
     return written
 
 

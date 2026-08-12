@@ -105,6 +105,10 @@ def _build_video_channel_name(thing_name: str) -> str:
     return f"{thing_name}-board-video"
 
 
+def _build_mavlink_channel_name(thing_name: str) -> str:
+    return f"{thing_name}-mavlink"
+
+
 def validate_service_environment(
     scope: str,
     environment: Mapping[str, str],
@@ -152,18 +156,18 @@ def validate_service_environment(
         if schema_file is not None:
             resolved["schema_file"] = schema_file
 
-        video_region_env_name, video_region = _first_non_empty(
-            environment,
-            "TXING_BOARD_VIDEO_REGION",
-            "BOARD_VIDEO_REGION",
-        )
-        if video_region is None:
-            video_region = resolved.get("aws_region")
-            results.append(_ok("Board video region (AWS_REGION default)"))
-        else:
-            results.append(_ok(f"Board video region ({video_region_env_name})"))
-        if isinstance(video_region, str):
-            resolved["video_region"] = video_region
+    video_region_env_name, video_region = _first_non_empty(
+        environment,
+        "TXING_BOARD_VIDEO_REGION",
+        "BOARD_VIDEO_REGION",
+    )
+    if video_region is None:
+        video_region = resolved.get("aws_region")
+        results.append(_ok("Board video region (AWS_REGION default)"))
+    else:
+        results.append(_ok(f"Board video region ({video_region_env_name})"))
+    if isinstance(video_region, str):
+        resolved["video_region"] = video_region
     return results, resolved
 
 
@@ -360,6 +364,8 @@ def _run_device_connectivity_checks(
     device_type: str | None,
     video_channel_name: str | None,
     video_region: str | None,
+    mavlink_channel_name: str | None,
+    mavlink_region: str | None,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
     _run_aws_check(results, "STS caller identity", runtime.sts_client().get_caller_identity)
@@ -414,6 +420,20 @@ def _run_device_connectivity_checks(
                     region_name=video_region,
                 ).describe_signaling_channel(ChannelName=video_channel_name),
             )
+    if "mavlink" in capabilities:
+        if not mavlink_region:
+            results.append(_fail("MAVLink region missing (AWS_REGION)"))
+        elif not mavlink_channel_name:
+            results.append(_fail("MAVLink channel name is empty"))
+        else:
+            _run_aws_check(
+                results,
+                f"KinesisVideo DescribeSignalingChannel on {mavlink_channel_name}",
+                lambda: runtime.client(
+                    "kinesisvideo",
+                    region_name=mavlink_region,
+                ).describe_signaling_channel(ChannelName=mavlink_channel_name),
+            )
     return results
 
 
@@ -459,7 +479,9 @@ def run_service_check(
             thing_name=resolved_thing_name,
             device_type=resolved.get("device_type"),
             video_channel_name=video_channel_name or _build_video_channel_name(resolved_thing_name),
-            video_region=resolved.get("video_region"),
+            video_region=resolved.get("video_region") or resolved.get("aws_region"),
+            mavlink_channel_name=_build_mavlink_channel_name(resolved_thing_name),
+            mavlink_region=resolved.get("aws_region"),
         )
     )
     return results

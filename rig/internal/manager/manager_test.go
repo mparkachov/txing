@@ -176,6 +176,134 @@ func TestCyberbrickMavlinkArmedMetricGatesRedconOneWithoutPublishingIt(t *testin
 	}
 }
 
+func TestCyberbrickMavlinkRedconMatrix(t *testing.T) {
+	cases := []struct {
+		name             string
+		mavlinkAvailable bool
+		videoAvailable   bool
+		mavlinkArmed     bool
+		wantRedcon       uint8
+	}{
+		{
+			name:             "board powered with MAVLink unavailable",
+			mavlinkAvailable: false,
+			videoAvailable:   false,
+			mavlinkArmed:     false,
+			wantRedcon:       3,
+		},
+		{
+			name:             "MAVLink ready without an Office peer and disarmed",
+			mavlinkAvailable: true,
+			videoAvailable:   false,
+			mavlinkArmed:     false,
+			wantRedcon:       2,
+		},
+		{
+			name:             "MAVLink and video ready but disarmed",
+			mavlinkAvailable: true,
+			videoAvailable:   true,
+			mavlinkArmed:     false,
+			wantRedcon:       2,
+		},
+		{
+			name:             "MAVLink armed without video",
+			mavlinkAvailable: true,
+			videoAvailable:   false,
+			mavlinkArmed:     true,
+			wantRedcon:       2,
+		},
+		{
+			name:             "MAVLink armed with video",
+			mavlinkAvailable: true,
+			videoAvailable:   true,
+			mavlinkArmed:     true,
+			wantRedcon:       1,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			state := NewDeviceRuntimeState(cyberbrickInventory())
+			if err := state.ObserveState(capabilityState(
+				"dev.txing.rig.BleConnectivity",
+				"cyberbrick-1",
+				map[string]bool{"sparkplug": true, "ble": true, PowerCapability: true},
+				nil,
+				1000,
+				1,
+			)); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.ObserveState(capabilityState(
+				"dev.txing.cyberbrick.Daemon",
+				"cyberbrick-1",
+				map[string]bool{
+					BoardCapability:   true,
+					MAVLinkCapability: testCase.mavlinkAvailable,
+					VideoCapability:   testCase.videoAvailable,
+				},
+				map[string]protocol.MetricValue{
+					protocol.MavlinkArmedMetric: protocol.MetricBoolean(testCase.mavlinkArmed),
+				},
+				1000,
+				2,
+			)); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := redconValue(t, state.Snapshot(1000).Redcon); got != testCase.wantRedcon {
+				t.Fatalf("REDCON = %d, want %d", got, testCase.wantRedcon)
+			}
+		})
+	}
+}
+
+func TestCyberbrickRedconFourClearsMavlinkStateAndArmingInput(t *testing.T) {
+	state := NewDeviceRuntimeState(cyberbrickInventory())
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.rig.BleConnectivity",
+		"cyberbrick-1",
+		map[string]bool{"sparkplug": true, "ble": true, PowerCapability: true},
+		nil,
+		1000,
+		1,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.cyberbrick.Daemon",
+		"cyberbrick-1",
+		map[string]bool{BoardCapability: true, MAVLinkCapability: true, VideoCapability: true},
+		map[string]protocol.MetricValue{protocol.MavlinkArmedMetric: protocol.MetricBoolean(true)},
+		1000,
+		2,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if got := redconValue(t, state.Snapshot(1000).Redcon); got != 1 {
+		t.Fatalf("armed MAVLink REDCON = %d, want 1", got)
+	}
+
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.rig.BleConnectivity",
+		"cyberbrick-1",
+		map[string]bool{"sparkplug": true, "ble": true, PowerCapability: false},
+		map[string]protocol.MetricValue{protocol.BleRedconMetric: protocol.MetricInt32(4)},
+		1100,
+		3,
+	)); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := state.Snapshot(1100)
+	if got := redconValue(t, snapshot.Redcon); got != 4 {
+		t.Fatalf("REDCON after shutdown state = %d, want 4", got)
+	}
+	for _, capability := range []string{PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability} {
+		assertCapability(t, snapshot.Capabilities, capability, false)
+	}
+}
+
 func TestWeatherSnapshotStaysRedcon4WithStaleRedcon3Rule(t *testing.T) {
 	state := NewDeviceRuntimeState(weatherInventoryWithStaleRedcon3Rule())
 	err := state.ObserveState(capabilityState(

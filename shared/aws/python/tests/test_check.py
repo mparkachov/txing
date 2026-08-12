@@ -55,6 +55,19 @@ class _FakeIotClient:
                     "townId": "town-3xvtqf",
                 },
             }
+        if thingName == "cyberbrick-local":
+            return {
+                "thingName": thingName,
+                "thingTypeName": "cyberbrick",
+                "attributes": {
+                    "name": "rover",
+                    "shortId": "local",
+                    "capabilities": "sparkplug,ble,power,board,mavlink,video",
+                    "deviceType": "cyberbrick",
+                    "rigId": "raspi-rig001",
+                    "townId": "town-3xvtqf",
+                },
+            }
         if thingName == "cloud-mcu-cloud":
             return {
                 "thingName": thingName,
@@ -348,6 +361,36 @@ class AwsCheckTests(unittest.TestCase):
             ],
         )
         self.assertEqual(runtime.kinesisvideo.channel_names, [])
+
+    def test_run_cyberbrick_device_service_check_validates_mavlink_and_video_independently(self) -> None:
+        runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
+
+        results = run_service_check(
+            "device",
+            environment={
+                "AWS_REGION": "eu-central-1",
+                "THING_NAME": "cyberbrick-local",
+                "TXING_DEVICE_TYPE": "cyberbrick",
+            },
+            aws_runtime=runtime,
+        )
+
+        self.assertTrue(all(result.ok for result in results), [result.message for result in results])
+        self.assertEqual(
+            runtime.iot_data.thing_names,
+            [
+                ("cyberbrick-local", "sparkplug"),
+                ("cyberbrick-local", "ble"),
+                ("cyberbrick-local", "power"),
+                ("cyberbrick-local", "board"),
+                ("cyberbrick-local", "mavlink"),
+                ("cyberbrick-local", "video"),
+            ],
+        )
+        self.assertEqual(
+            runtime.kinesisvideo.channel_names,
+            ["cyberbrick-local-board-video", "cyberbrick-local-mavlink"],
+        )
 
 
 if __name__ == "__main__":

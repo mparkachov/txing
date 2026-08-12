@@ -401,11 +401,13 @@ txing_cert_generate_device_daemon_bundle() {
     --arg iotShadowArn "arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${thing_id}/sparkplug" \
     --arg cloudwatchLogGroupArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
     --arg cloudwatchLogStreamArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
-    --arg kvsChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-board-video/*" \
+    --arg boardVideoChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-board-video/*" \
+    --arg mavlinkChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-mavlink/*" \
+    --arg thingType "$thing_type" \
     '{Version: "2012-10-17", Statement: [
       {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
       {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
-      {Sid: "DaemonBoardVideoMaster", Effect: "Allow", Action: ["kinesisvideo:DescribeSignalingChannel", "kinesisvideo:GetSignalingChannelEndpoint", "kinesisvideo:GetIceServerConfig", "kinesisvideo:ConnectAsMaster"], Resource: $kvsChannelArn}
+      {Sid: "DaemonKvsMaster", Effect: "Allow", Action: ["kinesisvideo:DescribeSignalingChannel", "kinesisvideo:GetSignalingChannelEndpoint", "kinesisvideo:GetIceServerConfig", "kinesisvideo:ConnectAsMaster"], Resource: ([$boardVideoChannelArn] + (if $thingType == "cyberbrick" then [$mavlinkChannelArn] else [] end))}
     ]}' \
     >"$credential_policy_file"
   daemon_role_arn="$(txing_cert_upsert_credential_role "$daemon_role_name" "" txing-daemon-own-thing "$credential_policy_file" "$trust_policy_file")"

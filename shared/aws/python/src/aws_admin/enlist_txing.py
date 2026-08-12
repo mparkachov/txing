@@ -535,35 +535,51 @@ class EnlistService:
                 initialized.append(shadow_name)
         return tuple(initialized)
 
-    def _ensure_board_video_resource(
+    def _ensure_signaling_resources(
         self,
         thing_name: str,
         record: Mapping[str, Any],
     ) -> dict[str, Any]:
         resources = record.get("resources")
         if not isinstance(resources, Mapping):
+            if "mavlink" in _capabilities(record, context=self._record_context(record)):
+                raise EnlistError(
+                    f"type catalog record {self._record_context(record)!r} declares mavlink without resources.mavlink.channelName"
+                )
             return {}
-        board_video = resources.get("boardVideo")
-        if not isinstance(board_video, Mapping):
-            return {}
-        template = _optional_text(board_video, "channelName")
-        if template is None:
-            return {}
-        channel_name = template.replace("{device_id}", thing_name)
-        client = self._runtime.client("kinesisvideo", region_name=self._runtime.region_name)
-        created = False
-        try:
-            client.describe_signaling_channel(ChannelName=channel_name)
-        except Exception as error:
-            if not _is_resource_not_found(error):
-                raise
-            client.create_signaling_channel(
-                ChannelName=channel_name,
-                ChannelType="SINGLE_MASTER",
-                SingleMasterConfiguration={"MessageTtlSeconds": 60},
-            )
-            created = True
-        return {"boardVideo": {"channelName": channel_name, "created": created}}
+        capabilities = _capabilities(record, context=self._record_context(record))
+        ensured: dict[str, Any] = {}
+        for resource_name, result_name in (("boardVideo", "boardVideo"), ("mavlink", "mavlink")):
+            resource = resources.get(resource_name)
+            if not isinstance(resource, Mapping):
+                if resource_name == "mavlink" and "mavlink" in capabilities:
+                    raise EnlistError(
+                        f"type catalog record {self._record_context(record)!r} declares mavlink without resources.mavlink.channelName"
+                    )
+                continue
+            template = _optional_text(resource, "channelName")
+            if template is None:
+                if resource_name == "mavlink" and "mavlink" in capabilities:
+                    raise EnlistError(
+                        f"type catalog record {self._record_context(record)!r} declares mavlink without resources.mavlink.channelName"
+                    )
+                continue
+            channel_name = template.replace("{device_id}", thing_name)
+            client = self._runtime.client("kinesisvideo", region_name=self._runtime.region_name)
+            created = False
+            try:
+                client.describe_signaling_channel(ChannelName=channel_name)
+            except Exception as error:
+                if not _is_resource_not_found(error):
+                    raise
+                client.create_signaling_channel(
+                    ChannelName=channel_name,
+                    ChannelType="SINGLE_MASTER",
+                    SingleMasterConfiguration={"MessageTtlSeconds": 60},
+                )
+                created = True
+            ensured[result_name] = {"channelName": channel_name, "created": created}
+        return ensured
 
     def _thing_result(
         self,
@@ -777,7 +793,7 @@ class EnlistService:
             town_id=town_id,
             rig_id=normalized_rig_id,
         )
-        auxiliary = self._ensure_board_video_resource(thing_name, record)
+        auxiliary = self._ensure_signaling_resources(thing_name, record)
         return self._thing_result(
             thing,
             created=created,
@@ -817,7 +833,7 @@ class EnlistService:
             attributes["webAdapter"] = web["adapter"]
         self._update_thing_attributes(device, attributes)
         updated_device = self._describe_thing(normalized_device_id)
-        auxiliary = self._ensure_board_video_resource(
+        auxiliary = self._ensure_signaling_resources(
             _require_text(updated_device, "thingName", context="device thing"),
             record,
         )

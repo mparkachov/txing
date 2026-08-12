@@ -315,8 +315,8 @@ All things receive:
 
 `town`, `cloud` rig, and non-host device things receive only that generic IoT
 certificate bundle attached to the base IoT policy. `raspi` rigs also receive
-`daemon.env` and `<thing-id>-rig-daemon-config.tgz`; `unit` devices also receive
-`daemon.env` and `<thing-id>-daemon-config.tgz`.
+`daemon.env` and `<thing-id>-rig-daemon-config.tgz`; `unit` and `cyberbrick`
+devices also receive `daemon.env` and `<thing-id>-daemon-config.tgz`.
 
 `certs/` is explicitly ignored by git. The recipe refuses to overwrite existing
 material; move or delete the files first if you intentionally rotate a
