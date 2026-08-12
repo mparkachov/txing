@@ -1,0 +1,27 @@
+{
+  "serviceId": "mavlink",
+  "protocolVersion": "1",
+  "mavlinkWireProtocolVersion": "2.0",
+  "dialect": "common",
+  "topicRoot": "txings/cyberbrick-a1/mavlink",
+  "descriptorTopic": "txings/cyberbrick-a1/mavlink/descriptor",
+  "statusTopic": "txings/cyberbrick-a1/mavlink/status",
+  "transport": "webrtc-datachannel",
+  "channelName": "cyberbrick-a1-mavlink",
+  "region": "eu-central-1",
+  "dataChannel": {
+    "label": "txing.mavlink.v1",
+    "ordered": true,
+    "reliable": true,
+    "binaryMessage": "mavlink2-unsigned-common-frame",
+    "textMessage": "cyberbrick-mavlink-control-json-v1"
+  },
+  "control": {
+    "sessionAuthority": "daemon",
+    "leaseTtlMs": 5000
+  },
+  "serverInfo": {
+    "name": "txing-cyberbrick-daemon",
+    "version": "0.1.0"
+  }
+}

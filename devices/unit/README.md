@@ -7,7 +7,7 @@ contracts are documented separately so each component has a single owner.
 
 - [Unit device-rig shadow contract](docs/device-rig-shadow-spec.md)
 - [Unit Thing Shadow model](docs/thing-shadow.md)
-- [Board video contract](docs/board-video.md)
+- [Shared board video contract](../../docs/components/board-video.md)
 - [Shared MCU stack](../../docs/components/mcu.md)
 
 `rig` owns the `ble` and `power` named-shadow contracts. The MCU implements the

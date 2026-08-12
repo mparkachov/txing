@@ -103,3 +103,35 @@ func TestInventoryDeviceCapabilityLookupUsesCapabilityList(t *testing.T) {
 		t.Fatalf("decoded redcon rule = %q", got)
 	}
 }
+
+func TestInventoryDeviceRoundTripsInternalRedconMetricRules(t *testing.T) {
+	device := InventoryDevice{
+		ThingName:           "cyberbrick-1",
+		ThingType:           "cyberbrick",
+		Capabilities:        []string{"sparkplug", "mavlink"},
+		RedconCommandLevels: []uint8{2, 1},
+		RedconRules: map[uint8][]string{
+			2: []string{"sparkplug", "mavlink"},
+			1: []string{"sparkplug", "mavlink"},
+		},
+		RedconMetricRules: map[uint8][]string{1: []string{MavlinkArmedMetric}},
+	}
+	payload, err := json.Marshal(device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["redconMetricRules"].(map[string]any)["1"]; !ok {
+		t.Fatalf("redconMetricRules not serialized with string key 1: %s", string(payload))
+	}
+	var decoded InventoryDevice
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded.RedconMetricRules[1]; len(got) != 1 || got[0] != MavlinkArmedMetric {
+		t.Fatalf("decoded redcon metric rules = %#v", decoded.RedconMetricRules)
+	}
+}

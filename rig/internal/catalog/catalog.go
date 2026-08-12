@@ -13,6 +13,7 @@ type TypeCatalogDevice struct {
 	Capabilities        []string
 	RedconCommandLevels []uint8
 	RedconRules         map[uint8][]string
+	RedconMetricRules   map[uint8][]string
 }
 
 func (d TypeCatalogDevice) ToInventoryDevice(thingName string) protocol.InventoryDevice {
@@ -26,12 +27,14 @@ func (d TypeCatalogDevice) ToInventoryDeviceWithCapabilities(thingName string, c
 		Capabilities:        capabilities,
 		RedconCommandLevels: append([]uint8(nil), d.RedconCommandLevels...),
 		RedconRules:         cloneRules(d.RedconRules),
+		RedconMetricRules:   cloneRules(d.RedconMetricRules),
 	}
 }
 
 func ReconstructTypeRecord(parameters [][2]string) (TypeCatalogDevice, error) {
 	var record TypeCatalogDevice
 	record.RedconRules = map[uint8][]string{}
+	record.RedconMetricRules = map[uint8][]string{}
 	for _, parameter := range parameters {
 		name := parameter[0]
 		value := parameter[1]
@@ -56,9 +59,15 @@ func ReconstructTypeRecord(parameters [][2]string) (TypeCatalogDevice, error) {
 			}
 			record.RedconCommandLevels = levels
 		default:
-			before, after, ok := strings.Cut(name, "/redconRules/")
-			_ = before
-			if !ok {
+			kind := ""
+			after := ""
+			if _, value, ok := strings.Cut(name, "/redconRules/"); ok {
+				kind = "capability"
+				after = value
+			} else if _, value, ok := strings.Cut(name, "/redconMetricRules/"); ok {
+				kind = "metric"
+				after = value
+			} else {
 				continue
 			}
 			levelText := strings.Split(after, "/")[0]
@@ -70,7 +79,11 @@ func ReconstructTypeRecord(parameters [][2]string) (TypeCatalogDevice, error) {
 			if err != nil {
 				return TypeCatalogDevice{}, err
 			}
-			record.RedconRules[level] = items
+			if kind == "metric" {
+				record.RedconMetricRules[level] = items
+			} else {
+				record.RedconRules[level] = items
+			}
 		}
 	}
 	if err := ValidateTypeRecord(record); err != nil {
@@ -105,6 +118,19 @@ func ValidateTypeRecord(record TypeCatalogDevice) error {
 		for _, capability := range capabilities {
 			if _, ok := capabilitySet[capability]; !ok {
 				return fmt.Errorf("redconRules.%d references unknown capability %s", level, capability)
+			}
+		}
+	}
+	for level, metrics := range record.RedconMetricRules {
+		if err := protocol.ValidateRedcon(level, "redconMetricRules"); err != nil {
+			return err
+		}
+		if len(metrics) == 0 {
+			return fmt.Errorf("redconMetricRules.%d must not be empty", level)
+		}
+		for _, metric := range metrics {
+			if strings.TrimSpace(metric) == "" {
+				return fmt.Errorf("redconMetricRules.%d contains an empty metric", level)
 			}
 		}
 	}

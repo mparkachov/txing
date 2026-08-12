@@ -287,4 +287,4 @@ The current implementation contracts are:
 - [Sparkplug lifecycle](./sparkplug-lifecycle.md)
 - [Unit thing shadow model](../devices/unit/docs/thing-shadow.md)
 - [Unit device-rig shadow contract](../devices/unit/docs/device-rig-shadow-spec.md)
-- [Unit board video contract](../devices/unit/docs/board-video.md)
+- [Shared board video contract](./components/board-video.md)

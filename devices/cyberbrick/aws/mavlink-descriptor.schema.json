@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/cyberbrick-mavlink-descriptor-v1.schema.json",
+  "title": "Cyberbrick MAVLink retained descriptor v1",
+  "description": "Retained without MQTT expiry at txings/<thing>/mavlink/descriptor.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["serviceId", "protocolVersion", "mavlinkWireProtocolVersion", "dialect", "topicRoot", "descriptorTopic", "statusTopic", "transport", "channelName", "region", "dataChannel", "control", "serverInfo"],
+  "properties": {
+    "serviceId": { "const": "mavlink" },
+    "protocolVersion": { "const": "1" },
+    "mavlinkWireProtocolVersion": { "const": "2.0" },
+    "dialect": { "const": "common" },
+    "topicRoot": { "type": "string", "pattern": "^txings/[^/]+/mavlink$" },
+    "descriptorTopic": { "type": "string", "pattern": "^txings/[^/]+/mavlink/descriptor$" },
+    "statusTopic": { "type": "string", "pattern": "^txings/[^/]+/mavlink/status$" },
+    "transport": { "const": "webrtc-datachannel" },
+    "channelName": { "type": "string", "minLength": 1 },
+    "region": { "type": "string", "minLength": 1 },
+    "dataChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "ordered", "reliable", "binaryMessage", "textMessage"],
+      "properties": {
+        "label": { "const": "txing.mavlink.v1" },
+        "ordered": { "const": true },
+        "reliable": { "const": true },
+        "binaryMessage": { "const": "mavlink2-unsigned-common-frame" },
+        "textMessage": { "const": "cyberbrick-mavlink-control-json-v1" }
+      }
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessionAuthority", "leaseTtlMs"],
+      "properties": {
+        "sessionAuthority": { "const": "daemon" },
+        "leaseTtlMs": { "const": 5000 }
+      }
+    },
+    "serverInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -10,7 +10,7 @@ const readRepoFile = (path: string): string =>
 describe('video multi-viewer contract', () => {
   test('keeps browser viewing on the existing single AWS KVS viewer path', () => {
     const videoRuntimeSource = readRepoFile('office/src/video-session-runtime.ts')
-    const boardVideoDoc = readRepoFile('devices/unit/docs/board-video.md')
+    const boardVideoDoc = readRepoFile('docs/components/board-video.md')
 
     expect(videoRuntimeSource).toContain('role: Role.VIEWER')
     expect(videoRuntimeSource).toContain(
@@ -24,7 +24,7 @@ describe('video multi-viewer contract', () => {
   })
 
   test('native KVS master fans the same encoded uplink to independent viewer peer sessions', () => {
-    const kvsMasterSource = readRepoFile('devices/unit/board/kvs_master/src/kvs_session_real.cpp')
+    const kvsMasterSource = readRepoFile('devices/common/board/kvs_master/src/kvs_session_real.cpp')
 
     expect(kvsMasterSource).toContain('constexpr UINT32 kMaxConcurrentStreamingSessions = 10;')
     expect(kvsMasterSource).toContain('std::unordered_map<std::string, std::shared_ptr<StreamingSession>> sessions_by_peer_')
@@ -37,11 +37,11 @@ describe('video multi-viewer contract', () => {
 
   test('video viewer observability is not an admission-control contract', () => {
     const unitContract = readRepoFile('docs/contracts/unit-device-contracts.md')
-    const boardVideoDoc = readRepoFile('devices/unit/docs/board-video.md')
+    const boardVideoDoc = readRepoFile('docs/components/board-video.md')
     const videoShadowSchema = readRepoFile('devices/unit/aws/video-shadow.schema.json')
 
     expect(unitContract).toContain('Multiple browser viewers may observe through separate WebRTC peer')
-    expect(boardVideoDoc).toContain('video viewing does not grant MCP active control')
+    expect(boardVideoDoc).toContain('video viewing does not grant control authority')
     expect(boardVideoDoc).toContain('viewerConnected` is a coarse observability boolean')
     expect(boardVideoDoc).toContain('It is not an')
     expect(boardVideoDoc).toContain('admission-control signal')

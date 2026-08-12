@@ -1198,9 +1198,23 @@ class VersionEnvironmentTests(unittest.TestCase):
             # Genuinely per-device material stays with the device.
             self.assertTrue((device_dir / "manifest.toml").is_file())
             self.assertTrue((device_dir / "aws").is_dir())
-            # The local protocols are device-independent now, so no device owns
-            # a proto package.
-            self.assertFalse((device_dir / "proto").exists())
+        # Unit uses only the shared board contracts. Cyberbrick's flight-control
+        # boundary is intentionally device-owned rather than a second copy of a
+        # shared board component.
+        self.assertFalse((REPO_ROOT / "devices" / "unit" / "proto").exists())
+        cyberbrick_mavlink = (
+            REPO_ROOT
+            / "devices"
+            / "cyberbrick"
+            / "proto"
+            / "txing"
+            / "board"
+            / "mavlink"
+            / "v1"
+            / "mavlink.proto"
+        ).read_text(encoding="utf-8")
+        self.assertIn("package txing.board.mavlink.v1;", cyberbrick_mavlink)
+        self.assertIn("service BoardMavlink {", cyberbrick_mavlink)
 
         # The device type is a build input, not a source axis.
         for cmakelists in (
@@ -1431,10 +1445,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         # A Pi has no RTC and boots far in the past; TLS fails until the
         # clock is stepped, so the daemon gates on it.
         self.assertIn("clock is not confirmed synchronized", cyberbrick_board_docs)
-        self.assertIn(
-            "dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4",
-            cyberbrick_board_docs,
-        )
+        self.assertIn("dtoverlay=pwm-2chan", cyberbrick_board_docs)
         # Camera capture needs more than libcamera linkage: the rpi pipeline
         # handler and IPA, a udev daemon for libcamera's enumerator, firmware
         # autodetection, and the codec/ISP modules. Every one of these missing
@@ -1572,7 +1583,7 @@ class VersionEnvironmentTests(unittest.TestCase):
 
         self.assertIn("components/board.md", docs_index)
         self.assertIn(
-            "`cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`",
+            "`cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mavlink`, `video`",
             docs_index,
         )
 

@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package txing.board.mavlink_bridge.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// The Cyberbrick KVS master calls this daemon-owned bridge. The daemon is the
+// sole authority for session identity, active ownership, lease epochs,
+// takeover, REDCON, and cloud state. Opening a peer never grants control.
+service BoardMavlinkBridge {
+  rpc GetControlChannelConfig(WorkerHello) returns (ControlChannelConfig);
+  rpc RefreshControlChannelCredentials(RefreshCredentialsRequest) returns (KvsCredentials);
+  rpc OpenPeer(OpenPeerRequest) returns (OpenPeerResponse);
+  rpc HandleControlMessage(ControlMessageRequest) returns (ControlMessageResponse);
+  rpc ExchangeFrames(stream PeerFrame) returns (stream PeerFrame);
+  rpc ClosePeer(ClosePeerRequest) returns (Ack);
+}
+
+message Ack {}
+
+message WorkerHello {
+  string protocol_version = 1;
+  string worker_name = 2;
+  string worker_version = 3;
+}
+
+message KvsCredentials {
+  string access_key_id = 1;
+  string secret_access_key = 2;
+  string session_token = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message ControlChannelConfig {
+  string region = 1;
+  string channel_name = 2;
+  string client_id = 3;
+  string data_channel_label = 4;
+  bool data_channel_ordered = 5;
+  bool data_channel_reliable = 6;
+  KvsCredentials credentials = 7;
+}
+
+message RefreshCredentialsRequest {}
+
+message OpenPeerRequest {
+  string peer_id = 1;
+}
+
+message OpenPeerResponse {
+  // Assigned by the daemon and used by every later bridge request for this
+  // peer. It is an identity, not proof of active-control authority.
+  string session_id = 1;
+}
+
+// json must validate against mavlink-webrtc.schema.json. It carries one of
+// control.get_state, control.activate, control.renew_active, or
+// control.release_active request envelopes.
+message ControlMessageRequest {
+  string session_id = 1;
+  string json = 2;
+}
+
+// json is either a stable successful state/mutation response envelope or a
+// stable control.error envelope from the daemon.
+message ControlMessageResponse {
+  string json = 1;
+}
+
+// Each value contains one complete, unsigned MAVLink 2 common-dialect frame.
+// Client-to-server values are candidate uplink frames. Server-to-client values
+// are daemon-authorized telemetry broadcasts for the addressed peer.
+message PeerFrame {
+  string session_id = 1;
+  bytes frame = 2;
+}
+
+message ClosePeerRequest {
+  string session_id = 1;
+  string reason = 2;
+}

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from aws.device_catalog import (
+    DeviceManifestError,
     DeviceTypeNotFoundError,
     discover_repo_root,
     list_loadable_device_types,
@@ -56,7 +57,7 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(manifest.web_adapter, "web/unit-adapter.tsx")
 
-    def test_loads_cyberbrick_manifest_with_unit_parity(self) -> None:
+    def test_loads_cyberbrick_manifest_with_mavlink_contract(self) -> None:
         manifest = load_device_manifest("cyberbrick", repo_root=REPO_ROOT)
 
         self.assertEqual(manifest.type, "cyberbrick")
@@ -64,26 +65,31 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.display_name, "Cyberbrick")
         self.assertEqual(
             manifest.capabilities,
-            ("sparkplug", "ble", "power", "board", "mcp", "video"),
+            ("sparkplug", "ble", "power", "board", "mavlink", "video"),
         )
         self.assertEqual(manifest.compatible_rig_types, ("raspi",))
         self.assertEqual(manifest.redcon_command_levels, (4, 3, 2, 1))
         self.assertEqual(
             manifest.redcon_rules,
             {
-                1: ("sparkplug", "ble", "power", "board", "mcp", "video"),
-                2: ("sparkplug", "ble", "power", "board", "mcp"),
+                1: ("sparkplug", "ble", "power", "board", "mavlink", "video"),
+                2: ("sparkplug", "ble", "power", "board", "mavlink"),
                 3: ("sparkplug", "ble", "power"),
                 4: ("sparkplug", "ble"),
             },
         )
+        self.assertEqual(manifest.redcon_metric_rules, {1: ("mavlinkArmed",)})
         self.assertEqual(
             [contract.name for contract in manifest.shadows.values()],
-            ["sparkplug", "ble", "power", "board", "mcp", "video"],
+            ["sparkplug", "ble", "power", "board", "mavlink", "video"],
         )
         self.assertEqual(
             manifest.render_board_video_channel_name(device_id="cyberbrick-a1"),
             "cyberbrick-a1-board-video",
+        )
+        self.assertEqual(
+            manifest.render_mavlink_channel_name(device_id="cyberbrick-a1"),
+            "cyberbrick-a1-mavlink",
         )
         self.assertEqual(manifest.web_adapter, "web/cyberbrick-adapter.tsx")
         for shadow_name in manifest.capabilities:
@@ -227,7 +233,7 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             capabilities["cyberbrick"],
-            ("sparkplug", "ble", "power", "board", "mcp", "video"),
+            ("sparkplug", "ble", "power", "board", "mavlink", "video"),
         )
         self.assertEqual(capabilities["cloud-mcu"], ("sparkplug", "sqs", "power", "ecs"))
         self.assertEqual(capabilities["weather"], ("sparkplug", "ble", "power", "weather"))
@@ -244,7 +250,7 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             capabilities_for_thing_type("cyberbrick", repo_root=REPO_ROOT),
-            ("sparkplug", "ble", "power", "board", "mcp", "video"),
+            ("sparkplug", "ble", "power", "board", "mavlink", "video"),
         )
         self.assertEqual(
             capabilities_for_thing_type("cloud-mcu", repo_root=REPO_ROOT),
@@ -311,6 +317,26 @@ adapter = "web/sensor-adapter.tsx"
         self.assertEqual(manifest.capabilities, ("sparkplug", "sensor-data"))
         self.assertEqual(manifest.compatible_rig_types, ("sensor-rig",))
         self.assertEqual(manifest.shadow_contract("sensor-data").name, "sensor-data")
+
+    def test_rejects_manifest_with_mcp_and_mavlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            (repo_root / "justfile").write_text("\n", encoding="utf-8")
+            device_dir = repo_root / "devices" / "invalid"
+            device_dir.mkdir(parents=True)
+            (device_dir / "manifest.toml").write_text(
+                """
+type = "invalid"
+device_name = "invalid"
+display_name = "Invalid"
+capabilities = ["sparkplug", "mcp", "mavlink"]
+compatible_rig_types = ["raspi"]
+""".strip(),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(DeviceManifestError, "mutually exclusive"):
+                load_device_manifest("invalid", repo_root=repo_root)
 
 
 if __name__ == "__main__":

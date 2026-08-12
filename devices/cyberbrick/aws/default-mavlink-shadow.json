@@ -1,0 +1,24 @@
+{
+  "state": {
+    "reported": {
+      "link": {
+        "state": "unavailable",
+        "heartbeatFresh": false,
+        "mavlinkWireProtocolVersion": "2.0",
+        "dialect": "common"
+      },
+      "target": {
+        "systemId": null,
+        "componentId": null
+      },
+      "armed": false,
+      "mode": null,
+      "peers": {
+        "connected": 0,
+        "observers": 0
+      },
+      "activeControl": null,
+      "errors": []
+    }
+  }
+}

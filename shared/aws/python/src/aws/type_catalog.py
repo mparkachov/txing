@@ -200,12 +200,22 @@ def _device_record(manifest: DeviceManifest, *, rig_type: str) -> dict[str, Any]
             },
         }
     )
-    if manifest.board_video_channel_template is not None:
-        record["resources"] = {
-            "boardVideo": {
-                "channelName": manifest.board_video_channel_template,
-            }
+    if manifest.redcon_metric_rules:
+        record["redconMetricRules"] = {
+            str(level): list(metrics)
+            for level, metrics in sorted(manifest.redcon_metric_rules.items())
         }
+    resources: dict[str, dict[str, str]] = {}
+    if manifest.board_video_channel_template is not None:
+        resources["boardVideo"] = {
+            "channelName": manifest.board_video_channel_template,
+        }
+    if manifest.mavlink_channel_template is not None:
+        resources["mavlink"] = {
+            "channelName": manifest.mavlink_channel_template,
+        }
+    if resources:
+        record["resources"] = resources
     return record
 
 

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/cyberbrick-mavlink-webrtc-control-v1.schema.json",
+  "title": "Cyberbrick MAVLink WebRTC control envelopes v1",
+  "description": "JSON text messages for the ordered, reliable txing.mavlink.v1 RTCDataChannel. Binary messages contain exactly one complete unsigned MAVLink 2 common-dialect frame.",
+  "oneOf": [
+    { "$ref": "#/$defs/getStateRequest" },
+    { "$ref": "#/$defs/activateRequest" },
+    { "$ref": "#/$defs/renewRequest" },
+    { "$ref": "#/$defs/releaseRequest" },
+    { "$ref": "#/$defs/successResponse" },
+    { "$ref": "#/$defs/errorResponse" }
+  ],
+  "$defs": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "activeControl": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["sessionId", "actor", "epoch"],
+      "properties": {
+        "sessionId": { "type": "string", "minLength": 1 },
+        "actor": { "type": "string", "minLength": 1 },
+        "epoch": { "$ref": "#/$defs/epoch" }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epoch", "leaseTtlMs", "activeControl"],
+      "properties": {
+        "epoch": { "$ref": "#/$defs/epoch" },
+        "leaseTtlMs": { "const": 5000 },
+        "activeControl": { "$ref": "#/$defs/activeControl" }
+      }
+    },
+    "getStateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "requestId"],
+      "properties": {
+        "type": { "const": "control.get_state" },
+        "requestId": { "$ref": "#/$defs/requestId" }
+      }
+    },
+    "activateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "requestId", "actor", "takeover"],
+      "properties": {
+        "type": { "const": "control.activate" },
+        "requestId": { "$ref": "#/$defs/requestId" },
+        "actor": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "takeover": { "type": "boolean" }
+      }
+    },
+    "renewRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "requestId", "epoch"],
+      "properties": {
+        "type": { "const": "control.renew_active" },
+        "requestId": { "$ref": "#/$defs/requestId" },
+        "epoch": { "$ref": "#/$defs/epoch" }
+      }
+    },
+    "releaseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "requestId", "epoch"],
+      "properties": {
+        "type": { "const": "control.release_active" },
+        "requestId": { "$ref": "#/$defs/requestId" },
+        "epoch": { "$ref": "#/$defs/epoch" }
+      }
+    },
+    "successResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "requestId", "state"],
+      "properties": {
+        "type": {
+          "enum": ["control.state", "control.activated", "control.renewed", "control.released"]
+        },
+        "requestId": { "$ref": "#/$defs/requestId" },
+        "state": { "$ref": "#/$defs/state" }
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "requestId", "code"],
+      "properties": {
+        "type": { "const": "control.error" },
+        "requestId": { "$ref": "#/$defs/requestId" },
+        "code": { "enum": ["control_busy", "stale_epoch", "invalid_request"] },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

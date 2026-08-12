@@ -167,6 +167,50 @@ def _optional_redcon_rules(
     return dict(sorted(rules.items()))
 
 
+def _optional_redcon_metric_rules(
+    payload: dict[str, Any],
+    key: str,
+    *,
+    manifest_file: Path,
+) -> dict[int, tuple[str, ...]]:
+    value = payload.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise DeviceManifestError(f"{manifest_file} field {key!r} must be a table when set")
+    rules: dict[int, tuple[str, ...]] = {}
+    for raw_level, raw_metrics in value.items():
+        try:
+            level = int(raw_level)
+        except (TypeError, ValueError) as err:
+            raise DeviceManifestError(
+                f"{manifest_file} field {key!r} keys must be REDCON levels"
+            ) from err
+        if level < 1 or level > 4:
+            raise DeviceManifestError(
+                f"{manifest_file} field {key!r} keys must be REDCON levels 1 through 4"
+            )
+        if not isinstance(raw_metrics, list) or not raw_metrics:
+            raise DeviceManifestError(
+                f"{manifest_file} field {key!r}.{raw_level} must be a non-empty string array"
+            )
+        metrics: list[str] = []
+        seen: set[str] = set()
+        for metric in raw_metrics:
+            if not isinstance(metric, str) or not metric.strip() or metric.strip() != metric:
+                raise DeviceManifestError(
+                    f"{manifest_file} field {key!r}.{raw_level} must contain trimmed non-empty strings"
+                )
+            if metric in seen:
+                raise DeviceManifestError(
+                    f"{manifest_file} field {key!r}.{raw_level} contains duplicate metric {metric!r}"
+                )
+            seen.add(metric)
+            metrics.append(metric)
+        rules[level] = tuple(metrics)
+    return dict(sorted(rules.items()))
+
+
 def _validate_capabilities(
     capabilities: tuple[str, ...],
     *,
@@ -176,6 +220,10 @@ def _validate_capabilities(
     if "sparkplug" not in seen:
         raise DeviceManifestError(
             f"{manifest_file} capability list must include 'sparkplug'"
+        )
+    if "mcp" in seen and "mavlink" in seen:
+        raise DeviceManifestError(
+            f"{manifest_file} capabilities 'mcp' and 'mavlink' are mutually exclusive"
         )
     return capabilities
 
@@ -219,11 +267,13 @@ class DeviceManifest:
     compatible_rig_types: tuple[str, ...]
     redcon_command_levels: tuple[int, ...]
     redcon_rules: dict[int, tuple[str, ...]]
+    redcon_metric_rules: dict[int, tuple[str, ...]]
     shadows: dict[str, DeviceShadowContract]
     web: DeviceWebContract
     manifest_file: Path
     repo_root: Path
     board_video_channel_template: str | None = None
+    mavlink_channel_template: str | None = None
 
     @property
     def device_dir(self) -> Path:
@@ -254,6 +304,12 @@ class DeviceManifest:
 
     def render_board_video_channel_name(self, *, device_id: str) -> str | None:
         template = self.board_video_channel_template
+        if template is None:
+            return None
+        return template.format(device_id=device_id)
+
+    def render_mavlink_channel_name(self, *, device_id: str) -> str | None:
+        template = self.mavlink_channel_template
         if template is None:
             return None
         return template.format(device_id=device_id)
@@ -333,6 +389,11 @@ def _load_manifest(
         manifest_file=manifest_file,
         capabilities=capabilities,
     )
+    redcon_metric_rules = _optional_redcon_metric_rules(
+        raw,
+        "redcon_metric_rules",
+        manifest_file=manifest_file,
+    )
     shadows = _load_shadow_contracts(
         raw,
         manifest_file=manifest_file,
@@ -342,6 +403,7 @@ def _load_manifest(
 
     resources = raw.get("resources")
     board_video_channel_template: str | None = None
+    mavlink_channel_template: str | None = None
     if resources is not None:
         if not isinstance(resources, dict):
             raise DeviceManifestError(
@@ -358,6 +420,25 @@ def _load_manifest(
                 "channel_name",
                 manifest_file=manifest_file,
             )
+        mavlink = resources.get("mavlink")
+        if mavlink is not None:
+            if not isinstance(mavlink, dict):
+                raise DeviceManifestError(
+                    f"{manifest_file} field 'resources.mavlink' must be a table"
+                )
+            mavlink_channel_template = _require_text(
+                mavlink,
+                "channel_name",
+                manifest_file=manifest_file,
+            )
+    if "mavlink" in capabilities and mavlink_channel_template is None:
+        raise DeviceManifestError(
+            f"{manifest_file} capability 'mavlink' requires resources.mavlink.channel_name"
+        )
+    if "mavlink" not in capabilities and mavlink_channel_template is not None:
+        raise DeviceManifestError(
+            f"{manifest_file} resources.mavlink requires the 'mavlink' capability"
+        )
 
     return DeviceManifest(
         type=manifest_type,
@@ -367,11 +448,13 @@ def _load_manifest(
         compatible_rig_types=compatible_rig_types,
         redcon_command_levels=redcon_command_levels,
         redcon_rules=redcon_rules,
+        redcon_metric_rules=redcon_metric_rules,
         shadows=shadows,
         web=web,
         manifest_file=manifest_file,
         repo_root=repo_root,
         board_video_channel_template=board_video_channel_template,
+        mavlink_channel_template=mavlink_channel_template,
     )
 
 

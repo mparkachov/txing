@@ -9,6 +9,7 @@ func TestReconstructsRedconRulesFromSSMLeafParameters(t *testing.T) {
 		{"/txing/town/raspi/power/redconCommandLevels", "4,3"},
 		{"/txing/town/raspi/power/redconRules/4", "sparkplug,ble"},
 		{"/txing/town/raspi/power/redconRules/3", "sparkplug,ble,power"},
+		{"/txing/town/raspi/cyberbrick/redconMetricRules/1", "mavlinkArmed"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -21,6 +22,7 @@ func TestReconstructsRedconRulesFromSSMLeafParameters(t *testing.T) {
 		t.Fatalf("redcon levels = %#v", record.RedconCommandLevels)
 	}
 	assertStrings(t, record.RedconRules[3], []string{"sparkplug", "ble", "power"})
+	assertStrings(t, record.RedconMetricRules[1], []string{"mavlinkArmed"})
 }
 
 func assertStrings(t *testing.T, got []string, want []string) {

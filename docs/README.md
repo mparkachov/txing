@@ -31,10 +31,11 @@ design notes have been folded into the owning component guides.
 ## Contracts
 
 - [Unit device contracts](./contracts/unit-device-contracts.md)
+- [Cyberbrick MAVLink capability contract](./contracts/cyberbrick-mavlink.md)
 - [Sparkplug lifecycle](./sparkplug-lifecycle.md)
 - [Unit thing shadow model](../devices/unit/docs/thing-shadow.md)
 - [Unit device-rig shadow contract](../devices/unit/docs/device-rig-shadow-spec.md)
-- [Unit board video contract](../devices/unit/docs/board-video.md)
+- [Shared board video contract](./components/board-video.md)
 - [Board video bridge gRPC contract](./contracts/board-video-bridge.md)
 
 ## Current Named-Shadow Capabilities
@@ -47,7 +48,7 @@ capabilities for each AWS IoT ThingType:
 - `cloud`: `sparkplug`
 - `local`: `sparkplug`
 - `unit`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
-- `cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
+- `cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mavlink`, `video`
 - `cloud-mcu`: `sparkplug`, `sqs`, `power`, `ecs`
 - `weather`: `sparkplug`, `ble`, `power`, `weather`
 - `power`: `sparkplug`, `ble`, `power`

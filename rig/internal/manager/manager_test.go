@@ -61,6 +61,24 @@ func unitInventory() protocol.InventoryDevice {
 	}
 }
 
+func cyberbrickInventory() protocol.InventoryDevice {
+	return protocol.InventoryDevice{
+		ThingName:           "cyberbrick-1",
+		ThingType:           "cyberbrick",
+		Capabilities:        []string{"sparkplug", "ble", PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability},
+		RedconCommandLevels: []uint8{4, 3, 2, 1},
+		RedconRules: map[uint8][]string{
+			4: []string{"sparkplug", "ble"},
+			3: []string{"sparkplug", "ble", PowerCapability},
+			2: []string{"sparkplug", "ble", PowerCapability, BoardCapability, MAVLinkCapability},
+			1: []string{"sparkplug", "ble", PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability},
+		},
+		RedconMetricRules: map[uint8][]string{
+			1: []string{protocol.MavlinkArmedMetric},
+		},
+	}
+}
+
 func capabilityState(adapterID string, thingName string, capabilities map[string]bool, metrics map[string]protocol.MetricValue, observedAtMS uint64, seq uint64) protocol.CapabilityState {
 	if metrics == nil {
 		metrics = map[string]protocol.MetricValue{}
@@ -104,6 +122,57 @@ func TestRedconSelectionIgnoresRulesOutsideCommandLevels(t *testing.T) {
 
 	if got := redconValue(t, SelectBestRedcon(inventory.RedconRules, inventory.RedconCommandLevels, capabilities)); got != 4 {
 		t.Fatalf("redcon = %d, want 4", got)
+	}
+}
+
+func TestCyberbrickMavlinkArmedMetricGatesRedconOneWithoutPublishingIt(t *testing.T) {
+	state := NewDeviceRuntimeState(cyberbrickInventory())
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.rig.BleConnectivity",
+		"cyberbrick-1",
+		map[string]bool{"sparkplug": true, "ble": true, PowerCapability: true},
+		nil,
+		1000,
+		1,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.cyberbrick.Daemon",
+		"cyberbrick-1",
+		map[string]bool{BoardCapability: true, MAVLinkCapability: true, VideoCapability: true},
+		map[string]protocol.MetricValue{protocol.MavlinkArmedMetric: protocol.MetricBoolean(false)},
+		1000,
+		2,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	first := state.Snapshot(1000)
+	if got := redconValue(t, first.Redcon); got != 2 {
+		t.Fatalf("disarmed Cyberbrick REDCON = %d, want 2", got)
+	}
+	publication, err := state.DecidePublication(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, metric := range publication.Metrics {
+		if metric.Name == protocol.MavlinkArmedMetric {
+			t.Fatal("mavlinkArmed must remain an internal REDCON input")
+		}
+	}
+
+	if err := state.ObserveState(capabilityState(
+		"dev.txing.cyberbrick.Daemon",
+		"cyberbrick-1",
+		map[string]bool{BoardCapability: true, MAVLinkCapability: true, VideoCapability: true},
+		map[string]protocol.MetricValue{protocol.MavlinkArmedMetric: protocol.MetricBoolean(true)},
+		1100,
+		3,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if got := redconValue(t, state.Snapshot(1100).Redcon); got != 1 {
+		t.Fatalf("armed Cyberbrick REDCON = %d, want 1", got)
 	}
 }
 

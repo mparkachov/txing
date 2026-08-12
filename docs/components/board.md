@@ -1,9 +1,9 @@
 # Board
 
 The board is the device-side Raspberry Pi. It is power-switched by the MCU, runs
-the root-owned Go daemon plus the native KVS master and hardware worker under
-OpenRC, publishes board-owned runtime state, and exposes board MCP for motion
-control.
+the root-owned Go daemon plus native workers under OpenRC, and publishes
+board-owned runtime state. Unit exposes board MCP for motion control; Cyberbrick
+uses the MAVLink contract documented below.
 
 One implementation serves every board device type. The daemon, KVS master, and
 hardware worker are built once from `devices/common/board/`, with the device type
@@ -59,10 +59,11 @@ this document is device-specific.
 | --- | --- | --- |
 | Daemon binary | `txing-unit-daemon` | `txing-cyberbrick-daemon` |
 | KVS master binary | `txing-unit-kvs-master` | `txing-cyberbrick-kvs-master` |
-| Hardware worker binary | `txing-unit-hardware-worker` | `txing-cyberbrick-hardware-worker` |
+| Hardware worker binary | `txing-unit-hardware-worker` | none after MAVLink cutover |
 | Daemon config directory | `/root/.config/txing/unit-daemon` | `/root/.config/txing/cyberbrick-daemon` |
-| Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | `/run/txing-cyberbrick-hardware-worker/cyberbrick-hardware.sock` |
-| MCP adapter id | `dev.txing.unit.Daemon` | `dev.txing.cyberbrick.Daemon` |
+| Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | none after MAVLink cutover |
+| MCP adapter id | `dev.txing.unit.Daemon` | not applicable |
+| MAVLink socket | not applicable | `/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock` |
 | Release version file | `release/versions/unit` | `release/versions/cyberbrick` |
 | Release tag prefix | `unit-v` | `cyberbrick-v` |
 | Device manifest | `devices/unit/manifest.toml` | `devices/cyberbrick/manifest.toml` |
@@ -101,10 +102,12 @@ sockets using two device-independent gRPC packages, defined once in
   daemon calls it for actuator readiness, `cmd_vel`, and stop requests.
   Contract: [Hardware worker](../contracts/unit-hardware-worker.md).
 
-Neither package carries a device name, so the same binaries speak the same
-contracts on every device type. The three binaries upgrade as a set; see
-[Maintenance](#maintenance) for why a partial upgrade is the worst failure this
-board has.
+Neither package carries a device name. They remain the shared Unit board
+contracts. Cyberbrick is a device-specific exception: it does not expose Board
+MCP and instead has the dedicated local service and daemon bridge in the
+[Cyberbrick MAVLink capability contract](../contracts/cyberbrick-mavlink.md).
+The three common binaries upgrade as a set; see [Maintenance](#maintenance) for
+why a partial upgrade is the worst failure this board has.
 
 ## Responsibilities
 
@@ -129,19 +132,23 @@ board has.
 ## REDCON Contract
 
 The ladder is declared per device type in `devices/<device>/manifest.toml`.
-For both current board device types:
+For Unit:
 
 - `REDCON 4`: BLE GATT is confirmed commandable and the device is in the sleep state.
 - `REDCON 3`: BLE GATT is confirmed commandable and MCU-controlled wakeup power/D1 is enabled.
 - `REDCON 2`: board and MCP are available; video is unavailable or not ready.
 - `REDCON 1`: board, MCP, and video are available.
 
-The board publishes retained v2 capability state for `board`, `mcp`, and
-`video`. `txing-sparkplug-manager` consumes that retained state directly for
-REDCON projection. When BLE confirms REDCON `4` / `power=false`, Sparkplug
-projection clears board-owned capabilities and does not reuse stale retained
-board state on the next wake; fresh board daemon state must arrive before
-`board`, `mcp`, or `video` become available again.
+For Cyberbrick, MAVLink replaces MCP. REDCON2 requires board and MAVLink;
+REDCON1 additionally requires video and the internal `mavlinkArmed` rule.
+
+The board publishes retained v2 capability state for `board`, the
+device-specific control capability, and `video`. `txing-sparkplug-manager`
+consumes that retained state directly for REDCON projection. When BLE confirms
+REDCON `4` / `power=false`, Sparkplug projection clears board-owned capabilities
+and does not reuse stale retained board state on the next wake; fresh board
+daemon state must arrive before the device's control capability can become
+available again.
 
 ## Retained AWS IoT Topics
 
@@ -150,13 +157,18 @@ freshness signals are retained with a MQTT 5 Message Expiry Interval equal to
 `TXING_CAPABILITY_TTL_SECONDS`, which defaults to `150` seconds:
 
 - `txings/<device_id>/capability/v2/state`
-- `txings/<device_id>/mcp/status`
 - `txings/<device_id>/video/status`
+
+The device-specific control status is retained separately: Unit uses
+`txings/<device_id>/mcp/status`; Cyberbrick uses
+`txings/<device_id>/mavlink/status`.
 
 Descriptor topics are retained discovery/config records and must not expire:
 
-- `txings/<device_id>/mcp/descriptor`
 - `txings/<device_id>/video/descriptor`
+
+The corresponding Unit MCP and Cyberbrick MAVLink descriptor topics use the
+same retention rule.
 
 Existing retained AWS IoT messages that were published before expiry was added
 are replaced only when the daemon republishes the same topic. Orphaned old
@@ -219,11 +231,11 @@ and IPv6-preferred TURN behavior. `TXING_KVS_DISABLE_IPV4_TURN=true` is a
 validation override, not the normal runtime setting.
 
 The worker reports coarse state through `ReportVideoState`. `READY` means the
-worker is ready enough for the daemon to advertise WebRTC MCP transport; it is
-not a media-quality guarantee.
+worker is ready enough for the daemon to advertise video availability; it is
+not a media-quality guarantee or a control-transport readiness signal.
 
-The board video contract is documented in
-[devices/unit/docs/board-video.md](../../devices/unit/docs/board-video.md).
+The shared board video contract is documented in
+[Board video](./board-video.md).
 
 ### Motion Hardware
 

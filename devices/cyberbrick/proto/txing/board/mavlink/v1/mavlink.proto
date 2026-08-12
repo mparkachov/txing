@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+// The local flight-controller boundary for Cyberbrick only. The MAVLink
+// service listens on:
+// unix:/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock
+package txing.board.mavlink.v1;
+
+// BoardMavlink owns the local flight-controller transport. Callers must not
+// reinterpret frames, session ownership, or safety policy at this boundary.
+service BoardMavlink {
+  rpc GetStatus(GetStatusRequest) returns (MavlinkStatus);
+  rpc Exchange(stream MavlinkFrame) returns (stream MavlinkFrame);
+  rpc EnterSafeState(EnterSafeStateRequest) returns (EnterSafeStateResponse);
+}
+
+message GetStatusRequest {}
+
+// Exactly one complete, unsigned MAVLink 2 common-dialect frame. A frame
+// includes the MAVLink 2 header and checksum and contains no RTC framing.
+message MavlinkFrame {
+  bytes frame = 1;
+}
+
+enum LinkState {
+  LINK_STATE_UNSPECIFIED = 0;
+  LINK_STATE_STARTING = 1;
+  LINK_STATE_READY = 2;
+  LINK_STATE_DEGRADED = 3;
+  LINK_STATE_UNAVAILABLE = 4;
+}
+
+message MavlinkTarget {
+  uint32 system_id = 1;
+  uint32 component_id = 2;
+}
+
+message MavlinkError {
+  string code = 1;
+  string message = 2;
+}
+
+message MavlinkStatus {
+  LinkState link_state = 1;
+  bool heartbeat_fresh = 2;
+  MavlinkTarget target = 3;
+  bool armed = 4;
+  string mode = 5;
+  string mavlink_wire_protocol_version = 6;
+  repeated MavlinkError errors = 7;
+}
+
+// Safe state is best effort and bounded by the service implementation. It
+// requests neutral control and Hold, and may also request ordinary disarm.
+message EnterSafeStateRequest {
+  string reason = 1;
+  bool request_disarm = 2;
+}
+
+message EnterSafeStateResponse {
+  bool neutral_requested = 1;
+  bool hold_requested = 2;
+  bool disarm_requested = 3;
+  bool disarm_confirmed = 4;
+  repeated MavlinkError errors = 5;
+}

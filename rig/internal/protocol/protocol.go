@@ -20,6 +20,7 @@ const (
 	CapabilityHeartbeatTopicPrefix     = LocalTopicRoot + "/capability/heartbeat"
 	BleRedconMetric                    = "bleRedcon"
 	TransportRedconMetric              = "transportRedcon"
+	MavlinkArmedMetric                 = "mavlinkArmed"
 	CommandPending                     = "pending"
 	CommandAccepted                    = "accepted"
 	CommandSucceeded                   = "succeeded"
@@ -42,6 +43,7 @@ type InventoryDevice struct {
 	Capabilities        []string           `json:"capabilities"`
 	RedconCommandLevels []uint8            `json:"redconCommandLevels"`
 	RedconRules         map[uint8][]string `json:"redconRules"`
+	RedconMetricRules   map[uint8][]string `json:"redconMetricRules,omitempty"`
 }
 
 type rawInventoryDevice struct {
@@ -50,6 +52,7 @@ type rawInventoryDevice struct {
 	Capabilities        []string            `json:"capabilities"`
 	RedconCommandLevels []uint8             `json:"redconCommandLevels"`
 	RedconRules         map[string][]string `json:"redconRules"`
+	RedconMetricRules   map[string][]string `json:"redconMetricRules,omitempty"`
 }
 
 type MetricValue struct {
@@ -178,6 +181,19 @@ func (d InventoryDevice) Validate() error {
 			}
 		}
 	}
+	for level, metrics := range d.RedconMetricRules {
+		if err := ValidateRedcon(level, "redconMetricRules"); err != nil {
+			return err
+		}
+		if len(metrics) == 0 {
+			return fmt.Errorf("redconMetricRules.%d must not be empty", level)
+		}
+		for _, metric := range metrics {
+			if err := validateNonEmpty(metric, "redconMetricRules metric"); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -197,9 +213,13 @@ func (d InventoryDevice) MarshalJSON() ([]byte, error) {
 		Capabilities:        d.Capabilities,
 		RedconCommandLevels: d.RedconCommandLevels,
 		RedconRules:         make(map[string][]string, len(d.RedconRules)),
+		RedconMetricRules:   make(map[string][]string, len(d.RedconMetricRules)),
 	}
 	for level, capabilities := range d.RedconRules {
 		raw.RedconRules[strconv.Itoa(int(level))] = capabilities
+	}
+	for level, metrics := range d.RedconMetricRules {
+		raw.RedconMetricRules[strconv.Itoa(int(level))] = metrics
 	}
 	return json.Marshal(raw)
 }
@@ -217,12 +237,21 @@ func (d *InventoryDevice) UnmarshalJSON(payload []byte) error {
 		}
 		rules[uint8(level)] = capabilities
 	}
+	metricRules := make(map[uint8][]string, len(raw.RedconMetricRules))
+	for rawLevel, metrics := range raw.RedconMetricRules {
+		level, err := strconv.ParseUint(rawLevel, 10, 8)
+		if err != nil {
+			return fmt.Errorf("parse redconMetricRules level %q: %w", rawLevel, err)
+		}
+		metricRules[uint8(level)] = metrics
+	}
 	*d = InventoryDevice{
 		ThingName:           raw.ThingName,
 		ThingType:           raw.ThingType,
 		Capabilities:        raw.Capabilities,
 		RedconCommandLevels: raw.RedconCommandLevels,
 		RedconRules:         rules,
+		RedconMetricRules:   metricRules,
 	}
 	return nil
 }

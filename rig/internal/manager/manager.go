@@ -17,6 +17,7 @@ const (
 	PowerCapability     = "power"
 	BoardCapability     = "board"
 	MCPCapability       = "mcp"
+	MAVLinkCapability   = "mavlink"
 	VideoCapability     = "video"
 
 	NodeRedconBorn = uint8(1)
@@ -138,6 +139,8 @@ func (s *DeviceRuntimeState) Snapshot(nowMS uint64) DeviceSnapshot {
 		capabilities[capability] = false
 	}
 	metrics := map[string]protocol.MetricValue{}
+	redconMetrics := map[string]bool{}
+	redconMetricObservedAt := map[string]uint64{}
 
 	var latestBoardStateMS *uint64
 	for _, state := range s.adapterStates {
@@ -162,10 +165,21 @@ func (s *DeviceRuntimeState) Snapshot(nowMS uint64) DeviceSnapshot {
 				capabilities[capability] = current || available
 			}
 		}
+		for name, metric := range state.Metrics {
+			value, ok := metric.Value.(bool)
+			if !ok || metric.Datatype != "Boolean" {
+				continue
+			}
+			if observedAt, exists := redconMetricObservedAt[name]; exists && observedAt > state.ObservedAtMS {
+				continue
+			}
+			redconMetrics[name] = value
+			redconMetricObservedAt[name] = state.ObservedAtMS
+		}
 	}
 
 	applyCapabilityDependencyGates(capabilities, redcon4Observed)
-	redcon := SelectBestRedcon(s.inventory.RedconRules, s.inventory.RedconCommandLevels, capabilities)
+	redcon := SelectBestRedconWithMetrics(s.inventory.RedconRules, s.inventory.RedconMetricRules, s.inventory.RedconCommandLevels, capabilities, redconMetrics)
 	sparkplugAvailable := capabilities["sparkplug"]
 	return DeviceSnapshot{
 		ThingName:          s.inventory.ThingName,
@@ -233,29 +247,42 @@ func applyCapabilityDependencyGates(capabilities map[string]bool, bleRedcon4Obse
 	if bleRedcon4Observed {
 		forceCapabilityUnavailable(capabilities, PowerCapability)
 		forceCapabilityUnavailable(capabilities, BoardCapability)
-		forceCapabilityUnavailable(capabilities, MCPCapability)
+		forceControlCapabilitiesUnavailable(capabilities)
 		forceCapabilityUnavailable(capabilities, VideoCapability)
 	}
 	if !bleRedcon4Observed &&
 		capabilityIsDeclared(capabilities, PowerCapability) &&
 		!capabilityIsAvailable(capabilities, PowerCapability) &&
 		(capabilityIsAvailable(capabilities, BoardCapability) ||
-			capabilityIsAvailable(capabilities, MCPCapability) ||
+			controlCapabilityAvailable(capabilities) ||
 			capabilityIsAvailable(capabilities, VideoCapability)) {
 		capabilities[PowerCapability] = true
 	}
 	if capabilityIsDeclared(capabilities, PowerCapability) && !capabilityIsAvailable(capabilities, PowerCapability) {
 		forceCapabilityUnavailable(capabilities, BoardCapability)
-		forceCapabilityUnavailable(capabilities, MCPCapability)
+		forceControlCapabilitiesUnavailable(capabilities)
 		forceCapabilityUnavailable(capabilities, VideoCapability)
 	}
 	if capabilityIsDeclared(capabilities, BoardCapability) && !capabilityIsAvailable(capabilities, BoardCapability) {
-		forceCapabilityUnavailable(capabilities, MCPCapability)
+		forceControlCapabilitiesUnavailable(capabilities)
 		forceCapabilityUnavailable(capabilities, VideoCapability)
 	}
-	if capabilityIsDeclared(capabilities, MCPCapability) && !capabilityIsAvailable(capabilities, MCPCapability) {
+	if controlCapabilityDeclared(capabilities) && !controlCapabilityAvailable(capabilities) {
 		forceCapabilityUnavailable(capabilities, VideoCapability)
 	}
+}
+
+func controlCapabilityDeclared(capabilities map[string]bool) bool {
+	return capabilityIsDeclared(capabilities, MCPCapability) || capabilityIsDeclared(capabilities, MAVLinkCapability)
+}
+
+func controlCapabilityAvailable(capabilities map[string]bool) bool {
+	return capabilityIsAvailable(capabilities, MCPCapability) || capabilityIsAvailable(capabilities, MAVLinkCapability)
+}
+
+func forceControlCapabilitiesUnavailable(capabilities map[string]bool) {
+	forceCapabilityUnavailable(capabilities, MCPCapability)
+	forceCapabilityUnavailable(capabilities, MAVLinkCapability)
 }
 
 func stateReportsTransportRedcon4(state protocol.CapabilityState) bool {
@@ -324,6 +351,7 @@ func stateFreshAt(state protocol.CapabilityState, nowMS uint64) bool {
 func stateDeclaresBoardOwnedCapability(state protocol.CapabilityState) bool {
 	return capabilityIsDeclared(state.Capabilities, BoardCapability) ||
 		capabilityIsDeclared(state.Capabilities, MCPCapability) ||
+		capabilityIsDeclared(state.Capabilities, MAVLinkCapability) ||
 		capabilityIsDeclared(state.Capabilities, VideoCapability)
 }
 
@@ -343,6 +371,10 @@ func forceCapabilityUnavailable(capabilities map[string]bool, capability string)
 }
 
 func SelectBestRedcon(rules map[uint8][]string, commandLevels []uint8, capabilities map[string]bool) *uint8 {
+	return SelectBestRedconWithMetrics(rules, nil, commandLevels, capabilities, nil)
+}
+
+func SelectBestRedconWithMetrics(rules map[uint8][]string, metricRules map[uint8][]string, commandLevels []uint8, capabilities map[string]bool, metrics map[string]bool) *uint8 {
 	commandLevelSet := make(map[uint8]struct{}, len(commandLevels))
 	for _, level := range commandLevels {
 		commandLevelSet[level] = struct{}{}
@@ -357,6 +389,14 @@ func SelectBestRedcon(rules map[uint8][]string, commandLevels []uint8, capabilit
 			if !capabilities[capability] {
 				ready = false
 				break
+			}
+		}
+		if ready {
+			for _, metric := range metricRules[level] {
+				if !metrics[metric] {
+					ready = false
+					break
+				}
 			}
 		}
 		if ready && (best == nil || level < *best) {
