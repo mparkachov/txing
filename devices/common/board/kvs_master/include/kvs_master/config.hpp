@@ -20,13 +20,22 @@ struct CameraConfig {
     std::uint32_t intra = 30;
 };
 
+enum class KvsSessionKind {
+    kVideo,
+    kMavlinkControl,
+};
+
 struct RuntimeConfig {
     std::string region;
     std::string channel_name;
     std::string client_id = TXING_BOARD_KVS_MASTER_BINARY_NAME;
     std::optional<std::string> mcp_webrtc_socket_path;
     std::optional<std::string> board_video_bridge_socket_path;
+    std::optional<std::string> mavlink_bridge_socket_path;
     std::string mcp_data_channel_label = "txing.mcp.v1";
+    std::string mavlink_data_channel_label = "txing.mavlink.v1";
+    KvsSessionKind session_kind = KvsSessionKind::kVideo;
+    bool mcp_data_channel_enabled = false;
     bool prefer_ipv6 = true;
     bool disable_ipv4_turn = false;
     CameraConfig camera;

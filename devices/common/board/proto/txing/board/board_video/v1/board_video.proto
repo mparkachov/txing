@@ -35,6 +35,10 @@ message WorkerConfig {
   bool disable_ipv4_turn = 7;
 
   KvsCredentials credentials = 8;
+
+  // Only device profiles that expose MCP may accept the MCP WebRTC channel on
+  // their video session. Video-only profiles must leave this false.
+  bool mcp_data_channel_enabled = 9;
 }
 
 message RefreshCredentialsRequest {}

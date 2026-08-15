@@ -132,6 +132,39 @@ func MCPDescriptor(config RuntimeConfig, transportMode string) map[string]interf
 	}
 }
 
+func MAVLinkDescriptor(config RuntimeConfig) map[string]interface{} {
+	topicRoot, _ := BuildMAVLinkTopicRoot(config.ThingID)
+	descriptorTopic, _ := BuildMAVLinkDescriptorTopic(config.ThingID)
+	statusTopic, _ := BuildMAVLinkStatusTopic(config.ThingID)
+	return map[string]interface{}{
+		"serviceId":                  MAVLinkCapability,
+		"protocolVersion":            MAVLinkProtocolVersion,
+		"mavlinkWireProtocolVersion": MAVLinkWireProtocolVersion,
+		"dialect":                    MAVLinkDialect,
+		"topicRoot":                  topicRoot,
+		"descriptorTopic":            descriptorTopic,
+		"statusTopic":                statusTopic,
+		"transport":                  "webrtc-datachannel",
+		"channelName":                config.MAVLinkChannelName,
+		"region":                     config.AWSRegion,
+		"dataChannel": map[string]interface{}{
+			"label":         MAVLinkWebRTCDataChannelLabel,
+			"ordered":       true,
+			"reliable":      true,
+			"binaryMessage": "mavlink2-unsigned-common-frame",
+			"textMessage":   "cyberbrick-mavlink-control-json-v1",
+		},
+		"control": map[string]interface{}{
+			"sessionAuthority": "daemon",
+			"leaseTtlMs":       float64(DefaultMAVLinkActiveTTLMillis),
+		},
+		"serverInfo": map[string]interface{}{
+			"name":    DaemonBinaryName,
+			"version": DaemonVersion,
+		},
+	}
+}
+
 func VideoDescriptor(config RuntimeConfig) map[string]interface{} {
 	topicRoot, _ := BuildVideoTopicRoot(config.ThingID)
 	descriptorTopic, _ := BuildVideoDescriptorTopic(config.ThingID)

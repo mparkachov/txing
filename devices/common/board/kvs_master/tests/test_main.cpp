@@ -299,6 +299,8 @@ void TestCliParsing() {
             "/tmp/txing_board_mcp_webrtc.sock",
             "--board-video-bridge-socket-path",
             "/tmp/txing_board_video_bridge.sock",
+            "--mavlink-bridge-socket-path",
+            "/tmp/txing_mavlink_bridge.sock",
             "--prefer-ipv6",
             "false",
             "--disable-ipv4-turn",
@@ -328,6 +330,11 @@ void TestCliParsing() {
         parsed.config.board_video_bridge_socket_path == "/tmp/txing_board_video_bridge.sock",
         "CLI should parse optional board video bridge socket path"
     );
+    Expect(
+        parsed.config.mavlink_bridge_socket_path == "/tmp/txing_mavlink_bridge.sock",
+        "CLI should parse optional MAVLink bridge socket path"
+    );
+    Expect(parsed.config.mcp_data_channel_enabled, "explicit MCP socket should enable MCP data channel");
     Expect(!parsed.config.prefer_ipv6, "CLI should parse prefer IPv6");
     Expect(parsed.config.disable_ipv4_turn, "CLI should parse disable IPv4 TURN");
     Expect(parsed.config.camera.width == 1280, "CLI should parse width");
@@ -335,6 +342,23 @@ void TestCliParsing() {
     Expect(parsed.config.camera.framerate == 15, "CLI should parse framerate");
     Expect(parsed.config.camera.bitrate == 1'200'000, "CLI should parse bitrate");
     Expect(parsed.config.camera.intra == 15, "CLI should parse intra");
+}
+
+void TestMavlinkCapabilitySelectsTheDeviceDerivedBridgeSocket() {
+    const auto parsed = ParseCli(
+        {
+            TXING_BOARD_KVS_MASTER_BINARY_NAME,
+            "--region",
+            "eu-central-1",
+            "--channel-name",
+            "txing-board-video",
+        },
+        EnvFrom({{"TXING_DAEMON_CAPABILITIES", "board,mavlink,video"}})
+    );
+    Expect(
+        parsed.config.mavlink_bridge_socket_path == "/run/txing-unit-daemon/mavlink-bridge.sock",
+        "MAVLink capability should select the device-derived bridge socket"
+    );
 }
 
 void TestBridgeCliDoesNotRequireStaticWorkerConfig() {
@@ -666,6 +690,7 @@ void TestRuntimeReportsStoppedToBridgeOnCleanExit() {
 
 int main() {
     TestCliParsing();
+    TestMavlinkCapabilitySelectsTheDeviceDerivedBridgeSocket();
     TestBridgeCliDoesNotRequireStaticWorkerConfig();
     TestCliRequiresStaticWorkerConfigWithoutBridge();
     TestUsageText();

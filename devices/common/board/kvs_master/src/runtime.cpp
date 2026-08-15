@@ -1,6 +1,7 @@
 #include "kvs_master/runtime.hpp"
 
 #include "kvs_master/aws_env.hpp"
+#include "kvs_master/board_mavlink_bridge.hpp"
 #include "kvs_master/kvs_session.hpp"
 #include "kvs_master/markers.hpp"
 #include "kvs_master/version.hpp"
@@ -151,6 +152,70 @@ void ConfigureKvsNetworkEnvironment(const RuntimeConfig& config) {
     SetEnvironmentFlag("KVS_DISABLE_IPV4_TURN", config.disable_ipv4_turn, "ON");
 }
 
+void RunMavlinkControlLoop(const RuntimeConfig& config) noexcept {
+    if (!config.mavlink_bridge_socket_path.has_value()) {
+        return;
+    }
+
+    auto delay = kBridgeRetryInitialDelay;
+    while (!g_stop_requested.load()) {
+        try {
+            auto bridge = CreateBoardMavlinkBridgeClient(*config.mavlink_bridge_socket_path);
+            if (bridge == nullptr) {
+                throw std::runtime_error("MAVLink bridge client is not initialized");
+            }
+            bridge->ReportControlChannelState(false, "MAVLink control KVS is starting");
+            const auto channel = bridge->GetControlChannelConfig(
+                TXING_BOARD_KVS_MASTER_BINARY_NAME,
+                std::string(kTxingBoardKvsMasterVersion)
+            );
+            if (!channel.data_channel_ordered || !channel.data_channel_reliable) {
+                throw std::runtime_error("MAVLink bridge requires an ordered reliable data channel");
+            }
+
+            RuntimeConfig control_config = config;
+            control_config.region = channel.region;
+            control_config.channel_name = channel.channel_name;
+            control_config.client_id = channel.client_id;
+            control_config.mavlink_data_channel_label = channel.data_channel_label;
+            control_config.session_kind = KvsSessionKind::kMavlinkControl;
+            control_config.board_video_bridge_socket_path.reset();
+            control_config.mcp_webrtc_socket_path.reset();
+
+            ConfigureKvsNetworkEnvironment(control_config);
+            auto session = CreateKvsSession(control_config, channel.credentials.credentials);
+            if (session == nullptr) {
+                throw std::runtime_error("MAVLink KVS session is not initialized");
+            }
+            session->Start();
+            bridge->ReportControlChannelState(true, "");
+            const auto refresh_at = CredentialRefreshAt(channel.credentials.expires_at);
+            delay = kBridgeRetryInitialDelay;
+            while (!g_stop_requested.load() && std::chrono::system_clock::now() < refresh_at) {
+                if (const auto fatal_error = session->TakeFatalError()) {
+                    throw std::runtime_error(*fatal_error);
+                }
+                SleepUntilStopped(std::chrono::milliseconds(200));
+            }
+            session->Stop();
+            bridge->ReportControlChannelState(false, "MAVLink control KVS is restarting");
+        } catch (const std::exception& error) {
+            try {
+                auto bridge = CreateBoardMavlinkBridgeClient(*config.mavlink_bridge_socket_path);
+                if (bridge != nullptr) {
+                    bridge->ReportControlChannelState(false, error.what());
+                }
+            } catch (const std::exception&) {
+                // The daemon bridge can be unavailable during its own restart; retry
+                // remains bounded independently of the video worker.
+            }
+            std::fprintf(stderr, "WARN runtime: MAVLink control KVS unavailable: %s\n", error.what());
+            SleepUntilStopped(std::chrono::duration_cast<std::chrono::milliseconds>(delay));
+            delay = std::min(delay * 2, kBridgeRetryMaxDelay);
+        }
+    }
+}
+
 }  // namespace
 
 RuntimeHooks DefaultRuntimeHooks() {
@@ -179,23 +244,39 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
     g_stop_requested.store(false);
     InstallSignalHandlers();
 
+    // Start the data-only control loop before any camera or video session
+    // setup. A missing camera or unavailable video bridge must not prevent
+    // MAVLink signaling from retrying independently.
+    std::thread mavlink_control_thread;
+    if (config.mavlink_bridge_socket_path.has_value()) {
+        mavlink_control_thread = std::thread(RunMavlinkControlLoop, config);
+    }
+
     RuntimeConfig effective_config = config;
     std::unique_ptr<BoardVideoBridgeClient> bridge_client;
     AwsCredentials credentials;
     std::optional<std::chrono::system_clock::time_point> credential_refresh_at;
-    if (config.board_video_bridge_socket_path.has_value()) {
-        bridge_client = hooks.create_bridge_client(*config.board_video_bridge_socket_path);
-        if (bridge_client == nullptr) {
-            throw std::runtime_error("board video bridge client is not initialized");
+    try {
+        if (config.board_video_bridge_socket_path.has_value()) {
+            bridge_client = hooks.create_bridge_client(*config.board_video_bridge_socket_path);
+            if (bridge_client == nullptr) {
+                throw std::runtime_error("board video bridge client is not initialized");
+            }
+            auto worker_config = GetWorkerConfigWithRetry(*bridge_client);
+            worker_config.runtime_config.camera = config.camera;
+            worker_config.runtime_config.board_video_bridge_socket_path = config.board_video_bridge_socket_path;
+            effective_config = worker_config.runtime_config;
+            credentials = worker_config.credentials.credentials;
+            credential_refresh_at = CredentialRefreshAt(worker_config.credentials.expires_at);
+        } else {
+            credentials = hooks.resolve_aws_credentials();
         }
-        auto worker_config = GetWorkerConfigWithRetry(*bridge_client);
-        worker_config.runtime_config.camera = config.camera;
-        worker_config.runtime_config.board_video_bridge_socket_path = config.board_video_bridge_socket_path;
-        effective_config = worker_config.runtime_config;
-        credentials = worker_config.credentials.credentials;
-        credential_refresh_at = CredentialRefreshAt(worker_config.credentials.expires_at);
-    } else {
-        credentials = hooks.resolve_aws_credentials();
+    } catch (...) {
+        g_stop_requested.store(true);
+        if (mavlink_control_thread.joinable()) {
+            mavlink_control_thread.join();
+        }
+        throw;
     }
 
     ConfigureKvsNetworkEnvironment(effective_config);
@@ -203,6 +284,10 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
     auto capturer = hooks.create_video_capturer();
 
     if (kvs_session == nullptr || capturer == nullptr) {
+        g_stop_requested.store(true);
+        if (mavlink_control_thread.joinable()) {
+            mavlink_control_thread.join();
+        }
         throw std::runtime_error("runtime dependencies are not initialized");
     }
 
@@ -295,8 +380,25 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
         first_error = error.what();
     }
 
+    if (first_error && mavlink_control_thread.joinable()) {
+        // A video/camera failure must not tear down the independent MAVLink
+        // control signaling path. Keep this worker alive for the control loop
+        // until OpenRC asks it to stop; video readiness remains error until a
+        // supervised restart restores the video path.
+        TryReportVideoState(bridge_client.get(), BridgeVideoState::kError, 0, *first_error);
+        while (!g_stop_requested.load()) {
+            SleepUntilStopped(std::chrono::milliseconds(200));
+        }
+        first_error.reset();
+    }
+
     capturer->Stop();
     kvs_session->Stop();
+
+    g_stop_requested.store(true);
+    if (mavlink_control_thread.joinable()) {
+        mavlink_control_thread.join();
+    }
 
     if (first_error) {
         TryReportVideoState(bridge_client.get(), BridgeVideoState::kError, 0, *first_error);

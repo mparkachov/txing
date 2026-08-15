@@ -622,6 +622,19 @@ func TestBoardVideoBridgeWorkerConfigAndUnixSocketEvents(t *testing.T) {
 	if workerConfig.GetRegion() != "eu-central-1" || workerConfig.GetChannelName() != "unit-local-board-video" || workerConfig.GetClientId() != "unit-local-"+DeviceType+"-kvs-master" || !workerConfig.GetPreferIpv6() {
 		t.Fatalf("worker config mismatch: %#v", workerConfig)
 	}
+	if !workerConfig.GetMcpDataChannelEnabled() {
+		t.Fatalf("unit worker config must enable the MCP data channel: %#v", workerConfig)
+	}
+	config.Capabilities = []string{BoardCapability, MAVLinkCapability, VideoCapability}
+	cyberbrickWorkerConfig, err := BuildWorkerConfigResponse(config, IotTemporaryCredentials{
+		AccessKeyID: "akid", SecretAccessKey: "secret", SessionToken: "token", Expiration: "2026-05-14T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("build cyberbrick worker config: %v", err)
+	}
+	if cyberbrickWorkerConfig.GetMcpDataChannelEnabled() {
+		t.Fatalf("cyberbrick worker config must not enable MCP: %#v", cyberbrickWorkerConfig)
+	}
 	if _, err := client.ReportVideoState(ctx, &boardvideov1.VideoState{State: boardvideov1.VideoState_READY, ViewerCount: 1}); err != nil {
 		t.Fatalf("report video: %v", err)
 	}

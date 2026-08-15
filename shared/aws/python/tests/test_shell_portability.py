@@ -155,7 +155,7 @@ class ShellPortabilityTest(unittest.TestCase):
             )
         self.assertIn("deploy-ok", result.stdout)
 
-    def test_aws_cert_dispatch_selects_cyberbrick_daemon_bundle(self) -> None:
+    def test_aws_cert_dispatch_uses_shared_board_template_for_cyberbrick_bundle(self) -> None:
         script = textwrap.dedent(
             """\
             . shared/aws/scripts/aws_lib.sh
@@ -173,7 +173,7 @@ class ShellPortabilityTest(unittest.TestCase):
               printf '%s|%s|%s\n' "$1" "$5" "$7"
             }
             txing_generate_iot_certificate_bundle \
-              cyberbrick-a1 /rig-template /unit-template /cyberbrick-template /mac-template
+              cyberbrick-a1 /rig-template /board-template /mac-template
             """
         )
         result = subprocess.run(
@@ -187,5 +187,5 @@ class ShellPortabilityTest(unittest.TestCase):
 
         self.assertEqual(
             result.stdout.strip(),
-            "cyberbrick-a1|/cyberbrick-template|cyberbrick-daemon",
+            "cyberbrick-a1|/board-template|cyberbrick-daemon",
         )

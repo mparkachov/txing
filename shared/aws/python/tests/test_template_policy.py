@@ -239,7 +239,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("TxingDaemonCredentialRole:", template)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias:", template)
 
-    def test_aws_cert_recipe_uses_unit_daemon_specific_outputs(self) -> None:
+    def test_aws_cert_recipe_uses_shared_board_daemon_outputs(self) -> None:
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
         daemon_env_template = (
@@ -251,7 +251,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         root_gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
         self.assertIn("cert thing_id='':", aws_justfile)
-        self.assertIn("unit_daemon_env_template", aws_justfile)
+        self.assertIn("board_daemon_env_template", aws_justfile)
         self.assertIn("txing_generate_iot_certificate_bundle", aws_justfile)
         self.assertIn("DeviceDaemonIotPolicyName", aws_lib)
         self.assertIn("deviceType:unit", aws_lib)
@@ -293,6 +293,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             aws_lib,
         )
         self.assertIn("TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}", daemon_env_template)
+        self.assertIn("TXING_DAEMON_CAPABILITIES={{TXING_DAEMON_CAPABILITIES}}", daemon_env_template)
+        self.assertIn('daemon_capabilities="$(txing_cert_board_daemon_capabilities', aws_lib)
         # Local socket paths must stay out of the identity bundle so each
         # binary's compiled device-correct default applies; setting them here
         # breaks any board running another device type's binaries.
@@ -376,16 +378,17 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("AWS_STACK_NAME", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
 
-    def test_aws_cert_recipe_uses_cyberbrick_daemon_bundle_and_video_policy(self) -> None:
+    def test_aws_cert_recipe_uses_shared_board_daemon_bundle_and_video_policy(self) -> None:
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
         daemon_env_template = (
             REPO_ROOT / "devices" / "common" / "board" / "daemon" / "daemon.env.template"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("cyberbrick_daemon_env_template", aws_justfile)
+        self.assertIn("board_daemon_env_template", aws_justfile)
+        self.assertNotIn("cyberbrick_daemon_env_template", aws_justfile)
         self.assertIn("deviceType:cyberbrick)", aws_lib)
-        self.assertIn('"$cyberbrick_env_template"', aws_lib)
+        self.assertIn('"$board_env_template"', aws_lib)
         self.assertIn("cyberbrick-daemon", aws_lib)
         self.assertIn("DaemonKvsMaster", aws_lib)
         self.assertIn("kinesisvideo:ConnectAsMaster", aws_lib)
@@ -404,14 +407,10 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}",
             daemon_env_template,
         )
-        # Local socket paths must stay out of the identity bundle so each
-        # binary's compiled device-correct default applies; setting them here
-        # breaks any board running another device type's binaries.
-        self.assertNotIn(
-            "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=", daemon_env_template
-        )
-        self.assertNotIn("TXING_HARDWARE_WORKER_SOCKET_PATH=", daemon_env_template)
-        self.assertNotIn("txing-unit", daemon_env_template)
+        self.assertIn("TXING_DAEMON_CAPABILITIES={{TXING_DAEMON_CAPABILITIES}}", daemon_env_template)
+        self.assertIn("txing_cert_board_daemon_capabilities", aws_lib)
+        self.assertIn('index("mcp") != null and index("mavlink") != null', aws_lib)
+        self.assertFalse((REPO_ROOT / "devices" / "cyberbrick" / "daemon.env.template").exists())
 
     def test_device_kvs_master_permissions_do_not_change_office_viewer_permissions(self) -> None:
         template = _template_text()

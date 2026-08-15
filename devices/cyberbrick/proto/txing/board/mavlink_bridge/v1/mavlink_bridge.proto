@@ -10,6 +10,7 @@ import "google/protobuf/timestamp.proto";
 service BoardMavlinkBridge {
   rpc GetControlChannelConfig(WorkerHello) returns (ControlChannelConfig);
   rpc RefreshControlChannelCredentials(RefreshCredentialsRequest) returns (KvsCredentials);
+  rpc ReportControlChannelState(ControlChannelState) returns (Ack);
   rpc OpenPeer(OpenPeerRequest) returns (OpenPeerResponse);
   rpc HandleControlMessage(ControlMessageRequest) returns (ControlMessageResponse);
   rpc ExchangeFrames(stream PeerFrame) returns (stream PeerFrame);
@@ -43,6 +44,14 @@ message ControlChannelConfig {
 
 message RefreshCredentialsRequest {}
 
+// KVS reports control-channel readiness independently from video. A ready
+// state means signaling and the data-only master session are running; it does
+// not imply that an Office peer is connected.
+message ControlChannelState {
+  bool ready = 1;
+  string error = 2;
+}
+
 message OpenPeerRequest {
   string peer_id = 1;
 }
@@ -67,12 +76,18 @@ message ControlMessageResponse {
   string json = 1;
 }
 
-// Each value contains one complete, unsigned MAVLink 2 common-dialect frame.
-// Client-to-server values are candidate uplink frames. Server-to-client values
-// are daemon-authorized telemetry broadcasts for the addressed peer.
+// Each non-empty value contains one complete, unsigned MAVLink 2 common-
+// dialect frame. The first client-to-server value may have an empty frame only
+// to bind the stream to an OpenPeer session so an observer can receive
+// telemetry before it sends an uplink. All later client-to-server values are
+// candidate uplink frames. Server-to-client values are daemon-authorized
+// telemetry broadcasts for the addressed peer.
 message PeerFrame {
   string session_id = 1;
   bytes frame = 2;
+  // The daemon-issued active-control epoch. It is required for every uplink
+  // frame so a previous owner cannot continue sending after a takeover.
+  uint64 epoch = 3;
 }
 
 message ClosePeerRequest {

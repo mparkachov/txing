@@ -680,6 +680,11 @@ type RuntimeState struct {
 	capabilityManager *CapabilityManager
 	mcp               *McpServer
 	cmdVel            *CmdVelController
+	mavlink           *MAVLinkControlState
+	mavlinkStatus     MAVLinkRuntimeStatus
+	mavlinkKVSReady   bool
+	mavlinkKVSError   string
+	mavlinkFlight     MAVLinkFlightTransport
 	video             VideoRuntimeState
 }
 
@@ -692,24 +697,41 @@ func NewRuntimeStateWithHardware(config RuntimeConfig, hardware HardwareClient) 
 	if err != nil {
 		return nil, err
 	}
-	if hardware == nil {
-		hardware = NewGRPCHardwareClient(config.HardwareWorkerSocketPath, config.HardwareWorkerTimeout)
-	}
-	return &RuntimeState{
+	state := &RuntimeState{
 		config:            config,
 		capabilityManager: manager,
-		mcp:               NewMcpServer(time.Duration(DefaultMCPActiveTTLMillis) * time.Millisecond),
-		cmdVel:            NewCmdVelController(hardware),
 		video:             VideoRuntimeStarting(0),
-	}, nil
+	}
+	if capabilityEnabled(config.Capabilities, MCPCapability) {
+		state.mcp = NewMcpServer(time.Duration(DefaultMCPActiveTTLMillis) * time.Millisecond)
+		if hardware == nil {
+			hardware = NewGRPCHardwareClient(config.HardwareWorkerSocketPath, config.HardwareWorkerTimeout)
+		}
+		state.cmdVel = NewCmdVelController(hardware)
+	}
+	if capabilityEnabled(config.Capabilities, MAVLinkCapability) {
+		state.mavlink = NewMAVLinkControlState(
+			time.Duration(DefaultMAVLinkActiveTTLMillis)*time.Millisecond,
+			time.Duration(DefaultMAVLinkWatchdogMillis)*time.Millisecond,
+		)
+		state.mavlinkStatus = MAVLinkRuntimeStatus{LinkState: "starting"}
+	}
+	return state, nil
 }
 
 func (s *RuntimeState) PublishOnline(ctx context.Context, publisher Publisher, addresses DefaultRouteAddresses, observedAtMS uint64) error {
 	if err := s.publishBoardShadow(ctx, publisher, BuildOnlineBoardReport(addresses)); err != nil {
 		return err
 	}
-	if err := s.publishMCPDiscovery(ctx, publisher, observedAtMS); err != nil {
-		return err
+	if s.mcpEnabled() {
+		if err := s.publishMCPDiscovery(ctx, publisher, observedAtMS); err != nil {
+			return err
+		}
+	}
+	if s.mavlinkEnabled() {
+		if err := s.publishMAVLinkDiscovery(ctx, publisher); err != nil {
+			return err
+		}
 	}
 	if s.videoEnabled() {
 		s.video = VideoRuntimeStarting(observedAtMS)
@@ -733,6 +755,7 @@ func RunConnectedRuntime(ctx context.Context, config RuntimeConfig, publisher in
 	}
 	videoEvents := make(chan VideoWorkerEvent, 32)
 	mcpEvents := make(chan interface{}, 32)
+	mavlinkEvents := make(chan interface{}, 64)
 	var bridge *BoardVideoBridgeServerHandle
 	if capabilityEnabled(config.Capabilities, VideoCapability) {
 		bridge, err = StartBoardVideoBridgeServer(config, videoEvents, mcpEvents)
@@ -741,12 +764,24 @@ func RunConnectedRuntime(ctx context.Context, config RuntimeConfig, publisher in
 		}
 		defer bridge.Shutdown()
 	}
-	subscription, err := BuildMCPSessionC2SSubscription(config.ThingID)
-	if err != nil {
-		return err
+	var mavlinkBridge *MAVLinkBridgeServerHandle
+	if state.mavlinkEnabled() {
+		state.mavlinkFlight = StartMAVLinkFlightClient(ctx, config.MAVLinkServiceSocketPath, mavlinkEvents)
+		mavlinkBridge, err = StartMAVLinkBridgeServer(config, mavlinkEvents)
+		if err != nil {
+			return err
+		}
+		defer mavlinkBridge.Shutdown()
+		defer state.mavlinkFlight.Close()
 	}
-	if err := publisher.Subscribe(ctx, subscription); err != nil {
-		return err
+	if state.mcpEnabled() {
+		subscription, err := BuildMCPSessionC2SSubscription(config.ThingID)
+		if err != nil {
+			return err
+		}
+		if err := publisher.Subscribe(ctx, subscription); err != nil {
+			return err
+		}
 	}
 	if err := state.PublishOnline(ctx, publisher, DiscoverDefaultRouteAddresses(), nowMillis()); err != nil {
 		return err
@@ -773,6 +808,8 @@ func RunConnectedRuntime(ctx context.Context, config RuntimeConfig, publisher in
 			_ = state.HandleVideoEvent(ctx, publisher, event, nowMillis())
 		case event := <-mcpEvents:
 			_ = state.HandleMCPIPCEvent(ctx, publisher, event, nowMillis())
+		case event := <-mavlinkEvents:
+			_ = state.HandleMAVLinkBridgeEvent(ctx, publisher, event, nowMillis())
 		case <-heartbeat.C:
 			_ = state.RefreshCapabilities(ctx, publisher, nowMillis())
 		case <-watchdog.C:
@@ -784,8 +821,15 @@ func RunConnectedRuntime(ctx context.Context, config RuntimeConfig, publisher in
 }
 
 func (s *RuntimeState) RefreshCapabilities(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
-	if err := s.publishMCPStatus(ctx, publisher, observedAtMS); err != nil {
-		return err
+	if s.mcpEnabled() {
+		if err := s.publishMCPStatus(ctx, publisher, observedAtMS); err != nil {
+			return err
+		}
+	}
+	if s.mavlinkEnabled() {
+		if err := s.publishMAVLinkStatus(ctx, publisher); err != nil {
+			return err
+		}
 	}
 	return s.publishCapabilities(ctx, publisher, s.onlineCapabilities(), observedAtMS)
 }
@@ -799,12 +843,30 @@ func (s *RuntimeState) RefreshVideoStatus(ctx context.Context, publisher Publish
 }
 
 func (s *RuntimeState) PublishOffline(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
-	_, _ = s.cmdVel.Stop(ctx, true)
+	if s.mcpEnabled() {
+		_, _ = s.cmdVel.Stop(ctx, true)
+	}
+	if s.mavlinkEnabled() {
+		s.mavlink.active = nil
+		shutdownCtx, cancel := context.WithTimeout(ctx, mavlinkFlightCallTimeout)
+		_ = s.enterMAVLinkSafeState(shutdownCtx, "MAVLink daemon shutdown", true)
+		cancel()
+		s.mavlinkStatus = MAVLinkUnavailableStatus("")
+		s.mavlinkKVSReady = false
+		s.mavlinkKVSError = ""
+	}
 	if err := s.publishBoardShadow(ctx, publisher, BuildOfflineBoardReport()); err != nil {
 		return err
 	}
-	if err := s.publishMCPUnavailable(ctx, publisher, observedAtMS); err != nil {
-		return err
+	if s.mcpEnabled() {
+		if err := s.publishMCPUnavailable(ctx, publisher, observedAtMS); err != nil {
+			return err
+		}
+	}
+	if s.mavlinkEnabled() {
+		if err := s.publishMAVLinkStatus(ctx, publisher); err != nil {
+			return err
+		}
 	}
 	if s.videoEnabled() {
 		s.video = VideoRuntimeUnavailable(observedAtMS)
@@ -820,18 +882,37 @@ func (s *RuntimeState) CapabilitySeq() uint64 {
 }
 
 func (s *RuntimeState) TickWatchdogs(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
-	changed := s.mcp.ClearExpired(observedAtMS)
-	if changed {
-		_, _ = s.cmdVel.Stop(ctx, true)
+	if s.mcpEnabled() {
+		changed := s.mcp.ClearExpired(observedAtMS)
+		if changed {
+			_, _ = s.cmdVel.Stop(ctx, true)
+		}
+		motionChanged, _ := s.cmdVel.RefreshStatus(ctx)
+		if changed || motionChanged {
+			return s.publishMCPStatus(ctx, publisher, observedAtMS)
+		}
 	}
-	motionChanged, _ := s.cmdVel.RefreshStatus(ctx)
-	if changed || motionChanged {
-		return s.publishMCPStatus(ctx, publisher, observedAtMS)
+	if s.mavlinkEnabled() {
+		changed := s.mavlink.ClearExpired(observedAtMS)
+		safeRequired := changed || s.mavlink.WatchdogExpired(observedAtMS)
+		if safeRequired {
+			reason := "MAVLink control watchdog expired"
+			if changed {
+				reason = "MAVLink active-control lease expired"
+			}
+			s.requestMAVLinkSafeState(reason, false)
+		}
+		if changed {
+			return s.publishMAVLinkStatus(ctx, publisher)
+		}
 	}
 	return nil
 }
 
 func (s *RuntimeState) HandleMQTTEvent(ctx context.Context, publisher Publisher, event RuntimeMqttEvent, observedAtMS uint64) error {
+	if !s.mcpEnabled() {
+		return nil
+	}
 	if event.Disconnected {
 		s.mcp.active = nil
 		_, _ = s.cmdVel.Stop(ctx, true)
@@ -844,26 +925,31 @@ func (s *RuntimeState) HandleVideoEvent(ctx context.Context, publisher Publisher
 	if !s.videoEnabled() {
 		return nil
 	}
-	previousTransport := s.mcpTransportMode()
+	var previousTransport MCPTransportMode
+	if s.mcpEnabled() {
+		previousTransport = s.mcpTransportMode()
+	}
 	s.video.ApplyEvent(event, observedAtMS)
-	mcpStatusChanged := false
-	switch event.Kind {
-	case VideoWorkerMCPDataChannelClosed:
-		mcpStatusChanged = s.stopIfRequired(ctx, s.mcp.CloseSession(event.SessionID))
-	case VideoWorkerMCPDataChannelError:
-		if strings.TrimSpace(event.SessionID) != "" {
+	if s.mcpEnabled() {
+		mcpStatusChanged := false
+		switch event.Kind {
+		case VideoWorkerMCPDataChannelClosed:
 			mcpStatusChanged = s.stopIfRequired(ctx, s.mcp.CloseSession(event.SessionID))
+		case VideoWorkerMCPDataChannelError:
+			if strings.TrimSpace(event.SessionID) != "" {
+				mcpStatusChanged = s.stopIfRequired(ctx, s.mcp.CloseSession(event.SessionID))
+			}
 		}
-	}
-	nextTransport := s.mcpTransportMode()
-	if previousTransport != nextTransport {
-		if err := s.publishMCPDiscovery(ctx, publisher, observedAtMS); err != nil {
-			return err
+		nextTransport := s.mcpTransportMode()
+		if previousTransport != nextTransport {
+			if err := s.publishMCPDiscovery(ctx, publisher, observedAtMS); err != nil {
+				return err
+			}
 		}
-	}
-	if mcpStatusChanged {
-		if err := s.publishMCPStatus(ctx, publisher, observedAtMS); err != nil {
-			return err
+		if mcpStatusChanged {
+			if err := s.publishMCPStatus(ctx, publisher, observedAtMS); err != nil {
+				return err
+			}
 		}
 	}
 	if err := s.publishVideoStatusAndShadow(ctx, publisher); err != nil {
@@ -873,6 +959,9 @@ func (s *RuntimeState) HandleVideoEvent(ctx context.Context, publisher Publisher
 }
 
 func (s *RuntimeState) HandleMCPIPCEvent(ctx context.Context, publisher Publisher, event interface{}, observedAtMS uint64) error {
+	if !s.mcpEnabled() {
+		return nil
+	}
 	switch typed := event.(type) {
 	case RuntimeMcpOpenEvent:
 		return nil
@@ -929,11 +1018,57 @@ func (s *RuntimeState) publishCapabilities(ctx context.Context, publisher Publis
 }
 
 func (s *RuntimeState) onlineCapabilities() map[string]bool {
-	return map[string]bool{BoardCapability: true, MCPCapability: true, VideoCapability: s.video.Ready}
+	availability := map[string]bool{BoardCapability: true}
+	if s.mcpEnabled() {
+		availability[MCPCapability] = true
+	}
+	if s.mavlinkEnabled() {
+		availability[MAVLinkCapability] = s.mavlinkAvailable()
+	}
+	if s.videoEnabled() {
+		availability[VideoCapability] = s.video.Ready
+	}
+	return availability
 }
 
 func (s *RuntimeState) offlineCapabilities() map[string]bool {
-	return map[string]bool{BoardCapability: false, MCPCapability: false, VideoCapability: false}
+	availability := map[string]bool{BoardCapability: false}
+	if s.mcpEnabled() {
+		availability[MCPCapability] = false
+	}
+	if s.mavlinkEnabled() {
+		availability[MAVLinkCapability] = false
+	}
+	if s.videoEnabled() {
+		availability[VideoCapability] = false
+	}
+	return availability
+}
+
+func (s *RuntimeState) mcpEnabled() bool {
+	return s.mcp != nil
+}
+
+func (s *RuntimeState) mavlinkEnabled() bool {
+	return s.mavlink != nil
+}
+
+func (s *RuntimeState) mavlinkAvailable() bool {
+	return s.mavlinkKVSReady && s.mavlinkStatus.LinkState == "ready" && s.mavlinkStatus.HeartbeatFresh
+}
+
+func (s *RuntimeState) requestMAVLinkSafeState(reason string, requestDisarm bool) {
+	if s.mavlinkFlight == nil {
+		return
+	}
+	s.mavlinkFlight.RequestSafeState(reason, requestDisarm)
+}
+
+func (s *RuntimeState) enterMAVLinkSafeState(ctx context.Context, reason string, requestDisarm bool) error {
+	if s.mavlinkFlight == nil {
+		return nil
+	}
+	return s.mavlinkFlight.EnterSafeState(ctx, reason, requestDisarm)
 }
 
 func (s *RuntimeState) videoEnabled() bool {
@@ -1006,6 +1141,51 @@ func (s *RuntimeState) publishMCPShadow(ctx context.Context, publisher Publisher
 	topic, _ := BuildMCPShadowUpdateTopic(s.config.ThingID)
 	return publishJSON(ctx, publisher, topic, map[string]interface{}{
 		"state": map[string]interface{}{"reported": map[string]interface{}{"descriptor": descriptor, "status": statusPayload}},
+	}, false)
+}
+
+func (s *RuntimeState) mavlinkStatusPayload() map[string]interface{} {
+	status := s.mavlinkStatus
+	if s.mavlinkKVSError != "" {
+		status.Errors = append(append([]MAVLinkError(nil), status.Errors...), MAVLinkError{
+			Code:    "control_kvs_unavailable",
+			Message: s.mavlinkKVSError,
+		})
+	}
+	return status.StatusPayload(s.mavlink, s.mavlinkKVSReady)
+}
+
+func (s *RuntimeState) publishMAVLinkDiscovery(ctx context.Context, publisher Publisher) error {
+	descriptor := MAVLinkDescriptor(s.config)
+	descriptorTopic, _ := BuildMAVLinkDescriptorTopic(s.config.ThingID)
+	if err := publishJSON(ctx, publisher, descriptorTopic, descriptor, true); err != nil {
+		return err
+	}
+	return s.publishMAVLinkStatus(ctx, publisher)
+}
+
+func (s *RuntimeState) publishMAVLinkStatus(ctx context.Context, publisher Publisher) error {
+	statusPayload := s.mavlinkStatusPayload()
+	statusTopic, _ := BuildMAVLinkStatusTopic(s.config.ThingID)
+	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
+		return err
+	}
+	return s.publishMAVLinkShadow(ctx, publisher, statusPayload)
+}
+
+func (s *RuntimeState) publishMAVLinkShadow(ctx context.Context, publisher Publisher, statusPayload map[string]interface{}) error {
+	topic, _ := BuildMAVLinkShadowUpdateTopic(s.config.ThingID)
+	reported := map[string]interface{}{
+		"link":          statusPayload["link"],
+		"target":        statusPayload["target"],
+		"armed":         statusPayload["armed"],
+		"mode":          statusPayload["mode"],
+		"peers":         statusPayload["peers"],
+		"activeControl": statusPayload["activeControl"],
+		"errors":        statusPayload["errors"],
+	}
+	return publishJSON(ctx, publisher, topic, map[string]interface{}{
+		"state": map[string]interface{}{"reported": reported},
 	}, false)
 }
 
@@ -1399,14 +1579,15 @@ func BuildWorkerConfigResponse(config RuntimeConfig, credentials IotTemporaryCre
 		return nil, err
 	}
 	return &boardvideov1.WorkerConfig{
-		Region:               config.VideoRegion,
-		ChannelName:          config.VideoChannelName,
-		ClientId:             BoardVideoWorkerClientID(config),
-		McpDataChannelLabel:  MCPWebRTCDataChannelLabel,
-		McpResponseTimeoutMs: DefaultMCPResponseTimeoutMillis,
-		PreferIpv6:           config.KVSPreferIPv6,
-		DisableIpv4Turn:      config.KVSDisableIPv4TURN,
-		Credentials:          bridgeCredentials,
+		Region:                config.VideoRegion,
+		ChannelName:           config.VideoChannelName,
+		ClientId:              BoardVideoWorkerClientID(config),
+		McpDataChannelLabel:   MCPWebRTCDataChannelLabel,
+		McpResponseTimeoutMs:  DefaultMCPResponseTimeoutMillis,
+		McpDataChannelEnabled: capabilityEnabled(config.Capabilities, MCPCapability),
+		PreferIpv6:            config.KVSPreferIPv6,
+		DisableIpv4Turn:       config.KVSDisableIPv4TURN,
+		Credentials:           bridgeCredentials,
 	}, nil
 }
 

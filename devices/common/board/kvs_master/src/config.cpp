@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <string_view>
 
 namespace txing::board::kvs_master {
 namespace {
@@ -94,6 +95,48 @@ bool ParseBool(
     return default_value;
 }
 
+std::string Trim(std::string value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return "";
+    }
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+bool HasMavlinkCapability(const EnvLookup& lookup_env) {
+    const auto capabilities = lookup_env("TXING_DAEMON_CAPABILITIES");
+    if (!capabilities.has_value()) {
+        return false;
+    }
+    std::istringstream input(*capabilities);
+    std::string capability;
+    while (std::getline(input, capability, ',')) {
+        if (Trim(capability) == "mavlink") {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string DefaultMavlinkBridgeSocketPath() {
+    std::string daemon_binary_name = TXING_BOARD_KVS_MASTER_BINARY_NAME;
+    constexpr std::string_view kKvsMasterSuffix = "-kvs-master";
+    if (
+        daemon_binary_name.size() <= kKvsMasterSuffix.size() ||
+        daemon_binary_name.compare(
+            daemon_binary_name.size() - kKvsMasterSuffix.size(),
+            kKvsMasterSuffix.size(),
+            kKvsMasterSuffix
+        ) != 0
+    ) {
+        throw std::runtime_error("KVS master binary name cannot derive the daemon socket path");
+    }
+    daemon_binary_name.resize(daemon_binary_name.size() - kKvsMasterSuffix.size());
+    daemon_binary_name += "-daemon";
+    return "/run/" + daemon_binary_name + "/mavlink-bridge.sock";
+}
+
 std::unordered_map<std::string, std::string> ParseOptions(
     const std::vector<std::string>& arguments,
     bool& show_help,
@@ -166,6 +209,19 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         socket_path && !socket_path->empty()) {
         parsed.config.board_video_bridge_socket_path = *socket_path;
     }
+    if (const auto socket_path = LookupValue(
+            options,
+            "mavlink-bridge-socket-path",
+            lookup_env,
+            "TXING_MAVLINK_BRIDGE_SOCKET_PATH"
+        );
+        socket_path && !socket_path->empty()) {
+        parsed.config.mavlink_bridge_socket_path = *socket_path;
+    } else if (HasMavlinkCapability(lookup_env)) {
+        // The profile is the behavior selector. Device type only derives the
+        // socket's installed binary path, as it does for every board worker.
+        parsed.config.mavlink_bridge_socket_path = DefaultMavlinkBridgeSocketPath();
+    }
     if (parsed.config.board_video_bridge_socket_path.has_value() || parsed.camera_probe) {
         parsed.config.region = LookupValue(
             options,
@@ -210,6 +266,10 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         socket_path && !socket_path->empty()) {
         parsed.config.mcp_webrtc_socket_path = *socket_path;
     }
+    // Static worker configuration predates capability-aware bridge config.
+    // Preserve its explicit opt-in behavior without enabling MCP for profiles
+    // that do not provide an MCP socket.
+    parsed.config.mcp_data_channel_enabled = parsed.config.mcp_webrtc_socket_path.has_value();
     parsed.config.prefer_ipv6 = ParseBool(
         options,
         "prefer-ipv6",
@@ -254,6 +314,7 @@ std::string UsageText() {
         << "  --client-id <id>                       default: " TXING_BOARD_KVS_MASTER_BINARY_NAME "\n"
         << "  --mcp-webrtc-socket-path <path>        or BOARD_MCP_WEBRTC_SOCKET_PATH\n"
         << "  --board-video-bridge-socket-path <path> or TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH\n"
+        << "  --mavlink-bridge-socket-path <path>   or TXING_MAVLINK_BRIDGE_SOCKET_PATH\n"
         << "  --prefer-ipv6 <bool>                   default: true\n"
         << "  --disable-ipv4-turn <bool>             default: false\n"
         << "  --camera-probe                         capture-only probe: no KVS session,\n"

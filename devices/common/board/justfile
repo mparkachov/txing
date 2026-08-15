@@ -88,18 +88,28 @@ proto-gen:
     install -d "$out_dir"
     hardware_proto="txing/board/hardware/v1/hardware.proto"
     board_video_proto="txing/board/board_video/v1/board_video.proto"
+    mavlink_proto="txing/board/mavlink/v1/mavlink.proto"
+    mavlink_bridge_proto="txing/board/mavlink_bridge/v1/mavlink_bridge.proto"
+    mavlink_proto_root="{{project_root}}/devices/cyberbrick/proto"
     PATH="$plugin_dir:$PATH" protoc \
       "--proto_path=$proto_root" \
+      "--proto_path=$mavlink_proto_root" \
       "--go_out=$out_dir" \
       "--go_opt=module={{daemon_module}}/internal/proto" \
       "--go_opt=M$hardware_proto={{daemon_module}}/internal/proto/hardwarev1" \
       "--go_opt=M$board_video_proto={{daemon_module}}/internal/proto/boardvideov1" \
+      "--go_opt=M$mavlink_proto={{daemon_module}}/internal/proto/mavlinkv1" \
+      "--go_opt=M$mavlink_bridge_proto={{daemon_module}}/internal/proto/mavlinkbridgev1" \
       "--go-grpc_out=$out_dir" \
       "--go-grpc_opt=module={{daemon_module}}/internal/proto" \
       "--go-grpc_opt=M$hardware_proto={{daemon_module}}/internal/proto/hardwarev1" \
       "--go-grpc_opt=M$board_video_proto={{daemon_module}}/internal/proto/boardvideov1" \
+      "--go-grpc_opt=M$mavlink_proto={{daemon_module}}/internal/proto/mavlinkv1" \
+      "--go-grpc_opt=M$mavlink_bridge_proto={{daemon_module}}/internal/proto/mavlinkbridgev1" \
       "$hardware_proto" \
-      "$board_video_proto"
+      "$board_video_proto" \
+      "$mavlink_proto" \
+      "$mavlink_bridge_proto"
 
 role-policy device thing_id='':
     #!/bin/sh

@@ -17,11 +17,17 @@ const (
 	SchemaVersion                 = "2.0"
 	BoardCapability               = "board"
 	MCPCapability                 = "mcp"
+	MAVLinkCapability             = "mavlink"
 	VideoCapability               = "video"
 	BoardShadowName               = "board"
 	MCPShadowName                 = "mcp"
+	MAVLinkShadowName             = "mavlink"
 	VideoShadowName               = "video"
 	MCPProtocolVersion            = "2026-05-19"
+	MAVLinkProtocolVersion        = "1"
+	MAVLinkWireProtocolVersion    = "2.0"
+	MAVLinkDialect                = "common"
+	MAVLinkWebRTCDataChannelLabel = "txing.mavlink.v1"
 	DefaultEnvFileName            = "daemon.env"
 	DefaultIoTCertFileName        = "certificate.pem.crt"
 	DefaultIoTPrivateKeyFileName  = "private.pem.key"
@@ -29,6 +35,8 @@ const (
 	DefaultCapabilityTTLSeconds   = uint64(150)
 	DefaultHeartbeatSeconds       = uint64(60)
 	DefaultMCPActiveTTLMillis     = uint64(5000)
+	DefaultMAVLinkActiveTTLMillis = uint64(5000)
+	DefaultMAVLinkWatchdogMillis  = uint64(500)
 	DefaultLogRetentionDays       = int32(14)
 	DefaultHardwareTimeoutMillis  = uint64(700)
 	MCPWebRTCDataChannelLabel     = "txing.mcp.v1"
@@ -64,9 +72,12 @@ type CLI struct {
 	KVSMasterCommand           string
 	MCPWebRTCSocketPath        string
 	BoardVideoBridgeSocketPath string
+	MAVLinkBridgeSocketPath    string
+	MAVLinkServiceSocketPath   string
 	KVSPreferIPv6              string
 	KVSDisableIPv4TURN         string
 	VideoChannelName           string
+	MAVLinkChannelName         string
 	HardwareWorkerSocketPath   string
 	HardwareWorkerTimeoutMS    *uint64
 	ShowVersion                bool
@@ -88,10 +99,13 @@ type RuntimeConfig struct {
 	KVSMasterCommand           string
 	MCPWebRTCSocketPath        string
 	BoardVideoBridgeSocketPath string
+	MAVLinkBridgeSocketPath    string
+	MAVLinkServiceSocketPath   string
 	KVSPreferIPv6              bool
 	KVSDisableIPv4TURN         bool
 	VideoRegion                string
 	VideoChannelName           string
+	MAVLinkChannelName         string
 	HardwareWorkerSocketPath   string
 	HardwareWorkerTimeout      time.Duration
 	CloudWatchLogging          *CloudWatchLogConfig
@@ -182,9 +196,12 @@ func ParseCLI(args []string) (CLI, error) {
 	flags.StringVar(&cli.KVSMasterCommand, "kvs-master-command", "", "")
 	flags.StringVar(&cli.MCPWebRTCSocketPath, "mcp-webrtc-socket-path", "", "")
 	flags.StringVar(&cli.BoardVideoBridgeSocketPath, "board-video-bridge-socket-path", "", "")
+	flags.StringVar(&cli.MAVLinkBridgeSocketPath, "mavlink-bridge-socket-path", "", "")
+	flags.StringVar(&cli.MAVLinkServiceSocketPath, "mavlink-service-socket-path", "", "")
 	flags.StringVar(&cli.KVSPreferIPv6, "kvs-prefer-ipv6", "", "")
 	flags.StringVar(&cli.KVSDisableIPv4TURN, "kvs-disable-ipv4-turn", "", "")
 	flags.StringVar(&cli.VideoChannelName, "video-channel-name", "", "")
+	flags.StringVar(&cli.MAVLinkChannelName, "mavlink-channel-name", "", "")
 	flags.StringVar(&cli.HardwareWorkerSocketPath, "hardware-worker-socket-path", "", "")
 	flags.Func("hardware-worker-timeout-ms", "", func(value string) error {
 		parsed, err := strconv.ParseUint(value, 10, 64)
@@ -271,6 +288,20 @@ func RuntimeConfigFromSourcesWithEnvFileDir(cli CLI, processEnv, fileEnv map[str
 	if strings.TrimSpace(boardVideoBridgeSocketPath) == "" {
 		return RuntimeConfig{}, errors.New("board-video-bridge-socket-path must not be empty")
 	}
+	mavlinkBridgeSocketPath := optionalConfigValue(cli.MAVLinkBridgeSocketPath, processEnv, fileEnv, "TXING_MAVLINK_BRIDGE_SOCKET_PATH")
+	if mavlinkBridgeSocketPath == "" {
+		mavlinkBridgeSocketPath = DefaultMavlinkBridgeSocket
+	}
+	if strings.TrimSpace(mavlinkBridgeSocketPath) == "" {
+		return RuntimeConfig{}, errors.New("mavlink-bridge-socket-path must not be empty")
+	}
+	mavlinkServiceSocketPath := optionalConfigValue(cli.MAVLinkServiceSocketPath, processEnv, fileEnv, "TXING_MAVLINK_SERVICE_SOCKET_PATH")
+	if mavlinkServiceSocketPath == "" {
+		mavlinkServiceSocketPath = DefaultMavlinkServiceSocket
+	}
+	if strings.TrimSpace(mavlinkServiceSocketPath) == "" {
+		return RuntimeConfig{}, errors.New("mavlink-service-socket-path must not be empty")
+	}
 	hardwareSocketPath := optionalConfigValue(cli.HardwareWorkerSocketPath, processEnv, fileEnv, "TXING_HARDWARE_WORKER_SOCKET_PATH")
 	if hardwareSocketPath == "" {
 		hardwareSocketPath = DefaultHardwareSocketPath
@@ -310,6 +341,13 @@ func RuntimeConfigFromSourcesWithEnvFileDir(cli CLI, processEnv, fileEnv map[str
 		videoChannelName = defaultVideoChannelName(thingID)
 	}
 	if err := validateTopicSegment(videoChannelName, "video-channel-name"); err != nil {
+		return RuntimeConfig{}, err
+	}
+	mavlinkChannelName := optionalConfigValue(cli.MAVLinkChannelName, processEnv, fileEnv, "TXING_MAVLINK_CHANNEL_NAME")
+	if mavlinkChannelName == "" {
+		mavlinkChannelName = defaultMAVLinkChannelName(thingID)
+	}
+	if err := validateTopicSegment(mavlinkChannelName, "mavlink-channel-name"); err != nil {
 		return RuntimeConfig{}, err
 	}
 	if err := validateTopicSegment(awsRegion, "aws-region"); err != nil {
@@ -368,10 +406,13 @@ func RuntimeConfigFromSourcesWithEnvFileDir(cli CLI, processEnv, fileEnv map[str
 		KVSMasterCommand:           kvsMasterCommand,
 		MCPWebRTCSocketPath:        mcpWebRTCSocketPath,
 		BoardVideoBridgeSocketPath: boardVideoBridgeSocketPath,
+		MAVLinkBridgeSocketPath:    mavlinkBridgeSocketPath,
+		MAVLinkServiceSocketPath:   mavlinkServiceSocketPath,
 		KVSPreferIPv6:              *kvsPreferIPv6,
 		KVSDisableIPv4TURN:         *kvsDisableIPv4TURN,
 		VideoRegion:                awsRegion,
 		VideoChannelName:           videoChannelName,
+		MAVLinkChannelName:         mavlinkChannelName,
 		HardwareWorkerSocketPath:   hardwareSocketPath,
 		HardwareWorkerTimeout:      time.Duration(hardwareTimeoutMS) * time.Millisecond,
 		CloudWatchLogging:          cloudwatch,
@@ -655,6 +696,11 @@ func normalizeCapabilities(values []string) ([]string, error) {
 			set[normalized] = struct{}{}
 		}
 	}
+	if _, hasMCP := set[MCPCapability]; hasMCP {
+		if _, hasMAVLink := set[MAVLinkCapability]; hasMAVLink {
+			return nil, errors.New("mcp and mavlink capabilities must not be declared together")
+		}
+	}
 	capabilities := make([]string, 0, len(set))
 	for capability := range set {
 		capabilities = append(capabilities, capability)
@@ -668,10 +714,10 @@ func validateCapabilityName(value string) error {
 		return err
 	}
 	switch value {
-	case BoardCapability, MCPCapability, VideoCapability:
+	case BoardCapability, MCPCapability, MAVLinkCapability, VideoCapability:
 		return nil
 	default:
-		return fmt.Errorf("unsupported capability %q; supported capabilities are %q, %q, %q", value, BoardCapability, MCPCapability, VideoCapability)
+		return fmt.Errorf("unsupported capability %q; supported capabilities are %q, %q, %q, %q", value, BoardCapability, MCPCapability, MAVLinkCapability, VideoCapability)
 	}
 }
 
@@ -826,6 +872,10 @@ func isASCIIAlnum(ch rune) bool {
 
 func defaultVideoChannelName(thingID string) string {
 	return thingID + "-board-video"
+}
+
+func defaultMAVLinkChannelName(thingID string) string {
+	return thingID + "-mavlink"
 }
 
 func mustReadDaemonEnvTemplate() string {

@@ -23,5 +23,7 @@ var (
 	DefaultKVSMasterCommand       = KVSMasterBinaryName
 	DefaultMCPWebRTCSocketPath    = "/run/" + DaemonBinaryName + "/mcp-webrtc.sock"
 	DefaultBoardVideoBridgeSocket = "/run/" + DaemonBinaryName + "/board-video-bridge.sock"
+	DefaultMavlinkBridgeSocket    = "/run/" + DaemonBinaryName + "/mavlink-bridge.sock"
+	DefaultMavlinkServiceSocket   = "/run/txing-" + DeviceType + "-mavlink/" + DeviceType + "-mavlink.sock"
 	DefaultHardwareSocketPath     = "/run/" + HardwareWorkerBinaryName + "/" + DeviceType + "-hardware.sock"
 )

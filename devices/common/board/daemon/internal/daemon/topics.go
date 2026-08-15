@@ -32,6 +32,29 @@ func BuildMCPStatusTopic(thingName string) (string, error) {
 	return root + "/status", nil
 }
 
+func BuildMAVLinkTopicRoot(thingName string) (string, error) {
+	if err := validateTopicSegment(thingName, "thing-id"); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("txings/%s/mavlink", thingName), nil
+}
+
+func BuildMAVLinkDescriptorTopic(thingName string) (string, error) {
+	root, err := BuildMAVLinkTopicRoot(thingName)
+	if err != nil {
+		return "", err
+	}
+	return root + "/descriptor", nil
+}
+
+func BuildMAVLinkStatusTopic(thingName string) (string, error) {
+	root, err := BuildMAVLinkTopicRoot(thingName)
+	if err != nil {
+		return "", err
+	}
+	return root + "/status", nil
+}
+
 func BuildVideoTopicRoot(thingName string) (string, error) {
 	if err := validateTopicSegment(thingName, "thing-id"); err != nil {
 		return "", err
@@ -107,6 +130,13 @@ func BuildMCPShadowUpdateTopic(thingName string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("$aws/things/%s/shadow/name/%s/update", thingName, MCPShadowName), nil
+}
+
+func BuildMAVLinkShadowUpdateTopic(thingName string) (string, error) {
+	if err := validateTopicSegment(thingName, "thing-id"); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("$aws/things/%s/shadow/name/%s/update", thingName, MAVLinkShadowName), nil
 }
 
 func BuildVideoShadowUpdateTopic(thingName string) (string, error) {

@@ -29,6 +29,7 @@ struct BridgeWorkerConfig {
     BridgeCredentials credentials;
     std::string mcp_data_channel_label;
     std::chrono::milliseconds mcp_response_timeout{7000};
+    bool mcp_data_channel_enabled = false;
 };
 
 class BoardVideoBridgeClient {

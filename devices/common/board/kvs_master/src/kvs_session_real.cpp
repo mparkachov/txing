@@ -1,5 +1,6 @@
 #include "kvs_master/kvs_session.hpp"
 
+#include "kvs_master/board_mavlink_bridge.hpp"
 #include "kvs_master/board_video_bridge.hpp"
 #include "kvs_master/markers.hpp"
 
@@ -57,6 +58,7 @@ constexpr CHAR kIceTransportPolicyEnvVar[] = "KVS_ICE_TRANSPORT_POLICY";
 constexpr CHAR kVideoStreamId[] = "txingBoardVideo";
 constexpr CHAR kVideoTrackId[] = "txingBoardVideoTrack";
 constexpr CHAR kDefaultMcpDataChannelLabel[] = "txing.mcp.v1";
+constexpr CHAR kDefaultMavlinkDataChannelLabel[] = "txing.mavlink.v1";
 constexpr char kSystemCaCertPath[] = TXING_KVS_SYSTEM_CA_CERT_PATH;
 constexpr char kSystemCaCertPathEnvVar[] = "TXING_KVS_SYSTEM_CA_CERT_PATH";
 constexpr std::size_t kCandidateAddressTokenIndex = 4;
@@ -450,6 +452,7 @@ struct StreamingSession {
     PRtcPeerConnection peer_connection = nullptr;
     PRtcRtpTransceiver video_transceiver = nullptr;
     PRtcDataChannel mcp_data_channel = nullptr;
+    PRtcDataChannel mavlink_data_channel = nullptr;
     RtcSessionDescriptionInit answer_description{};
     std::atomic_bool terminate_requested{false};
     std::atomic_bool first_frame{true};
@@ -457,6 +460,9 @@ struct StreamingSession {
     bool remote_can_trickle = false;
     int mcp_ipc_fd = -1;
     std::mutex mcp_ipc_lock;
+    std::unique_ptr<BoardMavlinkPeer> mavlink_peer;
+    std::uint64_t mavlink_epoch = 0;
+    std::mutex mavlink_lock;
     std::mutex peer_connection_lock;
     UINT64 frame_index = 0;
     UINT64 correlation_id_postfix = 0;
@@ -475,8 +481,22 @@ class RealKvsSession final : public KvsSession {
           bridge_socket_path_(config.board_video_bridge_socket_path),
           bridge_client_(bridge_socket_path_.has_value() ? CreateBoardVideoBridgeClient(*bridge_socket_path_) : nullptr),
           mcp_data_channel_label_(config.mcp_data_channel_label.empty() ? kDefaultMcpDataChannelLabel : config.mcp_data_channel_label),
+          session_kind_(config.session_kind),
+          mcp_data_channel_enabled_(config.mcp_data_channel_enabled),
+          mavlink_bridge_socket_path_(config.mavlink_bridge_socket_path),
+          mavlink_bridge_client_(
+              session_kind_ == KvsSessionKind::kMavlinkControl && mavlink_bridge_socket_path_.has_value()
+                  ? CreateBoardMavlinkBridgeClient(*mavlink_bridge_socket_path_)
+                  : nullptr
+          ),
+          mavlink_data_channel_label_(
+              config.mavlink_data_channel_label.empty() ? kDefaultMavlinkDataChannelLabel : config.mavlink_data_channel_label
+          ),
           video_bitrate_bps_(config.camera.bitrate) {
         try {
+            if (session_kind_ == KvsSessionKind::kMavlinkControl && mavlink_bridge_client_ == nullptr) {
+                throw std::runtime_error("MAVLink KVS session requires a MAVLink bridge socket");
+            }
             CreateCredentialProvider();
             InitializeStaticConfiguration();
             ThrowIfFailed(initKvsWebRtc(), "initKvsWebRtc");
@@ -882,7 +902,10 @@ class RealKvsSession final : public KvsSession {
     }
 
     STATUS AddMcpDataChannelHandler(StreamingSession* session) {
-        if (bridge_client_ == nullptr) {
+        if (session_kind_ == KvsSessionKind::kVideo && !mcp_data_channel_enabled_) {
+            return STATUS_SUCCESS;
+        }
+        if (bridge_client_ == nullptr && mavlink_bridge_client_ == nullptr) {
             return STATUS_SUCCESS;
         }
         return peerConnectionOnDataChannel(
@@ -1001,6 +1024,114 @@ class RealKvsSession final : public KvsSession {
         }
     }
 
+    void CloseMavlinkDataChannel(StreamingSession* session, const char* reason) noexcept {
+        if (session == nullptr) {
+            return;
+        }
+        session->mavlink_data_channel = nullptr;
+        std::lock_guard<std::mutex> lock(session->mavlink_lock);
+        if (session->mavlink_peer != nullptr) {
+            session->mavlink_peer->Close(reason == nullptr ? "MAVLink data channel closed" : reason);
+            session->mavlink_peer.reset();
+        }
+        session->mavlink_epoch = 0;
+    }
+
+    void OpenMavlinkDataChannel(StreamingSession* session) {
+        if (session == nullptr || mavlink_bridge_client_ == nullptr) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(session->mavlink_lock);
+        try {
+            session->mavlink_peer = mavlink_bridge_client_->OpenPeer(
+                session->peer_id,
+                [session](std::vector<std::uint8_t> frame) {
+                    if (
+                        session->terminate_requested.load() ||
+                        session->mavlink_data_channel == nullptr ||
+                        frame.empty()
+                    ) {
+                        return;
+                    }
+                    UNUSED_PARAM(dataChannelSend(
+                        session->mavlink_data_channel,
+                        TRUE,
+                        frame.data(),
+                        static_cast<UINT32>(frame.size())
+                    ));
+                }
+            );
+            EmitMarker("TXING_MAVLINK_DATACHANNEL_OPEN", {{"peerId", session->peer_id}});
+        } catch (const std::exception& error) {
+            EmitMarker(
+                "TXING_MAVLINK_DATACHANNEL_ERROR",
+                {{"peerId", session->peer_id}, {"detail", error.what()}}
+            );
+            std::fprintf(
+                stderr,
+                "WARN kvs_session_real: failed to open MAVLink bridge peer=%s error=%s\n",
+                session->peer_id.c_str(),
+                error.what()
+            );
+        }
+    }
+
+    std::optional<std::string> DispatchMavlinkDataChannelMessage(
+        StreamingSession* session,
+        std::string_view payload
+    ) {
+        if (session == nullptr) {
+            return std::nullopt;
+        }
+        std::lock_guard<std::mutex> lock(session->mavlink_lock);
+        if (session->mavlink_peer == nullptr) {
+            return std::nullopt;
+        }
+        try {
+            const std::string response = session->mavlink_peer->HandleControl(std::string(payload));
+            if (const auto epoch = ExtractJsonRawField(response, "epoch")) {
+                try {
+                    std::size_t consumed = 0;
+                    const auto parsed = std::stoull(*epoch, &consumed, 10);
+                    if (consumed == epoch->size()) {
+                        session->mavlink_epoch = parsed;
+                    }
+                } catch (const std::exception&) {
+                    // Keep the last daemon-issued epoch when the response is a
+                    // stable control.error envelope rather than a state result.
+                }
+            }
+            return response;
+        } catch (const std::exception& error) {
+            EmitMarker(
+                "TXING_MAVLINK_DATACHANNEL_ERROR",
+                {{"peerId", session->peer_id}, {"detail", error.what()}}
+            );
+            return std::nullopt;
+        }
+    }
+
+    void DispatchMavlinkDataChannelFrame(StreamingSession* session, const std::uint8_t* data, std::size_t len) {
+        if (session == nullptr || data == nullptr || len == 0) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(session->mavlink_lock);
+        if (session->mavlink_peer == nullptr || session->mavlink_epoch == 0) {
+            return;
+        }
+        try {
+            session->mavlink_peer->SendFrame(
+                std::vector<std::uint8_t>(data, data + len),
+                session->mavlink_epoch
+            );
+        } catch (const std::exception& error) {
+            EmitMarker(
+                "TXING_MAVLINK_DATACHANNEL_ERROR",
+                {{"peerId", session->peer_id}, {"detail", error.what()}}
+            );
+        }
+    }
+
     STATUS CreateStreamingSession(const std::string& peer_id, std::shared_ptr<StreamingSession>* session_out) {
         if (session_out == nullptr) {
             return STATUS_NULL_ARG;
@@ -1044,19 +1175,21 @@ class RealKvsSession final : public KvsSession {
             return status;
         }
 
-        status = addSupportedCodec(
-            session->peer_connection,
-            RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE
-        );
-        if (STATUS_FAILED(status)) {
-            DestroySession(session);
-            return status;
-        }
+        if (session_kind_ == KvsSessionKind::kVideo) {
+            status = addSupportedCodec(
+                session->peer_connection,
+                RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE
+            );
+            if (STATUS_FAILED(status)) {
+                DestroySession(session);
+                return status;
+            }
 
-        status = AddSendOnlyVideoTransceiver(session.get());
-        if (STATUS_FAILED(status)) {
-            DestroySession(session);
-            return status;
+            status = AddSendOnlyVideoTransceiver(session.get());
+            if (STATUS_FAILED(status)) {
+                DestroySession(session);
+                return status;
+            }
         }
 
         *session_out = std::move(session);
@@ -1483,7 +1616,11 @@ class RealKvsSession final : public KvsSession {
 
         SetSessionConnected(session.get(), false);
         session->terminate_requested.store(true);
-        CloseMcpIpc(session.get(), "MCP WebRTC peer session destroyed");
+        if (session_kind_ == KvsSessionKind::kMavlinkControl) {
+            CloseMavlinkDataChannel(session.get(), "MAVLink WebRTC peer session destroyed");
+        } else {
+            CloseMcpIpc(session.get(), "MCP WebRTC peer session destroyed");
+        }
 
         std::lock_guard<std::mutex> peer_lock(session->peer_connection_lock);
         if (session->peer_connection != nullptr) {
@@ -1645,7 +1782,13 @@ class RealKvsSession final : public KvsSession {
         if (session == nullptr || session->owner == nullptr || data_channel == nullptr) {
             return;
         }
-        if (std::string(data_channel->name) != session->owner->mcp_data_channel_label_) {
+        const bool is_mavlink = session->owner->session_kind_ == KvsSessionKind::kMavlinkControl;
+        if (!is_mavlink && !session->owner->mcp_data_channel_enabled_) {
+            return;
+        }
+        const std::string& expected_label = is_mavlink ? session->owner->mavlink_data_channel_label_
+                                                       : session->owner->mcp_data_channel_label_;
+        if (std::string(data_channel->name) != expected_label) {
             std::fprintf(
                 stderr,
                 "INFO kvs_session_real: ignoring unsupported data channel label=%s peer=%s\n",
@@ -1654,14 +1797,19 @@ class RealKvsSession final : public KvsSession {
             );
             return;
         }
-        session->mcp_data_channel = data_channel;
-        EmitMarker("TXING_MCP_DATACHANNEL_OPEN", {{"sessionId", session->peer_id}});
-        session->owner->OpenMcpDataChannel(session);
+        if (is_mavlink) {
+            session->mavlink_data_channel = data_channel;
+            session->owner->OpenMavlinkDataChannel(session);
+        } else {
+            session->mcp_data_channel = data_channel;
+            EmitMarker("TXING_MCP_DATACHANNEL_OPEN", {{"sessionId", session->peer_id}});
+            session->owner->OpenMcpDataChannel(session);
+        }
         const STATUS status = dataChannelOnMessage(data_channel, custom_data, OnDataChannelMessage);
         if (STATUS_FAILED(status)) {
             EmitMarker(
-                "TXING_MCP_DATACHANNEL_ERROR",
-                {{"sessionId", session->peer_id}, {"detail", "failed to register MCP data channel message handler"}}
+                is_mavlink ? "TXING_MAVLINK_DATACHANNEL_ERROR" : "TXING_MCP_DATACHANNEL_ERROR",
+                {{"sessionId", session->peer_id}, {"detail", "failed to register data channel message handler"}}
             );
             std::fprintf(
                 stderr,
@@ -1684,9 +1832,29 @@ class RealKvsSession final : public KvsSession {
             session == nullptr ||
             session->owner == nullptr ||
             data_channel == nullptr ||
-            message == nullptr ||
-            is_binary
+            message == nullptr
         ) {
+            return;
+        }
+        if (session->owner->session_kind_ == KvsSessionKind::kMavlinkControl) {
+            if (is_binary) {
+                session->owner->DispatchMavlinkDataChannelFrame(session, message, message_len);
+                return;
+            }
+            const std::string_view payload(reinterpret_cast<const char*>(message), message_len);
+            const auto response = session->owner->DispatchMavlinkDataChannelMessage(session, payload);
+            if (!response.has_value()) {
+                return;
+            }
+            UNUSED_PARAM(dataChannelSend(
+                data_channel,
+                FALSE,
+                reinterpret_cast<PBYTE>(const_cast<char*>(response->data())),
+                static_cast<UINT32>(response->size())
+            ));
+            return;
+        }
+        if (is_binary) {
             return;
         }
         const std::string_view payload(reinterpret_cast<const char*>(message), message_len);
@@ -1751,6 +1919,11 @@ class RealKvsSession final : public KvsSession {
     std::optional<std::string> bridge_socket_path_;
     std::unique_ptr<BoardVideoBridgeClient> bridge_client_;
     std::string mcp_data_channel_label_;
+    KvsSessionKind session_kind_ = KvsSessionKind::kVideo;
+    bool mcp_data_channel_enabled_ = false;
+    std::optional<std::string> mavlink_bridge_socket_path_;
+    std::unique_ptr<BoardMavlinkBridgeClient> mavlink_bridge_client_;
+    std::string mavlink_data_channel_label_;
     UINT32 video_bitrate_bps_ = 0;
 
     std::optional<std::string> control_plane_url_;

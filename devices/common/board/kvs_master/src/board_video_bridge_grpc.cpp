@@ -92,11 +92,13 @@ class GrpcBoardVideoBridgeClient final : public BoardVideoBridgeClient {
         result.runtime_config.channel_name = response.channel_name();
         result.runtime_config.client_id = response.client_id();
         result.runtime_config.mcp_data_channel_label = response.mcp_data_channel_label();
+        result.runtime_config.mcp_data_channel_enabled = response.mcp_data_channel_enabled();
         result.runtime_config.prefer_ipv6 = response.prefer_ipv6();
         result.runtime_config.disable_ipv4_turn = response.disable_ipv4_turn();
         result.credentials = CredentialsFromProto(response.credentials());
         result.mcp_data_channel_label = response.mcp_data_channel_label();
         result.mcp_response_timeout = std::chrono::milliseconds(response.mcp_response_timeout_ms());
+        result.mcp_data_channel_enabled = response.mcp_data_channel_enabled();
         return result;
     }
 

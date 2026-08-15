@@ -84,7 +84,7 @@ func TestDaemonEnvTemplateContainsForwardRuntimeDefaults(t *testing.T) {
 			t.Fatalf("expected %s=%q, got %q", key, value, parsed[key])
 		}
 	}
-	requireTemplate("TXING_DAEMON_CAPABILITIES", "board,mcp,video")
+	requireTemplate("TXING_DAEMON_CAPABILITIES", "{{TXING_DAEMON_CAPABILITIES}}")
 	requireTemplate("TXING_CAPABILITY_TTL_SECONDS", "150")
 	requireTemplate("TXING_HEARTBEAT_SECONDS", "60")
 	// The socket paths are device-derived, so the shared template cannot carry
@@ -105,6 +105,26 @@ func TestDaemonEnvTemplateContainsForwardRuntimeDefaults(t *testing.T) {
 		if strings.Contains(DefaultDaemonEnvTemplate, forbidden) {
 			t.Fatalf("template contains forbidden text %q", forbidden)
 		}
+	}
+}
+
+func TestMAVLinkRuntimeConfigurationUsesDeclaredCapabilityOnly(t *testing.T) {
+	fileEnv := testFileEnv()
+	fileEnv["TXING_THING_ID"] = "cyberbrick-a1"
+	fileEnv["TXING_DAEMON_CAPABILITIES"] = "board,mavlink,video"
+	config, err := RuntimeConfigFromSources(CLI{}, map[string]string{}, fileEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MAVLinkBridgeSocketPath != DefaultMavlinkBridgeSocket || config.MAVLinkServiceSocketPath != DefaultMavlinkServiceSocket || config.MAVLinkChannelName != "cyberbrick-a1-mavlink" {
+		t.Fatalf("MAVLink defaults = %#v", config)
+	}
+	if capabilityEnabled(config.Capabilities, MCPCapability) || !capabilityEnabled(config.Capabilities, MAVLinkCapability) {
+		t.Fatalf("capabilities = %#v", config.Capabilities)
+	}
+	fileEnv["TXING_DAEMON_CAPABILITIES"] = "board,mcp,mavlink"
+	if _, err := RuntimeConfigFromSources(CLI{}, map[string]string{}, fileEnv); err == nil || !strings.Contains(err.Error(), "mcp and mavlink") {
+		t.Fatalf("mixed control capabilities error = %v", err)
 	}
 }
 
