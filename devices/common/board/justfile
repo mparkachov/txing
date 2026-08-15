@@ -54,6 +54,15 @@ static_toolchain_dir := board_dir + "/target/alpine-static-toolchain"
     fi
 
 [private]
+@_require-hardware-worker-device device:
+    #!/bin/sh
+    set -eu
+    if [ "{{device}}" != "unit" ]; then
+      echo "the hardware worker is a Unit-only board component; Cyberbrick uses ArduPilot and MAVLink" >&2
+      exit 2
+    fi
+
+[private]
 @_device-version device:
     #!/bin/sh
     set -eu
@@ -277,6 +286,7 @@ hardware-build-native device:
     #!/bin/sh
     set -eu
     just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    just --quiet --justfile "{{board_justfile}}" _require-hardware-worker-device "{{device}}"
     build_dir="{{native_hardware_worker_dir}}/build-{{device}}"
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "{{device}}")"
     cmake -S "{{native_hardware_worker_dir}}" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DTXING_BOARD_DEVICE_TYPE="{{device}}" -DTXING_BOARD_HARDWARE_WORKER_VERSION="$version" -DTXING_HARDWARE_WORKER_GRPC=ON
@@ -287,6 +297,7 @@ hardware-test-native device:
     #!/bin/sh
     set -eu
     just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
+    just --quiet --justfile "{{board_justfile}}" _require-hardware-worker-device "{{device}}"
     build_dir="{{native_hardware_worker_dir}}/build-tests-{{device}}"
     cmake -S "{{native_hardware_worker_dir}}" -B "$build_dir" -DCMAKE_BUILD_TYPE=Debug -DTXING_BOARD_DEVICE_TYPE="{{device}}" -DTXING_HARDWARE_WORKER_GRPC=OFF
     cmake --build "$build_dir" --config Debug --target "txing-{{device}}-hardware-worker-tests"
@@ -300,6 +311,9 @@ hardware-test-native device:
 
 @hardware-build-alpine device:
     just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" hardware-worker
+
+@mavlink-build-alpine device:
+    just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" mavlink
 
 nerdctl-build device:
     #!/bin/sh
@@ -323,32 +337,50 @@ nerdctl-build device:
     commit="$(git -C "$project_root" rev-parse HEAD)"
     timestamp="$(date -u +%s)"
 
-    jq -n \
-      --arg version "$version" \
-      --arg commit "$commit" \
-      --argjson timestamp "$timestamp" \
-      --arg daemonBinaryName "txing-$device-daemon" \
-      --arg daemonBinaryPath "$bin_dir/txing-$device-daemon" \
-      --arg kvsMasterBinaryName "txing-$device-kvs-master" \
-      --arg kvsMasterBinaryPath "$bin_dir/txing-$device-kvs-master" \
-      --arg hardwareWorkerBinaryName "txing-$device-hardware-worker" \
-      --arg hardwareWorkerBinaryPath "$bin_dir/txing-$device-hardware-worker" \
-      --arg projectRoot "$project_root" \
-      --arg buildImage "{{alpine_build_image}}" \
-      --arg buildPlatform "{{alpine_build_platform}}" \
-      '{
-        version: $version,
-        commit: $commit,
-        timestamp: $timestamp,
-        outputs: {
-          ($daemonBinaryName): $daemonBinaryPath,
-          ($kvsMasterBinaryName): $kvsMasterBinaryPath,
-          ($hardwareWorkerBinaryName): $hardwareWorkerBinaryPath
-        },
-        projectRoot: $projectRoot,
-        buildImage: $buildImage,
-        buildPlatform: $buildPlatform
-      }' >"$metadata_path"
+    case "$device" in
+      unit)
+        jq -n \
+          --arg version "$version" \
+          --arg commit "$commit" \
+          --argjson timestamp "$timestamp" \
+          --arg daemonBinaryName "txing-$device-daemon" \
+          --arg daemonBinaryPath "$bin_dir/txing-$device-daemon" \
+          --arg kvsMasterBinaryName "txing-$device-kvs-master" \
+          --arg kvsMasterBinaryPath "$bin_dir/txing-$device-kvs-master" \
+          --arg hardwareWorkerBinaryName "txing-$device-hardware-worker" \
+          --arg hardwareWorkerBinaryPath "$bin_dir/txing-$device-hardware-worker" \
+          --arg projectRoot "$project_root" \
+          --arg buildImage "{{alpine_build_image}}" \
+          --arg buildPlatform "{{alpine_build_platform}}" \
+          '{version: $version, commit: $commit, timestamp: $timestamp, outputs: {($daemonBinaryName): $daemonBinaryPath, ($kvsMasterBinaryName): $kvsMasterBinaryPath, ($hardwareWorkerBinaryName): $hardwareWorkerBinaryPath}, projectRoot: $projectRoot, buildImage: $buildImage, buildPlatform: $buildPlatform}' \
+          >"$metadata_path"
+        component_binary="txing-$device-hardware-worker"
+        component_label="hardware worker"
+        ;;
+      cyberbrick)
+        jq -n \
+          --arg version "$version" \
+          --arg commit "$commit" \
+          --argjson timestamp "$timestamp" \
+          --arg daemonBinaryName "txing-$device-daemon" \
+          --arg daemonBinaryPath "$bin_dir/txing-$device-daemon" \
+          --arg kvsMasterBinaryName "txing-$device-kvs-master" \
+          --arg kvsMasterBinaryPath "$bin_dir/txing-$device-kvs-master" \
+          --arg mavlinkBinaryName "txing-$device-mavlink" \
+          --arg mavlinkBinaryPath "$bin_dir/txing-$device-mavlink" \
+          --arg projectRoot "$project_root" \
+          --arg buildImage "{{alpine_build_image}}" \
+          --arg buildPlatform "{{alpine_build_platform}}" \
+          '{version: $version, commit: $commit, timestamp: $timestamp, outputs: {($daemonBinaryName): $daemonBinaryPath, ($kvsMasterBinaryName): $kvsMasterBinaryPath, ($mavlinkBinaryName): $mavlinkBinaryPath}, projectRoot: $projectRoot, buildImage: $buildImage, buildPlatform: $buildPlatform}' \
+          >"$metadata_path"
+        component_binary="txing-$device-mavlink"
+        component_label="MAVLink"
+        ;;
+      *)
+        echo "Unsupported board device type '$device'." >&2
+        exit 2
+        ;;
+    esac
 
     printf 'prepared Alpine aarch64 board binaries\n'
     printf '  device: %s\n' "$device"
@@ -357,7 +389,7 @@ nerdctl-build device:
     printf '  build image: %s\n' "{{alpine_build_image}}"
     printf '  daemon binary: %s\n' "$bin_dir/txing-$device-daemon"
     printf '  KVS master binary: %s\n' "$bin_dir/txing-$device-kvs-master"
-    printf '  hardware worker binary: %s\n' "$bin_dir/txing-$device-hardware-worker"
+    printf '  %s binary: %s\n' "$component_label" "$bin_dir/$component_binary"
     printf '  metadata: %s\n' "$metadata_path"
 
 nerdctl-smoke device:
@@ -366,7 +398,12 @@ nerdctl-smoke device:
     device="{{device}}"
     bin_dir="{{board_dir}}/target/nerdctl-build-$device/bin"
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
-    for binary in "txing-$device-daemon" "txing-$device-kvs-master" "txing-$device-hardware-worker"; do
+    case "$device" in
+      unit) component_binary="txing-$device-hardware-worker" ;;
+      cyberbrick) component_binary="txing-$device-mavlink" ;;
+      *) echo "Unsupported board device type '$device'." >&2; exit 2 ;;
+    esac
+    for binary in "txing-$device-daemon" "txing-$device-kvs-master" "$component_binary"; do
       if [ ! -x "$bin_dir/$binary" ]; then
         echo "Missing $bin_dir/$binary. Run just common::board::nerdctl-build $device first." >&2
         exit 1
@@ -375,7 +412,7 @@ nerdctl-smoke device:
     TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/txing-$device-daemon" static "txing-$device-daemon $version"
     TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
-      "$bin_dir/txing-$device-hardware-worker" static "txing-$device-hardware-worker $version"
+      "$bin_dir/$component_binary" static "$component_binary $version"
     TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/txing-$device-kvs-master" musl-libcamera "txing-$device-kvs-master $version"
 
@@ -396,12 +433,21 @@ nerdctl-smoke device:
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
 
     case "$component" in
-      daemon|kvs-master|hardware-worker|all) ;;
+      daemon|kvs-master|hardware-worker|mavlink|all) ;;
       *)
         echo "Unsupported board Alpine component: $component" >&2
         exit 2
         ;;
     esac
+
+    if [ "$component" = "hardware-worker" ] && [ "$device" != "unit" ]; then
+      echo "the hardware worker is a Unit-only board component; Cyberbrick uses ArduPilot and MAVLink" >&2
+      exit 2
+    fi
+    if [ "$component" = "mavlink" ] && [ "$device" != "cyberbrick" ]; then
+      echo "the MAVLink service is a Cyberbrick-only board component" >&2
+      exit 2
+    fi
 
     command -v nerdctl >/dev/null 2>&1 || {
       echo "nerdctl is required to build board projects in Alpine." >&2
@@ -501,23 +547,33 @@ nerdctl-smoke device:
       GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$TXING_PROTOC_GEN_GO_VERSION"
       GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$TXING_PROTOC_GEN_GO_GRPC_VERSION"
       proto_root="$PWD/devices/common/board/proto"
+      mavlink_proto_root="$PWD/devices/cyberbrick/proto"
       out_dir="$daemon_workdir/internal/proto"
       hardware_proto="txing/board/hardware/v1/hardware.proto"
       board_video_proto="txing/board/board_video/v1/board_video.proto"
+      mavlink_proto="txing/board/mavlink/v1/mavlink.proto"
+      mavlink_bridge_proto="txing/board/mavlink_bridge/v1/mavlink_bridge.proto"
       rm -rf "$out_dir"
       install -d "$out_dir"
       PATH="$plugin_dir:$PATH" protoc \
         "--proto_path=$proto_root" \
+        "--proto_path=$mavlink_proto_root" \
         "--go_out=$out_dir" \
         "--go_opt=module=$daemon_module/internal/proto" \
         "--go_opt=M$hardware_proto=$daemon_module/internal/proto/hardwarev1" \
         "--go_opt=M$board_video_proto=$daemon_module/internal/proto/boardvideov1" \
+        "--go_opt=M$mavlink_proto=$daemon_module/internal/proto/mavlinkv1" \
+        "--go_opt=M$mavlink_bridge_proto=$daemon_module/internal/proto/mavlinkbridgev1" \
         "--go-grpc_out=$out_dir" \
         "--go-grpc_opt=module=$daemon_module/internal/proto" \
         "--go-grpc_opt=M$hardware_proto=$daemon_module/internal/proto/hardwarev1" \
         "--go-grpc_opt=M$board_video_proto=$daemon_module/internal/proto/boardvideov1" \
+        "--go-grpc_opt=M$mavlink_proto=$daemon_module/internal/proto/mavlinkv1" \
+        "--go-grpc_opt=M$mavlink_bridge_proto=$daemon_module/internal/proto/mavlinkbridgev1" \
         "$hardware_proto" \
-        "$board_video_proto"
+        "$board_video_proto" \
+        "$mavlink_proto" \
+        "$mavlink_bridge_proto"
     }
 
     build_daemon() {
@@ -560,6 +616,22 @@ nerdctl-smoke device:
       install -m 755 "$hardware_build/txing-$device-hardware-worker" "/out/txing-$device-hardware-worker"
     }
 
+    build_mavlink() {
+      mavlink_source="$daemon_workdir"
+      mavlink_build="$(mktemp -d /tmp/txing-board-mavlink.XXXXXX)"
+      (
+        cd "$mavlink_source"
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+          go build -trimpath -buildvcs=false \
+            -ldflags="-s -w -X $daemon_module/internal/daemon.DeviceType=$device -X $daemon_module/internal/daemon.DaemonVersion=$version" \
+            -o "$mavlink_build/txing-$device-mavlink" \
+            ./cmd/txing-board-mavlink
+      )
+      assert_static "$mavlink_build/txing-$device-mavlink" "txing-$device-mavlink"
+      "$mavlink_build/txing-$device-mavlink" --version
+      install -m 755 "$mavlink_build/txing-$device-mavlink" "/out/txing-$device-mavlink"
+    }
+
     build_kvs_master() {
       kvs_source="$PWD/devices/common/board/kvs_master"
       kvs_build="$(mktemp -d /tmp/txing-board-kvs-master.XXXXXX)"
@@ -600,11 +672,18 @@ nerdctl-smoke device:
       hardware-worker)
         build_hardware_worker
         ;;
+      mavlink)
+        generate_go_bindings
+        build_mavlink
+        ;;
       all)
         generate_go_bindings
         build_daemon
         build_kvs_master
-        build_hardware_worker
+        case "$device" in
+          unit) build_hardware_worker ;;
+          cyberbrick) build_mavlink ;;
+        esac
         ;;
     esac
     ALPINE_BUILD
@@ -619,10 +698,20 @@ nerdctl-smoke device:
       hardware-worker)
         install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
         ;;
+      mavlink)
+        install -m 755 "$output_stage/txing-$device-mavlink" "$output_root/bin/txing-$device-mavlink"
+        ;;
       all)
         install -m 755 "$output_stage/txing-$device-daemon" "$output_root/bin/txing-$device-daemon"
         install -m 755 "$output_stage/txing-$device-kvs-master" "$output_root/bin/txing-$device-kvs-master"
-        install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
+        case "$device" in
+          unit)
+            install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
+            ;;
+          cyberbrick)
+            install -m 755 "$output_stage/txing-$device-mavlink" "$output_root/bin/txing-$device-mavlink"
+            ;;
+        esac
         ;;
     esac
     rm -rf "$output_stage"

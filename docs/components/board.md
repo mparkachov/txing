@@ -59,7 +59,9 @@ this document is device-specific.
 | --- | --- | --- |
 | Daemon binary | `txing-unit-daemon` | `txing-cyberbrick-daemon` |
 | KVS master binary | `txing-unit-kvs-master` | `txing-cyberbrick-kvs-master` |
-| Hardware worker binary | `txing-unit-hardware-worker` | none after MAVLink cutover |
+| Hardware worker binary | `txing-unit-hardware-worker` | none |
+| MAVLink binary | not applicable | `txing-cyberbrick-mavlink` |
+| ArduPilot binary/defaults | not applicable | `txing-cyberbrick-ardupilot` and `txing-cyberbrick-ardupilot.defaults.parm` |
 | Daemon config directory | `/root/.config/txing/unit-daemon` | `/root/.config/txing/cyberbrick-daemon` |
 | Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | none after MAVLink cutover |
 | MCP adapter id | `dev.txing.unit.Daemon` | not applicable |
@@ -71,15 +73,16 @@ this document is device-specific.
 
 The daemon derives every one of these from the device type injected at build
 time, so they are consequences of the profile rather than independent settings.
-A board never mixes them: all three binaries on a board come from the same
-device's release stream.
+A board never mixes them: Unit's three binaries or Cyberbrick's four runtime
+artifacts come from the same device release stream.
 
 Operator commands are device-owned, matching the MCU commands:
 
 ```sh
 just ${TXING_DEVICE}::board::nerdctl-build
 just ${TXING_DEVICE}::board::nerdctl-smoke
-just ${TXING_DEVICE}::board::hardware-test-native
+just unit::board::hardware-test-native
+just cyberbrick::board::mavlink-build-alpine
 ```
 
 Board operations that do not depend on the device type stay common-owned, the
@@ -106,10 +109,14 @@ Neither package carries a device name. They remain the shared Unit board
 contracts. Cyberbrick is a device-specific exception: it does not expose Board
 MCP and instead has the dedicated local service and daemon bridge in the
 [Cyberbrick MAVLink capability contract](../contracts/cyberbrick-mavlink.md).
-The three common binaries upgrade as a set; see [Maintenance](#maintenance) for
-why a partial upgrade is the worst failure this board has.
+Unit upgrades its three common binaries as a set. Cyberbrick upgrades daemon,
+KVS, MAVLink, and ArduPilot/defaults as a set; see [Maintenance](#maintenance)
+for why a partial upgrade is the worst failure this board has.
 
-## Responsibilities
+## Unit Responsibilities
+
+The following hardware/MCP responsibilities are Unit-specific. Cyberbrick
+uses the dedicated MAVLink contract linked above.
 
 - publish the `board` named shadow
 - publish the `video` named shadow mirror
@@ -487,23 +494,36 @@ env file.
 
 ## Release Artifacts
 
-Boards install three GitHub Release assets from the immutable
-`<device>-v*` release stream through root-owned `mise`:
+Unit installs daemon, KVS master, and hardware worker from its immutable
+`unit-v*` release stream. Cyberbrick installs daemon, KVS master, MAVLink, and
+ArduPilot from `cyberbrick-v*`; it has no hardware-worker artifact or service.
 
 ```text
-txing-<device>-daemon-linux-aarch64.tar.gz
-txing-<device>-kvs-master-linux-aarch64.tar.gz
-txing-<device>-hardware-worker-linux-aarch64.tar.gz
+# Unit
+txing-unit-daemon-linux-aarch64.tar.gz
+txing-unit-kvs-master-linux-aarch64.tar.gz
+txing-unit-hardware-worker-linux-aarch64.tar.gz
+
+# Cyberbrick
+txing-cyberbrick-daemon-linux-aarch64.tar.gz
+txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
+txing-cyberbrick-mavlink-linux-aarch64.tar.gz
+txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
 ```
 
-Each archive contains one root-level executable with the same command name.
-Boards use root's persistent mise config and install tree:
+Every daemon, KVS, MAVLink, and hardware-worker archive contains its one
+root-level executable. The Cyberbrick ArduPilot archive contains both
+`txing-cyberbrick-ardupilot` and
+`txing-cyberbrick-ardupilot.defaults.parm`; OpenRC loads the defaults on every
+tmpfs-backed boot. Boards use root's persistent mise config and install tree:
 
 ```text
 /root/.config/mise/conf.d/txing-<device>-daemon.toml
 /root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon
 /root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master
-/root/.local/share/mise/installs/txing-<device>-hardware-worker/latest/txing-<device>-hardware-worker
+/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
+/root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
+/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
 ```
 
 Root-owned `mise` configs must set `version_prefix = "<device>-v"` so
@@ -514,17 +534,9 @@ restarting an OpenRC service does not install or upgrade tools, invoke mise,
 or call GitHub. If a board needs new binaries, follow
 [Maintenance](#maintenance).
 
-Cyberbrick additionally installs the static ArduRover executable from the
-matching `cyberbrick-v*` release:
-
-```text
-txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
-```
-
-Its corresponding patched source archive is published with the release, but is
-not installed on the board. ArduPilot is a manually selected alternative PWM
-owner to the Cyberbrick hardware worker; see
-[Cyberbrick ArduPilot](#cyberbrick-ardupilot).
+Cyberbrick's corresponding patched ArduPilot source archive is published for
+provenance but is not installed on the board. The release cutover and its
+forward-only operational steps are in [Cyberbrick MAVLink cutover](#cyberbrick-mavlink-cutover).
 
 The release gates bound what these artifacts prove. `assert-board-musl.sh`
 checks linkage kinds and `smoke-board-cross-distro.sh` runs each binary in
@@ -1068,7 +1080,10 @@ These fail in a chain, so fix them in step order: without step 2 there is no
 later it is a wall of `Error loading shared library` from a correct binary, or
 `configured camera index is not available` from a working camera.
 
-Install the release tools through root-owned `mise`. Both `"0s"` settings exist
+The following generic runtime install is **Unit-only**. Cyberbrick operators
+must instead use [Cyberbrick MAVLink cutover](#cyberbrick-mavlink-cutover),
+which installs MAVLink and ArduPilot together and removes the former hardware
+worker. Both `"0s"` settings exist
 because a board installs first-party releases minutes after they are published,
 which is exactly the case each default is tuned against:
 
@@ -1088,6 +1103,10 @@ idempotent, so running it on an already-writable root is harmless.
 
 ```sh
 : "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
+test "$TXING_DEVICE" = unit || {
+  echo 'This Unit runtime block does not apply to Cyberbrick; use Cyberbrick MAVLink cutover.' >&2
+  exit 1
+}
 root-rw
 
 install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
@@ -1136,6 +1155,10 @@ loader), and the musl-dynamic KVS master must use the musl interpreter and
 resolve all shared libraries:
 
 ```sh
+test "${TXING_DEVICE:?export the board device type}" = unit || {
+  echo 'Use the Cyberbrick MAVLink cutover maintenance command below.' >&2
+  exit 1
+}
 INSTALLS=/root/.local/share/mise/installs
 DAEMON="$INSTALLS/txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon"
 KVS="$INSTALLS/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master"
@@ -1172,7 +1195,7 @@ The KVS service points its TLS at this file through
 SDK cannot verify the signaling chain against the full OS bundle. This anchor
 is stable (valid to 2037).
 
-Write the root-owned OpenRC init scripts. There is no OpenRC equivalent of
+Write the Unit-owned OpenRC init scripts. There is no OpenRC equivalent of
 unit's `txing-unit.target`; each service is enabled individually and OpenRC
 dependencies order them hardware worker, then daemon, then KVS master. The
 daemon owns the board-video bridge socket; the KVS master connects to it as a
@@ -1365,126 +1388,216 @@ Expected:
 - REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
   and `video` capability state
 
-#### Cyberbrick ArduPilot
+#### Cyberbrick MAVLink cutover
 
-This optional Cyberbrick-only service installs ArduRover from the same release
-stream as the daemon, KVS master, and hardware worker. It does not need an
-ArduPilot source checkout or a GitHub connection at service start.
+Cyberbrick's forward-only runtime starts ArduPilot, MAVLink, the daemon, and
+KVS master in that order. ArduPilot is the only PWM owner. There is no
+direction GPIO, 20 kHz H-bridge mode, MCP compatibility shim, or
+hardware-worker fallback. Keep the rover lifted and motor power isolated until
+the separate physical-acceptance work is approved.
 
-ArduPilot and `txing-cyberbrick-hardware-worker` both own PWM chip 0 channels
-0 and 1. There is deliberately no automatic guard, failover, or recovery
-logic: the operator must stop and remove the hardware worker before enabling
-ArduPilot, and reverse that sequence to return to the worker. Keep motor power
-physically isolated throughout installation and acceptance.
+1. Provision the MAVLink KVS resource and IAM policy from the operator
+   workstation before touching the board. The current base stack must deploy
+   successfully first, then generate a fresh Cyberbrick bundle:
 
-Install the fourth mise tool in a Cyberbrick-specific config fragment:
+   ```sh
+   : "${TXING_AWS_STACK:?export the selected stack prefix}"
+   : "${THING_ID:?export the Cyberbrick Thing id}"
+   just aws::deploy
+   just aws::cert "$THING_ID"
+   ```
 
-```sh
-test "${TXING_DEVICE:?run step 2 first}" = cyberbrick || {
-  echo 'ArduPilot is only a Cyberbrick board component' >&2
-  exit 1
-}
+   Copy and unpack `<thing-id>-daemon-config.tgz` to
+   `/root/.config/txing/cyberbrick-daemon/`. Its `mavlink` capability and role
+   authorize both `<thing-id>-board-video` and `<thing-id>-mavlink`.
 
-cat >/root/.config/mise/conf.d/txing-cyberbrick-ardupilot.toml <<'EOF'
-[tool_alias]
-txing-cyberbrick-ardupilot = "github:mparkachov/txing"
+2. In one writable-root window, replace old Cyberbrick mise configuration and
+   install all four matching `cyberbrick-v*` artifacts together:
 
-[tools.txing-cyberbrick-ardupilot]
-version = "latest"
-version_prefix = "cyberbrick-v"
-asset_pattern = "txing-cyberbrick-ardupilot-linux-aarch64.tar.gz"
-EOF
+   ```sh
+   export TXING_DEVICE=cyberbrick
+   root-rw
+   install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
+   cat >/root/.config/mise/conf.d/txing-cyberbrick-runtime.toml <<'EOF'
+   [settings]
+   fetch_remote_versions_cache = "0s"
+   minimum_release_age = "0s"
 
-MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise install txing-cyberbrick-ardupilot@latest
+   [tool_alias]
+   txing-cyberbrick-daemon = "github:mparkachov/txing"
+   txing-cyberbrick-kvs-master = "github:mparkachov/txing"
+   txing-cyberbrick-mavlink = "github:mparkachov/txing"
+   txing-cyberbrick-ardupilot = "github:mparkachov/txing"
 
-ARDUPILOT=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
-test -x "$ARDUPILOT"
-"$ARDUPILOT" --help >/dev/null
-/root/.local/bin/mise list
-```
+   [tools.txing-cyberbrick-daemon]
+   version = "latest"
+   version_prefix = "cyberbrick-v"
+   asset_pattern = "txing-cyberbrick-daemon-linux-aarch64.tar.gz"
+   [tools.txing-cyberbrick-kvs-master]
+   version = "latest"
+   version_prefix = "cyberbrick-v"
+   asset_pattern = "txing-cyberbrick-kvs-master-linux-aarch64.tar.gz"
+   [tools.txing-cyberbrick-mavlink]
+   version = "latest"
+   version_prefix = "cyberbrick-v"
+   asset_pattern = "txing-cyberbrick-mavlink-linux-aarch64.tar.gz"
+   [tools.txing-cyberbrick-ardupilot]
+   version = "latest"
+   version_prefix = "cyberbrick-v"
+   asset_pattern = "txing-cyberbrick-ardupilot-linux-aarch64.tar.gz"
+   EOF
 
-Write the root-owned OpenRC service. The `--serial0` option is ArduPilot's
-Linux `SERIAL0`; `udpin` listens on every interface at UDP port 14550. MAVLink
-there is unauthenticated, so expose the board only on a trusted LAN.
+   MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+     /root/.local/bin/mise install \
+       txing-cyberbrick-daemon@latest \
+       txing-cyberbrick-kvs-master@latest \
+       txing-cyberbrick-mavlink@latest \
+       txing-cyberbrick-ardupilot@latest
+   ```
 
-```sh
-cat >/etc/init.d/txing-cyberbrick-ardupilot <<'EOF'
-#!/sbin/openrc-run
+   The ArduPilot archive supplies both the executable and its defaults file;
+   no source checkout is installed on the board.
 
-description="Cyberbrick ArduPilot ArduRover"
+3. Stop and remove the obsolete Cyberbrick hardware worker before replacing
+   services. This is manual, intentional cleanup—not a compatibility path:
 
-supervisor=supervise-daemon
-command=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
-command_args="--serial0 udpin:0.0.0.0:14550 --storage-directory /var/tmp/txing-cyberbrick-ardupilot/storage --terrain-directory /var/tmp/txing-cyberbrick-ardupilot/terrain --log-directory /var/log/txing-cyberbrick-ardupilot"
-directory=/var/tmp/txing-cyberbrick-ardupilot
-respawn_delay=5
-respawn_max=5
-respawn_period=600
-output_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
-error_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
+   ```sh
+   rc-service txing-cyberbrick-hardware-worker stop || true
+   rc-update del txing-cyberbrick-hardware-worker default || true
+   rm -f /etc/init.d/txing-cyberbrick-hardware-worker
+   rm -f /root/.config/mise/conf.d/txing-cyberbrick-hardware-worker.toml
+   rm -rf /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker
+   ```
 
-depend() {
-    need localmount
-    need net
-}
+4. Write the root-owned OpenRC services. They order ArduPilot, MAVLink,
+   daemon, then KVS master. KVS depends on the daemon, not MAVLink directly,
+   so video/camera faults cannot stop the control transport.
 
-start_pre() {
-    test -x "$command" || return 1
-    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot
-    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/storage
-    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/terrain
-    checkpath --directory --mode 0755 --owner root:root /var/log/txing-cyberbrick-ardupilot
-    export HOME=/root
-}
-EOF
+   ```sh
+   cat >/etc/init.d/txing-cyberbrick-ardupilot <<'EOF'
+   #!/sbin/openrc-run
+   description="Cyberbrick ArduPilot ArduRover"
+   supervisor=supervise-daemon
+   command=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
+   defaults=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
+   command_args="--defaults ${defaults} --serial0 udpin:127.0.0.1:14550 --storage-directory /var/tmp/txing-cyberbrick-ardupilot/storage --terrain-directory /var/tmp/txing-cyberbrick-ardupilot/terrain --log-directory /var/log/txing-cyberbrick-ardupilot"
+   directory=/var/tmp/txing-cyberbrick-ardupilot
+   respawn_delay=5
+   respawn_max=5
+   respawn_period=600
+   output_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
+   error_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
+   depend() { need localmount net; }
+   start_pre() {
+       test -x "$command" && test -r "$defaults" || return 1
+       checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/storage
+       checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/terrain
+       checkpath --directory --mode 0755 --owner root:root /var/log/txing-cyberbrick-ardupilot
+       export HOME=/root
+   }
+   EOF
 
-chmod 755 /etc/init.d/txing-cyberbrick-ardupilot
-sh -n /etc/init.d/txing-cyberbrick-ardupilot
-```
+   cat >/etc/init.d/txing-cyberbrick-mavlink <<'EOF'
+   #!/sbin/openrc-run
+   description="Cyberbrick MAVLink transport"
+   supervisor=supervise-daemon
+   command=/root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
+   daemon_env=/root/.config/txing/cyberbrick-daemon/daemon.env
+   directory=/root
+   respawn_delay=2
+   respawn_max=5
+   respawn_period=600
+   output_log=/var/log/txing-cyberbrick-mavlink.log
+   error_log=/var/log/txing-cyberbrick-mavlink.log
+   depend() { need localmount; after txing-cyberbrick-ardupilot; }
+   start_pre() {
+       test -x "$command" && test -r "$daemon_env" || return 1
+       checkpath --directory --mode 0755 --owner root:root /run/txing-cyberbrick-mavlink
+       set -a; . "$daemon_env"; set +a
+       export HOME=/root
+   }
+   EOF
 
-The OpenRC output log records only ArduPilot stdout and stderr, so an empty
-`ardupilot.log` is normal for a healthy idle process. ArduPilot's binary
-DataFlash logs are written under `/var/log/txing-cyberbrick-ardupilot/` when
-there is loggable vehicle activity. Do not arm merely to create a log.
+   cat >/etc/init.d/txing-cyberbrick-daemon <<'EOF'
+   #!/sbin/openrc-run
+   description="Cyberbrick daemon"
+   supervisor=supervise-daemon
+   command=/root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon
+   directory=/root
+   respawn_delay=5
+   respawn_max=5
+   respawn_period=600
+   output_log=/var/log/txing-cyberbrick-daemon.log
+   error_log=/var/log/txing-cyberbrick-daemon.log
+   depend() { need net; use dns ntpd; after txing-cyberbrick-mavlink; }
+   start_pre() {
+       test -x "$command" || return 1
+       checkpath --directory --mode 0755 --owner root:root /run/txing-cyberbrick-daemon
+       export HOME=/root
+       export TXING_DAEMON_CONFIG_DIR=/root/.config/txing/cyberbrick-daemon
+   }
+   EOF
 
-Perform the manual PWM ownership switch in this order:
+   cat >/etc/init.d/txing-cyberbrick-kvs-master <<'EOF'
+   #!/sbin/openrc-run
+   description="Cyberbrick KVS master"
+   supervisor=supervise-daemon
+   command=/root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master
+   ca_cert=/root/.config/txing/cyberbrick-daemon/SFSRootCAG2.pem
+   directory=/root
+   respawn_delay=5
+   respawn_max=5
+   respawn_period=600
+   output_log=/var/log/txing-cyberbrick-kvs-master.log
+   error_log=/var/log/txing-cyberbrick-kvs-master.log
+   depend() { need net; use dns; after txing-cyberbrick-daemon; }
+   start_pre() {
+       test -x "$command" && test -r "$ca_cert" || return 1
+       export HOME=/root
+       export TXING_KVS_SYSTEM_CA_CERT_PATH="$ca_cert"
+       export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-cyberbrick-daemon/board-video-bridge.sock
+   }
+   EOF
 
-```sh
-rc-service txing-cyberbrick-hardware-worker stop
-rc-update del txing-cyberbrick-hardware-worker default
+   chmod 755 /etc/init.d/txing-cyberbrick-{ardupilot,mavlink,daemon,kvs-master}
+   for s in ardupilot mavlink daemon kvs-master; do
+     sh -n "/etc/init.d/txing-cyberbrick-$s"
+   done
+   ```
 
-rc-update add txing-cyberbrick-ardupilot default
-rc-service txing-cyberbrick-ardupilot start
+5. Enable the complete service set, verify it, then return the root to
+   read-only and reboot:
 
-rc-service txing-cyberbrick-ardupilot status
-netstat -patun | grep -F ':14550'
-tail -n 100 /var/log/txing-cyberbrick-ardupilot/ardupilot.log
-for s in daemon kvs-master; do
-  rc-service "txing-cyberbrick-$s" status
-done
-```
+   ```sh
+   for s in ardupilot mavlink daemon kvs-master; do
+     rc-update add "txing-cyberbrick-$s" default
+     rc-service "txing-cyberbrick-$s" restart
+   done
+   rc-status default
+   for s in ardupilot mavlink daemon kvs-master; do
+     rc-service "txing-cyberbrick-$s" status
+   done
+   test ! -e /etc/init.d/txing-cyberbrick-hardware-worker
+   test ! -e /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker
+   ! rc-status default | grep -F txing-cyberbrick-hardware-worker
+   ss -lunp | grep -F '127.0.0.1:14550'
+   ! ss -lunp | grep -F '0.0.0.0:14550'
+   grep -F -- '--defaults' /etc/init.d/txing-cyberbrick-ardupilot
+   grep -Fx 'FS_GCS_TIMEOUT 1' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
+   grep -Fx 'SERVO1_FUNCTION 73' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
+   grep -Fx 'SERVO2_FUNCTION 74' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
+   root-ro
+   sync
+   reboot
+   ```
 
-Expected results are a stable ArduPilot process with UDP port 14550, a stopped
-and disabled hardware worker, and still-healthy daemon/KVS services. Before a
-MAVLink peer sends a packet, `netstat` can show `0.0.0.0:14550`; after one does,
-`udpin` selects that peer and Linux displays the UDP socket as `ESTABLISHED`
-between the board address and the peer. Both are healthy states. The daemon
-remains enabled but reports motion hardware unavailable; this is the intended
-manual ownership state and does not change gRPC, MQTT, Shadow, MCP, video, or
-REDCON contracts.
-
-To return PWM ownership to the hardware worker, reverse the handoff:
-
-```sh
-rc-service txing-cyberbrick-ardupilot stop
-rc-update del txing-cyberbrick-ardupilot default
-
-rc-update add txing-cyberbrick-hardware-worker default
-rc-service txing-cyberbrick-hardware-worker start
-```
-
-Never enable or start both PWM owners together.
+   After reconnecting, repeat the service, local-UDP, defaults, and no-worker
+   checks. Deploy Office through its normal Cloudflare Pages Git deployment
+   only after that reboot. Finally, use the AWS IoT console to manually delete
+   the obsolete `<thing-id>` named `mcp` shadow and clear retained
+   `txings/<thing-id>/mcp/descriptor` and `txings/<thing-id>/mcp/status`
+   messages with zero-byte retained publishes. No automated cleanup or
+   compatibility publication is retained.
 
 ### 7. Configure Read-Only Root
 
@@ -1570,7 +1683,7 @@ Operational rules:
 - the services run as root with `HOME=/root`
 - AWS-backed services depend on net and wait for clock synchronization so TLS
   validation does not race NTP
-- the hardware worker neutralizes motors internally; supervise-daemon restart
+- Unit's hardware worker neutralizes motors internally; supervise-daemon restart
   latency is supervision only, not the motion-control safety layer
 - ArduPilot storage, terrain, and logs are under `/var/tmp/txing-cyberbrick-ardupilot/`
   and `/var/log/txing-cyberbrick-ardupilot/`. Both are tmpfs-backed, so content
@@ -1581,15 +1694,14 @@ Operational rules:
 
 ```sh
 root-ro
-if rc-update show default | grep -q 'txing-cyberbrick-ardupilot'; then
-  mkdir -p /var/tmp/txing-cyberbrick-ardupilot
-  : >/var/tmp/txing-cyberbrick-ardupilot/.pre-reboot-sentinel
-  test -e /var/tmp/txing-cyberbrick-ardupilot/.pre-reboot-sentinel
-fi
 reboot
 ```
 
-After reconnecting:
+The following generic check is Unit-only. Cyberbrick operators use the
+post-reboot checks in [Cyberbrick MAVLink cutover](#cyberbrick-mavlink-cutover)
+instead.
+
+After reconnecting to a Unit board:
 
 ```sh
 INSTALLS=/root/.local/share/mise/installs
@@ -1611,23 +1723,6 @@ readlink /etc/resolv.conf
 getent hosts example.com
 ```
 
-If Cyberbrick ArduPilot owns PWM, use this additional check instead of checking
-the hardware worker as started:
-
-```sh
-rc-service txing-cyberbrick-hardware-worker status
-rc-service txing-cyberbrick-ardupilot status
-netstat -patun | grep -F ':14550'
-test -d /var/tmp/txing-cyberbrick-ardupilot
-test -d /var/log/txing-cyberbrick-ardupilot
-test ! -e /var/tmp/txing-cyberbrick-ardupilot/.pre-reboot-sentinel
-```
-
-The hardware worker must be stopped, ArduPilot must be started, and the
-sentinel must be absent after reboot. `start_pre()` recreates the volatile
-directories before ArduPilot starts, so their presence does not imply state
-survived the reboot.
-
 Expected:
 
 - root filesystem is read-only
@@ -1636,8 +1731,7 @@ Expected:
 - the daemon and KVS master start under OpenRC and stay up without a source
   checkout and without network access to GitHub; the KVS master also autostarts
   and completes signaling but stays up only with a camera attached
-- exactly one PWM owner is enabled: normally the hardware worker, or ArduPilot
-  when the explicit Cyberbrick handoff above selected it
+- the Unit hardware worker is enabled and owns the Unit motor hardware
 - the daemon reports version, MQTT connect, and retained board/MCP/video state
   to CloudWatch (its local OpenRC log is empty by design); confirm locally by a
   stable daemon PID and the bound bridge socket
@@ -1869,26 +1963,28 @@ Do not reboot if any `ldd` output reports `not found` or the expected
 libcamera sonames are missing; realign the apk branch and the installed
 release first, inside the same window.
 
-Cyberbrick ArduPilot is independent of those local gRPC contracts. Upgrade it
-only after a newer `cyberbrick-v*` release has been published, while the root
-is writable and with its PWM ownership selected:
+Cyberbrick upgrades its daemon, KVS master, MAVLink service, and ArduPilot
+executable/defaults as one release set. Do not perform a component-only
+Cyberbrick upgrade:
 
 ```sh
 root-rw
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-  /root/.local/bin/mise upgrade txing-cyberbrick-ardupilot
-ARDUPILOT=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
-test -x "$ARDUPILOT"
-"$ARDUPILOT" --help >/dev/null
-rc-service txing-cyberbrick-ardupilot restart
+  /root/.local/bin/mise upgrade \
+    txing-cyberbrick-daemon \
+    txing-cyberbrick-kvs-master \
+    txing-cyberbrick-mavlink \
+    txing-cyberbrick-ardupilot
+for s in ardupilot mavlink daemon kvs-master; do
+  rc-service "txing-cyberbrick-$s" restart
+done
 root-ro
 reboot
 ```
 
 The board never clones or patches ArduPilot. If upstream `master` or a tracked
-patch breaks the checkout, build, or release job, it fails normally with no
-fallback. Refresh the tracked patch in the source workflow, publish a later
-Cyberbrick release, then repeat this manual mise upgrade.
+patch breaks the checkout, build, or release job, publish a later Cyberbrick
+release and repeat this complete manual upgrade.
 
 Confirm the three binaries speak the current gRPC contracts before rebooting.
 Version numbers alone cannot show this: a board can carry matching versions and

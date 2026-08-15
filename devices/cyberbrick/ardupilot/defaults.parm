@@ -1,0 +1,40 @@
+# Cyberbrick's deterministic ArduRover runtime defaults.
+#
+# This file is applied at every boot because the ArduPilot storage directory is
+# on tmpfs.  The local MAVLink service is the sole GCS; there is no RC receiver
+# or hardware-worker fallback.
+
+# MAVLink service contract.
+SERIAL0_PROTOCOL 2
+SYSID_MYGCS 255
+FS_GCS_ENABLE 1
+FS_GCS_TIMEOUT 1
+FS_ACTION 2
+
+# The service starts in Manual and the allowed MAVLink subset can select Hold.
+INITIAL_MODE 0
+MODE1 0
+MODE2 4
+MODE_CH 0
+
+# Differential consumer ESC outputs on pwmchip0/pwm0 and pwm1.
+MOT_PWM_TYPE 0
+SERVO1_FUNCTION 73
+SERVO1_MIN 1000
+SERVO1_TRIM 1500
+SERVO1_MAX 2000
+SERVO2_FUNCTION 74
+SERVO2_MIN 1000
+SERVO2_TRIM 1500
+SERVO2_MAX 2000
+
+# There is no RC receiver.  Keep MAVLink manual-control overrides enabled.
+RC_OPTIONS 1
+FS_THR_ENABLE 0
+
+# The Linux target has no inertial sensors or physical safety switch.  This is
+# the minimal accommodation that lets ordinary (non-forced) MAVLink arming
+# perform the remaining mandatory checks.
+ARMING_CHECK 0
+ARMING_RUDDER 0
+BRD_SAFETYENABLE 0

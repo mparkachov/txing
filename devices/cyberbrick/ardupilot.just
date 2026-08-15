@@ -57,4 +57,5 @@ build:
     ./waf configure --board linux --extra-hwdef /cyberbrick/ardupilot/hwdef.dat --static --define CANARD_64_BIT=1
     ./waf rover
     install -m 755 build/linux/bin/ardurover /out/txing-cyberbrick-ardupilot
+    install -m 644 /cyberbrick/ardupilot/defaults.parm /out/txing-cyberbrick-ardupilot.defaults.parm
     ALPINE_BUILD

@@ -16,8 +16,10 @@ env:
   RELEASE_TAG_PREFIX: cyberbrick-v
   CYBERBRICK_DAEMON_ASSET: txing-cyberbrick-daemon-linux-aarch64.tar.gz
   KVS_MASTER_ASSET: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
-  HARDWARE_WORKER_ASSET: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+  MAVLINK_BINARY: txing-cyberbrick-mavlink
+  MAVLINK_ASSET: txing-cyberbrick-mavlink-linux-aarch64.tar.gz
   ARDUPILOT_BINARY: txing-cyberbrick-ardupilot
+  ARDUPILOT_DEFAULTS: txing-cyberbrick-ardupilot.defaults.parm
   ARDUPILOT_ASSET: txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
   ARDUPILOT_SOURCE_ASSET: txing-cyberbrick-ardupilot-source.tar.gz
   ARDUPILOT_SOURCE_ROOT: txing-cyberbrick-ardupilot-source
@@ -147,9 +149,9 @@ jobs:
             binary: txing-cyberbrick-kvs-master
             asset: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
             kind: musl-libcamera
-          - component: hardware-worker
-            binary: txing-cyberbrick-hardware-worker
-            asset: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+          - component: mavlink
+            binary: txing-cyberbrick-mavlink
+            asset: txing-cyberbrick-mavlink-linux-aarch64.tar.gz
             kind: static
 
     steps:
@@ -157,18 +159,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      # The static protobuf/gRPC toolchain takes ~25 minutes to source-build.
-      # build-board-static-toolchain.sh validates the restored prefix against
-      # its version marker and rebuilds on mismatch, so a stale cache can slow
-      # a run down but never poison it. Keep the alpine version in this key in
-      # sync with the pinned build image below.
-      - name: Cache static toolchain
-        if: matrix.component == 'hardware-worker'
-        uses: actions/cache@v5
-        with:
-          path: ${{ runner.temp }}/static-toolchain
-          key: board-static-toolchain-alpine3.24.1-${{ hashFiles('release/scripts/build-board-static-toolchain.sh') }}
 
       # JavaScript actions cannot run inside musl containers on arm64
       # runners, so the job runs on the host and drives the pinned Alpine
@@ -224,30 +214,44 @@ jobs:
           output="$RUNNER_TEMP/$BINARY"
 
           case "$COMPONENT" in
-            daemon)
+            daemon|mavlink)
               # The daemon's Go bindings are generated here rather than
               # checked in, matching how the C++ workers get theirs.
               plugin_dir="$RUNNER_TEMP/protoc-plugins"
               GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$PROTOC_GEN_GO_VERSION"
               GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$PROTOC_GEN_GO_GRPC_VERSION"
               proto_root="$GITHUB_WORKSPACE/devices/common/board/proto"
+              mavlink_proto_root="$GITHUB_WORKSPACE/devices/cyberbrick/proto"
               out_dir="$GITHUB_WORKSPACE/devices/common/board/daemon/internal/proto"
               hardware_proto="txing/board/hardware/v1/hardware.proto"
               board_video_proto="txing/board/board_video/v1/board_video.proto"
+              mavlink_proto="txing/board/mavlink/v1/mavlink.proto"
+              mavlink_bridge_proto="txing/board/mavlink_bridge/v1/mavlink_bridge.proto"
               rm -rf "$out_dir"
               install -d "$out_dir"
               PATH="$plugin_dir:$PATH" protoc \
                 "--proto_path=$proto_root" \
+                "--proto_path=$mavlink_proto_root" \
                 "--go_out=$out_dir" \
                 "--go_opt=module=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto" \
                 "--go_opt=M$hardware_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/hardwarev1" \
                 "--go_opt=M$board_video_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/boardvideov1" \
+                "--go_opt=M$mavlink_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/mavlinkv1" \
+                "--go_opt=M$mavlink_bridge_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/mavlinkbridgev1" \
                 "--go-grpc_out=$out_dir" \
                 "--go-grpc_opt=module=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto" \
                 "--go-grpc_opt=M$hardware_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/hardwarev1" \
                 "--go-grpc_opt=M$board_video_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/boardvideov1" \
+                "--go-grpc_opt=M$mavlink_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/mavlinkv1" \
+                "--go-grpc_opt=M$mavlink_bridge_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/mavlinkbridgev1" \
                 "$hardware_proto" \
-                "$board_video_proto"
+                "$board_video_proto" \
+                "$mavlink_proto" \
+                "$mavlink_bridge_proto"
+              case "$COMPONENT" in
+                daemon) command=txing-board-daemon ;;
+                mavlink) command=txing-board-mavlink ;;
+              esac
               (
                 cd devices/common/board/daemon
                 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
@@ -255,7 +259,7 @@ jobs:
                   go build -trimpath \
                     -ldflags="-s -w -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DeviceType=cyberbrick -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DaemonVersion=$VERSION" \
                     -o "$output" \
-                    ./cmd/txing-board-daemon
+                    "./cmd/$command"
               )
               ;;
             kvs-master)
@@ -278,27 +282,6 @@ jobs:
                 -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
                 -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
               cmake --build "$build_dir" --config Release
-              ctest --test-dir "$build_dir" --output-on-failure
-              install -m 755 "$build_dir/$BINARY" "$output"
-              ;;
-            hardware-worker)
-              source_dir="$GITHUB_WORKSPACE/devices/common/board/hardware_worker"
-              build_dir="$RUNNER_TEMP/build-txing-cyberbrick-hardware-worker"
-              toolchain_prefix="$RUNNER_TEMP/static-toolchain"
-              sh release/scripts/build-board-static-toolchain.sh "$toolchain_prefix"
-              PATH="$toolchain_prefix/bin:$PATH" cmake \
-                -S "$source_dir" \
-                -B "$build_dir" \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DBUILD_TESTING=ON \
-                -DTXING_HARDWARE_WORKER_GRPC=ON \
-                -DTXING_BOARD_DEVICE_TYPE=cyberbrick \
-                -DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION" \
-                -DCMAKE_PREFIX_PATH="$toolchain_prefix" \
-                -DCMAKE_EXE_LINKER_FLAGS=-static \
-                -DOPENSSL_USE_STATIC_LIBS=TRUE \
-                -DZLIB_USE_STATIC_LIBS=ON
-              PATH="$toolchain_prefix/bin:$PATH" cmake --build "$build_dir" --config Release
               ctest --test-dir "$build_dir" --output-on-failure
               install -m 755 "$build_dir/$BINARY" "$output"
               ;;
@@ -383,6 +366,7 @@ jobs:
         run: |
           docker exec -i \
             -e ARDUPILOT_BINARY="$ARDUPILOT_BINARY" \
+            -e ARDUPILOT_DEFAULTS="$ARDUPILOT_DEFAULTS" \
             -e ARDUPILOT_ASSET="$ARDUPILOT_ASSET" \
             -e ARDUPILOT_SOURCE_ASSET="$ARDUPILOT_SOURCE_ASSET" \
             -e ARDUPILOT_SOURCE_ROOT="$ARDUPILOT_SOURCE_ROOT" \
@@ -400,6 +384,7 @@ jobs:
           binary_package_dir="$RUNNER_TEMP/package-$ARDUPILOT_BINARY"
           source_asset="$RUNNER_TEMP/$ARDUPILOT_SOURCE_ASSET"
           binary_asset="$RUNNER_TEMP/$ARDUPILOT_ASSET"
+          defaults_source="$GITHUB_WORKSPACE/devices/cyberbrick/ardupilot/defaults.parm"
 
           test ! -e "$source_dir"
           test ! -e "$source_package_dir"
@@ -440,14 +425,18 @@ jobs:
           install -d "$binary_package_dir"
           install -m 755 build/linux/bin/ardurover \
             "$binary_package_dir/$ARDUPILOT_BINARY"
+          install -m 644 "$defaults_source" \
+            "$binary_package_dir/$ARDUPILOT_DEFAULTS"
           strip "$binary_package_dir/$ARDUPILOT_BINARY"
           sh "$GITHUB_WORKSPACE/release/scripts/assert-board-musl.sh" \
             "$binary_package_dir/$ARDUPILOT_BINARY" static
           "$binary_package_dir/$ARDUPILOT_BINARY" --help >/dev/null
-          tar -C "$binary_package_dir" -czf "$binary_asset" "$ARDUPILOT_BINARY"
+          tar -C "$binary_package_dir" -czf "$binary_asset" \
+            "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS"
           archive_listing="$(tar -tzf "$binary_asset")"
-          if [ "$archive_listing" != "$ARDUPILOT_BINARY" ]; then
-            echo "Expected $ARDUPILOT_ASSET to contain only root-level $ARDUPILOT_BINARY, got:" >&2
+          expected_listing="$(printf '%s\\n%s' "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS")"
+          if [ "$archive_listing" != "$expected_listing" ]; then
+            echo "Expected $ARDUPILOT_ASSET to contain root-level executable and defaults, got:" >&2
             printf '%s\n' "$archive_listing" >&2
             exit 1
           fi
@@ -512,12 +501,12 @@ jobs:
           install -d "$smoke_dir"
           tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$CYBERBRICK_DAEMON_ASSET"
           tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$KVS_MASTER_ASSET"
-          tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$HARDWARE_WORKER_ASSET"
+          tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$MAVLINK_ASSET"
 
           sh release/scripts/smoke-board-cross-distro.sh \
             "$smoke_dir/txing-cyberbrick-daemon" static "txing-cyberbrick-daemon $VERSION"
           sh release/scripts/smoke-board-cross-distro.sh \
-            "$smoke_dir/txing-cyberbrick-hardware-worker" static "txing-cyberbrick-hardware-worker $VERSION"
+            "$smoke_dir/$MAVLINK_BINARY" static "$MAVLINK_BINARY $VERSION"
           sh release/scripts/smoke-board-cross-distro.sh \
             "$smoke_dir/txing-cyberbrick-kvs-master" musl-libcamera "txing-cyberbrick-kvs-master $VERSION"
 
@@ -531,6 +520,7 @@ jobs:
             -v "$RUNNER_TEMP:$RUNNER_TEMP" \
             -w "$GITHUB_WORKSPACE" \
             -e ARDUPILOT_BINARY="$ARDUPILOT_BINARY" \
+            -e ARDUPILOT_DEFAULTS="$ARDUPILOT_DEFAULTS" \
             -e ARDUPILOT_ASSET="$ARDUPILOT_ASSET" \
             -e ARDUPILOT_SOURCE_ASSET="$ARDUPILOT_SOURCE_ASSET" \
             -e ARDUPILOT_SOURCE_ROOT="$ARDUPILOT_SOURCE_ROOT" \
@@ -550,6 +540,8 @@ jobs:
           sh release/scripts/assert-board-musl.sh \
             "$smoke_dir/$ARDUPILOT_BINARY" static
           "$smoke_dir/$ARDUPILOT_BINARY" --help >/dev/null
+          cmp "$smoke_dir/$ARDUPILOT_DEFAULTS" \
+            "$GITHUB_WORKSPACE/devices/cyberbrick/ardupilot/defaults.parm"
 
           if tar -tzf "$RELEASE_ASSETS_DIR/$ARDUPILOT_SOURCE_ASSET" | \
             grep -Ev "^$ARDUPILOT_SOURCE_ROOT/" >/dev/null; then
@@ -595,7 +587,7 @@ jobs:
           release_assets=(
             "$CYBERBRICK_DAEMON_ASSET"
             "$KVS_MASTER_ASSET"
-            "$HARDWARE_WORKER_ASSET"
+            "$MAVLINK_ASSET"
             "$ARDUPILOT_ASSET"
             "$ARDUPILOT_SOURCE_ASSET"
           )

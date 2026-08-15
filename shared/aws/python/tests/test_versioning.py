@@ -602,7 +602,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("matrix:", cyberbrick_workflow)
         self.assertIn("component: daemon", cyberbrick_workflow)
         self.assertIn("component: kvs-master", cyberbrick_workflow)
-        self.assertIn("component: hardware-worker", cyberbrick_workflow)
+        self.assertIn("component: mavlink", cyberbrick_workflow)
         self.assertIn(
             "CYBERBRICK_DAEMON_ASSET: txing-cyberbrick-daemon-linux-aarch64.tar.gz",
             cyberbrick_workflow,
@@ -612,7 +612,11 @@ class VersionEnvironmentTests(unittest.TestCase):
             cyberbrick_workflow,
         )
         self.assertIn(
-            "HARDWARE_WORKER_ASSET: txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz",
+            "MAVLINK_ASSET: txing-cyberbrick-mavlink-linux-aarch64.tar.gz",
+            cyberbrick_workflow,
+        )
+        self.assertIn(
+            "ARDUPILOT_DEFAULTS: txing-cyberbrick-ardupilot.defaults.parm",
             cyberbrick_workflow,
         )
         self.assertIn("image: docker.io/library/alpine:3.24.1", cyberbrick_workflow)
@@ -627,20 +631,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0", cyberbrick_workflow)
         self.assertNotIn("-linkmode=external", cyberbrick_workflow)
         self.assertIn(
-            "release/scripts/build-board-static-toolchain.sh", cyberbrick_workflow
-        )
-        self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", cyberbrick_workflow)
-        self.assertIn(
             "github.com/mparkachov/txing/devices/common/board/daemon"
             "/internal/daemon.DaemonVersion=$VERSION",
             cyberbrick_workflow,
         )
         self.assertIn(
             "-DTXING_BOARD_KVS_MASTER_VERSION=\"$VERSION\"",
-            cyberbrick_workflow,
-        )
-        self.assertIn(
-            "-DTXING_BOARD_HARDWARE_WORKER_VERSION=\"$VERSION\"",
             cyberbrick_workflow,
         )
         self.assertIn("-DBUILD_TESTING=ON", cyberbrick_workflow)
@@ -655,7 +651,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn('"$CYBERBRICK_DAEMON_ASSET"', cyberbrick_workflow)
         self.assertIn('"$KVS_MASTER_ASSET"', cyberbrick_workflow)
-        self.assertIn('"$HARDWARE_WORKER_ASSET"', cyberbrick_workflow)
+        self.assertIn('"$MAVLINK_ASSET"', cyberbrick_workflow)
+        self.assertIn('"$ARDUPILOT_DEFAULTS"', cyberbrick_workflow)
+        self.assertIn('cmp "$smoke_dir/$ARDUPILOT_DEFAULTS"', cyberbrick_workflow)
+        self.assertNotIn("txing-cyberbrick-hardware-worker", cyberbrick_workflow)
+        self.assertNotIn("HARDWARE_WORKER_ASSET", cyberbrick_workflow)
+        self.assertNotIn("build-board-static-toolchain.sh", cyberbrick_workflow)
         self.assertNotIn("image: debian:trixie", cyberbrick_workflow)
         self.assertNotIn("apt-get", cyberbrick_workflow)
         self.assertNotIn("archive.raspberrypi.com", cyberbrick_workflow)
@@ -1335,9 +1336,13 @@ class VersionEnvironmentTests(unittest.TestCase):
                 self.assertIn(
                     '-DTXING_BOARD_KVS_MASTER_VERSION="$VERSION"', workflow
                 )
-                self.assertIn(
-                    '-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', workflow
-                )
+                if device_type == "unit":
+                    self.assertIn(
+                        '-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', workflow
+                    )
+                else:
+                    self.assertIn("component: mavlink", workflow)
+                    self.assertNotIn("txing-cyberbrick-hardware-worker", workflow)
                 self.assertIn(f"-DTXING_BOARD_DEVICE_TYPE={device_type}", workflow)
                 self.assertIn(
                     "github.com/mparkachov/txing/devices/common/board/daemon"
@@ -1517,6 +1522,17 @@ class VersionEnvironmentTests(unittest.TestCase):
             "    txing-${TXING_DEVICE}-hardware-worker\n",
             cyberbrick_board_docs,
         )
+        self.assertIn("#### Cyberbrick MAVLink cutover", cyberbrick_board_docs)
+        self.assertIn("txing-cyberbrick-mavlink", cyberbrick_board_docs)
+        self.assertIn("txing-cyberbrick-ardupilot.defaults.parm", cyberbrick_board_docs)
+        self.assertIn("udpin:127.0.0.1:14550", cyberbrick_board_docs)
+        self.assertIn("FS_GCS_TIMEOUT 1", cyberbrick_board_docs)
+        self.assertIn("SERVO1_FUNCTION 73", cyberbrick_board_docs)
+        self.assertIn("SERVO2_FUNCTION 74", cyberbrick_board_docs)
+        self.assertIn("after txing-cyberbrick-ardupilot", cyberbrick_board_docs)
+        self.assertIn("after txing-cyberbrick-mavlink", cyberbrick_board_docs)
+        self.assertIn("test ! -e /etc/init.d/txing-cyberbrick-hardware-worker", cyberbrick_board_docs)
+        self.assertNotIn("udpin:0.0.0.0:14550", cyberbrick_board_docs)
         self.assertIn(
             "`apk upgrade` and `mise upgrade` happen together in the same "
             "maintenance window",
@@ -1546,7 +1562,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("rc-update add <service> default", installation_docs)
         self.assertIn("setup-disk -m sys", installation_docs)
         self.assertIn(
-            "installed from `cyberbrick-v*` GitHub Release assets through "
+            "from matching `cyberbrick-v*` GitHub Release assets through "
             "root-owned `mise`, supervised by OpenRC on a read-only root "
             "filesystem",
             normalized_installation_docs,
@@ -1557,7 +1573,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "/root/.config/txing/cyberbrick-daemon/daemon.env", artifacts_docs
         )
         self.assertIn(
-            "/root/.config/mise/conf.d/txing-cyberbrick-daemon.toml",
+            "/root/.config/mise/conf.d/txing-cyberbrick-runtime.toml",
             artifacts_docs,
         )
         self.assertIn(
@@ -1567,9 +1583,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn("/etc/init.d/txing-cyberbrick-daemon", artifacts_docs)
         self.assertIn("/etc/init.d/txing-cyberbrick-kvs-master", artifacts_docs)
-        self.assertIn(
-            "/etc/init.d/txing-cyberbrick-hardware-worker", artifacts_docs
-        )
+        self.assertIn("/etc/init.d/txing-cyberbrick-mavlink", artifacts_docs)
+        self.assertIn("/etc/init.d/txing-cyberbrick-ardupilot", artifacts_docs)
+        self.assertNotIn("txing-cyberbrick-hardware-worker", artifacts_docs)
         self.assertIn("/lib/ld-musl-aarch64.so.1", artifacts_docs)
         self.assertIn(
             "`apk upgrade` and `mise upgrade` happen together",
@@ -1615,6 +1631,50 @@ class VersionEnvironmentTests(unittest.TestCase):
             "`PWM chip path does not exist` is a **failure** here",
             " ".join(runbook[services:read_only].split()),
         )
+
+    def test_cyberbrick_ardupilot_defaults_and_release_cutover_are_tracked(self) -> None:
+        """Cyberbrick boots deterministic ArduPilot defaults beside the release binary."""
+        defaults = (
+            REPO_ROOT / "devices" / "cyberbrick" / "ardupilot" / "defaults.parm"
+        ).read_text(encoding="utf-8")
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "release-cyberbrick.yml"
+        ).read_text(encoding="utf-8")
+        runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
+            encoding="utf-8"
+        )
+
+        expected = {
+            "SERIAL0_PROTOCOL 2",
+            "SYSID_MYGCS 255",
+            "FS_GCS_ENABLE 1",
+            "FS_GCS_TIMEOUT 1",
+            "FS_ACTION 2",
+            "INITIAL_MODE 0",
+            "MODE2 4",
+            "MOT_PWM_TYPE 0",
+            "SERVO1_FUNCTION 73",
+            "SERVO2_FUNCTION 74",
+            "SERVO1_MIN 1000",
+            "SERVO1_TRIM 1500",
+            "SERVO1_MAX 2000",
+            "SERVO2_MIN 1000",
+            "SERVO2_TRIM 1500",
+            "SERVO2_MAX 2000",
+            "RC_OPTIONS 1",
+            "FS_THR_ENABLE 0",
+            "ARMING_CHECK 0",
+        }
+        for value in expected:
+            with self.subTest(value=value):
+                self.assertIn(value, defaults)
+        self.assertNotIn("MOT_PWM_FREQ", defaults)
+        self.assertNotIn("GPIO", defaults)
+        self.assertIn("txing-cyberbrick-ardupilot.defaults.parm", workflow)
+        self.assertIn('"$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS"', workflow)
+        self.assertIn("--defaults ${defaults}", runbook)
+        self.assertIn("udpin:127.0.0.1:14550", runbook)
+        self.assertNotIn("udpin:0.0.0.0:14550", runbook)
 
     def test_board_runbook_shell_blocks_are_copy_pasteable(self) -> None:
         """Every `sh` block in the board runbook must run as pasted.

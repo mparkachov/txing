@@ -147,16 +147,16 @@ The short production flow is:
 ## Cyberbrick Board Host
 
 The cyberbrick board is a supported device-side Raspberry Pi board running
-Alpine Linux aarch64. Production cyberbrick boards run the root-owned Go
-`txing-cyberbrick-daemon`, native `txing-cyberbrick-kvs-master`, and native
-`txing-cyberbrick-hardware-worker` installed from `cyberbrick-v*` GitHub
-Release assets through root-owned `mise`, supervised by OpenRC on a read-only
-root filesystem. The daemon and hardware worker are fully static musl
-binaries; the KVS master is dynamically linked against musl and Alpine
-libcamera, so the installed Alpine `v3.24` packages and the release stream
-move together for the camera. Cyberbrick can additionally install the static
-`txing-cyberbrick-ardupilot` ArduRover release asset; it manually replaces the
-hardware worker as PWM owner and is also supervised by OpenRC.
+Alpine Linux aarch64. Production Cyberbrick boards run the root-owned Go
+`txing-cyberbrick-daemon`, native `txing-cyberbrick-kvs-master`, static
+`txing-cyberbrick-mavlink`, and static `txing-cyberbrick-ardupilot` from
+matching `cyberbrick-v*` GitHub Release assets through root-owned `mise`,
+supervised by OpenRC on a read-only root filesystem. ArduPilot is the PWM
+owner and receives its tracked defaults on every tmpfs-backed boot. The daemon
+and MAVLink service are fully static musl binaries; the KVS master is
+dynamically linked against musl and Alpine libcamera, so the installed Alpine
+`v3.24` packages and release stream move together for the camera. Cyberbrick
+does not install or start a hardware worker.
 
 Canonical cyberbrick board installation, Alpine sys install, OpenRC service
 setup, read-only-root layout, manual maintenance, and validation instructions
@@ -168,22 +168,24 @@ The short production flow is:
 1. Write the Alpine `v3.24` aarch64 Raspberry Pi image, run `setup-alpine`,
    and convert the card to a persistent install with `setup-disk -m sys`.
 2. Install the runtime apk packages and root-owned `mise`.
-3. Generate the daemon environment/certificate bundle on the operator machine
-   with
-   `just aws::cert <thing-id>`.
+3. Provision the MAVLink KVS resource and IAM policy with `just aws::deploy`,
+   then generate the daemon environment/certificate bundle on the operator
+   machine with `just aws::cert <thing-id>`.
 4. Copy and unpack `<thing-id>-daemon-config.tgz` under
    `/root/.config/txing/cyberbrick-daemon`, including `daemon.env` and
    certificate files.
-5. Install the root-owned mise release tools from the `cyberbrick-v*` stream
-   and create the `txing-cyberbrick-hardware-worker`,
+5. In one writable-root window, install the four matching Cyberbrick release
+   assets, remove the old hardware-worker state, and create the
+   `txing-cyberbrick-ardupilot`, `txing-cyberbrick-mavlink`,
    `txing-cyberbrick-daemon`, and `txing-cyberbrick-kvs-master` OpenRC
    services, enabled with `rc-update add <service> default`.
-6. Optionally install `txing-cyberbrick-ardupilot`, create its OpenRC service,
-   stop/remove the hardware worker, and enable ArduPilot as the manual PWM
-   owner. Never enable both services together.
+6. Verify ArduPilot binds only `127.0.0.1:14550`, the four-service dependency
+   order, the packaged defaults, and hardware-worker removal.
 7. Configure the PWM overlay and the read-only-root fstab/tmpfs layout.
-8. Reboot and verify daemon/KVS readiness, REDCON convergence, and the one
-   selected PWM owner.
+8. Reboot with read-only root, repeat the service/default/local-UDP checks,
+   deploy Office, then manually remove obsolete MCP shadow and retained-topic
+   state. The full cutover commands are in
+   [Cyberbrick MAVLink cutover](./components/board.md#cyberbrick-mavlink-cutover).
 
 ## Web
 

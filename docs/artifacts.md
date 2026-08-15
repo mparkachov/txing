@@ -57,7 +57,7 @@ Cyberbrick releases publish these Alpine Linux `aarch64` assets:
 ```text
 txing-cyberbrick-daemon-linux-aarch64.tar.gz
 txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
-txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+txing-cyberbrick-mavlink-linux-aarch64.tar.gz
 txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
 ```
 
@@ -76,13 +76,15 @@ txing-cloud-mcu-lambda-linux-aarch64.zip
 ```
 
 Each `.tar.gz` archive contains one root-level executable with the same command
-name. Each runtime Lambda `.zip` contains one root-level Go executable named
+name, except Cyberbrick ArduPilot which also contains its tracked defaults
+file. Each runtime Lambda `.zip` contains one root-level Go executable named
 `bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
-Unit and cyberbrick board binaries are built in the same pinned Alpine
-release under one linkage contract: the Go daemons and hardware workers are
-fully static musl binaries that run on both Debian and Alpine hosts, and each
+Unit and Cyberbrick board binaries are built in the same pinned Alpine
+release under one linkage contract: the Go daemons plus the Unit hardware
+worker and Cyberbrick MAVLink service are fully static musl binaries that run
+on both Debian and Alpine hosts, and each
 KVS master is dynamically linked against musl and stock Alpine libcamera, so
 it runs on Alpine hosts only. Both board workflows verify the linkage kind of
 the exact stripped executable placed in each archive with
@@ -224,22 +226,23 @@ during that writable-root maintenance window: disable and remove
 
 ### Cyberbrick board
 
-Cyberbrick boards install these three release assets with root-owned `mise`:
+Cyberbrick boards install these four release assets with root-owned `mise`:
 
 ```text
 txing-cyberbrick-daemon-linux-aarch64.tar.gz
 txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
-txing-cyberbrick-hardware-worker-linux-aarch64.tar.gz
+txing-cyberbrick-mavlink-linux-aarch64.tar.gz
+txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
 ```
 
 Installed commands are `txing-cyberbrick-daemon`,
-`txing-cyberbrick-kvs-master`, and `txing-cyberbrick-hardware-worker`.
-Cyberbrick uses the `cyberbrick-v*` release stream and Alpine `v3.24`; the
-release image, installed apk branch, and runtime libraries must move together.
-Publishing a release never upgrades a Cyberbrick automatically. Installation,
-OpenRC service configuration, writable-root maintenance, and the return to a
-read-only root remain explicit operator steps in the Cyberbrick board runbook,
-[components/board.md](./components/board.md).
+`txing-cyberbrick-kvs-master`, `txing-cyberbrick-mavlink`, and
+`txing-cyberbrick-ardupilot`. The ArduPilot archive also contains the tracked
+`txing-cyberbrick-ardupilot.defaults.parm` loaded on every tmpfs-backed boot.
+Cyberbrick uses the `cyberbrick-v*` release stream and Alpine `v3.24`; its
+release image, installed apk branch, and runtime libraries move together.
+Publishing a release never upgrades a board automatically. The forward-only
+release/install/reboot procedure is [Cyberbrick MAVLink cutover](./components/board.md#cyberbrick-mavlink-cutover).
 
 The root-owned runtime layout is:
 
@@ -250,26 +253,30 @@ The root-owned runtime layout is:
 /root/.config/txing/cyberbrick-daemon/certificate.pem.crt
 /root/.config/txing/cyberbrick-daemon/private.pem.key
 /root/.config/txing/cyberbrick-daemon/public.pem.key
-/root/.config/mise/conf.d/txing-cyberbrick-daemon.toml
+/root/.config/mise/conf.d/txing-cyberbrick-runtime.toml
 /root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon
 /root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master
-/root/.local/share/mise/installs/txing-cyberbrick-hardware-worker/latest/txing-cyberbrick-hardware-worker
+/root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
+/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
+/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
 /etc/init.d/txing-cyberbrick-daemon
 /etc/init.d/txing-cyberbrick-kvs-master
-/etc/init.d/txing-cyberbrick-hardware-worker
+/etc/init.d/txing-cyberbrick-mavlink
+/etc/init.d/txing-cyberbrick-ardupilot
 ```
 
-The `daemon.env` file is rendered from
-`devices/common/daemon.env.template` and follows the unit key
-contract; cyberbrick differs only in its config, socket, and install paths.
+The `daemon.env` file is rendered from `devices/common/daemon.env.template`.
 There is no OpenRC equivalent of `txing-unit.target`: each init script is
-enabled individually with `rc-update add <service> default`, and OpenRC
-dependencies order the hardware worker, then the daemon, then the KVS master.
-Service starts stay offline and never invoke mise or call GitHub.
+enabled individually with `rc-update add <service> default`, and dependencies
+order ArduPilot, MAVLink, daemon, then KVS master. The MAVLink service alone
+owns `udp://127.0.0.1:14550` and
+`/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock`. Service starts stay
+offline and never invoke mise or call GitHub. Cyberbrick does not publish,
+install, or start a hardware worker.
 
 Cyberbrick's ldd policy follows from the board linkage contract: before
 rebooting out of a maintenance window, run `ldd` on each installed `latest`
-binary. The static daemon and hardware worker must show no shared-library
+binary. The static daemon and MAVLink service must show no shared-library
 dependencies (musl `ldd` refuses them or lists only the loader). The
 musl-dynamic KVS master must show the `/lib/ld-musl-aarch64.so.1`
 interpreter, no `not found` libraries, and the `libcamera.so.0.7` and
