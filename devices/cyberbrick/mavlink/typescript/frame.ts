@@ -28,6 +28,14 @@ export interface MavlinkV2Frame {
   readonly payload: Uint8Array
 }
 
+export interface UnsignedMavlinkV2FrameInput {
+  readonly componentId: number
+  readonly messageId: number
+  readonly payload: Uint8Array
+  readonly sequence: number
+  readonly systemId: number
+}
+
 const crcExtraByMessageId: ReadonlyMap<number, number> = new Map(
   messageRegistry.map(([messageId, Message]): [number, number] => {
     const message = new Message(0, 0)
@@ -47,6 +55,54 @@ const mavlinkCrc = (bytes: Uint8Array, crcExtra: number): number => {
     crc = accumulateX25(crc, byte)
   }
   return accumulateX25(crc, crcExtra)
+}
+
+const assertByte = (value: number, field: string): void => {
+  if (!Number.isInteger(value) || value < 0 || value > 0xff) {
+    throw new Error(`${field} must be an unsigned byte`)
+  }
+}
+
+// Builds exactly one unsigned MAVLink 2 common-dialect frame. Callers own the
+// sequence number and forward the returned bytes without rewriting them.
+export const buildUnsignedMavlinkV2CommonFrame = ({
+  componentId,
+  messageId,
+  payload,
+  sequence,
+  systemId,
+}: UnsignedMavlinkV2FrameInput): Uint8Array => {
+  assertByte(componentId, 'componentId')
+  assertByte(sequence, 'sequence')
+  assertByte(systemId, 'systemId')
+  if (!Number.isInteger(messageId) || messageId < 0 || messageId > 0xffffff) {
+    throw new Error('messageId must be a 24-bit unsigned integer')
+  }
+  if (payload.byteLength > 0xff) {
+    throw new Error('MAVLink payload must not exceed 255 bytes')
+  }
+  const crcExtra = crcExtraByMessageId.get(messageId)
+  if (crcExtra === undefined) {
+    throw new MavlinkFrameValidationError('unsupported_message')
+  }
+
+  const frame = new Uint8Array(MAVLINK_V2_HEADER_LENGTH + payload.byteLength + MAVLINK_V2_CHECKSUM_LENGTH)
+  frame[0] = MAVLINK_V2_MAGIC
+  frame[1] = payload.byteLength
+  frame[2] = 0
+  frame[3] = 0
+  frame[4] = sequence
+  frame[5] = systemId
+  frame[6] = componentId
+  frame[7] = messageId & 0xff
+  frame[8] = (messageId >>> 8) & 0xff
+  frame[9] = (messageId >>> 16) & 0xff
+  frame.set(payload, MAVLINK_V2_HEADER_LENGTH)
+  const checksumOffset = MAVLINK_V2_HEADER_LENGTH + payload.byteLength
+  const checksum = mavlinkCrc(frame.slice(1, checksumOffset), crcExtra)
+  frame[checksumOffset] = checksum & 0xff
+  frame[checksumOffset + 1] = checksum >>> 8
+  return frame
 }
 
 // Validates one complete unsigned MAVLink 2 common-dialect frame. The caller

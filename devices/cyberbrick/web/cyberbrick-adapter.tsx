@@ -2,6 +2,7 @@ import type { DeviceWebAdapter } from '../../../office/src/device-adapter'
 import VideoPanel from '../../../office/src/VideoPanel'
 import {
   buildBoardVideoChannelName,
+  buildMavlinkChannelName,
   extractReportedBatteryMv,
   extractReportedBoardPower,
   extractReportedBoardWifiOnline,
@@ -14,8 +15,11 @@ const cyberbrickDeviceAdapter: DeviceWebAdapter = {
   type: 'cyberbrick',
   displayName: 'Cyberbrick',
   buildVideoChannelName: buildBoardVideoChannelName,
+  buildMavlinkChannelName,
   canUseBoardVideo: (reportedRedcon) => reportedRedcon === 1,
-  canUseDriveControl: (reportedRedcon) => reportedRedcon === 1 || reportedRedcon === 2,
+  // Cyberbrick owns a distinct MAVLink data peer. Keeping this false prevents
+  // the Unit-only MCP/cmd_vel keyboard path from being initialized here.
+  canUseDriveControl: () => false,
   extractTelemetry: (shadow) => ({
     reportedBatteryMv: extractReportedBatteryMv(shadow),
     reportedBoardPower: extractReportedBoardPower(shadow),

@@ -27,10 +27,13 @@ describe('device web adapter registry', () => {
     expect(cyberbrickAdapter?.buildVideoChannelName('cyberbrick-a1')).toBe(
       'cyberbrick-a1-board-video',
     )
+    expect(cyberbrickAdapter?.buildMavlinkChannelName?.('cyberbrick-a1')).toBe(
+      'cyberbrick-a1-mavlink',
+    )
     expect(cyberbrickAdapter?.canUseBoardVideo(1)).toBe(true)
     expect(cyberbrickAdapter?.canUseBoardVideo(2)).toBe(false)
-    expect(cyberbrickAdapter?.canUseDriveControl(1)).toBe(true)
-    expect(cyberbrickAdapter?.canUseDriveControl(2)).toBe(true)
+    expect(cyberbrickAdapter?.canUseDriveControl(1)).toBe(false)
+    expect(cyberbrickAdapter?.canUseDriveControl(2)).toBe(false)
     expect(cyberbrickAdapter?.canUseDriveControl(3)).toBe(false)
     expect(weatherAdapter?.type).toBe('weather')
     expect(weatherAdapter?.canUseDriveControl(1)).toBe(false)

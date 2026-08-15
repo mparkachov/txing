@@ -382,7 +382,7 @@ Deployed boards use root-owned config:
 ```
 
 `daemon.env` is a systemd-compatible environment file rendered from
-`devices/common/board/daemon/daemon.env.template`. It uses plain `KEY=value` lines so
+`devices/common/daemon.env.template`. It uses plain `KEY=value` lines so
 both `txing-<device>-hardware-worker.service` and the daemon can consume the same
 root-owned file. Certificate paths are omitted by default; the daemon derives
 colocated paths from the loaded `daemon.env` directory. For manual shell export,
@@ -906,7 +906,7 @@ against (see [OS And ABI Contract](#os-and-abi-contract)). Both are fetched
 from AWS's public repository by `just aws::cert` and shipped in the bundle.
 
 `daemon.env` is rendered from
-`devices/common/board/daemon/daemon.env.template` and uses plain `KEY=value`
+`devices/common/daemon.env.template` and uses plain `KEY=value`
 lines so both the daemon and the hardware worker init script can consume the
 same root-owned file. Certificate paths are omitted by default; the daemon
 derives colocated paths from the loaded `daemon.env` directory. For manual

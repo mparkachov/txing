@@ -8,10 +8,9 @@ export TMPDIR := tmp_dir
 root_justfile := project_root + "/justfile"
 aws_lib := aws_dir + "/scripts/aws_lib.sh"
 rig_env_template := project_root + "/rig/rig-daemon.env.template"
-# Both board device types use one template. Certificate generation substitutes
-# the board-facing capability subset from the enlisted device's catalog profile.
-board_daemon_env_template := project_root + "/devices/common/board/daemon/daemon.env.template"
-mac_daemon_env_template := project_root + "/devices/mac/daemon.env.template"
+# All native device daemons share one template. Certificate generation derives
+# the device-facing capability subset from the enlisted catalog profile.
+device_daemon_env_template := project_root + "/devices/common/daemon.env.template"
 
 stack_name := ""
 template_file := "template.yaml"
@@ -607,7 +606,7 @@ cert thing_id='':
     txing_validate_iot_thing_id "$requested_thing_id" "Use: just aws::cert <thing-id>"
     eval "$(just --justfile "{{root_justfile}}" _project-aws-env aws)"
     txing_aws_init
-    txing_generate_iot_certificate_bundle "$requested_thing_id" "{{rig_env_template}}" "{{board_daemon_env_template}}" "{{mac_daemon_env_template}}"
+    txing_generate_iot_certificate_bundle "$requested_thing_id" "{{rig_env_template}}" "{{device_daemon_env_template}}"
 
 init-shadow thing_name='' shadow_name='sparkplug' payload_file='' shadow_response_file='':
     #!/bin/sh

@@ -2205,6 +2205,10 @@ function App({ initialAuthError = '' }: AppProps) {
         callMcpTool: callDeviceMcpTool,
         isBoardVideoExpanded,
         isDebugEnabled,
+        mavlinkActor: mcpActor,
+        mavlinkChannelName:
+          currentDeviceAdapter.buildMavlinkChannelName?.(selectedDeviceRoute.device) ?? '',
+        mavlinkRegion: appConfig.awsRegion,
         isTakeControlPending: isTakingMcpControl,
         isShadowConnected,
         mcpTransport,

@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import { renderToStaticMarkup } from 'react-dom/server'
 import cyberbrickDeviceAdapter from '../../devices/cyberbrick/web/cyberbrick-adapter'
 
 describe('cyberbrick adapter', () => {
-  test('matches unit teleoperation and video REDCON gates', () => {
+  test('uses an independent MAVLink control path and the existing video REDCON gate', () => {
     expect(cyberbrickDeviceAdapter.type).toBe('cyberbrick')
     expect(cyberbrickDeviceAdapter.displayName).toBe('Cyberbrick')
     expect(cyberbrickDeviceAdapter.buildVideoChannelName('cyberbrick-a1')).toBe(
@@ -11,8 +12,11 @@ describe('cyberbrick adapter', () => {
     expect(cyberbrickDeviceAdapter.canUseBoardVideo(1)).toBe(true)
     expect(cyberbrickDeviceAdapter.canUseBoardVideo(2)).toBe(false)
     expect(cyberbrickDeviceAdapter.canUseBoardVideo(null)).toBe(false)
-    expect(cyberbrickDeviceAdapter.canUseDriveControl(1)).toBe(true)
-    expect(cyberbrickDeviceAdapter.canUseDriveControl(2)).toBe(true)
+    expect(cyberbrickDeviceAdapter.buildMavlinkChannelName?.('cyberbrick-a1')).toBe(
+      'cyberbrick-a1-mavlink',
+    )
+    expect(cyberbrickDeviceAdapter.canUseDriveControl(1)).toBe(false)
+    expect(cyberbrickDeviceAdapter.canUseDriveControl(2)).toBe(false)
     expect(cyberbrickDeviceAdapter.canUseDriveControl(3)).toBe(false)
 
     const renderedVideo = cyberbrickDeviceAdapter.renderVideo({
@@ -104,12 +108,15 @@ describe('cyberbrick adapter', () => {
     ).toBe(false)
   })
 
-  test('renders the cyberbrick teleoperation panel', () => {
-    const rendered = collectRenderedText(
+  test('renders the Cyberbrick MAVLink control panel without an MCP affordance', () => {
+    const rendered = renderToStaticMarkup(
       cyberbrickDeviceAdapter.renderDetail({
         callMcpTool: async () => null,
         isBoardVideoExpanded: false,
         isDebugEnabled: false,
+        mavlinkActor: 'operator@example.test',
+        mavlinkChannelName: 'cyberbrick-a1-mavlink',
+        mavlinkRegion: 'eu-central-1',
         isShadowConnected: true,
         isTakeControlPending: false,
         mcpTransport: 'mqtt-jsonrpc',
@@ -139,42 +146,9 @@ describe('cyberbrick adapter', () => {
 
     expect(rendered).toContain('Cyberbrick status')
     expect(rendered).toContain('CYBERBRICK')
-    expect(rendered).toContain('Take active control')
-    expect(rendered).toContain('MCP over MQTT JSON-RPC')
+    expect(rendered).toContain('MAVLink control')
+    expect(rendered).toContain('Acquire control')
+    expect(rendered).toContain('MAVLink over an independent WebRTC data channel')
+    expect(rendered).not.toContain('MCP')
   })
 })
-
-const collectRenderedText = (node: unknown): string => {
-  if (
-    node === null ||
-    node === undefined ||
-    typeof node === 'boolean' ||
-    typeof node === 'symbol'
-  ) {
-    return ''
-  }
-  if (typeof node === 'string' || typeof node === 'number' || typeof node === 'bigint') {
-    return String(node)
-  }
-  if (Array.isArray(node)) {
-    return node.map(collectRenderedText).join('')
-  }
-  if (typeof node !== 'object') {
-    return ''
-  }
-
-  const element = node as {
-    props?: Record<string, unknown>
-    type?: unknown
-  }
-  if (typeof element.type === 'function') {
-    return collectRenderedText(element.type(element.props ?? {}))
-  }
-
-  const propText = Object.entries(element.props ?? {})
-    .filter(([name, value]) => name !== 'children' && typeof value === 'string')
-    .map(([, value]) => value)
-    .join('')
-
-  return `${propText}${collectRenderedText(element.props?.children)}`
-}

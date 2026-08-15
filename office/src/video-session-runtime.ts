@@ -259,7 +259,7 @@ export const resolveCachedKvsSignalingMetadata = async ({
   return loadPromise
 }
 
-const resolveKvsSignalingMetadata = async ({
+export const resolveKvsSignalingMetadata = async ({
   channelName,
   region,
   kinesisVideoClient,

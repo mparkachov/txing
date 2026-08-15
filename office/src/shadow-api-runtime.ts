@@ -579,6 +579,7 @@ class AwsIotShadowSession implements ShadowSession {
   private readonly sparkplugTopics: SparkplugTopics
   private readonly mcpDescriptorTopic: string
   private readonly mcpStatusTopic: string
+  private readonly mcpEnabled: boolean
   private readonly credentialsProvider: BrowserCredentialProvider
   private client: mqtt5.Mqtt5Client | null = null
   private closed = false
@@ -700,6 +701,7 @@ class AwsIotShadowSession implements ShadowSession {
     )
     this.mcpDescriptorTopic = buildMcpDescriptorTopic(options.thingName)
     this.mcpStatusTopic = buildMcpStatusTopic(options.thingName)
+    this.mcpEnabled = options.capabilities.includes('mcp')
     this.mcpDiscovery = normalizeMcpDiscoverySummary(options.thingName)
     this.credentialsProvider = new BrowserCredentialProvider(options.resolveIdToken)
     this.cmdVelPublisher = new LatestAsyncValueRunner(async (twist) => this.publishCmdVelNow(twist))
@@ -995,18 +997,20 @@ class AwsIotShadowSession implements ShadowSession {
         shadowSubscriptionPacket.subscriptions,
         'Thing shadow',
       )
-      const mcpDiscoverySubscriptionPacket = {
-        subscriptions: [
-          { topicFilter: this.mcpDescriptorTopic, qos: 1 as const },
-          { topicFilter: this.mcpStatusTopic, qos: 1 as const },
-        ],
-      } as mqtt5.SubscribePacket
-      const mcpDiscoverySuback = await client.subscribe(mcpDiscoverySubscriptionPacket)
-      ensureSuccessfulSuback(
-        mcpDiscoverySuback,
-        mcpDiscoverySubscriptionPacket.subscriptions,
-        'MCP discovery',
-      )
+      if (this.mcpEnabled) {
+        const mcpDiscoverySubscriptionPacket = {
+          subscriptions: [
+            { topicFilter: this.mcpDescriptorTopic, qos: 1 as const },
+            { topicFilter: this.mcpStatusTopic, qos: 1 as const },
+          ],
+        } as mqtt5.SubscribePacket
+        const mcpDiscoverySuback = await client.subscribe(mcpDiscoverySubscriptionPacket)
+        ensureSuccessfulSuback(
+          mcpDiscoverySuback,
+          mcpDiscoverySubscriptionPacket.subscriptions,
+          'MCP discovery',
+        )
+      }
       if (this.closed || client !== this.client) {
         return
       }
@@ -1019,7 +1023,9 @@ class AwsIotShadowSession implements ShadowSession {
           `Unable to request initial shadow snapshots: ${getErrorMessage(caughtError)}`,
         )
       })
-      void this.warmUpMcpSession()
+      if (this.mcpEnabled) {
+        void this.warmUpMcpSession()
+      }
     } catch (caughtError) {
       this.setConnectionState('error')
       this.options.onError(`Unable to subscribe to shadow topics: ${getErrorMessage(caughtError)}`)

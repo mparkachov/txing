@@ -1,23 +1,24 @@
-import { getTrackIndicatorPresentation } from './app-model'
+import {
+  extractCyberbrickMavlinkReportedState,
+  getTrackIndicatorPresentation,
+} from './app-model'
 import VideoPanel from '../../../office/src/VideoPanel'
-import type { McpTransportKind } from '../../../office/src/mcp-descriptor'
-import type { RobotControlState } from '../../../office/src/shadow-api'
+import MavlinkControlPanel from './MavlinkControlPanel'
 
 type CyberbrickPanelProps = {
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
-  isShadowConnected: boolean
-  isTakeControlPending: boolean
-  mcpTransport: McpTransportKind | null
-  onTakeControl: () => void
+  mavlinkActor: string
+  mavlinkChannelName: string
+  mavlinkRegion: string
   reportedBatteryMv: number | null
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
   reportedBoardRightTrackSpeed: number | null
   reportedRedcon: number | null
   reportedMcuOnline: boolean | null
-  robotControl: RobotControlState | null
   onToggleDebug: () => void
+  shadow: unknown
   videoChannelName: string
   resolveIdToken: () => Promise<string>
   onBoardVideoRuntimeError: (message: string) => void
@@ -27,7 +28,6 @@ type TrackGaugeProps = {
   side: 'Left' | 'Right'
   speed: number | null
 }
-type ActiveControlOwnership = 'unknown' | 'none' | 'current' | 'other'
 type BatteryCurvePoint = readonly [mv: number, percent: number]
 
 const batterySocCurve: readonly BatteryCurvePoint[] = [
@@ -187,160 +187,20 @@ function DebugGlyph() {
   )
 }
 
-function TakeControlGlyph() {
-  return (
-    <svg
-      className="status-video-take-control-glyph"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        d="M12 4.8v5.8M12 13.4v5.8M4.8 12h5.8M13.4 12h5.8"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="2"
-      />
-      <circle
-        cx="12"
-        cy="12"
-        r="6.6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
-      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
-    </svg>
-  )
-}
-
-function ActiveControlGlyph({ ownership }: { ownership: ActiveControlOwnership }) {
-  return (
-    <svg
-      className="status-mcp-control-glyph"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      {ownership === 'current' ? (
-        <path
-          d="M5 12.8 9.4 17 19 7"
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="2.4"
-        />
-      ) : (
-        <>
-          <circle
-            cx="12"
-            cy="12"
-            r="7"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.9"
-          />
-          <path
-            d="M12 7.6v4.8M12 16.2h.01"
-            fill="none"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeWidth="2.2"
-          />
-        </>
-      )}
-    </svg>
-  )
-}
-
-const getActiveControlOwnership = (
-  robotControl: RobotControlState | null,
-): ActiveControlOwnership => {
-  if (!robotControl) {
-    return 'unknown'
-  }
-  if (robotControl.activeOwnerSessionId === null) {
-    return 'none'
-  }
-  return robotControl.activeHeldByCaller ? 'current' : 'other'
-}
-
-function McpTransportGlyph({ transport }: { transport: McpTransportKind | null }) {
-  const label =
-    transport === 'webrtc-datachannel'
-      ? 'MCP over WebRTC data channel'
-      : transport === 'mqtt-jsonrpc'
-        ? 'MCP over MQTT JSON-RPC'
-        : 'MCP transport pending'
-  const toneClass =
-    transport === 'webrtc-datachannel'
-      ? 'status-mcp-transport-webrtc'
-      : transport === 'mqtt-jsonrpc'
-        ? 'status-mcp-transport-mqtt'
-        : 'status-mcp-transport-pending'
-
-  return (
-    <span
-      className={`status-mcp-transport ${toneClass}`}
-      role="img"
-      aria-label={label}
-      title={label}
-      data-mcp-transport={transport ?? 'pending'}
-    >
-      <svg
-        className="status-mcp-transport-glyph"
-        viewBox="0 0 24 24"
-        aria-hidden="true"
-        focusable="false"
-      >
-        {transport === 'mqtt-jsonrpc' ? (
-          <>
-            <path
-              d="M7 9.2a7.5 7.5 0 0 1 10 0M9.7 12a3.8 3.8 0 0 1 4.6 0"
-              fill="none"
-              stroke="currentColor"
-              strokeLinecap="round"
-              strokeWidth="2"
-            />
-            <path d="M12 16.4h.01" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="3" />
-          </>
-        ) : (
-          <>
-            <path
-              d="M8.2 8.4h7.6M8.2 15.6h7.6"
-              fill="none"
-              stroke="currentColor"
-              strokeLinecap="round"
-              strokeWidth="2"
-            />
-            <circle cx="6" cy="8.4" r="1.8" fill="currentColor" />
-            <circle cx="18" cy="8.4" r="1.8" fill="currentColor" />
-            <circle cx="6" cy="15.6" r="1.8" fill="currentColor" />
-            <circle cx="18" cy="15.6" r="1.8" fill="currentColor" />
-          </>
-        )}
-      </svg>
-    </span>
-  )
-}
-
 function CyberbrickPanel({
   isBoardVideoExpanded,
   isDebugEnabled,
-  isShadowConnected,
-  isTakeControlPending,
-  mcpTransport,
-  onTakeControl,
+  mavlinkActor,
+  mavlinkChannelName,
+  mavlinkRegion,
   reportedBatteryMv,
   reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
   reportedBoardRightTrackSpeed,
   reportedRedcon,
   reportedMcuOnline,
-  robotControl,
   onToggleDebug,
+  shadow,
   videoChannelName,
   resolveIdToken,
   onBoardVideoRuntimeError,
@@ -348,22 +208,7 @@ function CyberbrickPanel({
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
   const shouldRenderBoardVideo = isBoardVideoExpanded && reportedRedcon === 1
-  const activeControlOwnership = getActiveControlOwnership(robotControl)
-  const activeControlActor = robotControl?.activeControl?.actor
-  const shouldRenderTakeControlButton =
-    activeControlOwnership === 'none' || activeControlOwnership === 'other'
-  const activeControlLabel =
-    activeControlOwnership === 'current'
-      ? 'You have active control'
-      : activeControlOwnership === 'other' && activeControlActor
-        ? `Active control held by ${activeControlActor}`
-        : activeControlOwnership === 'other'
-          ? 'Active control held by another session'
-          : 'MCP active-control status pending'
-  const takeControlTitle =
-    activeControlOwnership === 'other' && activeControlActor
-      ? `Take active control from ${activeControlActor}`
-      : 'Take active control'
+  const mavlinkReported = extractCyberbrickMavlinkReportedState(shadow)
   const videoOverlay = (
     <div className="status-video-overlay-bar">
       <div className="status-video-overlay-side status-video-overlay-side-start">
@@ -383,30 +228,15 @@ function CyberbrickPanel({
             <DebugGlyph />
           </button>
         ) : null}
-        {shouldRenderTakeControlButton ? (
-          <button
-            type="button"
-            className="status-video-take-control-button"
-            aria-label="Take active control"
-            disabled={!isShadowConnected || isTakeControlPending}
-            title={takeControlTitle}
-            data-mcp-control-owner={activeControlOwnership}
-            onClick={onTakeControl}
-          >
-            <TakeControlGlyph />
-          </button>
-        ) : (
-          <span
-            className={`status-mcp-control status-mcp-control-${activeControlOwnership}`}
-            role="img"
-            aria-label={activeControlLabel}
-            title={activeControlLabel}
-            data-mcp-control-owner={activeControlOwnership}
-          >
-            <ActiveControlGlyph ownership={activeControlOwnership} />
-          </span>
-        )}
-        <McpTransportGlyph transport={mcpTransport} />
+        <span
+          className="status-mavlink-transport"
+          role="img"
+          aria-label="MAVLink over an independent WebRTC data channel"
+          title="MAVLink over an independent WebRTC data channel"
+          data-mavlink-transport="webrtc-datachannel"
+        >
+          MAVLINK
+        </span>
       </div>
       <div className="status-video-overlay-lockup">
         <div className="status-txing-title-group" role="group" aria-label="Cyberbrick drive indicators">
@@ -473,13 +303,23 @@ function CyberbrickPanel({
             <div
               className="status-video-offline-surface"
               aria-label="Cyberbrick drive status"
-              data-drive-mode={mcpTransport ?? 'pending'}
+              data-drive-mode="mavlink"
             >
               {videoOverlay}
             </div>
           )}
         </div>
       </div>
+      <MavlinkControlPanel
+        actor={mavlinkActor}
+        channelName={mavlinkChannelName}
+        initialArmed={mavlinkReported.armed}
+        initialMode={mavlinkReported.mode}
+        initialTarget={mavlinkReported.target}
+        onRuntimeError={onBoardVideoRuntimeError}
+        region={mavlinkRegion}
+        resolveIdToken={resolveIdToken}
+      />
     </section>
   )
 }

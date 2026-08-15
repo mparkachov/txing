@@ -16,6 +16,7 @@ export const namedShadowNames: readonly ShadowName[] = [
   'power',
   'board',
   'mcp',
+  'mavlink',
   'video',
 ]
 const shadowNamePattern = /^[A-Za-z0-9:_-]+$/

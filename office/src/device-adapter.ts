@@ -31,6 +31,9 @@ export type DeviceDetailRenderProps = {
   callMcpTool: (name: string, args?: Record<string, unknown>) => Promise<unknown>
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
+  mavlinkActor: string
+  mavlinkChannelName: string
+  mavlinkRegion: string
   isShadowConnected: boolean
   isTakeControlPending: boolean
   mcpTransport: McpTransportKind | null
@@ -60,6 +63,7 @@ export type DeviceWebAdapter = {
   type: string
   displayName: string
   buildVideoChannelName: (deviceId: string) => string
+  buildMavlinkChannelName?: (deviceId: string) => string
   canUseBoardVideo: (reportedRedcon: number | null) => boolean
   canUseDriveControl: (reportedRedcon: number | null) => boolean
   extractTelemetry: (shadow: unknown) => DeviceTelemetry

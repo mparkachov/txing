@@ -247,7 +247,7 @@ txing_cert_write_daemon_env() {
   chmod 600 "$env_file"
 }
 
-txing_cert_board_daemon_capabilities() {
+txing_cert_device_daemon_capabilities() {
   thing_json="$1"
   thing_id="$2"
   capabilities="$(printf '%s\n' "$thing_json" | jq -er '
@@ -264,11 +264,11 @@ txing_cert_board_daemon_capabilities() {
       else join(",")
       end
   ')" || {
-    echo "Thing $thing_id has an invalid board daemon capability profile" >&2
+    echo "Thing $thing_id has an invalid device daemon capability profile" >&2
     return 1
   }
   [ -n "$capabilities" ] || {
-    echo "Thing $thing_id has an empty board daemon capability profile" >&2
+    echo "Thing $thing_id has an empty device daemon capability profile" >&2
     return 1
   }
   printf '%s\n' "$capabilities"
@@ -410,7 +410,7 @@ txing_cert_generate_device_daemon_bundle() {
   iot_role_alias="txing-daemon-$thing_id"
   cloudwatch_log_group="txing/${town_id}/${rig_id}/${thing_id}"
   video_channel_name="${TXING_BOARD_VIDEO_CHANNEL_NAME:-${thing_id}-board-video}"
-  daemon_capabilities="$(txing_cert_board_daemon_capabilities "$thing_json" "$thing_id")"
+  daemon_capabilities="$(txing_cert_device_daemon_capabilities "$thing_json" "$thing_id")"
   tarball_path="$output_dir/${thing_id}-daemon-config.tgz"
 
   if [ "${#daemon_role_name}" -gt 64 ]; then
@@ -475,8 +475,7 @@ txing_cert_generate_device_daemon_bundle() {
 txing_generate_iot_certificate_bundle() {
   thing_id="$1"
   rig_env_template="$2"
-  board_env_template="$3"
-  mac_env_template="$4"
+  device_env_template="$3"
   txing_validate_iot_thing_id "$thing_id" "Use: just aws::cert <thing-id>"
   thing_json="$(aws iot describe-thing --thing-name "$thing_id" --output json)"
   thing_type="$(txing_json_string "$thing_json" '.thingTypeName')"
@@ -496,13 +495,13 @@ txing_generate_iot_certificate_bundle() {
       txing_cert_generate_rig_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$base_policy_name" "$rig_env_template" "$thing_json"
       ;;
     deviceType:unit)
-      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$board_env_template" "$thing_json" unit-daemon
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" unit-daemon
       ;;
     deviceType:cyberbrick)
-      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$board_env_template" "$thing_json" cyberbrick-daemon
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" cyberbrick-daemon
       ;;
     deviceType:mac)
-      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$mac_env_template" "$thing_json" mac-daemon
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" mac-daemon
       ;;
     *)
       txing_cert_generate_generic_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$base_policy_name"

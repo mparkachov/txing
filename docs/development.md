@@ -253,7 +253,7 @@ and expects certificate files in the same directory unless explicit certificate
 path overrides are supplied. Provision that directory with
 `just aws::cert <thing-id>` only when AWS resource changes are
 intended; the recipe renders systemd-compatible `daemon.env` content from
-`devices/common/board/daemon/daemon.env.template` and refuses to overwrite existing
+`devices/common/daemon.env.template` and refuses to overwrite existing
 daemon env or certificate material.
 
 The deployed board runtime, MCP/video transport contract, and board install

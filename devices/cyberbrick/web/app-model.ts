@@ -74,7 +74,7 @@ const extractReportedState = (shadow: unknown): Record<string, unknown> | null =
 
 const extractNamedShadowReportedState = (
   shadow: unknown,
-  shadowName: 'sparkplug' | 'ble' | 'power' | 'board' | 'video',
+  shadowName: 'sparkplug' | 'ble' | 'power' | 'board' | 'mavlink' | 'video',
 ): Record<string, unknown> | null => {
   if (!isRecord(shadow) || !isRecord(shadow.namedShadows)) {
     return null
@@ -370,4 +370,39 @@ export const getTrackIndicatorPresentation = (
   }
 }
 
+export type CyberbrickMavlinkReportedState = {
+  armed: boolean | null
+  mode: string | null
+  target: {
+    componentId: number
+    systemId: number
+  } | null
+}
+
+const extractReportedMavlink = (shadow: unknown): Record<string, unknown> | null =>
+  extractNamedShadowReportedState(shadow, 'mavlink')
+
+const isMavlinkIdentifier = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 255
+
+export const extractCyberbrickMavlinkReportedState = (
+  shadow: unknown,
+): CyberbrickMavlinkReportedState => {
+  const mavlink = extractReportedMavlink(shadow)
+  const target = mavlink?.target
+  return {
+    armed: typeof mavlink?.armed === 'boolean' ? mavlink.armed : null,
+    mode: typeof mavlink?.mode === 'string' ? mavlink.mode : null,
+    target:
+      isRecord(target) && isMavlinkIdentifier(target.systemId) && isMavlinkIdentifier(target.componentId)
+        ? {
+            systemId: target.systemId,
+            componentId: target.componentId,
+          }
+        : null,
+  }
+}
+
 export const buildBoardVideoChannelName = (deviceId: string): string => `${deviceId}-board-video`
+
+export const buildMavlinkChannelName = (deviceId: string): string => `${deviceId}-mavlink`

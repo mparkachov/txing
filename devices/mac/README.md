@@ -36,7 +36,7 @@ Layout:
   web adapter, board video channel resource)
 - `aws/`: per-shadow schema and default payloads
 - `web/`: office SPA adapter (video at REDCON 1, no drive control)
-- `daemon.env.template`: runtime config rendered by `just aws::cert <thing-id>`
+- shared `../common/daemon.env.template`: runtime config rendered by `just aws::cert <thing-id>`
 - `daemon/`: `txing-mac-daemon` Go runtime
 
 Run the daemon from the repository checkout:

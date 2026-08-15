@@ -1489,6 +1489,54 @@ h1 {
   flex: 0 0 auto;
 }
 
+.status-mavlink-transport {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0 0.55rem;
+  border: 1px solid rgba(108, 238, 246, 0.46);
+  border-radius: 999px;
+  color: rgba(108, 238, 246, 0.96);
+  background: rgba(4, 9, 14, 0.42);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.mavlink-control-panel {
+  width: min(100%, 42rem);
+  margin: 1rem auto 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(108, 238, 246, 0.32);
+  border-radius: 14px;
+  background: rgba(4, 9, 14, 0.52);
+}
+
+.mavlink-control-heading,
+.mavlink-control-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.mavlink-control-heading span,
+.mavlink-control-owner,
+.mavlink-control-flight-state,
+.mavlink-control-help {
+  font-size: 0.78rem;
+}
+
+.mavlink-control-owner,
+.mavlink-control-flight-state,
+.mavlink-control-help {
+  margin: 0.48rem 0;
+}
+
+.mavlink-control-help {
+  color: rgba(207, 218, 232, 0.7);
+}
+
 .status-video-preview {
   position: absolute;
   inset: 0;

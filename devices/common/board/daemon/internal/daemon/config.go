@@ -883,7 +883,10 @@ func mustReadDaemonEnvTemplate() string {
 	if err == nil {
 		return string(contents)
 	}
-	contents, err = os.ReadFile("../../daemon.env.template")
+	// The canonical template is shared by every native device daemon, including
+	// the development-only mac daemon. Keep this fallback relative to this
+	// board daemon package so Go tests work from a source checkout.
+	contents, err = os.ReadFile("../../../../daemon.env.template")
 	if err == nil {
 		return string(contents)
 	}
