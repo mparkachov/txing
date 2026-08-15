@@ -434,7 +434,7 @@ jobs:
           tar -C "$binary_package_dir" -czf "$binary_asset" \
             "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS"
           archive_listing="$(tar -tzf "$binary_asset")"
-          expected_listing="$(printf '%s\\n%s' "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS")"
+          expected_listing="$(printf '%s\n%s' "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS")"
           if [ "$archive_listing" != "$expected_listing" ]; then
             echo "Expected $ARDUPILOT_ASSET to contain root-level executable and defaults, got:" >&2
             printf '%s\n' "$archive_listing" >&2

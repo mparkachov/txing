@@ -1672,6 +1672,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("GPIO", defaults)
         self.assertIn("txing-cyberbrick-ardupilot.defaults.parm", workflow)
         self.assertIn('"$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS"', workflow)
+        self.assertIn(
+            'expected_listing="$(printf \'%s\\n%s\' "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS")"',
+            workflow,
+        )
         self.assertIn("--defaults ${defaults}", runbook)
         self.assertIn("udpin:127.0.0.1:14550", runbook)
         self.assertNotIn("udpin:0.0.0.0:14550", runbook)

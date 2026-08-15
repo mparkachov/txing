@@ -15,6 +15,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -345,6 +346,20 @@ void TestCliParsing() {
 }
 
 void TestMavlinkCapabilitySelectsTheDeviceDerivedBridgeSocket() {
+    std::string daemon_binary_name = TXING_BOARD_KVS_MASTER_BINARY_NAME;
+    constexpr std::string_view kKvsMasterSuffix = "-kvs-master";
+    Expect(
+        daemon_binary_name.size() > kKvsMasterSuffix.size() &&
+            daemon_binary_name.compare(
+                daemon_binary_name.size() - kKvsMasterSuffix.size(),
+                kKvsMasterSuffix.size(),
+                kKvsMasterSuffix
+            ) == 0,
+        "KVS master binary name should derive a daemon name"
+    );
+    daemon_binary_name.resize(daemon_binary_name.size() - kKvsMasterSuffix.size());
+    daemon_binary_name += "-daemon";
+
     const auto parsed = ParseCli(
         {
             TXING_BOARD_KVS_MASTER_BINARY_NAME,
@@ -356,7 +371,8 @@ void TestMavlinkCapabilitySelectsTheDeviceDerivedBridgeSocket() {
         EnvFrom({{"TXING_DAEMON_CAPABILITIES", "board,mavlink,video"}})
     );
     Expect(
-        parsed.config.mavlink_bridge_socket_path == "/run/txing-unit-daemon/mavlink-bridge.sock",
+        parsed.config.mavlink_bridge_socket_path ==
+            "/run/" + daemon_binary_name + "/mavlink-bridge.sock",
         "MAVLink capability should select the device-derived bridge socket"
     );
 }
