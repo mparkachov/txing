@@ -421,6 +421,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         cyberbrick_workflow = (workflow_dir / "release-cyberbrick.yml").read_text(
             encoding="utf-8"
         )
+        kvs_workflow = (workflow_dir / "release-kvs-master.yml").read_text(
+            encoding="utf-8"
+        )
         board_musl_assertion = (
             REPO_ROOT / "release" / "scripts" / "assert-board-musl.sh"
         ).read_text(encoding="utf-8")
@@ -491,6 +494,24 @@ class VersionEnvironmentTests(unittest.TestCase):
             self.assertNotIn("curl git just", workflow)
             self.assertNotIn("JUST_VERSION", workflow)
 
+        self.assertIn("name: Release KVS master", kvs_workflow)
+        self.assertIn("workflow_dispatch:", kvs_workflow)
+        self.assertIn("group: txing-release-kvs-master-${{ github.ref }}", kvs_workflow)
+        self.assertIn("RELEASE_COMPONENT: kvs-master", kvs_workflow)
+        self.assertIn("RELEASE_VERSION_FILE: release/versions/kvs-master", kvs_workflow)
+        self.assertIn("RELEASE_TAG_PREFIX: kvs-master-v", kvs_workflow)
+        self.assertIn("KVS_MASTER_BINARY: txing-board-kvs-master", kvs_workflow)
+        self.assertIn(
+            "KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz",
+            kvs_workflow,
+        )
+        self.assertIn('-DTXING_BOARD_KVS_MASTER_VERSION="$VERSION"', kvs_workflow)
+        self.assertNotIn("TXING_BOARD_DEVICE_TYPE", kvs_workflow)
+        self.assertIn("musl-libcamera", kvs_workflow)
+        self.assertIn("release/scripts/assert-board-musl.sh", kvs_workflow)
+        self.assertIn("release/scripts/smoke-board-cross-distro.sh", kvs_workflow)
+        self.assertIn('gh release create "$TAG"', kvs_workflow)
+
         self.assertIn("build-go-rig-binary:", rig_workflow)
         self.assertIn("package_path: ./cmd/txing-sparkplug-manager", rig_workflow)
         self.assertIn("package_path: ./cmd/txing-ble-connectivity", rig_workflow)
@@ -538,15 +559,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("build:", unit_workflow)
         self.assertIn("matrix:", unit_workflow)
         self.assertIn("component: daemon", unit_workflow)
-        self.assertIn("component: kvs-master", unit_workflow)
         self.assertIn("component: hardware-worker", unit_workflow)
         self.assertIn("txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
-        self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz", unit_workflow)
-        self.assertIn("KVS_MASTER_ASSET: txing-unit-kvs-master-linux-aarch64.tar.gz", unit_workflow)
         self.assertIn("HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz", unit_workflow)
-        self.assertIn("image: docker.io/library/alpine:3.24.1", unit_workflow)
+        self.assertNotIn("component: kvs-master", unit_workflow)
+        self.assertNotIn("KVS_MASTER_ASSET", unit_workflow)
+        self.assertNotIn("txing-board-kvs-master", unit_workflow)
         self.assertIn('test "$(cat /etc/alpine-release)" = "3.24.1"', unit_workflow)
         self.assertIn('test "$(uname -m)" = "aarch64"', unit_workflow)
         self.assertIn("libusrsctp-dev", unit_workflow)
@@ -567,7 +587,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             unit_workflow,
         )
         self.assertNotIn("-linkmode=external", unit_workflow)
-        self.assertIn("TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG", unit_workflow)
+        self.assertNotIn("TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG", unit_workflow)
         self.assertIn(
             "release/scripts/build-board-static-toolchain.sh", unit_workflow
         )
@@ -577,7 +597,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("strip \"$package_dir/$BINARY\"", unit_workflow)
         self.assertIn("sh release/scripts/assert-board-musl.sh", unit_workflow)
         self.assertIn("kind: static", unit_workflow)
-        self.assertIn("kind: musl-libcamera", unit_workflow)
+        self.assertNotIn("kind: musl-libcamera", unit_workflow)
         self.assertIn('archive_listing="$(tar -tzf "$asset_path")"', unit_workflow)
         self.assertIn('release_asset_paths+=("$asset_path")', unit_workflow)
         self.assertNotIn("build-go-rig-binary:", unit_workflow)
@@ -601,16 +621,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("build:", cyberbrick_workflow)
         self.assertIn("matrix:", cyberbrick_workflow)
         self.assertIn("component: daemon", cyberbrick_workflow)
-        self.assertIn("component: kvs-master", cyberbrick_workflow)
         self.assertIn("component: mavlink", cyberbrick_workflow)
         self.assertIn(
             "CYBERBRICK_DAEMON_ASSET: txing-cyberbrick-daemon-linux-aarch64.tar.gz",
             cyberbrick_workflow,
         )
-        self.assertIn(
-            "KVS_MASTER_ASSET: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz",
-            cyberbrick_workflow,
-        )
+        self.assertNotIn("component: kvs-master", cyberbrick_workflow)
+        self.assertNotIn("KVS_MASTER_ASSET", cyberbrick_workflow)
+        self.assertNotIn("txing-board-kvs-master", cyberbrick_workflow)
         self.assertIn(
             "MAVLINK_ASSET: txing-cyberbrick-mavlink-linux-aarch64.tar.gz",
             cyberbrick_workflow,
@@ -635,22 +653,18 @@ class VersionEnvironmentTests(unittest.TestCase):
             "/internal/daemon.DaemonVersion=$VERSION",
             cyberbrick_workflow,
         )
-        self.assertIn(
-            "-DTXING_BOARD_KVS_MASTER_VERSION=\"$VERSION\"",
-            cyberbrick_workflow,
-        )
-        self.assertIn("-DBUILD_TESTING=ON", cyberbrick_workflow)
-        self.assertIn("ctest --test-dir", cyberbrick_workflow)
+        self.assertNotIn("TXING_BOARD_KVS_MASTER_VERSION", cyberbrick_workflow)
+        self.assertNotIn("-DBUILD_TESTING=ON", cyberbrick_workflow)
+        self.assertNotIn("ctest --test-dir", cyberbrick_workflow)
         self.assertIn("strip \"$package_dir/$BINARY\"", cyberbrick_workflow)
         self.assertIn("sh release/scripts/assert-board-musl.sh", cyberbrick_workflow)
         self.assertIn("kind: static", cyberbrick_workflow)
-        self.assertIn("kind: musl-libcamera", cyberbrick_workflow)
+        self.assertNotIn("kind: musl-libcamera", cyberbrick_workflow)
         self.assertIn('archive_listing="$(tar -tzf "$asset_path")"', cyberbrick_workflow)
         self.assertIn(
             'release_asset_paths+=("$asset_path")', cyberbrick_workflow
         )
         self.assertIn('"$CYBERBRICK_DAEMON_ASSET"', cyberbrick_workflow)
-        self.assertIn('"$KVS_MASTER_ASSET"', cyberbrick_workflow)
         self.assertIn('"$MAVLINK_ASSET"', cyberbrick_workflow)
         self.assertIn('"$ARDUPILOT_DEFAULTS"', cyberbrick_workflow)
         self.assertIn('cmp "$smoke_dir/$ARDUPILOT_DEFAULTS"', cyberbrick_workflow)
@@ -682,16 +696,17 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('nerdctl info --format', board_smoke_script)
         self.assertIn("libcamera-dev", board_smoke_script)
         self.assertIn("static|musl-libcamera", board_smoke_script)
-        for workflow in (unit_workflow, cyberbrick_workflow):
+        for workflow in (unit_workflow, cyberbrick_workflow, kvs_workflow):
             self.assertIn("name: Cross-distro smoke", workflow)
             self.assertIn("TXING_CONTAINER_CLI: docker", workflow)
             self.assertIn(
                 "release/scripts/smoke-board-cross-distro.sh", workflow
             )
             self.assertIn("- smoke", workflow)
-        # One shared board justfile serves both device types; the device is the
-        # recipe's first argument.
+        # One shared board justfile serves both device types; only the
+        # device-neutral KVS recipes omit the device argument.
         self.assertIn("nerdctl-smoke device:", board_justfile)
+        self.assertIn("kvs-test-native:", board_justfile)
         self.assertIn("release/scripts/smoke-board-cross-distro.sh", board_justfile)
 
         for workflow in existing_go_workflows.values():
@@ -712,18 +727,18 @@ class VersionEnvironmentTests(unittest.TestCase):
             self.assertNotIn("txing-greengrass-lite-payload/root", workflow)
             self.assertNotIn('run_nucleus "$payload_dir', workflow)
 
-        # Board versions are injected at build time from release/versions/<device>,
-        # so the release CLI manages no board source file and there is no
-        # per-device literal left for a bump to drift against.
+        # Board versions are injected at build time from their component files,
+        # so the release CLI manages no source literal that can drift.
         self.assertNotIn('Path("devices/', release_cli)
         self.assertNotIn("KVS_MASTER_VERSION", release_cli)
         self.assertNotIn("HARDWARE_WORKER_VERSION", release_cli)
         self.assertNotIn("packageVersion", release_cli)
         self.assertIn(
-            'components := "rig lambda unit cyberbrick office"', release_justfile
+            'components := "rig lambda unit cyberbrick kvs-master office"', release_justfile
         )
         self.assertIn('cyberbrick) workflow="release-cyberbrick.yml"', release_justfile)
-        self.assertIn("unit|cyberbrick|office)", release_justfile)
+        self.assertIn('kvs-master) workflow="release-kvs-master.yml"', release_justfile)
+        self.assertIn("unit|cyberbrick|kvs-master|office)", release_justfile)
         self.assertNotIn("kTxingBoardKvsMasterVersion", release_cli)
         self.assertNotIn("shared/aws/python/pyproject.toml", release_cli)
         self.assertNotIn("shared/aws/python/uv.lock", release_cli)
@@ -760,6 +775,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("release/versions/lambda", artifacts_docs)
         self.assertIn("release/versions/unit", artifacts_docs)
         self.assertIn("release/versions/cyberbrick", artifacts_docs)
+        self.assertIn("release/versions/kvs-master", artifacts_docs)
         self.assertIn("release/versions/office", artifacts_docs)
         self.assertIn("office version metadata only", artifacts_docs)
         self.assertIn("Cloudflare Pages", artifacts_docs)
@@ -809,9 +825,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("-DCMAKE_EXE_LINKER_FLAGS=-static", justfile)
         self.assertIn("statically linked|static-pie linked", justfile)
         self.assertIn("outputs: {", justfile)
-        # Binary names are derived from the device the recipe is invoked with.
+        # Device binaries keep device names; the KVS artifact is board-wide.
         self.assertIn("txing-$device-daemon", justfile)
-        self.assertIn("txing-$device-kvs-master", justfile)
+        self.assertIn("txing-board-kvs-master", justfile)
+        self.assertNotIn("txing-$device-kvs-master", justfile)
         self.assertIn("txing-$device-hardware-worker", justfile)
         self.assertNotIn("txing-unit-daemon", justfile)
         self.assertNotIn("txing-cyberbrick-daemon", justfile)
@@ -917,19 +934,20 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("root-owned mise release tools", installation_docs)
         self.assertIn("sudo su -", board_docs)
         self.assertIn(
-            "/root/.local/share/mise/installs/txing-unit-kvs-master/latest/"
-            "txing-unit-kvs-master",
+            "/root/.local/share/mise/installs/txing-board-kvs-master/latest/"
+            "txing-board-kvs-master",
             board_docs,
         )
         self.assertIn("just unit::board::role-policy <thing-id>", board_docs)
         self.assertIn("dynamic `mcp`", board_docs)
-        self.assertIn("txing-unit-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
+        self.assertIn("txing-board-kvs-master-linux-aarch64.tar.gz", artifacts_docs)
         self.assertIn("txing-unit-hardware-worker-linux-aarch64.tar.gz", artifacts_docs)
         self.assertIn("The Go daemon consumes the daemon/cloud/video", artifacts_docs)
-        self.assertIn("/etc/systemd/system/txing-unit.target", artifacts_docs)
-        self.assertIn("/etc/systemd/system/txing-unit-hardware-worker.service", artifacts_docs)
-        self.assertIn("PartOf=txing-unit.target", artifacts_docs)
-        self.assertIn("txing-unit.target", installation_docs)
+        self.assertIn("/etc/init.d/txing-unit-daemon", artifacts_docs)
+        self.assertIn("/etc/init.d/txing-unit-hardware-worker", artifacts_docs)
+        self.assertIn("OpenRC starts the three root-owned binaries", artifacts_docs)
+        self.assertNotIn("txing-unit.target", installation_docs)
+        self.assertIn("common KVS script", installation_docs)
         self.assertIn("txing-unit.target", board_docs)
         self.assertNotIn("TXING_KVS_MASTER_COMMAND", board_docs)
         self.assertIn("daemon.env", installation_docs)
@@ -942,8 +960,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("libcamera.so.0.7", artifacts_docs)
         self.assertNotIn("libcamera.so.0.6", artifacts_docs)
         self.assertIn("assert-board-musl.sh", artifacts_docs)
-        self.assertIn("last Debian-built KVS master", artifacts_docs)
-        self.assertIn("installed `latest` binaries before rebooting", artifacts_docs)
+        self.assertIn("legacy per-device KVS master", artifacts_docs)
         self.assertIn("mount /tmp ; mount /var/tmp", board_docs)
         self.assertIn(
             "/root/.local/share/mise/installs/txing-unit-daemon/latest/"
@@ -954,9 +971,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("generated shims", artifacts_docs)
         self.assertIn("Service starts are offline", board_docs)
         self.assertIn("Release does not upgrade a board", artifacts_docs)
-        self.assertIn("`txing-board.target`", artifacts_docs)
-        self.assertIn("`txing-board-kvs-master.service`", artifacts_docs)
-        self.assertIn("`systemctl daemon-reload`", artifacts_docs)
+        self.assertIn("/etc/init.d/txing-unit-kvs-master", artifacts_docs)
+        self.assertIn("`rc-update add <service> default`", artifacts_docs)
         self.assertIn("Release artifacts are split by component", artifacts_docs)
         self.assertIn('version_prefix = "unit-v"', artifacts_docs)
         self.assertNotIn("MISE_OFFLINE=1", artifacts_docs)
@@ -983,21 +999,21 @@ class VersionEnvironmentTests(unittest.TestCase):
         # the job, and nothing outside CI exercises that path.
         import re
 
-        for device_type in ("unit", "cyberbrick"):
+        for component in ("unit", "cyberbrick", "kvs-master"):
             workflow = (
-                REPO_ROOT / ".github" / "workflows" / f"release-{device_type}.yml"
+                REPO_ROOT / ".github" / "workflows" / f"release-{component}.yml"
             ).read_text(encoding="utf-8")
             blocks = re.findall(
                 r"(docker exec.*?<<'EOF'\n)(.*?)\n\s*EOF\n", workflow, re.S
             )
-            self.assertTrue(blocks, f"no docker exec heredoc found in {device_type}")
+            self.assertTrue(blocks, f"no docker exec heredoc found in {component}")
             for head, body in blocks:
                 forwarded = set(re.findall(r"-e (\w+)=", head))
                 assigned = set(re.findall(r"^\s*(\w+)=", body, re.M))
                 defaulted = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*):-", body))
                 used = set(re.findall(r"\$\{?([A-Z][A-Z0-9_]{2,})\b", body))
                 missing = used - forwarded - assigned - defaulted - {"PWD", "HOME", "PATH"}
-                with self.subTest(device_type=device_type):
+                with self.subTest(component=component):
                     self.assertEqual(set(), missing)
 
     def test_board_card_files_are_base_os_setup_only(self) -> None:
@@ -1045,16 +1061,17 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "docs" / "agent-guidance" / "editing-boundaries.md"
         ).read_text(encoding="utf-8")
         self.assertIn("Narrow exception, board initial installation only", rules)
-        self.assertIn("Everything from the mise step", rules)
+        self.assertIn("fixed board runtime-package baseline", rules)
 
-    def test_board_first_boot_provisioning_stops_at_a_base_os(self) -> None:
+    def test_board_first_boot_provisioning_installs_os_baseline(self) -> None:
         card_dir = REPO_ROOT / "devices" / "common" / "board" / "card"
         script = (card_dir / "unattended.sh").read_text(encoding="utf-8")
         runbook = (
             REPO_ROOT / "docs" / "components" / "board.md"
         ).read_text(encoding="utf-8")
 
-        # Base OS setup only. Anything past this belongs in the runbook, over ssh.
+        # The card owns the fixed OS baseline. Device releases and configuration
+        # still belong in the runbook, over ssh.
         self.assertIn("apk upgrade", script)
         self.assertIn("setup-alpine -ef", script)
         # setup-alpine's disk stage rejects a partition target; setup-disk
@@ -1073,9 +1090,8 @@ class VersionEnvironmentTests(unittest.TestCase):
             for line in script.splitlines()
             if not line.lstrip().startswith("#") and not line.lstrip().startswith("log ")
         )
-        # mise is now installed by the card so the board comes up with it on
-        # root's PATH; a read-only root cannot add it later without root-rw.
-        # Everything past it still belongs to the runbook.
+        # mise and the runtime package baseline are installed by the card so the
+        # board comes up ready to install releases on its read-only root.
         self.assertIn("mise.run", script)
         # Installed from inside the new root, so the download stages on the
         # card rather than the RAM-backed diskless tmpfs, and the bind
@@ -1083,9 +1099,33 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("chroot \"$NEW_ROOT\"", script)
         self.assertIn("chroot_teardown", script)
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"', script)
+        for package in (
+            "curl",
+            "jq",
+            "curl-dev",
+            "openssl-dev",
+            "log4cplus-dev",
+            "libsrtp-dev",
+            "libusrsctp-dev",
+            "libwebsockets-dev",
+            "zlib-dev",
+            "libcamera-dev",
+            "protobuf-dev",
+            "grpc-dev",
+            "libcamera-raspberrypi",
+            "eudev",
+            "v4l-utils",
+            "iproute2",
+        ):
+            with self.subTest(package=package):
+                self.assertIn(package, actions)
         for beyond_scope in (
-            "libcamera", "eudev", "kvs-master", "hardware-worker",
-            "daemon.env", ".tar.gz", "txing-unit", "txing-cyberbrick",
+            "kvs-master",
+            "hardware-worker",
+            "daemon.env",
+            ".tar.gz",
+            "txing-unit",
+            "txing-cyberbrick",
         ):
             with self.subTest(beyond_scope=beyond_scope):
                 self.assertNotIn(beyond_scope, actions)
@@ -1109,6 +1149,13 @@ class VersionEnvironmentTests(unittest.TestCase):
         # the board would reboot with the right config and nothing running it.
         self.assertIn('apk --root "$NEW_ROOT"', script)
         self.assertIn("wpa_supplicant openssh", script)
+        self.assertIn("installing Alpine runtime package baseline", script)
+
+        manual_baseline = runbook.split("### 2. Confirm OS Baseline", 1)[1].split(
+            "### 2a. Enable Udev", 1
+        )[0]
+        self.assertNotIn("apk add", manual_baseline)
+        self.assertIn("apk info -e", manual_baseline)
 
         # Re-running must not destroy a board that already converted.
         self.assertIn("refusing to reinstall", script)
@@ -1217,15 +1264,32 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("package txing.board.mavlink.v1;", cyberbrick_mavlink)
         self.assertIn("service BoardMavlink {", cyberbrick_mavlink)
 
-        # The device type is a build input, not a source axis.
-        for cmakelists in (
-            board_dir / "kvs_master" / "CMakeLists.txt",
-            board_dir / "hardware_worker" / "CMakeLists.txt",
-        ):
-            text = cmakelists.read_text(encoding="utf-8")
-            self.assertIn("TXING_BOARD_DEVICE_TYPE", text)
+        # Hardware remains device-named. KVS is a device-neutral build whose
+        # service supplies identity and sockets at runtime.
+        hardware_cmake = (
+            board_dir / "hardware_worker" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("TXING_BOARD_DEVICE_TYPE", hardware_cmake)
+        kvs_cmake = (board_dir / "kvs_master" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("TXING_BOARD_DEVICE_TYPE", kvs_cmake)
+        self.assertIn('set(_txing_kvs_bin "txing-board-kvs-master")', kvs_cmake)
+        for text in (hardware_cmake, kvs_cmake):
             self.assertNotIn("txing-unit-", text)
             self.assertNotIn("txing-cyberbrick-", text)
+
+        kvs_config = (board_dir / "kvs_master" / "src" / "config.cpp").read_text(
+            encoding="utf-8"
+        )
+        kvs_service = (
+            board_dir / "kvs_master" / "openrc" / "txing-kvs-master"
+        ).read_text(encoding="utf-8")
+        self.assertIn("TXING_KVS_WORKER_NAME", kvs_config)
+        self.assertIn("TXING_MAVLINK_BRIDGE_SOCKET_PATH", kvs_config)
+        self.assertNotIn("DefaultMavlinkBridgeSocketPath", kvs_config)
+        self.assertIn('export TXING_KVS_WORKER_NAME="$service_name"', kvs_service)
+        self.assertIn('. "$daemon_env"', kvs_service)
 
         device_go = (
             board_dir / "daemon" / "internal" / "daemon" / "device.go"
@@ -1301,8 +1365,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("std::getenv(kSystemCaCertPathEnvVar)", kvs_session_real)
 
     def test_board_release_versions_are_injected_at_build_time(self) -> None:
-        # Each device type keeps an independent release stream, and with one
-        # shared implementation there is no source literal left to mirror.
+        # Device binaries and the shared KVS master have independent release
+        # streams, with no source literal left to mirror.
         board_dir = REPO_ROOT / "devices" / "common" / "board"
         kvs_version = (
             board_dir / "kvs_master" / "include" / "kvs_master" / "version.hpp"
@@ -1322,6 +1386,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("var DaemonVersion", daemon_version)
         self.assertNotIn("packageVersion", daemon_version)
 
+        self.assertTrue((REPO_ROOT / "release" / "versions" / "kvs-master").is_file())
+        kvs_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "release-kvs-master.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('-DTXING_BOARD_KVS_MASTER_VERSION="$VERSION"', kvs_workflow)
+        self.assertIn("txing-board-kvs-master", kvs_workflow)
+        self.assertNotIn("TXING_BOARD_DEVICE_TYPE", kvs_workflow)
+
         for device_type in ("unit", "cyberbrick"):
             with self.subTest(device_type=device_type):
                 self.assertTrue(
@@ -1333,9 +1405,8 @@ class VersionEnvironmentTests(unittest.TestCase):
                     / "workflows"
                     / f"release-{device_type}.yml"
                 ).read_text(encoding="utf-8")
-                self.assertIn(
-                    '-DTXING_BOARD_KVS_MASTER_VERSION="$VERSION"', workflow
-                )
+                self.assertNotIn("TXING_BOARD_KVS_MASTER_VERSION", workflow)
+                self.assertNotIn("component: kvs-master", workflow)
                 if device_type == "unit":
                     self.assertIn(
                         '-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', workflow
@@ -1343,7 +1414,6 @@ class VersionEnvironmentTests(unittest.TestCase):
                 else:
                     self.assertIn("component: mavlink", workflow)
                     self.assertNotIn("txing-cyberbrick-hardware-worker", workflow)
-                self.assertIn(f"-DTXING_BOARD_DEVICE_TYPE={device_type}", workflow)
                 self.assertIn(
                     "github.com/mparkachov/txing/devices/common/board/daemon"
                     f"/internal/daemon.DeviceType={device_type}",
@@ -1361,6 +1431,53 @@ class VersionEnvironmentTests(unittest.TestCase):
             encoding="utf-8"
         )
         docs_index = (REPO_ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+        card_script = (
+            REPO_ROOT / "devices" / "common" / "board" / "card" / "unattended.sh"
+        ).read_text(encoding="utf-8")
+        unit_daemon_service = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "daemon"
+            / "openrc"
+            / "txing-unit-daemon"
+        ).read_text(encoding="utf-8")
+        unit_kvs_service = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "kvs_master"
+            / "openrc"
+            / "txing-kvs-master"
+        ).read_text(encoding="utf-8")
+        cyberbrick_ardupilot_service = (
+            REPO_ROOT
+            / "devices"
+            / "cyberbrick"
+            / "ardupilot"
+            / "openrc"
+            / "txing-cyberbrick-ardupilot"
+        ).read_text(encoding="utf-8")
+        cyberbrick_mavlink_service = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "daemon"
+            / "openrc"
+            / "txing-cyberbrick-mavlink"
+        ).read_text(encoding="utf-8")
+        cyberbrick_daemon_service = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "daemon"
+            / "openrc"
+            / "txing-cyberbrick-daemon"
+        ).read_text(encoding="utf-8")
         kvs_session_real = (
             REPO_ROOT / "devices" / "common" / "board"
             / "kvs_master"
@@ -1383,7 +1500,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             cyberbrick_board_docs,
         )
         self.assertIn(
-            'txing-${TXING_DEVICE}-kvs-master = "github:mparkachov/txing"',
+            'txing-board-kvs-master = "github:mparkachov/txing"',
             cyberbrick_board_docs,
         )
         self.assertIn(
@@ -1396,9 +1513,10 @@ class VersionEnvironmentTests(unittest.TestCase):
             cyberbrick_board_docs,
         )
         self.assertIn(
-            'asset_pattern = "txing-${TXING_DEVICE}-kvs-master-linux-aarch64.tar.gz"',
+            'asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"',
             cyberbrick_board_docs,
         )
+        self.assertIn('version_prefix = "kvs-master-v"', cyberbrick_board_docs)
         self.assertIn(
             'asset_pattern = "txing-${TXING_DEVICE}-hardware-worker-linux-aarch64.tar.gz"',
             cyberbrick_board_docs,
@@ -1412,16 +1530,11 @@ class VersionEnvironmentTests(unittest.TestCase):
             cyberbrick_board_docs,
         )
         self.assertIn(
-            "cat >/etc/init.d/txing-${TXING_DEVICE}-hardware-worker",
+            'install -m 755 "$SERVICE_DIR/txing-kvs-master"',
             cyberbrick_board_docs,
         )
-        self.assertIn(
-            "cat >/etc/init.d/txing-${TXING_DEVICE}-daemon", cyberbrick_board_docs
-        )
-        self.assertIn(
-            "cat >/etc/init.d/txing-${TXING_DEVICE}-kvs-master", cyberbrick_board_docs
-        )
-        self.assertIn("supervisor=supervise-daemon", cyberbrick_board_docs)
+        self.assertNotIn("cat >/etc/init.d", cyberbrick_board_docs)
+        self.assertIn("supervisor=supervise-daemon", unit_daemon_service)
         self.assertIn(
             "rc-update add txing-${TXING_DEVICE}-hardware-worker default",
             cyberbrick_board_docs,
@@ -1435,28 +1548,44 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn(
             "command=/root/.local/share/mise/installs/"
-            "txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon",
-            cyberbrick_board_docs,
+            "txing-unit-daemon/latest/txing-unit-daemon",
+            unit_daemon_service,
         )
         self.assertIn(
             "TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/"
-            "txing-${TXING_DEVICE}-daemon/board-video-bridge.sock",
-            cyberbrick_board_docs,
+            "txing-${device}-daemon/board-video-bridge.sock",
+            unit_kvs_service,
         )
+        self.assertIn(
+            "command=/root/.local/share/mise/installs/"
+            "txing-board-kvs-master/latest/txing-board-kvs-master",
+            unit_kvs_service,
+        )
+        self.assertIn('export TXING_KVS_WORKER_NAME="$service_name"', unit_kvs_service)
+        self.assertIn(
+            "TXING_MAVLINK_BRIDGE_SOCKET_PATH=/run/"
+            "txing-cyberbrick-daemon/mavlink-bridge.sock",
+            unit_kvs_service,
+        )
+        self.assertIn('service_name="${RC_SVCNAME:-${0##*/}}"', unit_kvs_service)
+        self.assertIn('device="${service_name#txing-}"', unit_kvs_service)
+        self.assertNotIn("txing-unit-kvs-master/latest", unit_kvs_service)
+        self.assertNotIn("txing-cyberbrick-kvs-master/latest", unit_kvs_service)
         self.assertIn(
             "/run/txing-<device>-hardware-worker/<device>-hardware.sock",
             cyberbrick_board_docs,
         )
         # A Pi has no RTC and boots far in the past; TLS fails until the
         # clock is stepped, so the daemon gates on it.
-        self.assertIn("clock is not confirmed synchronized", cyberbrick_board_docs)
+        self.assertIn("clock is not confirmed synchronized", unit_daemon_service)
         self.assertIn("dtoverlay=pwm-2chan", cyberbrick_board_docs)
         # Camera capture needs more than libcamera linkage: the rpi pipeline
         # handler and IPA, a udev daemon for libcamera's enumerator, firmware
         # autodetection, and the codec/ISP modules. Every one of these missing
         # surfaces as the same "configured camera index is not available".
         self.assertIn(
-            "libcamera-raspberrypi eudev v4l-utils", cyberbrick_board_docs
+            "libcamera-raspberrypi eudev v4l-utils iproute2",
+            card_script,
         )
         self.assertIn(
             "for s in udev udev-trigger udev-settle; do rc-update add $s sysinit; done",
@@ -1511,26 +1640,27 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("alias root-ro=", cyberbrick_board_docs)
         self.assertIn("mount /tmp ; mount /var/tmp", cyberbrick_board_docs)
         self.assertIn("tmpfs  /var/log", cyberbrick_board_docs)
-        # All three binaries move in one command. A partial upgrade leaves the
-        # gRPC contracts mismatched, which takes video and motion control down
-        # with no local error, so the guard is on the single invocation rather
-        # than on the three names appearing somewhere nearby.
+        # All three Unit components move in one command even though KVS has its
+        # own release stream. A partial upgrade leaves the gRPC contracts
+        # mismatched, so the guard is on the single invocation.
         self.assertIn(
             "/root/.local/bin/mise upgrade \\\n"
             "    txing-${TXING_DEVICE}-daemon \\\n"
-            "    txing-${TXING_DEVICE}-kvs-master \\\n"
+            "    txing-board-kvs-master \\\n"
             "    txing-${TXING_DEVICE}-hardware-worker\n",
             cyberbrick_board_docs,
         )
-        self.assertIn("#### Cyberbrick MAVLink cutover", cyberbrick_board_docs)
+        self.assertIn("#### Unit runtime", cyberbrick_board_docs)
+        self.assertIn("#### Cyberbrick runtime", cyberbrick_board_docs)
+        self.assertNotIn("#### Cyberbrick MAVLink cutover", cyberbrick_board_docs)
         self.assertIn("txing-cyberbrick-mavlink", cyberbrick_board_docs)
         self.assertIn("txing-cyberbrick-ardupilot.defaults.parm", cyberbrick_board_docs)
-        self.assertIn("udpin:127.0.0.1:14550", cyberbrick_board_docs)
+        self.assertIn("udpin:127.0.0.1:14550", cyberbrick_ardupilot_service)
         self.assertIn("FS_GCS_TIMEOUT 1", cyberbrick_board_docs)
         self.assertIn("SERVO1_FUNCTION 73", cyberbrick_board_docs)
         self.assertIn("SERVO2_FUNCTION 74", cyberbrick_board_docs)
-        self.assertIn("after txing-cyberbrick-ardupilot", cyberbrick_board_docs)
-        self.assertIn("after txing-cyberbrick-mavlink", cyberbrick_board_docs)
+        self.assertIn("after txing-cyberbrick-ardupilot", cyberbrick_mavlink_service)
+        self.assertIn("after txing-cyberbrick-mavlink", cyberbrick_daemon_service)
         self.assertIn("test ! -e /etc/init.d/txing-cyberbrick-hardware-worker", cyberbrick_board_docs)
         self.assertNotIn("udpin:0.0.0.0:14550", cyberbrick_board_docs)
         self.assertIn(
@@ -1539,7 +1669,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             normalized_cyberbrick_board_docs,
         )
         self.assertIn(
-            "publish a matching board release built on that Alpine version",
+            "publish a matching shared KVS release built on that Alpine version",
             normalized_cyberbrick_board_docs,
         )
         self.assertNotIn("systemctl", cyberbrick_board_docs)
@@ -1562,9 +1692,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("rc-update add <service> default", installation_docs)
         self.assertIn("setup-disk -m sys", installation_docs)
         self.assertIn(
-            "from matching `cyberbrick-v*` GitHub Release assets through "
-            "root-owned `mise`, supervised by OpenRC on a read-only root "
-            "filesystem",
+            "from the `cyberbrick-v*` and `kvs-master-v*` GitHub Release "
+            "streams through root-owned `mise`, supervised by OpenRC on a "
+            "read-only root filesystem",
             normalized_installation_docs,
         )
 
@@ -1592,8 +1722,8 @@ class VersionEnvironmentTests(unittest.TestCase):
             normalized_artifacts_docs,
         )
         self.assertIn(
-            "an Alpine release bump requires a matching cyberbrick release "
-            "built on that Alpine version first",
+            "an Alpine release bump requires a shared KVS release built on "
+            "that Alpine version first",
             normalized_artifacts_docs,
         )
 
@@ -1615,9 +1745,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
             encoding="utf-8"
         )
-
         pwm = runbook.index("### 5. Enable PWM Overlay And Camera")
-        services = runbook.index("### 6. Install Runtime And OpenRC Services")
+        services = runbook.index("### 6. Install Device Runtime And OpenRC Services")
         read_only = runbook.index("### 7. Configure Read-Only Root")
         self.assertLess(pwm, services)
         self.assertLess(services, read_only)
@@ -1643,6 +1772,32 @@ class VersionEnvironmentTests(unittest.TestCase):
         runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
             encoding="utf-8"
         )
+        ardupilot_service = (
+            REPO_ROOT
+            / "devices"
+            / "cyberbrick"
+            / "ardupilot"
+            / "openrc"
+            / "txing-cyberbrick-ardupilot"
+        ).read_text(encoding="utf-8")
+        mavlink_service = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "daemon"
+            / "openrc"
+            / "txing-cyberbrick-mavlink"
+        ).read_text(encoding="utf-8")
+        kvs_service = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "kvs_master"
+            / "openrc"
+            / "txing-kvs-master"
+        ).read_text(encoding="utf-8")
 
         expected = {
             "SERIAL0_PROTOCOL 2",
@@ -1678,9 +1833,29 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         ardupilot_smoke = workflow.split("- name: Run Alpine ArduPilot smoke", 1)[1]
         self.assertIn('-e GITHUB_WORKSPACE="$GITHUB_WORKSPACE"', ardupilot_smoke)
-        self.assertIn("--defaults ${defaults}", runbook)
-        self.assertIn("udpin:127.0.0.1:14550", runbook)
-        self.assertNotIn("udpin:0.0.0.0:14550", runbook)
+        cyberbrick_runtime = runbook.split("#### Cyberbrick runtime", 1)[1]
+        self.assertNotIn(
+            "/root/.config/mise/conf.d/txing-cyberbrick-daemon.toml",
+            cyberbrick_runtime,
+        )
+        self.assertIn("--defaults ${defaults}", ardupilot_service)
+        self.assertIn("udpin:127.0.0.1:14550", ardupilot_service)
+        self.assertNotIn("udpin:0.0.0.0:14550", ardupilot_service)
+        self.assertIn(
+            'eerror "MAVLink daemon environment is missing: $daemon_env"',
+            mavlink_service,
+        )
+        self.assertIn(
+            'eerror "KVS master CA certificate is missing: $ca_cert"',
+            kvs_service,
+        )
+        self.assertIn(
+            "checkpath --directory --mode 0755 --owner root:root "
+            "/var/tmp/txing-cyberbrick-ardupilot || return 1\n"
+            "    checkpath --directory --mode 0755 --owner root:root "
+            "/var/tmp/txing-cyberbrick-ardupilot/storage || return 1",
+            ardupilot_service,
+        )
 
     def test_board_runbook_shell_blocks_are_copy_pasteable(self) -> None:
         """Every `sh` block in the board runbook must run as pasted.
@@ -1717,6 +1892,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertGreater(len(blocks), 20, "board runbook shell blocks not found")
 
         placeholder = re.compile(r"<[a-z][a-z0-9-]*>")
+        bash_brace_expansion = re.compile(
+            r"(?<!\$)\{[^\s{},]+(?:,[^\s{},]+)+\}"
+        )
         for start_line, block in blocks:
             with self.subTest(line=start_line):
                 found = placeholder.findall(block)
@@ -1739,51 +1917,70 @@ class VersionEnvironmentTests(unittest.TestCase):
                     f"board.md:{start_line} shell block does not parse: "
                     f"{parsed.stderr.strip()}",
                 )
+                self.assertNotRegex(
+                    block,
+                    r"(?m)^\s*reboot\s*$",
+                    f"board.md:{start_line} must leave reboot as a separate "
+                    "operator action",
+                )
+                self.assertIsNone(
+                    bash_brace_expansion.search(block),
+                    f"board.md:{start_line} uses Bash-only brace expansion; "
+                    "board commands must work in BusyBox ash",
+                )
 
-    def test_board_runbook_init_scripts_defer_openrc_expansion(self) -> None:
-        """The init-script heredocs expand the device type and nothing else.
+    def test_board_docs_keep_reboot_out_of_copy_paste_blocks(self) -> None:
+        """A pasted maintenance block must never reboot the board unexpectedly."""
+        for name in ("board.md", "board-debian-frozen.md"):
+            with self.subTest(document=name):
+                document = (
+                    REPO_ROOT / "docs" / "components" / name
+                ).read_text(encoding="utf-8")
+                blocks = re.findall(r"```(?:sh|bash)\n(.*?)```", document, re.DOTALL)
+                self.assertGreater(len(blocks), 0)
+                for block in blocks:
+                    self.assertNotRegex(block, r"(?m)^\s*reboot\s*$")
 
-        They are unquoted so ${TXING_DEVICE} resolves as the file is written.
-        That makes every other `$` the operator's shell would eat, so the
-        runtime variables OpenRC supplies must stay escaped: an unescaped
-        `$command` writes `test -x ""` into the init script, which fails the
-        service at start with no indication why.
-        """
+    def test_board_runbook_installs_service_owned_openrc_scripts(self) -> None:
         runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
             encoding="utf-8"
         )
-
-        for service in ("hardware-worker", "daemon", "kvs-master"):
-            with self.subTest(service=service):
-                self.assertIn(
-                    f"cat >/etc/init.d/txing-${{TXING_DEVICE}}-{service} <<EOF",
-                    runbook,
-                )
-                self.assertNotIn(
-                    f"cat >/etc/init.d/txing-${{TXING_DEVICE}}-{service} <<'EOF'",
-                    runbook,
-                )
-
-        for deferred in (
-            'test -x "\\$command"',
-            'test -r "\\$daemon_env"',
-            'test -r "\\$ca_cert"',
-            '. "\\$daemon_env"',
-            'export TXING_KVS_SYSTEM_CA_CERT_PATH="\\$ca_cert"',
-            '[ "\\$(date -u +%Y)" -lt 2025 ]',
-            "ntp_waited=\\$((ntp_waited + 2))",
-        ):
-            with self.subTest(deferred=deferred):
-                self.assertIn(deferred, runbook)
-
-        # The blocks that write files refuse to run with the device type unset,
-        # rather than writing paths like txing--daemon.
-        self.assertEqual(
-            runbook.count(
-                ': "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"'
-            ),
-            2,
+        service_paths = (
+            REPO_ROOT / "devices" / "common" / "board" / "hardware_worker" / "openrc" / "txing-unit-hardware-worker",
+            REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-unit-daemon",
+            REPO_ROOT / "devices" / "common" / "board" / "kvs_master" / "openrc" / "txing-kvs-master",
+            REPO_ROOT / "devices" / "cyberbrick" / "ardupilot" / "openrc" / "txing-cyberbrick-ardupilot",
+            REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-cyberbrick-mavlink",
+            REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-cyberbrick-daemon",
         )
+
+        self.assertNotIn("cat >/etc/init.d", runbook)
+        self.assertIn(
+            'SERVICE_DIR=/root/.config/txing/${TXING_DEVICE}-daemon/services',
+            runbook,
+        )
+        self.assertIn(
+            "SERVICE_DIR=/root/.config/txing/cyberbrick-daemon/services",
+            runbook,
+        )
+        self.assertIn(
+            'install -m 755 "$SERVICE_DIR/txing-kvs-master" '
+            "/etc/init.d/txing-unit-kvs-master",
+            runbook,
+        )
+        self.assertIn(
+            'install -m 755 "$SERVICE_DIR/txing-kvs-master" '
+            "/etc/init.d/txing-cyberbrick-kvs-master",
+            runbook,
+        )
+        for path in service_paths:
+            with self.subTest(service=path.name):
+                self.assertTrue(path.is_file())
+                self.assertTrue(os.access(path, os.X_OK))
+                self.assertTrue(
+                    path.read_text(encoding="utf-8").startswith("#!/sbin/openrc-run\n")
+                )
+                subprocess.run(["sh", "-n", str(path)], check=True)
 
     def test_rig_mise_config_uses_github_assets_without_greengrass(self) -> None:
         installer = (REPO_ROOT / "rig" / "install-mise-tools.sh").read_text(

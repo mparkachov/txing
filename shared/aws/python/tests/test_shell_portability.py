@@ -170,10 +170,10 @@ class ShellPortabilityTest(unittest.TestCase):
             txing_cert_output_dir() { printf '%s\n' /tmp/unused-cyberbrick-cert-output; }
             stack_parameter() { printf '%s\n' test-policy; }
             txing_cert_generate_device_daemon_bundle() {
-              printf '%s|%s|%s\n' "$1" "$5" "$7"
+              printf '%s|%s|%s|%s\n' "$1" "$5" "$7" "$8"
             }
             txing_generate_iot_certificate_bundle \
-              cyberbrick-a1 /rig-template /device-template
+              cyberbrick-a1 /rig-template /device-template /devices
             """
         )
         result = subprocess.run(
@@ -187,5 +187,5 @@ class ShellPortabilityTest(unittest.TestCase):
 
         self.assertEqual(
             result.stdout.strip(),
-            "cyberbrick-a1|/device-template|cyberbrick-daemon",
+            "cyberbrick-a1|/device-template|cyberbrick-daemon|/devices",
         )

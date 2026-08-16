@@ -28,6 +28,8 @@ publish normal GitHub Releases with component-prefixed tags:
   `lambda-vX.Y.Z`
 - unit: `release/versions/unit` publishes `unit-vX.Y.Z`
 - cyberbrick: `release/versions/cyberbrick` publishes `cyberbrick-vX.Y.Z`
+- shared KVS master: `release/versions/kvs-master` publishes
+  `kvs-master-vX.Y.Z`
 - office: `release/versions/office` tracks office version metadata only
 
 Each manual release workflow is dispatched from the selected branch, reads only
@@ -48,7 +50,6 @@ Unit releases publish these Linux `aarch64` assets:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
-txing-unit-kvs-master-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
 ```
 
@@ -56,9 +57,15 @@ Cyberbrick releases publish these Alpine Linux `aarch64` assets:
 
 ```text
 txing-cyberbrick-daemon-linux-aarch64.tar.gz
-txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
 txing-cyberbrick-mavlink-linux-aarch64.tar.gz
 txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
+```
+
+The shared KVS master release publishes one Alpine Linux `aarch64` asset used
+unchanged by both board device types:
+
+```text
+txing-board-kvs-master-linux-aarch64.tar.gz
 ```
 
 Cyberbrick releases also publish the corresponding patched ArduPilot source:
@@ -81,12 +88,12 @@ file. Each runtime Lambda `.zip` contains one root-level Go executable named
 `bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
-Unit and Cyberbrick board binaries are built in the same pinned Alpine
+Unit, Cyberbrick, and shared KVS binaries are built in the same pinned Alpine
 release under one linkage contract: the Go daemons plus the Unit hardware
 worker and Cyberbrick MAVLink service are fully static musl binaries that run
-on both Debian and Alpine hosts, and each
-KVS master is dynamically linked against musl and stock Alpine libcamera, so
-it runs on Alpine hosts only. Both board workflows verify the linkage kind of
+on both Debian and Alpine hosts. The one shared KVS master is dynamically linked
+against musl and stock Alpine libcamera, so it runs on Alpine hosts only. The
+three workflows verify the linkage kind of
 the exact stripped executable placed in each archive with
 `release/scripts/assert-board-musl.sh` (static: no ELF interpreter;
 musl-dynamic: musl interpreter, fully resolved libraries, expected libcamera
@@ -100,18 +107,30 @@ Release rollout flow:
 2. Push the intended code to the branch that should be released.
 3. Dispatch the matching GitHub release workflow with `just release::build
    <component>`.
-4. Deploy AWS infrastructure and all standalone Lambda stacks with
-   `just aws::deploy`.
-5. Publish runtime Lambda code from the operator machine with
+4. Deploy AWS infrastructure only when the change includes infrastructure;
+   artifact-only board releases do not require an AWS or Lambda deploy.
+5. For a Lambda release, publish runtime Lambda code from the operator machine with
    `just release::publish lambda`. `latest` resolves within the `lambda-v*`
    release stream.
 6. If a rig needs new binaries, publish it with `just release::publish rig`.
    Boards still update manually from a root shell with writable root and
-   root-owned `mise upgrade`, then reboot.
+   root-owned `mise upgrade`, followed by validation and an explicit restart of
+   only the affected OpenRC services.
+
+For a shared KVS change, bump and dispatch only `kvs-master`:
+
+```bash
+just release::bump kvs-master X.Y.Z
+just release::build kvs-master
+```
+
+No Unit, Cyberbrick, AWS, or Lambda release/deploy is required unless that
+component also changed.
 
 Host `latest` resolution is component-specific: rig mise configs use
-`version_prefix = "rig-v"`, unit board configs use `version_prefix = "unit-v"`,
-and Cyberbrick board configs use `version_prefix = "cyberbrick-v"`. This is
+`version_prefix = "rig-v"`, device board configs use `version_prefix = "unit-v"`
+or `version_prefix = "cyberbrick-v"`, and their shared KVS tool uses
+`version_prefix = "kvs-master-v"`. This is
 forward-only operator state; manually replace old host configs that do not
 include the appropriate prefix before relying on `latest`.
 
@@ -144,20 +163,21 @@ runtime Lambda release stream.
 
 ### Unit board
 
-Unit boards install these three release assets with root-owned `mise`:
+Unit boards install two Unit release assets plus the shared KVS asset with
+root-owned `mise`:
 
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
-txing-unit-kvs-master-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
+txing-board-kvs-master-linux-aarch64.tar.gz
 ```
 
 Installed commands:
 
 ```text
 txing-unit-daemon
-txing-unit-kvs-master
 txing-unit-hardware-worker
+txing-board-kvs-master
 ```
 
 The root-owned runtime layout is:
@@ -171,78 +191,68 @@ The root-owned runtime layout is:
 /root/.config/txing/unit-daemon/public.pem.key
 /root/.config/mise/conf.d/txing-unit-daemon.toml
 /root/.local/share/mise/installs/txing-unit-daemon/latest/txing-unit-daemon
-/root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 /root/.local/share/mise/installs/txing-unit-daemon/
-/root/.local/share/mise/installs/txing-unit-kvs-master/
+/root/.local/share/mise/installs/txing-board-kvs-master/
 /root/.local/share/mise/installs/txing-unit-hardware-worker/
-/etc/systemd/system/txing-unit.target
-/etc/systemd/system/txing-unit-daemon.service
-/etc/systemd/system/txing-unit-kvs-master.service
-/etc/systemd/system/txing-unit-hardware-worker.service
+/etc/init.d/txing-unit-daemon
+/etc/init.d/txing-unit-kvs-master
+/etc/init.d/txing-unit-hardware-worker
 ```
 
-The `daemon.env` file is a systemd-compatible environment file rendered from
+The `daemon.env` file is a POSIX shell-compatible environment file rendered from
 `devices/common/daemon.env.template`. It contains daemon-owned `TXING_*`
 runtime defaults for video, capabilities, CloudWatch, hardware-worker socket
 configuration, and motor control. The Go daemon consumes the daemon/cloud/video
 keys. The hardware worker consumes the `TXING_HARDWARE_WORKER_*` and
-`TXING_MOTOR_*` keys when its systemd unit loads the same root-owned env file.
+`TXING_MOTOR_*` keys when its OpenRC service loads the same root-owned env file.
 Track power trim uses numeric percentage keys such as
 `TXING_MOTOR_LEFT_TRACK_POWER_PERCENT=100` and
 `TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=98`; omit the `%` sign.
 Certificate paths are omitted by default; the daemon derives colocated
 certificate paths from the loaded `daemon.env` directory.
 
-Unit assets follow the board linkage contract: `txing-unit-daemon` and
+Current Unit assets follow the board linkage contract: `txing-unit-daemon` and
 `txing-unit-hardware-worker` are fully static musl binaries that run on both
-Raspberry Pi OS (Debian) and Alpine boards, while `txing-unit-kvs-master` is
+Raspberry Pi OS (Debian) and Alpine boards, while `txing-board-kvs-master` is
 dynamically linked against musl and stock Alpine libcamera
 (`libcamera.so.0.7`/`libcamera-base.so.0.7`) and runs on Alpine boards only.
-Existing Debian boards keep updating the static pair but stay pinned to the
-last Debian-built KVS master (linked against `libcamera.so.0.7`) until they
-are reimaged to Alpine; board maintenance instructions run `ldd` on the
-installed `latest` binaries before rebooting. Alpine `v3.24` and Debian
-trixie both ship the `libcamera.so.0.7` soname; the glibc-built and
-musl-built KVS masters are still not interchangeable, and the linkage checks
-distinguish them by ELF interpreter, not by soname.
+Existing Debian boards stay pinned to the legacy per-device KVS master until
+they are reimaged to Alpine; that frozen layout is documented separately in
+[Board (Debian, frozen)](./components/board-debian-frozen.md).
 
-The `txing-unit.target` unit groups the daemon, KVS master, and hardware
-worker services for boot. The board systemd units start the root-owned binaries
-under mise's `latest` install paths. The daemon owns the local BoardVideoBridge
-gRPC socket. The hardware worker owns the local hardware worker gRPC socket. The
-KVS master and daemon connect as separate services. All three services declare
-`PartOf=txing-unit.target`, so stopping or restarting the target propagates to
-the services. Restarts do not invoke mise or call GitHub. They do not depend on
-generated shims. They do not use separate wrapper scripts.
+OpenRC starts the three root-owned binaries from mise's `latest` install paths.
+The daemon owns the local BoardVideoBridge gRPC socket, the hardware worker owns
+the hardware socket, and the KVS service connects them using the Unit runtime
+identity. Restarts do not invoke mise or call GitHub and do not depend on
+generated shims.
 Publishing a new GitHub Release does not upgrade a board automatically. Release
 does not upgrade a board; the operator must log in to the board, switch to
 root, run `root-rw`, run root-owned `mise upgrade`, verify versions, sync, and
-reboot.
-Boards that already ran the older board-named runtime need one manual cleanup
-during that writable-root maintenance window: disable and remove
-`txing-board.target` and `txing-board-kvs-master.service`, then run
-`systemctl daemon-reload` before rebooting into `txing-unit.target`.
+restart only the affected OpenRC services.
 
 ### Cyberbrick board
 
-Cyberbrick boards install these four release assets with root-owned `mise`:
+Cyberbrick boards install three Cyberbrick release assets plus the shared KVS
+asset with root-owned `mise`:
 
 ```text
 txing-cyberbrick-daemon-linux-aarch64.tar.gz
-txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
 txing-cyberbrick-mavlink-linux-aarch64.tar.gz
 txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
+txing-board-kvs-master-linux-aarch64.tar.gz
 ```
 
 Installed commands are `txing-cyberbrick-daemon`,
-`txing-cyberbrick-kvs-master`, `txing-cyberbrick-mavlink`, and
+`txing-board-kvs-master`, `txing-cyberbrick-mavlink`, and
 `txing-cyberbrick-ardupilot`. The ArduPilot archive also contains the tracked
 `txing-cyberbrick-ardupilot.defaults.parm` loaded on every tmpfs-backed boot.
 Cyberbrick uses the `cyberbrick-v*` release stream and Alpine `v3.24`; its
 release image, installed apk branch, and runtime libraries move together.
-Publishing a release never upgrades a board automatically. The forward-only
-release/install/reboot procedure is [Cyberbrick MAVLink cutover](./components/board.md#cyberbrick-mavlink-cutover).
+Publishing a release never upgrades a board automatically. The current
+release and maintenance procedure is
+[Cyberbrick runtime](./components/board.md#cyberbrick-runtime).
 
 The root-owned runtime layout is:
 
@@ -255,7 +265,7 @@ The root-owned runtime layout is:
 /root/.config/txing/cyberbrick-daemon/public.pem.key
 /root/.config/mise/conf.d/txing-cyberbrick-runtime.toml
 /root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon
-/root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
 /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
 /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
@@ -275,15 +285,16 @@ offline and never invoke mise or call GitHub. Cyberbrick does not publish,
 install, or start a hardware worker.
 
 Cyberbrick's ldd policy follows from the board linkage contract: before
-rebooting out of a maintenance window, run `ldd` on each installed `latest`
+leaving a maintenance window, run `ldd` on each installed `latest`
 binary. The static daemon and MAVLink service must show no shared-library
 dependencies (musl `ldd` refuses them or lists only the loader). The
 musl-dynamic KVS master must show the `/lib/ld-musl-aarch64.so.1`
 interpreter, no `not found` libraries, and the `libcamera.so.0.7` and
 `libcamera-base.so.0.7` linkage. Because of the camera coupling,
 `apk upgrade` and `mise upgrade` happen together in that window, and an
-Alpine release bump requires a matching cyberbrick release built on that
-Alpine version first.
+Alpine release bump requires a shared KVS release built on that Alpine version
+first; the fully static Cyberbrick binaries need a new release only when their
+own code changes.
 
 ## Rig Artifacts
 
@@ -350,7 +361,7 @@ boards and standalone rig daemons:
 
 - board install into `/root/.local/share/mise/installs`
 - board manual upgrade with root-owned `mise upgrade`
-- read-only-root board reboot with systemd starting the daemon offline
+- read-only-root board reboot with OpenRC starting the daemon offline
 - REDCON `4` to `1` convergence
 - browser AWS KVS video
 - browser MCP motor control over WebRTC data channel at REDCON `1`

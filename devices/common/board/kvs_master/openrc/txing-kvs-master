@@ -1,0 +1,62 @@
+#!/sbin/openrc-run
+
+description="Txing Board KVS Master"
+
+service_name="${RC_SVCNAME:-${0##*/}}"
+device="${service_name#txing-}"
+device="${device%-kvs-master}"
+
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
+directory=/root
+respawn_delay=5
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-${device}-kvs-master.log
+error_log=/var/log/txing-${device}-kvs-master.log
+
+ca_cert=/root/.config/txing/${device}-daemon/SFSRootCAG2.pem
+daemon_env=/root/.config/txing/${device}-daemon/daemon.env
+
+depend() {
+    need net
+    use dns
+    after txing-${device}-daemon
+}
+
+start_pre() {
+    case "$device" in
+        unit | cyberbrick) ;;
+        *)
+            eerror "Unsupported board device type derived from $service_name: $device"
+            return 1
+            ;;
+    esac
+    test -x "$command" || {
+        eerror "KVS master executable is missing: $command"
+        return 1
+    }
+    test -r "$ca_cert" || {
+        eerror "KVS master CA certificate is missing: $ca_cert"
+        return 1
+    }
+    test -r "$daemon_env" || {
+        eerror "KVS master daemon environment is missing: $daemon_env"
+        return 1
+    }
+    set -a
+    . "$daemon_env"
+    set +a
+    export HOME=/root
+    export TXING_KVS_SYSTEM_CA_CERT_PATH="$ca_cert"
+    export TXING_KVS_WORKER_NAME="$service_name"
+    export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-${device}-daemon/board-video-bridge.sock
+    case "$device" in
+        cyberbrick)
+            export TXING_MAVLINK_BRIDGE_SOCKET_PATH=/run/txing-cyberbrick-daemon/mavlink-bridge.sock
+            ;;
+        unit)
+            unset TXING_MAVLINK_BRIDGE_SOCKET_PATH
+            ;;
+    esac
+}

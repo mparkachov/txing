@@ -58,12 +58,13 @@ no cloud access.
 ## What happens on first boot
 
 `unattended.sh` runs as root once networking is up. It enables the community
-repository, upgrades packages, creates the root partition after the boot FAT,
-runs `setup-alpine` for the sys install, writes the Wi-Fi configuration and
-operator key onto the new root, verifies them, and reboots into it.
+repository, upgrades packages, installs the fixed board runtime-package
+baseline, creates the root partition after the boot FAT, runs `setup-alpine`
+for the sys install, writes the Wi-Fi configuration and operator key onto the
+new root, verifies them, and reboots into it.
 
-It stops at a base OS. Everything from the mise step onward is a manual runbook
-step over ssh.
+It stops after the OS baseline. Release binaries, daemon configuration, and
+services remain manual runbook steps over ssh.
 
 The explicit write onto the new root is the point of the script, not an extra:
 the overlay is applied to the tmpfs root of the diskless boot and is not applied

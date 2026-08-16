@@ -112,7 +112,7 @@ Cloud MCU registration and runtime behavior are documented in
 ## Board Host
 
 The board is the device-side Raspberry Pi. Production boards run the root-owned
-Go `txing-unit-daemon`, native `txing-unit-kvs-master`, and native
+Go `txing-unit-daemon`, shared native `txing-board-kvs-master`, and native
 `txing-unit-hardware-worker` installed from GitHub Release assets through
 `mise`. Release binaries are built in the pinned Alpine musl container under
 the shared board contract: the daemon and hardware worker are fully static and
@@ -127,19 +127,21 @@ read-only-root layout, manual maintenance, and validation instructions live in
 
 The short production flow is:
 
-1. Flash Raspberry Pi OS Lite 64-bit and boot once with writable root.
-2. Enter a root shell on the board.
-3. Install OS packages, `NetworkManager`, and root-owned `mise`.
+1. Write the Alpine `v3.24` aarch64 Raspberry Pi image with Raspberry Pi
+   Imager and boot the diskless system.
+2. Enter a root shell and use the board `unattended.sh` flow to create the
+   persistent Alpine sys install.
+3. Confirm the scripted runtime package baseline and root-owned `mise` install.
 4. Generate the daemon environment/certificate bundle on the operator machine
    with
    `just aws::cert <thing-id>`.
 5. Copy and unpack `<thing-id>-daemon-config.tgz` under
    `/root/.config/txing/unit-daemon`, including `daemon.env` and certificate
-   files.
-6. Install the root-owned mise release tools and create `txing-unit.target`
-   with `txing-unit-daemon.service`, `txing-unit-kvs-master.service`, and
-   `txing-unit-hardware-worker.service` manually as documented in the board
-   guide.
+   files plus the complete board OpenRC service catalog.
+6. Install the root-owned mise release tools, copy the Unit daemon and hardware
+   worker scripts plus the common KVS script from the bundle's `services/`
+   directory into `/etc/init.d`, and enable them with `rc-update` as documented
+   in the board guide.
 7. Configure the PWM overlay and read-only-root tmpfs layout.
 8. Reboot and verify all three board services, KVS readiness, hardware-worker
    readiness, and REDCON convergence.
@@ -148,9 +150,9 @@ The short production flow is:
 
 The cyberbrick board is a supported device-side Raspberry Pi board running
 Alpine Linux aarch64. Production Cyberbrick boards run the root-owned Go
-`txing-cyberbrick-daemon`, native `txing-cyberbrick-kvs-master`, static
+`txing-cyberbrick-daemon`, shared native `txing-board-kvs-master`, static
 `txing-cyberbrick-mavlink`, and static `txing-cyberbrick-ardupilot` from
-matching `cyberbrick-v*` GitHub Release assets through root-owned `mise`,
+the `cyberbrick-v*` and `kvs-master-v*` GitHub Release streams through root-owned `mise`,
 supervised by OpenRC on a read-only root filesystem. ArduPilot is the PWM
 owner and receives its tracked defaults on every tmpfs-backed boot. The daemon
 and MAVLink service are fully static musl binaries; the KVS master is
@@ -173,19 +175,20 @@ The short production flow is:
    machine with `just aws::cert <thing-id>`.
 4. Copy and unpack `<thing-id>-daemon-config.tgz` under
    `/root/.config/txing/cyberbrick-daemon`, including `daemon.env` and
-   certificate files.
-5. In one writable-root window, install the four matching Cyberbrick release
-   assets, remove the old hardware-worker state, and create the
+   certificate files plus the complete board OpenRC service catalog.
+5. In one writable-root window, install the three Cyberbrick artifacts plus the
+   shared KVS artifact, copy the packaged Cyberbrick scripts plus the common KVS script as
    `txing-cyberbrick-ardupilot`, `txing-cyberbrick-mavlink`,
    `txing-cyberbrick-daemon`, and `txing-cyberbrick-kvs-master` OpenRC
-   services, enabled with `rc-update add <service> default`.
+   scripts into `/etc/init.d`, and enable them with
+   `rc-update add <service> default`.
 6. Verify ArduPilot binds only `127.0.0.1:14550`, the four-service dependency
    order, the packaged defaults, and hardware-worker removal.
 7. Configure the PWM overlay and the read-only-root fstab/tmpfs layout.
 8. Reboot with read-only root, repeat the service/default/local-UDP checks,
    deploy Office, then manually remove obsolete MCP shadow and retained-topic
-   state. The full cutover commands are in
-   [Cyberbrick MAVLink cutover](./components/board.md#cyberbrick-mavlink-cutover).
+   state. The full runtime commands are in
+   [Cyberbrick runtime](./components/board.md#cyberbrick-runtime).
 
 ## Web
 

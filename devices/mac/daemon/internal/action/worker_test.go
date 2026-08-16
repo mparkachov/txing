@@ -110,7 +110,7 @@ exit 0`)
 	}
 	supervisor.Stop()
 
-	logBytes, err := os.ReadFile(filepath.Join(dir, "txing-unit-kvs-master.log"))
+	logBytes, err := os.ReadFile(filepath.Join(dir, "txing-board-kvs-master.log"))
 	if err != nil {
 		t.Fatalf("worker log must exist: %v", err)
 	}

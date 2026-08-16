@@ -17,7 +17,7 @@ var DeviceType = "board"
 var (
 	AdapterID                     = "dev.txing." + DeviceType + ".Daemon"
 	DaemonBinaryName              = "txing-" + DeviceType + "-daemon"
-	KVSMasterBinaryName           = "txing-" + DeviceType + "-kvs-master"
+	KVSMasterBinaryName           = "txing-board-kvs-master"
 	HardwareWorkerBinaryName      = "txing-" + DeviceType + "-hardware-worker"
 	DefaultConfigSubdir           = "txing/" + DeviceType + "-daemon"
 	DefaultKVSMasterCommand       = KVSMasterBinaryName

@@ -1,4 +1,4 @@
-name: Release unit
+name: Release KVS master
 
 on:
   workflow_dispatch:
@@ -7,15 +7,15 @@ permissions:
   contents: write
 
 concurrency:
-  group: txing-release-unit-${{ github.ref }}
+  group: txing-release-kvs-master-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  RELEASE_COMPONENT: unit
-  RELEASE_VERSION_FILE: release/versions/unit
-  RELEASE_TAG_PREFIX: unit-v
-  UNIT_DAEMON_ASSET: txing-unit-daemon-linux-aarch64.tar.gz
-  HARDWARE_WORKER_ASSET: txing-unit-hardware-worker-linux-aarch64.tar.gz
+  RELEASE_COMPONENT: kvs-master
+  RELEASE_VERSION_FILE: release/versions/kvs-master
+  RELEASE_TAG_PREFIX: kvs-master-v
+  KVS_MASTER_BINARY: txing-board-kvs-master
+  KVS_MASTER_ASSET: txing-board-kvs-master-linux-aarch64.tar.gz
 
 jobs:
   metadata:
@@ -120,51 +120,20 @@ jobs:
             echo "Release $TAG already exists; releases are immutable." >&2
             exit 1
           fi
-
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "Release tag $TAG already exists; releases are immutable." >&2
             exit 1
           fi
 
   build:
-    name: Build ${{ matrix.binary }}
+    name: Build shared KVS master
     runs-on: ubuntu-24.04-arm
     needs: metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: daemon
-            binary: txing-unit-daemon
-            asset: txing-unit-daemon-linux-aarch64.tar.gz
-            kind: static
-          - component: hardware-worker
-            binary: txing-unit-hardware-worker
-            asset: txing-unit-hardware-worker-linux-aarch64.tar.gz
-            kind: static
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
-      # The static protobuf/gRPC toolchain takes ~25 minutes to source-build.
-      # build-board-static-toolchain.sh validates the restored prefix against
-      # its version marker and rebuilds on mismatch, so a stale cache can slow
-      # a run down but never poison it. Keep the alpine version in this key in
-      # sync with the pinned build image below.
-      - name: Cache static toolchain
-        if: matrix.component == 'hardware-worker'
-        uses: actions/cache@v5
-        with:
-          path: ${{ runner.temp }}/static-toolchain
-          key: board-static-toolchain-alpine3.24.1-${{ hashFiles('release/scripts/build-board-static-toolchain.sh') }}
-
-      # JavaScript actions cannot run inside musl containers on arm64
-      # runners, so the job runs on the host and drives the pinned Alpine
-      # build container through docker exec. Workspace and temp are mounted
-      # at their host paths so step bodies see identical locations.
       - name: Start pinned Alpine build container
         shell: bash
         run: |
@@ -184,143 +153,88 @@ jobs:
           test "$(uname -m)" = "aarch64"
           apk add --no-cache \
             gcompat build-base cmake pkgconf git perl ca-certificates curl \
-            curl-dev openssl-dev openssl-libs-static log4cplus-dev libsrtp-dev \
-            libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
-            linux-headers protobuf-dev protobuf grpc-dev grpc-plugins \
-            go binutils file tar gzip
+            curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
+            libwebsockets-dev zlib-dev libcamera-dev linux-headers \
+            protobuf-dev protobuf grpc-dev grpc-plugins binutils file tar gzip
           git config --global --add safe.directory '*'
           EOF
 
-      - name: Build and test ${{ matrix.binary }}
+      - name: Build and test shared KVS master
         env:
-          COMPONENT: ${{ matrix.component }}
-          BINARY: ${{ matrix.binary }}
           VERSION: ${{ needs.metadata.outputs.version }}
-          PROTOC_GEN_GO_VERSION: v1.36.10
-          PROTOC_GEN_GO_GRPC_VERSION: v1.5.1
+          AWS_KVS_SDK_COMMIT: bb106510cf74edd2c24881c1ae94ceaa0083d15c
         shell: bash
         run: |
           docker exec -i \
-            -e COMPONENT="$COMPONENT" \
-            -e BINARY="$BINARY" \
             -e VERSION="$VERSION" \
-            -e PROTOC_GEN_GO_VERSION="$PROTOC_GEN_GO_VERSION" \
-            -e PROTOC_GEN_GO_GRPC_VERSION="$PROTOC_GEN_GO_GRPC_VERSION" \
+            -e AWS_KVS_SDK_COMMIT="$AWS_KVS_SDK_COMMIT" \
             -e GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             -e RUNNER_TEMP="$RUNNER_TEMP" \
+            -e KVS_MASTER_BINARY="$KVS_MASTER_BINARY" \
             board-build sh <<'EOF'
           set -eu
-          output="$RUNNER_TEMP/$BINARY"
+          source_dir="$GITHUB_WORKSPACE/devices/common/board/kvs_master"
+          build_dir="$RUNNER_TEMP/build-$KVS_MASTER_BINARY"
+          output="$RUNNER_TEMP/$KVS_MASTER_BINARY"
+          openssl_libdir="$(pkg-config --variable=libdir openssl)"
+          openssl_includedir="$(pkg-config --variable=includedir openssl)"
+          cmake \
+            -S "$source_dir" \
+            -B "$build_dir" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DTXING_KVS_SYSTEM_CA_CERT_PATH="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}" \
+            -DTXING_KVS_GRPC_BRIDGE=ON \
+            -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$AWS_KVS_SDK_COMMIT" \
+            -DTXING_BOARD_KVS_MASTER_VERSION="$VERSION" \
+            -DOPENSSL_USE_STATIC_LIBS=FALSE \
+            -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
+            -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
+            -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
+          cmake --build "$build_dir" --config Release
+          ctest --test-dir "$build_dir" --output-on-failure
+          install -m 755 "$build_dir/$KVS_MASTER_BINARY" "$output"
 
-          case "$COMPONENT" in
-            daemon)
-              # The daemon's Go bindings are generated here rather than
-              # checked in, matching how the C++ workers get theirs.
-              plugin_dir="$RUNNER_TEMP/protoc-plugins"
-              GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$PROTOC_GEN_GO_VERSION"
-              GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$PROTOC_GEN_GO_GRPC_VERSION"
-              proto_root="$GITHUB_WORKSPACE/devices/common/board/proto"
-              out_dir="$GITHUB_WORKSPACE/devices/common/board/daemon/internal/proto"
-              hardware_proto="txing/board/hardware/v1/hardware.proto"
-              board_video_proto="txing/board/board_video/v1/board_video.proto"
-              rm -rf "$out_dir"
-              install -d "$out_dir"
-              PATH="$plugin_dir:$PATH" protoc \
-                "--proto_path=$proto_root" \
-                "--go_out=$out_dir" \
-                "--go_opt=module=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto" \
-                "--go_opt=M$hardware_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/hardwarev1" \
-                "--go_opt=M$board_video_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/boardvideov1" \
-                "--go-grpc_out=$out_dir" \
-                "--go-grpc_opt=module=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto" \
-                "--go-grpc_opt=M$hardware_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/hardwarev1" \
-                "--go-grpc_opt=M$board_video_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/boardvideov1" \
-                "$hardware_proto" \
-                "$board_video_proto"
-              (
-                cd devices/common/board/daemon
-                GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...
-                GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-                  go build -trimpath \
-                    -ldflags="-s -w -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DeviceType=unit -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DaemonVersion=$VERSION" \
-                    -o "$output" \
-                    ./cmd/txing-board-daemon
-              )
-              ;;
-            hardware-worker)
-              source_dir="$GITHUB_WORKSPACE/devices/common/board/hardware_worker"
-              build_dir="$RUNNER_TEMP/build-txing-unit-hardware-worker"
-              toolchain_prefix="$RUNNER_TEMP/static-toolchain"
-              sh release/scripts/build-board-static-toolchain.sh "$toolchain_prefix"
-              PATH="$toolchain_prefix/bin:$PATH" cmake \
-                -S "$source_dir" \
-                -B "$build_dir" \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DBUILD_TESTING=ON \
-                -DTXING_HARDWARE_WORKER_GRPC=ON \
-                -DTXING_BOARD_DEVICE_TYPE=unit \
-                -DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION" \
-                -DCMAKE_PREFIX_PATH="$toolchain_prefix" \
-                -DCMAKE_EXE_LINKER_FLAGS=-static \
-                -DOPENSSL_USE_STATIC_LIBS=TRUE \
-                -DZLIB_USE_STATIC_LIBS=ON
-              PATH="$toolchain_prefix/bin:$PATH" cmake --build "$build_dir" --config Release
-              ctest --test-dir "$build_dir" --output-on-failure
-              install -m 755 "$build_dir/$BINARY" "$output"
-              ;;
-            *)
-              echo "Unsupported unit release component: $COMPONENT" >&2
-              exit 2
-              ;;
-          esac
-
-          test -x "$output"
           actual_version="$("$output" --version)"
-          expected_version="$BINARY $VERSION"
+          expected_version="$KVS_MASTER_BINARY $VERSION"
           if [ "$actual_version" != "$expected_version" ]; then
             echo "Expected '$expected_version', got '$actual_version'." >&2
             exit 1
           fi
           EOF
 
-      - name: Package and verify ${{ matrix.asset }}
-        env:
-          BINARY: ${{ matrix.binary }}
-          ASSET: ${{ matrix.asset }}
-          BINARY_KIND: ${{ matrix.kind }}
+      - name: Package and verify shared KVS master
         shell: bash
         run: |
           docker exec -i \
-            -e BINARY="$BINARY" \
-            -e ASSET="$ASSET" \
-            -e BINARY_KIND="$BINARY_KIND" \
+            -e KVS_MASTER_BINARY="$KVS_MASTER_BINARY" \
+            -e KVS_MASTER_ASSET="$KVS_MASTER_ASSET" \
             -e GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             -e RUNNER_TEMP="$RUNNER_TEMP" \
             board-build sh <<'EOF'
           set -eu
-          source="$RUNNER_TEMP/$BINARY"
-          package_dir="$RUNNER_TEMP/package-$BINARY"
-          asset_path="$RUNNER_TEMP/$ASSET"
+          package_dir="$RUNNER_TEMP/package-$KVS_MASTER_BINARY"
+          asset_path="$RUNNER_TEMP/$KVS_MASTER_ASSET"
           rm -rf "$package_dir"
           install -d "$package_dir"
-          install -m 755 "$source" "$package_dir/$BINARY"
-          strip "$package_dir/$BINARY"
+          install -m 755 "$RUNNER_TEMP/$KVS_MASTER_BINARY" "$package_dir/$KVS_MASTER_BINARY"
+          strip "$package_dir/$KVS_MASTER_BINARY"
           sh release/scripts/assert-board-musl.sh \
-            "$package_dir/$BINARY" "$BINARY_KIND"
-          tar -C "$package_dir" -czf "$asset_path" "$BINARY"
+            "$package_dir/$KVS_MASTER_BINARY" musl-libcamera
+          tar -C "$package_dir" -czf "$asset_path" "$KVS_MASTER_BINARY"
           archive_listing="$(tar -tzf "$asset_path")"
-          if [ "$archive_listing" != "$BINARY" ]; then
-            echo "Expected $ASSET to contain only root-level $BINARY, got:" >&2
+          if [ "$archive_listing" != "$KVS_MASTER_BINARY" ]; then
+            echo "Expected $KVS_MASTER_ASSET to contain only root-level $KVS_MASTER_BINARY, got:" >&2
             printf '%s\n' "$archive_listing" >&2
             exit 1
           fi
           EOF
 
-      - name: Upload ${{ matrix.asset }}
+      - name: Upload shared KVS master
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.asset }}
-          path: ${{ runner.temp }}/${{ matrix.asset }}
+          name: ${{ env.KVS_MASTER_ASSET }}
+          path: ${{ runner.temp }}/${{ env.KVS_MASTER_ASSET }}
           if-no-files-found: error
 
   smoke:
@@ -334,7 +248,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Download release assets
+      - name: Download release asset
         uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/release-assets
@@ -348,17 +262,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           smoke_dir="$RUNNER_TEMP/smoke-bin"
           rm -rf "$smoke_dir"
           install -d "$smoke_dir"
-          tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$UNIT_DAEMON_ASSET"
-          tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$HARDWARE_WORKER_ASSET"
-
+          tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$KVS_MASTER_ASSET"
           sh release/scripts/smoke-board-cross-distro.sh \
-            "$smoke_dir/txing-unit-daemon" static "txing-unit-daemon $VERSION"
-          sh release/scripts/smoke-board-cross-distro.sh \
-            "$smoke_dir/txing-unit-hardware-worker" static "txing-unit-hardware-worker $VERSION"
+            "$smoke_dir/$KVS_MASTER_BINARY" musl-libcamera "$KVS_MASTER_BINARY $VERSION"
 
   publish:
     name: Publish release
@@ -369,7 +278,7 @@ jobs:
       - smoke
 
     steps:
-      - name: Download release assets
+      - name: Download release asset
         uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/release-assets
@@ -385,40 +294,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          release_assets=(
-            "$UNIT_DAEMON_ASSET"
-            "$HARDWARE_WORKER_ASSET"
-          )
-
-          release_asset_paths=()
-          for asset in "${release_assets[@]}"; do
-            asset_path="$RELEASE_ASSETS_DIR/$asset"
-            if [ ! -s "$asset_path" ]; then
-              echo "Missing release asset from build jobs: $asset_path" >&2
-              find "$RELEASE_ASSETS_DIR" -maxdepth 2 -type f -print >&2 || true
-              exit 1
-            fi
-            release_asset_paths+=("$asset_path")
-          done
+          asset_path="$RELEASE_ASSETS_DIR/$KVS_MASTER_ASSET"
+          if [ ! -s "$asset_path" ]; then
+            echo "Missing release asset from build job: $asset_path" >&2
+            exit 1
+          fi
 
           notes_file="$(mktemp)"
           {
-            echo "Txing $RELEASE_COMPONENT release."
+            echo "Txing shared board KVS master release."
             echo
             echo "- Component: $RELEASE_COMPONENT"
             echo "- Version: $VERSION"
             echo "- Tag: $TAG"
             echo "- Commit: $RELEASE_TARGET"
             echo "- Build image: docker.io/library/alpine:3.24.1"
-            echo "- Assets:"
-            for asset in "${release_assets[@]}"; do
-              echo "  - $asset"
-            done
+            echo "- Asset: $KVS_MASTER_ASSET"
           } >"$notes_file"
 
           gh release create "$TAG" \
-            "${release_asset_paths[@]}" \
+            "$asset_path" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$RELEASE_TARGET" \
             --title "$TAG" \

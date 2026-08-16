@@ -186,6 +186,7 @@ txing_cert_create_iot_bundle() {
 txing_cert_write_runtime_tarball() {
   output_dir="$1"
   tarball_path="$2"
+  shift 2
   COPYFILE_DISABLE=1 tar -C "$output_dir" -czf "$tarball_path" \
     daemon.env \
     certificate.pem.crt \
@@ -193,8 +194,37 @@ txing_cert_write_runtime_tarball() {
     private.pem.key \
     certificate.arn \
     AmazonRootCA1.pem \
-    SFSRootCAG2.pem
+    SFSRootCAG2.pem \
+    "$@"
   chmod 600 "$tarball_path"
+}
+
+txing_cert_install_board_service() {
+  source_path="$1"
+  services_dir="$2"
+  [ -r "$source_path" ] || {
+    echo "Missing board OpenRC service: $source_path" >&2
+    return 1
+  }
+  install -m 755 "$source_path" "$services_dir/$(basename "$source_path")"
+}
+
+txing_cert_stage_board_services() {
+  output_dir="$1"
+  devices_dir="$2"
+  services_dir="$output_dir/services"
+
+  [ -d "$devices_dir" ] || {
+    echo "Missing device source directory: $devices_dir" >&2
+    return 1
+  }
+  install -d -m 700 "$services_dir"
+  txing_cert_install_board_service "$devices_dir/common/board/hardware_worker/openrc/txing-unit-hardware-worker" "$services_dir"
+  txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-unit-daemon" "$services_dir"
+  txing_cert_install_board_service "$devices_dir/common/board/kvs_master/openrc/txing-kvs-master" "$services_dir"
+  txing_cert_install_board_service "$devices_dir/cyberbrick/ardupilot/openrc/txing-cyberbrick-ardupilot" "$services_dir"
+  txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-cyberbrick-mavlink" "$services_dir"
+  txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-cyberbrick-daemon" "$services_dir"
 }
 
 txing_cert_write_rig_env() {
@@ -400,6 +430,7 @@ txing_cert_generate_device_daemon_bundle() {
   daemon_env_template="$5"
   thing_json="$6"
   bundle_type="$7"
+  devices_dir="$8"
   daemon_policy_name="$(stack_parameter DeviceDaemonIotPolicyName)"
   account_id="$(aws sts get-caller-identity --query Account --output text)"
   caller_arn="$(aws sts get-caller-identity --query Arn --output text)"
@@ -422,8 +453,20 @@ txing_cert_generate_device_daemon_bundle() {
     return 1
   fi
 
-  txing_cert_refuse_existing_material "$output_dir" "$tarball_path"
+  case "$thing_type" in
+    unit | cyberbrick)
+      txing_cert_refuse_existing_material "$output_dir" "$tarball_path" "$output_dir/services"
+      ;;
+    *)
+      txing_cert_refuse_existing_material "$output_dir" "$tarball_path"
+      ;;
+  esac
   install -d -m 700 "$output_dir"
+  case "$thing_type" in
+    unit | cyberbrick)
+      txing_cert_stage_board_services "$output_dir" "$devices_dir"
+      ;;
+  esac
   trust_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-trust.XXXXXX")"
   credential_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-credential-policy.XXXXXX")"
   jq -n '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "credentials.iot.amazonaws.com"}, Action: "sts:AssumeRole"}]}' >"$trust_policy_file"
@@ -446,7 +489,14 @@ txing_cert_generate_device_daemon_bundle() {
   iot_credential_endpoint="$(aws iot describe-endpoint --endpoint-type iot:CredentialProvider --query endpointAddress --output text)"
   cert_arn="$(txing_cert_create_iot_bundle "$thing_id" "$output_dir" "$daemon_policy_name")"
   txing_cert_write_daemon_env "$output_dir" "$daemon_env_template" "$thing_id" "$iot_data_endpoint" "$iot_credential_endpoint" "$iot_role_alias" "$video_channel_name" "$cloudwatch_log_group" "$daemon_capabilities"
-  txing_cert_write_runtime_tarball "$output_dir" "$tarball_path"
+  case "$thing_type" in
+    unit | cyberbrick)
+      txing_cert_write_runtime_tarball "$output_dir" "$tarball_path" services
+      ;;
+    *)
+      txing_cert_write_runtime_tarball "$output_dir" "$tarball_path"
+      ;;
+  esac
   jq -n \
     --arg thingName "$thing_id" \
     --arg thingType "$thing_type" \
@@ -476,6 +526,7 @@ txing_generate_iot_certificate_bundle() {
   thing_id="$1"
   rig_env_template="$2"
   device_env_template="$3"
+  devices_dir="$4"
   txing_validate_iot_thing_id "$thing_id" "Use: just aws::cert <thing-id>"
   thing_json="$(aws iot describe-thing --thing-name "$thing_id" --output json)"
   thing_type="$(txing_json_string "$thing_json" '.thingTypeName')"
@@ -495,13 +546,13 @@ txing_generate_iot_certificate_bundle() {
       txing_cert_generate_rig_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$base_policy_name" "$rig_env_template" "$thing_json"
       ;;
     deviceType:unit)
-      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" unit-daemon
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" unit-daemon "$devices_dir"
       ;;
     deviceType:cyberbrick)
-      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" cyberbrick-daemon
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" cyberbrick-daemon "$devices_dir"
       ;;
     deviceType:mac)
-      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" mac-daemon
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" mac-daemon "$devices_dir"
       ;;
     *)
       txing_cert_generate_generic_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$base_policy_name"

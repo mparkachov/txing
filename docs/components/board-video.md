@@ -10,8 +10,8 @@
   REDCON rules remain in the owning device contract.
 - Field-validation status: the current Unit video path is accepted as the
   behavior baseline; each device still requires its own physical acceptance.
-- Current implementation: `txing-<device>-daemon` and the native
-  `txing-<device>-kvs-master` are separately supervised. The daemon serves the
+- Current implementation: `txing-<device>-daemon` and the shared native
+  `txing-board-kvs-master` are separately supervised. The daemon serves the
   local BoardVideoBridge gRPC socket, publishes retained video service topics,
   `rig` consumes them for REDCON readiness, and the browser uses AWS KVS
   signaling + WebRTC for the viewer path.
@@ -43,7 +43,8 @@ Explicit non-goals for this slice:
 - ML and other cloud-side consumers are explicitly outside the current media path.
 - A second direct operator path remains deferred. The recorded manual field validation did not justify reopening it.
 - The native sender implementation is shipped in-tree as the
-  `txing-<device>-kvs-master` release asset. The daemon and worker communicate
+  `txing-board-kvs-master` release asset. Its OpenRC service supplies the
+  device-specific worker identity and bridge sockets at runtime. The daemon and worker communicate
   through the language-neutral BoardVideoBridge gRPC contract.
 
 ## High-Level Architecture
@@ -56,7 +57,7 @@ txing-<device>-daemon
   -> tracks coarse board video readiness and failures
 
 native sender command
-  -> is shipped as txing-<device>-kvs-master
+  -> is shipped as txing-board-kvs-master
   -> owns the actual camera capture, encode, and single KVS master session
   -> creates one WebRTC peer session per viewer client on the same signaling channel
   -> connects to BoardVideoBridge for config, credentials, and video state

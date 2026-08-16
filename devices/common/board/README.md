@@ -6,14 +6,14 @@ authoritative board documentation lives in
 
 - `daemon/` — Go daemon (`txing-<device>-daemon`)
 - `kvs_master/` — camera and AWS KVS WebRTC signaling worker
-  (`txing-<device>-kvs-master`)
+  (`txing-board-kvs-master`)
 - `hardware_worker/` — board-local motor hardware worker
   (`txing-<device>-hardware-worker`)
 
-The device type is a build input rather than a source axis. Builds pass
-`TXING_BOARD_DEVICE_TYPE`, which selects the proto package under
-`devices/<device>/proto`, the binary names, the hardware socket path, and the
-release stream in `release/versions/<device>` that the version is injected from.
+The device type is a build input rather than a source axis for the daemon and
+device-specific workers. The KVS master has no device build input and uses the
+shared release stream in `release/versions/kvs-master`; its installed service
+provides device identity and sockets at runtime.
 Per-device material — the `manifest.toml` profile, shadow schemas, the web
 adapter, and the proto package — stays under `devices/<device>/`.
 
@@ -22,7 +22,7 @@ first argument:
 
 ```sh
 just common::board::hardware-test-native unit
-just common::board::kvs-test-native cyberbrick
+just common::board::kvs-test-native
 just common::board::nerdctl-build unit
 ```
 

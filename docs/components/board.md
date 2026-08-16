@@ -5,10 +5,11 @@ the root-owned Go daemon plus native workers under OpenRC, and publishes
 board-owned runtime state. Unit exposes board MCP for motion control; Cyberbrick
 uses the MAVLink contract documented below.
 
-One implementation serves every board device type. The daemon, KVS master, and
-hardware worker are built once from `devices/common/board/`, with the device type
-supplied as a build input that selects the binary names, the hardware socket
-path, and the release stream. This runbook therefore covers every device type.
+One implementation serves every board device type. Device-specific daemons and
+workers are built from `devices/common/board/`; the KVS master is one
+device-neutral `txing-board-kvs-master` artifact. Its installed service supplies
+the worker identity, capability profile, and bridge sockets at runtime. This
+runbook therefore covers every device type.
 
 Every command block in this document is written to be pasted verbatim, with no
 placeholders to substitute by hand. The one value that varies is the device
@@ -18,7 +19,7 @@ type, carried in `TXING_DEVICE`. Set it once in the shell you are pasting into:
 export TXING_DEVICE=cyberbrick      # or: unit
 ```
 
-[Install OS Packages](#2-install-os-packages) writes it into the board's
+[Confirm OS Baseline](#2-confirm-os-baseline) writes it into the board's
 `/root/.profile`, so board shells keep it across the reboots the install
 performs. On the operator machine, set it in the shell you work from.
 [Generate And Copy Daemon Config](#4-generate-and-copy-daemon-config) adds
@@ -58,7 +59,7 @@ this document is device-specific.
 | Value | `unit` | `cyberbrick` |
 | --- | --- | --- |
 | Daemon binary | `txing-unit-daemon` | `txing-cyberbrick-daemon` |
-| KVS master binary | `txing-unit-kvs-master` | `txing-cyberbrick-kvs-master` |
+| KVS master binary | `txing-board-kvs-master` | `txing-board-kvs-master` |
 | Hardware worker binary | `txing-unit-hardware-worker` | none |
 | MAVLink binary | not applicable | `txing-cyberbrick-mavlink` |
 | ArduPilot binary/defaults | not applicable | `txing-cyberbrick-ardupilot` and `txing-cyberbrick-ardupilot.defaults.parm` |
@@ -66,15 +67,16 @@ this document is device-specific.
 | Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | none after MAVLink cutover |
 | MCP adapter id | `dev.txing.unit.Daemon` | not applicable |
 | MAVLink socket | not applicable | `/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock` |
-| Release version file | `release/versions/unit` | `release/versions/cyberbrick` |
-| Release tag prefix | `unit-v` | `cyberbrick-v` |
+| Device release version file | `release/versions/unit` | `release/versions/cyberbrick` |
+| Device release tag prefix | `unit-v` | `cyberbrick-v` |
 | Device manifest | `devices/unit/manifest.toml` | `devices/cyberbrick/manifest.toml` |
 | Shadow schemas and defaults | `devices/unit/aws/` | `devices/cyberbrick/aws/` |
 
-The daemon derives every one of these from the device type injected at build
-time, so they are consequences of the profile rather than independent settings.
-A board never mixes them: Unit's three binaries or Cyberbrick's four runtime
-artifacts come from the same device release stream.
+The daemon derives its values from the device type injected at build time. The
+shared KVS master instead reads `TXING_KVS_WORKER_NAME`,
+`TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`, `TXING_MAVLINK_BRIDGE_SOCKET_PATH`, and
+the daemon capability profile at service start. Both device types install the
+same KVS bytes from `release/versions/kvs-master` / `kvs-master-v*`.
 
 Operator commands are device-owned, matching the MCU commands:
 
@@ -90,6 +92,7 @@ same way `just mcu::check` is the shared MCU preflight:
 
 ```sh
 just common::board::proto-gen           # regenerate the daemon's gRPC bindings
+just common::board::kvs-test-native     # test the shared KVS master
 ```
 
 ## Local Protocol Contracts
@@ -220,7 +223,7 @@ Current video is headless AWS Kinesis Video Streams WebRTC:
   - `txings/<device_id>/video/status`: retained dynamic state, expires after
     `TXING_CAPABILITY_TTL_SECONDS`
 - named shadow mirror: `video`
-- worker binary: `txing-<device>-kvs-master`
+- worker binary: `txing-board-kvs-master`
 
 The native worker owns camera capture, H.264 encode, AWS KVS master behavior,
 WebRTC peer connections, and data-channel transport. The Go daemon owns
@@ -382,18 +385,22 @@ Deployed boards use root-owned config:
 ```text
 /root/.config/txing/<device>-daemon/daemon.env
 /root/.config/txing/<device>-daemon/AmazonRootCA1.pem
+/root/.config/txing/<device>-daemon/SFSRootCAG2.pem
 /root/.config/txing/<device>-daemon/certificate.arn
 /root/.config/txing/<device>-daemon/certificate.pem.crt
 /root/.config/txing/<device>-daemon/private.pem.key
 /root/.config/txing/<device>-daemon/public.pem.key
+/root/.config/txing/<device>-daemon/services/txing-*
 ```
 
-`daemon.env` is a systemd-compatible environment file rendered from
+`daemon.env` is an environment file rendered from
 `devices/common/daemon.env.template`. It uses plain `KEY=value` lines so
-both `txing-<device>-hardware-worker.service` and the daemon can consume the same
-root-owned file. Certificate paths are omitted by default; the daemon derives
-colocated paths from the loaded `daemon.env` directory. For manual shell export,
-use `set -a; . /root/.config/txing/<device>-daemon/daemon.env; set +a`.
+both the OpenRC hardware-worker script and the daemon can consume the same
+root-owned file. The `services/` directory contains the complete board OpenRC
+catalog; installation copies only the services for the selected device type.
+Certificate paths are omitted by default; the daemon derives colocated paths
+from the loaded `daemon.env` directory. For manual shell export, use
+`set -a; . /root/.config/txing/<device>-daemon/daemon.env; set +a`.
 
 Default runtime inputs include:
 
@@ -475,7 +482,7 @@ env file.
   by the build container's package set or by `ldd` linkage checks, and every
   one of them fails as the same KVS master error,
   `configured camera index is not available`. See
-  [Install OS Packages](#2-install-os-packages),
+  [Confirm OS Baseline](#2-confirm-os-baseline),
   [Enable Udev](#2a-enable-udev), and
   [Enable PWM Overlay And Camera](#5-enable-pwm-overlay-and-camera).
 - The KVS master verifies the AWS signaling endpoint against a single trust
@@ -489,26 +496,27 @@ env file.
 - The pinned Alpine build image in the board daemon justfile, the
   release workflow containers, and the on-device apk branch must name the
   same Alpine release. Bumping the Alpine release is one coordinated change
-  across all three plus a new board release; see
+  across all three plus a new shared KVS release; see
   [Maintenance](#maintenance).
 
 ## Release Artifacts
 
-Unit installs daemon, KVS master, and hardware worker from its immutable
-`unit-v*` release stream. Cyberbrick installs daemon, KVS master, MAVLink, and
-ArduPilot from `cyberbrick-v*`; it has no hardware-worker artifact or service.
+Unit installs its daemon and hardware worker from `unit-v*`. Cyberbrick installs
+its daemon, MAVLink, and ArduPilot from `cyberbrick-v*`. Both install the exact
+same KVS master from the independent `kvs-master-v*` stream.
 
 ```text
 # Unit
 txing-unit-daemon-linux-aarch64.tar.gz
-txing-unit-kvs-master-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
 
 # Cyberbrick
 txing-cyberbrick-daemon-linux-aarch64.tar.gz
-txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
 txing-cyberbrick-mavlink-linux-aarch64.tar.gz
 txing-cyberbrick-ardupilot-linux-aarch64.tar.gz
+
+# Shared board KVS master
+txing-board-kvs-master-linux-aarch64.tar.gz
 ```
 
 Every daemon, KVS, MAVLink, and hardware-worker archive contains its one
@@ -520,23 +528,23 @@ tmpfs-backed boot. Boards use root's persistent mise config and install tree:
 ```text
 /root/.config/mise/conf.d/txing-<device>-daemon.toml
 /root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon
-/root/.local/share/mise/installs/txing-<device>-kvs-master/latest/txing-<device>-kvs-master
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 /root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
 /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
 ```
 
-Root-owned `mise` configs must set `version_prefix = "<device>-v"` so
-`latest` resolves from `<device>-v*` GitHub Releases instead of the
-repository-wide latest release. This release model is forward-only;
+Root-owned `mise` configs use `version_prefix = "<device>-v"` for device
+artifacts and `version_prefix = "kvs-master-v"` for the shared KVS artifact, so
+each `latest` resolves within its owning release stream. This release model is forward-only;
 replace old board configs manually if they do not include the component prefix. Service starts are offline by design:
 restarting an OpenRC service does not install or upgrade tools, invoke mise,
 or call GitHub. If a board needs new binaries, follow
 [Maintenance](#maintenance).
 
 Cyberbrick's corresponding patched ArduPilot source archive is published for
-provenance but is not installed on the board. The release cutover and its
-forward-only operational steps are in [Cyberbrick MAVLink cutover](#cyberbrick-mavlink-cutover).
+provenance but is not installed on the board. Its current runtime installation
+and operational steps are in [Cyberbrick runtime](#cyberbrick-runtime).
 
 The release gates bound what these artifacts prove. `assert-board-musl.sh`
 checks linkage kinds and `smoke-board-cross-distro.sh` runs each binary in
@@ -620,13 +628,14 @@ manual steps below.
 
 Boot the board. `unattended.sh` runs as root once networking is up and takes the
 board the rest of the way on its own: it enables the community repository,
-upgrades packages, creates the root partition in the free space after the boot
-FAT, runs `setup-alpine` for the sys install, and reboots into it. No console
-login and no interactive setup.
+upgrades packages, installs the fixed runtime package baseline, creates the
+root partition in the free space after the boot FAT, runs `setup-alpine` for
+the sys install, and reboots into it. No console login and no interactive
+setup.
 
-It stops there, at a base OS. Everything from the mise step onward — runtime
-packages, udev, camera support, release binaries, device configuration, and
-services — remains a manual step below, performed over ssh.
+It stops after the OS baseline. Release binaries, udev runlevel setup, camera
+configuration, device configuration, and services remain manual steps below,
+performed over ssh.
 
 Two properties worth knowing, because they decide whether a bad run is
 recoverable:
@@ -661,10 +670,10 @@ mise --version             # installed by the card, on root's PATH
 ships with an empty root password, so a board that accepts password logins over
 Wi-Fi is open.
 
-`mise` is installed by the card and already on `root`'s `PATH`, because a
-read-only root cannot install it afterwards without `root-rw` first. Everything
-past it -- runtime packages, camera support, release binaries, daemon config and
-services -- is still a manual step below.
+`mise` and the fixed Alpine runtime package baseline are installed by the card
+before its first reboot. Everything past that baseline -- udev runlevel setup,
+camera configuration, release binaries, daemon config, and services -- is still
+a manual step below.
 
 The board boots **read-only**, with `/tmp`, `/var/tmp`, `/var/log`, and
 on tmpfs, `/etc/resolv.conf` pointed at udhcpc's runtime
@@ -676,7 +685,7 @@ and OpenRC changes all need a writable root. `root-ro` puts it back, and
 `/root/txing-unattended.log` on the board records how it was provisioned. It is
 in `/root` rather than `/var/log` because the tmpfs mount would shadow it.
 
-Continue over ssh from [Install OS Packages](#2-install-os-packages).
+Continue over ssh from [Confirm OS Baseline](#2-confirm-os-baseline).
 
 If you would rather drive base setup by hand instead, the same answers are:
 
@@ -709,14 +718,15 @@ setup-disk -m sys /dev/mmcblk0p2
 In `cfdisk`, create one Linux partition (`/dev/mmcblk0p2`) in the free space
 after the boot FAT partition and write the table before quitting. After
 `setup-disk` finishes, point the boot FAT at the new root filesystem if
-`setup-disk` did not already do it, then reboot into the sys install:
+`setup-disk` did not already do it:
 
 ```sh
 mount -o remount,rw /media/mmcblk0p1
 grep -q 'root=/dev/mmcblk0p2' /media/mmcblk0p1/cmdline.txt \
   || sed -i 's|$| root=/dev/mmcblk0p2|' /media/mmcblk0p1/cmdline.txt
-reboot
 ```
+
+After reviewing the successful result, reboot manually into the sys install.
 
 All remaining steps run as `root` on the sys install while the root
 filesystem is still writable. `setup-disk -m sys` writes a UUID-based
@@ -724,7 +734,7 @@ filesystem is still writable. `setup-disk -m sys` writes a UUID-based
 only existed during the diskless boot above); steps 5 and 7 use `/boot` and
 those UUIDs.
 
-### 2. Install OS Packages
+### 2. Confirm OS Baseline
 
 This is the first step over ssh. Make the root writable and record the device
 type, so every later block on this board pastes as written — including after the
@@ -757,32 +767,19 @@ harmless either way:
 sed -i 's|^#\(http.*/community\)$|\1|' /etc/apk/repositories
 ```
 
-Now the runtime packages. **This part runs on every board, however it was
-built.** The card installs no runtime packages at all — it stops at a base OS
-with `mise` — so a freshly provisioned board has no libcamera, no grpc and no
-`libstdc++`, and the release KVS master cannot start. Skipping this surfaces
-much later as a wall of `Error loading shared library` from a binary that is
-perfectly correct:
+The card installs the fixed runtime package baseline into the persistent root
+before its first reboot. Confirm it before moving on, because everything
+downstream assumes it:
 
 ```sh
-apk update
-apk upgrade
-apk add \
-  curl jq ca-certificates \
-  curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
-  libwebsockets-dev zlib-dev libcamera-dev \
-  protobuf-dev grpc-dev \
-  libcamera-raspberrypi eudev v4l-utils
-```
-
-Confirm before moving on, because everything downstream assumes it:
-
-```sh
-apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf \
+apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf iproute2 \
   | sort | tr '\n' ' '; echo
 ```
 
-All six must be listed.
+All seven named packages must be listed.
+
+`iproute2` supplies `ss`, used below to confirm that ArduPilot's MAVLink
+listener is restricted to `127.0.0.1:14550`.
 
 The dev packages are the proven runtime superset from the pinned Alpine build
 container: installing them guarantees every shared library the musl-dynamic
@@ -821,7 +818,7 @@ count, which is `0`. `v4l-utils` is not required at run time; it provides
 ### 2a. Enable Udev
 
 Alpine's `setup-alpine` leaves the board on busybox `mdev`. libcamera needs a
-udev database, so switch device management to udev before installing the
+udev database, so switch device management to udev before starting the device
 runtime. `setup-udev` from `alpine-conf` is not present on all Alpine images;
 wire the services directly, which is equivalent and image-independent:
 
@@ -905,6 +902,15 @@ chmod 600 "$CONFIG_DIR/private.pem.key"
 chmod 600 "$CONFIG_DIR/public.pem.key"
 chmod 644 "$CONFIG_DIR/AmazonRootCA1.pem"
 chmod 644 "$CONFIG_DIR/SFSRootCAG2.pem"
+for service in \
+  txing-unit-hardware-worker \
+  txing-unit-daemon \
+  txing-kvs-master \
+  txing-cyberbrick-ardupilot \
+  txing-cyberbrick-mavlink \
+  txing-cyberbrick-daemon; do
+  test -x "$CONFIG_DIR/services/$service"
+done
 rm -f "$CONFIG_TGZ"
 ```
 
@@ -916,6 +922,10 @@ was chosen before it is unpacked over the live config.
 Starfield Services Root CA G2 that the KVS master's signaling TLS verifies
 against (see [OS And ABI Contract](#os-and-abi-contract)). Both are fetched
 from AWS's public repository by `just aws::cert` and shipped in the bundle.
+Every board bundle also contains the complete OpenRC service catalog under
+`services/`. KVS has one common service-owned script. The runtime section
+installs it under the selected device type's OpenRC name and copies only the
+other relevant scripts into `/etc/init.d`.
 
 `daemon.env` is rendered from
 `devices/common/daemon.env.template` and uses plain `KEY=value`
@@ -1034,7 +1044,7 @@ the firmware-read `usercfg.txt`.
 The reboot also reseals the root filesystem read-only on a card-provisioned
 board, so the next step starts by making it writable again.
 
-### 6. Install Runtime And OpenRC Services
+### 6. Install Device Runtime And OpenRC Services
 
 Everything above this point is a prerequisite of what follows, and each one fails
 later and confusingly if skipped: missing apk packages surface as a wall of
@@ -1044,7 +1054,7 @@ camera that is actually working. Confirm all of it in one paste first:
 
 ```sh
 printf 'step 2  packages: '
-apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf \
+apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf iproute2 \
   | sort | tr '\n' ' '; echo
 
 printf 'step 2a runlevel: '
@@ -1068,22 +1078,24 @@ Each line names the step that fixes it:
 
 | Line | Expected |
 | --- | --- |
-| `step 2 packages` | all six named |
+| `step 2 packages` | all seven named |
 | `step 2a runlevel` | `3` |
 | `step 2a database` | hundreds, not `0` |
 | `step 5 hardware` | `pwmchip0`, the H.264 encoder at `video11`, and one `camera:` line |
 | `step 2 device` | `unit` or `cyberbrick` |
 
-These fail in a chain, so fix them in step order: without step 2 there is no
-`eudev`, so step 2a's `rc-update add udev sysinit` fails too and one missed
-`apk add` shows up as three broken lines. Fixing it here costs minutes; found
-later it is a wall of `Error loading shared library` from a correct binary, or
-`configured camera index is not available` from a working camera.
+These fail in a chain, so fix them in step order: without step 2's package
+baseline there is no `eudev`, so step 2a's `rc-update add udev sysinit` fails
+too and one missing package shows up as three broken lines. Fixing it here costs
+minutes; found later it is a wall of `Error loading shared library` from a
+correct binary, or `configured camera index is not available` from a working
+camera.
 
-The following generic runtime install is **Unit-only**. Cyberbrick operators
-must instead use [Cyberbrick MAVLink cutover](#cyberbrick-mavlink-cutover),
-which installs MAVLink and ArduPilot together and removes the former hardware
-worker. Both `"0s"` settings exist
+#### Unit runtime
+
+The following runtime install is for **Unit only**. It installs the Unit daemon,
+KVS master, and hardware worker. Cyberbrick uses [Cyberbrick
+runtime](#cyberbrick-runtime) below. Both `"0s"` settings exist
 because a board installs first-party releases minutes after they are published,
 which is exactly the case each default is tuned against:
 
@@ -1104,7 +1116,7 @@ idempotent, so running it on an already-writable root is harmless.
 ```sh
 : "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
 test "$TXING_DEVICE" = unit || {
-  echo 'This Unit runtime block does not apply to Cyberbrick; use Cyberbrick MAVLink cutover.' >&2
+  echo 'This Unit runtime block does not apply to Cyberbrick; use Cyberbrick runtime.' >&2
   exit 1
 }
 root-rw
@@ -1117,7 +1129,7 @@ minimum_release_age = "0s"
 
 [tool_alias]
 txing-${TXING_DEVICE}-daemon = "github:mparkachov/txing"
-txing-${TXING_DEVICE}-kvs-master = "github:mparkachov/txing"
+txing-board-kvs-master = "github:mparkachov/txing"
 txing-${TXING_DEVICE}-hardware-worker = "github:mparkachov/txing"
 
 [tools.txing-${TXING_DEVICE}-daemon]
@@ -1125,10 +1137,10 @@ version = "latest"
 version_prefix = "${TXING_DEVICE}-v"
 asset_pattern = "txing-${TXING_DEVICE}-daemon-linux-aarch64.tar.gz"
 
-[tools.txing-${TXING_DEVICE}-kvs-master]
+[tools.txing-board-kvs-master]
 version = "latest"
-version_prefix = "${TXING_DEVICE}-v"
-asset_pattern = "txing-${TXING_DEVICE}-kvs-master-linux-aarch64.tar.gz"
+version_prefix = "kvs-master-v"
+asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"
 
 [tools.txing-${TXING_DEVICE}-hardware-worker]
 version = "latest"
@@ -1139,7 +1151,7 @@ EOF
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
   /root/.local/bin/mise install \
     txing-${TXING_DEVICE}-daemon@latest \
-    txing-${TXING_DEVICE}-kvs-master@latest \
+    txing-board-kvs-master@latest \
     txing-${TXING_DEVICE}-hardware-worker@latest
 ```
 
@@ -1156,12 +1168,12 @@ resolve all shared libraries:
 
 ```sh
 test "${TXING_DEVICE:?export the board device type}" = unit || {
-  echo 'Use the Cyberbrick MAVLink cutover maintenance command below.' >&2
+  echo 'Use the Cyberbrick runtime instructions below.' >&2
   exit 1
 }
 INSTALLS=/root/.local/share/mise/installs
 DAEMON="$INSTALLS/txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon"
-KVS="$INSTALLS/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master"
+KVS="$INSTALLS/txing-board-kvs-master/latest/txing-board-kvs-master"
 WORKER="$INSTALLS/txing-${TXING_DEVICE}-hardware-worker/latest/txing-${TXING_DEVICE}-hardware-worker"
 
 /root/.local/bin/mise list
@@ -1195,7 +1207,8 @@ The KVS service points its TLS at this file through
 SDK cannot verify the signaling chain against the full OS bundle. This anchor
 is stable (valid to 2037).
 
-Write the Unit-owned OpenRC init scripts. There is no OpenRC equivalent of
+Install the Unit-owned OpenRC init scripts from the daemon config bundle.
+There is no OpenRC equivalent of
 unit's `txing-unit.target`; each service is enabled individually and OpenRC
 dependencies order them hardware worker, then daemon, then KVS master. The
 daemon owns the board-video bridge socket; the KVS master connects to it as a
@@ -1205,139 +1218,23 @@ three services run under `supervise-daemon`, which restarts them on failure
 with bounded respawn limits. The daemons exit cleanly on the default
 supervise-daemon stop signal.
 
-These heredocs are **unquoted**, so `${TXING_DEVICE}` expands as the file is
-written, while every `\$` stays literal and is resolved by OpenRC at service
-start. The distinction is the whole reason the block is paste-able; the
-verification below catches a mistake in either direction.
-
 ```sh
 : "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
-
-cat >/etc/init.d/txing-${TXING_DEVICE}-hardware-worker <<EOF
-#!/sbin/openrc-run
-
-description="Txing Board Hardware Worker"
-
-supervisor=supervise-daemon
-command=/root/.local/share/mise/installs/txing-${TXING_DEVICE}-hardware-worker/latest/txing-${TXING_DEVICE}-hardware-worker
-directory=/root
-respawn_delay=2
-respawn_max=5
-respawn_period=600
-output_log=/var/log/txing-${TXING_DEVICE}-hardware-worker.log
-error_log=/var/log/txing-${TXING_DEVICE}-hardware-worker.log
-
-daemon_env=/root/.config/txing/${TXING_DEVICE}-daemon/daemon.env
-
-depend() {
-    need localmount
-    before txing-${TXING_DEVICE}-daemon
-}
-
-start_pre() {
-    test -x "\$command" || return 1
-    test -r "\$daemon_env" || return 1
-    checkpath --directory --mode 0755 --owner root:root /run/txing-${TXING_DEVICE}-hardware-worker
-    set -a
-    . "\$daemon_env"
-    set +a
-    export HOME=/root
-}
-EOF
-
-cat >/etc/init.d/txing-${TXING_DEVICE}-daemon <<EOF
-#!/sbin/openrc-run
-
-description="Txing Board Daemon"
-
-supervisor=supervise-daemon
-command=/root/.local/share/mise/installs/txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon
-directory=/root
-respawn_delay=5
-respawn_max=5
-respawn_period=600
-output_log=/var/log/txing-${TXING_DEVICE}-daemon.log
-error_log=/var/log/txing-${TXING_DEVICE}-daemon.log
-
-depend() {
-    need net
-    use dns ntpd
-    after txing-${TXING_DEVICE}-hardware-worker
-}
-
-start_pre() {
-    test -x "\$command" || return 1
-    checkpath --directory --mode 0755 --owner root:root /run/txing-${TXING_DEVICE}-daemon
-    # busybox ntpd has no waitsync equivalent, so the gate is the clock
-    # itself: a Pi has no RTC and boots far in the past, which fails TLS
-    # certificate validation. Anything past 2025 means ntpd has stepped it.
-    ntp_waited=0
-    while [ "\$(date -u +%Y)" -lt 2025 ] && [ "\$ntp_waited" -lt 60 ]; do
-        sleep 2
-        ntp_waited=\$((ntp_waited + 2))
-    done
-    if [ "\$(date -u +%Y)" -lt 2025 ]; then
-        ewarn "clock is not confirmed synchronized; AWS TLS setup may retry"
-    fi
-    export HOME=/root
-    export TXING_DAEMON_CONFIG_DIR=/root/.config/txing/${TXING_DEVICE}-daemon
-}
-EOF
-
-cat >/etc/init.d/txing-${TXING_DEVICE}-kvs-master <<EOF
-#!/sbin/openrc-run
-
-description="Txing Board KVS Master"
-
-supervisor=supervise-daemon
-command=/root/.local/share/mise/installs/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master
-directory=/root
-respawn_delay=5
-respawn_max=5
-respawn_period=600
-output_log=/var/log/txing-${TXING_DEVICE}-kvs-master.log
-error_log=/var/log/txing-${TXING_DEVICE}-kvs-master.log
-
-ca_cert=/root/.config/txing/${TXING_DEVICE}-daemon/SFSRootCAG2.pem
-
-depend() {
-    need net
-    use dns
-    after txing-${TXING_DEVICE}-daemon
-}
-
-start_pre() {
-    test -x "\$command" || return 1
-    test -r "\$ca_cert" || return 1
-    export HOME=/root
-    export TXING_KVS_SYSTEM_CA_CERT_PATH="\$ca_cert"
-    export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-${TXING_DEVICE}-daemon/board-video-bridge.sock
-}
-EOF
-
-chmod 755 /etc/init.d/txing-${TXING_DEVICE}-hardware-worker
-chmod 755 /etc/init.d/txing-${TXING_DEVICE}-daemon
-chmod 755 /etc/init.d/txing-${TXING_DEVICE}-kvs-master
-```
-
-Check the written files before enabling anything. Every `command=` must name an
-executable that exists, and `$command`, `$daemon_env`, and `$ca_cert` must have
-survived as literals for OpenRC to expand at start:
-
-```sh
+SERVICE_DIR=/root/.config/txing/${TXING_DEVICE}-daemon/services
+install -m 755 \
+  "$SERVICE_DIR/txing-unit-hardware-worker" \
+  /etc/init.d/txing-unit-hardware-worker
+install -m 755 "$SERVICE_DIR/txing-unit-daemon" /etc/init.d/txing-unit-daemon
+install -m 755 "$SERVICE_DIR/txing-kvs-master" /etc/init.d/txing-unit-kvs-master
 for s in hardware-worker daemon kvs-master; do
-  f=/etc/init.d/txing-${TXING_DEVICE}-$s
-  sh -n "$f" || echo "SYNTAX ERROR in $f"
-  grep -q 'test -x "$command"' "$f" || echo "OVER-EXPANDED in $f"
-  test -x "$(sed -n 's/^command=//p' "$f")" || echo "NO SUCH BINARY in $f"
+  service=txing-${TXING_DEVICE}-$s
+  sh -n "/etc/init.d/$service"
 done
 ```
 
-Silence means all three are correct. `OVER-EXPANDED` means a `\$` was lost and
-the shell resolved a runtime variable at write time; `NO SUCH BINARY` usually
-means `TXING_DEVICE` does not match what `mise` installed.
-
-Then enable and start them, dependencies first:
+Silence means the three installed scripts are syntactically valid. The binary
+checks immediately above already confirmed their commands exist. Then enable
+and start them, dependencies first:
 
 ```sh
 rc-update add txing-${TXING_DEVICE}-hardware-worker default
@@ -1388,216 +1285,134 @@ Expected:
 - REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
   and `video` capability state
 
-#### Cyberbrick MAVLink cutover
+#### Cyberbrick runtime
 
-Cyberbrick's forward-only runtime starts ArduPilot, MAVLink, the daemon, and
-KVS master in that order. ArduPilot is the only PWM owner. There is no
+Cyberbrick starts ArduPilot, MAVLink, the daemon, and KVS master in that order.
+ArduPilot is the only PWM owner. There is no
 direction GPIO, 20 kHz H-bridge mode, MCP compatibility shim, or
-hardware-worker fallback. Keep the rover lifted and motor power isolated until
-the separate physical-acceptance work is approved.
+hardware worker. Keep the rover lifted and motor power isolated until the
+separate physical-acceptance work is approved.
 
-1. Provision the MAVLink KVS resource and IAM policy from the operator
-   workstation before touching the board. The current base stack must deploy
-   successfully first, then generate a fresh Cyberbrick bundle:
+Provision the MAVLink KVS resource and IAM policy from the operator
+workstation before touching the board. The current base stack must deploy
+successfully first, then generate a fresh Cyberbrick bundle:
 
-   ```sh
-   : "${TXING_AWS_STACK:?export the selected stack prefix}"
-   : "${THING_ID:?export the Cyberbrick Thing id}"
-   just aws::deploy
-   just aws::cert "$THING_ID"
-   ```
+```sh
+: "${TXING_AWS_STACK:?export the selected stack prefix}"
+: "${THING_ID:?export the Cyberbrick Thing id}"
+just aws::deploy
+just aws::cert "$THING_ID"
+```
 
-   Copy and unpack `<thing-id>-daemon-config.tgz` to
-   `/root/.config/txing/cyberbrick-daemon/`. Its `mavlink` capability and role
-   authorize both `<thing-id>-board-video` and `<thing-id>-mavlink`.
+Copy and unpack `<thing-id>-daemon-config.tgz` to
+`/root/.config/txing/cyberbrick-daemon/`. Its `mavlink` capability and role
+authorize both `<thing-id>-board-video` and `<thing-id>-mavlink`.
 
-2. In one writable-root window, replace old Cyberbrick mise configuration and
-   install all four matching `cyberbrick-v*` artifacts together:
+In one writable-root window, install the three `cyberbrick-v*` artifacts and
+the shared `kvs-master-v*` artifact together:
 
-   ```sh
-   export TXING_DEVICE=cyberbrick
-   root-rw
-   install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
-   cat >/root/.config/mise/conf.d/txing-cyberbrick-runtime.toml <<'EOF'
-   [settings]
-   fetch_remote_versions_cache = "0s"
-   minimum_release_age = "0s"
+```sh
+export TXING_DEVICE=cyberbrick
+root-rw
+install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
+cat >/root/.config/mise/conf.d/txing-cyberbrick-runtime.toml <<'EOF'
+[settings]
+fetch_remote_versions_cache = "0s"
+minimum_release_age = "0s"
 
-   [tool_alias]
-   txing-cyberbrick-daemon = "github:mparkachov/txing"
-   txing-cyberbrick-kvs-master = "github:mparkachov/txing"
-   txing-cyberbrick-mavlink = "github:mparkachov/txing"
-   txing-cyberbrick-ardupilot = "github:mparkachov/txing"
+[tool_alias]
+txing-cyberbrick-daemon = "github:mparkachov/txing"
+txing-board-kvs-master = "github:mparkachov/txing"
+txing-cyberbrick-mavlink = "github:mparkachov/txing"
+txing-cyberbrick-ardupilot = "github:mparkachov/txing"
 
-   [tools.txing-cyberbrick-daemon]
-   version = "latest"
-   version_prefix = "cyberbrick-v"
-   asset_pattern = "txing-cyberbrick-daemon-linux-aarch64.tar.gz"
-   [tools.txing-cyberbrick-kvs-master]
-   version = "latest"
-   version_prefix = "cyberbrick-v"
-   asset_pattern = "txing-cyberbrick-kvs-master-linux-aarch64.tar.gz"
-   [tools.txing-cyberbrick-mavlink]
-   version = "latest"
-   version_prefix = "cyberbrick-v"
-   asset_pattern = "txing-cyberbrick-mavlink-linux-aarch64.tar.gz"
-   [tools.txing-cyberbrick-ardupilot]
-   version = "latest"
-   version_prefix = "cyberbrick-v"
-   asset_pattern = "txing-cyberbrick-ardupilot-linux-aarch64.tar.gz"
-   EOF
+[tools.txing-cyberbrick-daemon]
+version = "latest"
+version_prefix = "cyberbrick-v"
+asset_pattern = "txing-cyberbrick-daemon-linux-aarch64.tar.gz"
+[tools.txing-board-kvs-master]
+version = "latest"
+version_prefix = "kvs-master-v"
+asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"
+[tools.txing-cyberbrick-mavlink]
+version = "latest"
+version_prefix = "cyberbrick-v"
+asset_pattern = "txing-cyberbrick-mavlink-linux-aarch64.tar.gz"
+[tools.txing-cyberbrick-ardupilot]
+version = "latest"
+version_prefix = "cyberbrick-v"
+asset_pattern = "txing-cyberbrick-ardupilot-linux-aarch64.tar.gz"
+EOF
 
-   MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
-     /root/.local/bin/mise install \
-       txing-cyberbrick-daemon@latest \
-       txing-cyberbrick-kvs-master@latest \
-       txing-cyberbrick-mavlink@latest \
-       txing-cyberbrick-ardupilot@latest
-   ```
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise install \
+    txing-cyberbrick-daemon@latest \
+    txing-board-kvs-master@latest \
+    txing-cyberbrick-mavlink@latest \
+    txing-cyberbrick-ardupilot@latest
+```
 
-   The ArduPilot archive supplies both the executable and its defaults file;
-   no source checkout is installed on the board.
+The ArduPilot archive supplies both the executable and its defaults file;
+no source checkout is installed on the board.
 
-3. Stop and remove the obsolete Cyberbrick hardware worker before replacing
-   services. This is manual, intentional cleanup—not a compatibility path:
+Install the Cyberbrick OpenRC services from the daemon config bundle. They
+order ArduPilot, MAVLink,
+daemon, then KVS master. KVS depends on the daemon, not MAVLink directly,
+so video/camera faults cannot stop the control transport.
 
-   ```sh
-   rc-service txing-cyberbrick-hardware-worker stop || true
-   rc-update del txing-cyberbrick-hardware-worker default || true
-   rm -f /etc/init.d/txing-cyberbrick-hardware-worker
-   rm -f /root/.config/mise/conf.d/txing-cyberbrick-hardware-worker.toml
-   rm -rf /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker
-   ```
+```sh
+SERVICE_DIR=/root/.config/txing/cyberbrick-daemon/services
+install -m 755 \
+  "$SERVICE_DIR/txing-cyberbrick-ardupilot" \
+  /etc/init.d/txing-cyberbrick-ardupilot
+install -m 755 \
+  "$SERVICE_DIR/txing-cyberbrick-mavlink" \
+  /etc/init.d/txing-cyberbrick-mavlink
+install -m 755 \
+  "$SERVICE_DIR/txing-cyberbrick-daemon" \
+  /etc/init.d/txing-cyberbrick-daemon
+install -m 755 "$SERVICE_DIR/txing-kvs-master" /etc/init.d/txing-cyberbrick-kvs-master
+for s in ardupilot mavlink daemon kvs-master; do
+  service=txing-cyberbrick-$s
+  sh -n "/etc/init.d/$service"
+done
+```
 
-4. Write the root-owned OpenRC services. They order ArduPilot, MAVLink,
-   daemon, then KVS master. KVS depends on the daemon, not MAVLink directly,
-   so video/camera faults cannot stop the control transport.
+Enable the complete service set, verify it, then return the root to
+read-only:
 
-   ```sh
-   cat >/etc/init.d/txing-cyberbrick-ardupilot <<'EOF'
-   #!/sbin/openrc-run
-   description="Cyberbrick ArduPilot ArduRover"
-   supervisor=supervise-daemon
-   command=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
-   defaults=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
-   command_args="--defaults ${defaults} --serial0 udpin:127.0.0.1:14550 --storage-directory /var/tmp/txing-cyberbrick-ardupilot/storage --terrain-directory /var/tmp/txing-cyberbrick-ardupilot/terrain --log-directory /var/log/txing-cyberbrick-ardupilot"
-   directory=/var/tmp/txing-cyberbrick-ardupilot
-   respawn_delay=5
-   respawn_max=5
-   respawn_period=600
-   output_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
-   error_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
-   depend() { need localmount net; }
-   start_pre() {
-       test -x "$command" && test -r "$defaults" || return 1
-       checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/storage
-       checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/terrain
-       checkpath --directory --mode 0755 --owner root:root /var/log/txing-cyberbrick-ardupilot
-       export HOME=/root
-   }
-   EOF
+```sh
+for s in ardupilot mavlink daemon kvs-master; do
+  rc-update add "txing-cyberbrick-$s" default
+  rc-service "txing-cyberbrick-$s" restart
+done
+rc-status default
+for s in ardupilot mavlink daemon kvs-master; do
+  rc-service "txing-cyberbrick-$s" status
+done
+test ! -e /etc/init.d/txing-cyberbrick-hardware-worker
+test ! -e /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker
+! rc-status default | grep -F txing-cyberbrick-hardware-worker
+ss -lunp | grep -F '127.0.0.1:14550'
+! ss -lunp | grep -F '0.0.0.0:14550'
+grep -F -- '--defaults' /etc/init.d/txing-cyberbrick-ardupilot
+grep -Fx 'FS_GCS_TIMEOUT 1' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
+grep -Fx 'SERVO1_FUNCTION 73' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
+grep -Fx 'SERVO2_FUNCTION 74' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
+root-ro
+sync
+```
 
-   cat >/etc/init.d/txing-cyberbrick-mavlink <<'EOF'
-   #!/sbin/openrc-run
-   description="Cyberbrick MAVLink transport"
-   supervisor=supervise-daemon
-   command=/root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
-   daemon_env=/root/.config/txing/cyberbrick-daemon/daemon.env
-   directory=/root
-   respawn_delay=2
-   respawn_max=5
-   respawn_period=600
-   output_log=/var/log/txing-cyberbrick-mavlink.log
-   error_log=/var/log/txing-cyberbrick-mavlink.log
-   depend() { need localmount; after txing-cyberbrick-ardupilot; }
-   start_pre() {
-       test -x "$command" && test -r "$daemon_env" || return 1
-       checkpath --directory --mode 0755 --owner root:root /run/txing-cyberbrick-mavlink
-       set -a; . "$daemon_env"; set +a
-       export HOME=/root
-   }
-   EOF
+After reviewing the successful checks, reboot manually. It is deliberately
+separate from the copy-paste block.
 
-   cat >/etc/init.d/txing-cyberbrick-daemon <<'EOF'
-   #!/sbin/openrc-run
-   description="Cyberbrick daemon"
-   supervisor=supervise-daemon
-   command=/root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon
-   directory=/root
-   respawn_delay=5
-   respawn_max=5
-   respawn_period=600
-   output_log=/var/log/txing-cyberbrick-daemon.log
-   error_log=/var/log/txing-cyberbrick-daemon.log
-   depend() { need net; use dns ntpd; after txing-cyberbrick-mavlink; }
-   start_pre() {
-       test -x "$command" || return 1
-       checkpath --directory --mode 0755 --owner root:root /run/txing-cyberbrick-daemon
-       export HOME=/root
-       export TXING_DAEMON_CONFIG_DIR=/root/.config/txing/cyberbrick-daemon
-   }
-   EOF
-
-   cat >/etc/init.d/txing-cyberbrick-kvs-master <<'EOF'
-   #!/sbin/openrc-run
-   description="Cyberbrick KVS master"
-   supervisor=supervise-daemon
-   command=/root/.local/share/mise/installs/txing-cyberbrick-kvs-master/latest/txing-cyberbrick-kvs-master
-   ca_cert=/root/.config/txing/cyberbrick-daemon/SFSRootCAG2.pem
-   directory=/root
-   respawn_delay=5
-   respawn_max=5
-   respawn_period=600
-   output_log=/var/log/txing-cyberbrick-kvs-master.log
-   error_log=/var/log/txing-cyberbrick-kvs-master.log
-   depend() { need net; use dns; after txing-cyberbrick-daemon; }
-   start_pre() {
-       test -x "$command" && test -r "$ca_cert" || return 1
-       export HOME=/root
-       export TXING_KVS_SYSTEM_CA_CERT_PATH="$ca_cert"
-       export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-cyberbrick-daemon/board-video-bridge.sock
-   }
-   EOF
-
-   chmod 755 /etc/init.d/txing-cyberbrick-{ardupilot,mavlink,daemon,kvs-master}
-   for s in ardupilot mavlink daemon kvs-master; do
-     sh -n "/etc/init.d/txing-cyberbrick-$s"
-   done
-   ```
-
-5. Enable the complete service set, verify it, then return the root to
-   read-only and reboot:
-
-   ```sh
-   for s in ardupilot mavlink daemon kvs-master; do
-     rc-update add "txing-cyberbrick-$s" default
-     rc-service "txing-cyberbrick-$s" restart
-   done
-   rc-status default
-   for s in ardupilot mavlink daemon kvs-master; do
-     rc-service "txing-cyberbrick-$s" status
-   done
-   test ! -e /etc/init.d/txing-cyberbrick-hardware-worker
-   test ! -e /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker
-   ! rc-status default | grep -F txing-cyberbrick-hardware-worker
-   ss -lunp | grep -F '127.0.0.1:14550'
-   ! ss -lunp | grep -F '0.0.0.0:14550'
-   grep -F -- '--defaults' /etc/init.d/txing-cyberbrick-ardupilot
-   grep -Fx 'FS_GCS_TIMEOUT 1' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
-   grep -Fx 'SERVO1_FUNCTION 73' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
-   grep -Fx 'SERVO2_FUNCTION 74' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
-   root-ro
-   sync
-   reboot
-   ```
-
-   After reconnecting, repeat the service, local-UDP, defaults, and no-worker
-   checks. Deploy Office through its normal Cloudflare Pages Git deployment
-   only after that reboot. Finally, use the AWS IoT console to manually delete
-   the obsolete `<thing-id>` named `mcp` shadow and clear retained
-   `txings/<thing-id>/mcp/descriptor` and `txings/<thing-id>/mcp/status`
-   messages with zero-byte retained publishes. No automated cleanup or
-   compatibility publication is retained.
+After reconnecting, repeat the service, local-UDP, defaults, and no-worker
+checks. Deploy Office through its normal Cloudflare Pages Git deployment
+only after that reboot. Finally, use the AWS IoT console to manually delete
+the obsolete `<thing-id>` named `mcp` shadow and clear retained
+`txings/<thing-id>/mcp/descriptor` and `txings/<thing-id>/mcp/status`
+messages with zero-byte retained publishes. No automated cleanup or
+compatibility publication is retained.
 
 ### 7. Configure Read-Only Root
 
@@ -1692,14 +1507,15 @@ Operational rules:
 
 ### 8. Final Reboot Check
 
+Seal the root, then reboot manually once you are ready to begin the
+post-reboot checks:
+
 ```sh
 root-ro
-reboot
 ```
 
 The following generic check is Unit-only. Cyberbrick operators use the
-post-reboot checks in [Cyberbrick MAVLink cutover](#cyberbrick-mavlink-cutover)
-instead.
+post-reboot checks in [Cyberbrick runtime](#cyberbrick-runtime) instead.
 
 After reconnecting to a Unit board:
 
@@ -1716,9 +1532,10 @@ for s in hardware-worker daemon kvs-master; do
   tail -n 160 /var/log/txing-${TXING_DEVICE}-$s.log
 done
 /root/.local/bin/mise list
-for b in daemon kvs-master hardware-worker; do
+for b in daemon hardware-worker; do
   "$INSTALLS/txing-${TXING_DEVICE}-$b/latest/txing-${TXING_DEVICE}-$b" --version
 done
+"$INSTALLS/txing-board-kvs-master/latest/txing-board-kvs-master" --version
 readlink /etc/resolv.conf
 getent hosts example.com
 ```
@@ -1742,7 +1559,7 @@ Expected:
 With a camera attached, confirm the full video path end to end:
 
 ```sh
-KVS="/root/.local/share/mise/installs/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master"
+KVS="/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master"
 
 rc-service txing-${TXING_DEVICE}-kvs-master stop
 "$KVS" --camera-probe
@@ -1778,7 +1595,7 @@ ls /usr/share/libcamera/ipa/rpi/vc4/ | head
 rc-status sysinit | grep -i udev
 udevadm info --export-db | grep -c '^P:'
 LIBCAMERA_LOG_LEVELS=*:DEBUG \
-  "/root/.local/share/mise/installs/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master" \
+  "/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master" \
   --camera-probe 2>&1 | tail -40
 ```
 
@@ -1787,8 +1604,8 @@ LIBCAMERA_LOG_LEVELS=*:DEBUG \
 | No sensor in `dmesg`, no `unicam-image` node | camera is not configured or detected | confirm `usercfg.txt` is included, enable `camera_auto_detect=1`, then use the connected camera's explicit overlay if needed ([step 5](#5-enable-pwm-overlay-and-camera)) |
 | `unicam-image` at any number, no `/dev/video11` | `bcm2835-codec` not loaded or board lacks the required encoder | add to `/etc/modules`; a board without `bcm2835-codec-encode` at `video11` is not supported by the current KVS worker |
 | Unicam and codec media controllers, no ISP media controller | `bcm2835-isp` not loaded | add to `/etc/modules` ([step 5](#5-enable-pwm-overlay-and-camera)) |
-| No `ipa_rpi_vc4.so`, no `vc4/` tuning dir | `libcamera-raspberrypi` missing | `apk add libcamera-raspberrypi` ([step 2](#2-install-os-packages)) |
-| All of the above present, no udev services in `sysinit` | no udev daemon, or a daemon with an empty database | `apk add eudev` + [step 2a](#2a-enable-udev) |
+| No `ipa_rpi_vc4.so`, no `vc4/` tuning dir | `libcamera-raspberrypi` missing | the current card's package baseline was not applied; reprovision from a current card |
+| All of the above present, no udev services in `sysinit` | no udev daemon, or a daemon with an empty database | confirm the package baseline, then complete [step 2a](#2a-enable-udev) |
 
 **Do not test udev with `ls -d /run/udev`.** It is a false negative: the
 directory exists as soon as `udevd` starts, and `rc-service udev status` reports
@@ -1890,7 +1707,8 @@ failed connections. *Upgrading* one of them alone is not safe; see
 ## Maintenance
 
 Board update during a writable-root maintenance window. Publish a new
-immutable `<device>-vX.Y.Z` release first.
+immutable `<device>-vX.Y.Z` release for changed device-specific binaries and a
+`kvs-master-vX.Y.Z` release for KVS changes first.
 
 Upgrade the daemon, the hardware worker, and the KVS master together, in one
 window, as the `mise upgrade` below does. They speak the device-independent
@@ -1901,8 +1719,9 @@ connects, so **video stays down and motion control stops responding with no
 local error**. The KVS master retries a bridge that never answers and the
 daemon reports the failure to CloudWatch rather than the console, so `rc-status`
 shows every service running and the board looks healthy from the console while
-being useless. If video or control is missing after an upgrade, confirm all
-three `--version` outputs match before investigating anything else.
+being useless. If video or control is missing after an upgrade, record all
+three `--version` outputs before investigating anything else. Their versions
+can differ because the shared KVS master has its own release stream.
 
 Because the KVS master is dynamically linked against musl and the installed
 Alpine libraries, `apk upgrade` and `mise upgrade` happen together in the
@@ -1920,24 +1739,24 @@ exist in the branch the board runs. It shows as a wall of
 `Error loading shared library` naming *older* sonames than this document
 records — a libcamera one revision back on a `v3.24` board that ships
 `libcamera.so.0.7`, alongside older grpc, protobuf and abseil revisions.
-Retargeting the Alpine contract therefore means publishing on **every** stream,
-not only the one being worked on; a stream left behind is silently broken for
-new installs while existing boards keep running. Check the newest tag on the
-stream predates nothing you care about before installing:
+Retargeting the Alpine contract therefore requires a new shared KVS release.
+The fully static device binaries need no rebuild for an Alpine-only change.
+Check both relevant streams before installing so the runtime protocol changes
+you need are present:
 
 ```sh
 gh release list --limit 5 | grep "^${TXING_DEVICE}-v"
+gh release list --limit 20 | grep '^kvs-master-v'
 ```
 
 `libstdc++.so.6` or `libgcc_s.so.1` among the missing libraries means something
-else: those sonames are stable across Alpine branches, so their absence is
-[Install OS Packages](#2-install-os-packages) never having run on the board,
-not a release mismatch.
+else: those sonames are stable across Alpine branches, so their absence means
+the card's package baseline was not applied, not a release mismatch.
 
 ```sh
 INSTALLS=/root/.local/share/mise/installs
 DAEMON="$INSTALLS/txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon"
-KVS="$INSTALLS/txing-${TXING_DEVICE}-kvs-master/latest/txing-${TXING_DEVICE}-kvs-master"
+KVS="$INSTALLS/txing-board-kvs-master/latest/txing-board-kvs-master"
 WORKER="$INSTALLS/txing-${TXING_DEVICE}-hardware-worker/latest/txing-${TXING_DEVICE}-hardware-worker"
 
 root-rw
@@ -1946,7 +1765,7 @@ apk upgrade
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
   /root/.local/bin/mise upgrade \
     txing-${TXING_DEVICE}-daemon \
-    txing-${TXING_DEVICE}-kvs-master \
+    txing-board-kvs-master \
     txing-${TXING_DEVICE}-hardware-worker
 "$DAEMON" --version
 "$KVS" --version
@@ -1956,31 +1775,31 @@ ldd "$WORKER"
 ldd "$KVS" | grep -F "libcamera.so.0.7"
 ldd "$KVS" | grep -F "libcamera-base.so.0.7"
 sync
-reboot
 ```
 
-Do not reboot if any `ldd` output reports `not found` or the expected
+After the checks pass, reboot manually. Do not reboot if any `ldd` output
+reports `not found` or the expected
 libcamera sonames are missing; realign the apk branch and the installed
 release first, inside the same window.
 
-Cyberbrick upgrades its daemon, KVS master, MAVLink service, and ArduPilot
-executable/defaults as one release set. Do not perform a component-only
-Cyberbrick upgrade:
+Cyberbrick upgrades its device release and shared KVS release as one maintenance
+set. Do not perform a component-only Cyberbrick upgrade:
 
 ```sh
 root-rw
 MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
   /root/.local/bin/mise upgrade \
     txing-cyberbrick-daemon \
-    txing-cyberbrick-kvs-master \
+    txing-board-kvs-master \
     txing-cyberbrick-mavlink \
     txing-cyberbrick-ardupilot
 for s in ardupilot mavlink daemon kvs-master; do
   rc-service "txing-cyberbrick-$s" restart
 done
 root-ro
-reboot
 ```
+
+After reviewing the service restart results, reboot manually.
 
 The board never clones or patches ArduPilot. If upstream `master` or a tracked
 patch breaks the checkout, build, or release job, publish a later Cyberbrick
@@ -1993,13 +1812,18 @@ release. The package names are embedded in each binary, so `strings` answers it
 directly:
 
 ```sh
-for b in daemon kvs-master hardware-worker; do
+for b in daemon hardware-worker; do
   printf '%s: ' "$b"
   strings "/root/.local/share/mise/installs/txing-${TXING_DEVICE}-$b/latest/txing-${TXING_DEVICE}-$b" \
     | grep -oE 'txing\.(board|unit|cyberbrick)\.(board_video|hardware)\.v1' \
     | sort -u | tr '\n' ' '
   echo
 done
+printf 'kvs-master: '
+strings "/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master" \
+  | grep -oE 'txing\.(board|unit|cyberbrick)\.(board_video|hardware)\.v1' \
+  | sort -u | tr '\n' ' '
+echo
 ```
 
 Expect `txing.board.board_video.v1` and `txing.board.hardware.v1` from the
@@ -2016,7 +1840,7 @@ rebooting; the Pi firmware only reads the FAT partition.
 Bumping the Alpine release (for example a future move off `v3.24`, or a
 libcamera soname change inside the branch) is one coordinated change: update
 the pinned build image in the board daemon justfile and the release
-workflow containers, publish a matching board release built on that
+KVS workflow container, publish a matching shared KVS release built on that
 Alpine version, and only then move the device apk repositories and run the
 coupled `apk upgrade` + `mise upgrade` window above.
 
@@ -2029,13 +1853,13 @@ export TXING_DEVICE=cyberbrick      # or: unit
 
 just ${TXING_DEVICE}::board::test
 just ${TXING_DEVICE}::board::run
-just ${TXING_DEVICE}::board::kvs-test-native
 just ${TXING_DEVICE}::board::hardware-test-native
 just ${TXING_DEVICE}::board::daemon-build-alpine
-just ${TXING_DEVICE}::board::kvs-build-alpine
 just ${TXING_DEVICE}::board::hardware-build-alpine
 just ${TXING_DEVICE}::board::nerdctl-build
 just ${TXING_DEVICE}::board::nerdctl-smoke
+just common::board::kvs-test-native
+just common::board::kvs-build-alpine
 ```
 
 The local daemon uses

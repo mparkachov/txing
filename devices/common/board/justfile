@@ -34,7 +34,8 @@ static_toolchain_dir := board_dir + "/target/alpine-static-toolchain"
 
 # Every recipe takes the board device type as its first argument. It selects the
 # proto package under devices/<device>/proto, the binary names, and the release
-# stream in release/versions/<device>.
+# stream in release/versions/<device>. KVS recipes are board-wide and take no
+# device argument.
 [private]
 @_require-device device:
     #!/bin/sh
@@ -67,6 +68,18 @@ static_toolchain_dir := board_dir + "/target/alpine-static-toolchain"
     #!/bin/sh
     set -eu
     version_file="{{project_root}}/release/versions/{{device}}"
+    version="$(tr -d '[:space:]' < "$version_file")"
+    if ! printf '%s\n' "$version" | grep -E -q '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+      echo "$version_file must contain a semantic version like x.y.z." >&2
+      exit 1
+    fi
+    printf '%s\n' "$version"
+
+[private]
+@_kvs-version:
+    #!/bin/sh
+    set -eu
+    version_file="{{project_root}}/release/versions/kvs-master"
     version="$(tr -d '[:space:]' < "$version_file")"
     if ! printf '%s\n' "$version" | grep -E -q '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
       echo "$version_file must contain a semantic version like x.y.z." >&2
@@ -232,12 +245,11 @@ run device:
         exit 1
     fi
 
-kvs-build-native device:
+kvs-build-native:
     #!/bin/sh
     set -eu
-    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
-    build_dir="{{native_kvs_master_dir}}/build-{{device}}"
-    version="$(just --quiet --justfile "{{board_justfile}}" _device-version "{{device}}")"
+    build_dir="{{native_kvs_master_dir}}/build"
+    version="$(just --quiet --justfile "{{board_justfile}}" _kvs-version)"
     if [ -f "$build_dir/CMakeCache.txt" ] && grep -Fq "TXING_KVS_WEBRTC_SDK_" "$build_dir/CMakeCache.txt"; then
         rm -rf "$build_dir"
     fi
@@ -250,7 +262,6 @@ kvs-build-native device:
             -B "$build_dir" \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
-            -DTXING_BOARD_DEVICE_TYPE="{{device}}" \
             -DTXING_BOARD_KVS_MASTER_VERSION="$version" \
             -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
             -DTXING_KVS_GRPC_BRIDGE=ON \
@@ -265,21 +276,19 @@ kvs-build-native device:
             -B "$build_dir" \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
-            -DTXING_BOARD_DEVICE_TYPE="{{device}}" \
             -DTXING_BOARD_KVS_MASTER_VERSION="$version" \
             -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
             -DTXING_KVS_GRPC_BRIDGE=OFF
     fi
     cmake --build "$build_dir" --config Release
-    test -x "$build_dir/txing-{{device}}-kvs-master"
+    test -x "$build_dir/txing-board-kvs-master"
 
-kvs-test-native device:
+kvs-test-native:
     #!/bin/sh
     set -eu
-    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
-    build_dir="{{native_kvs_master_dir}}/build-tests-{{device}}"
-    cmake -S "{{native_kvs_master_dir}}" -B "$build_dir" -DCMAKE_BUILD_TYPE=Debug -DTXING_BOARD_DEVICE_TYPE="{{device}}" -DTXING_KVS_REAL_SDK=OFF -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}"
-    cmake --build "$build_dir" --config Debug --target "txing-{{device}}-kvs-master-tests"
+    build_dir="{{native_kvs_master_dir}}/build-tests"
+    cmake -S "{{native_kvs_master_dir}}" -B "$build_dir" -DCMAKE_BUILD_TYPE=Debug -DTXING_KVS_REAL_SDK=OFF -DTXING_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}"
+    cmake --build "$build_dir" --config Debug --target "txing-board-kvs-master-tests"
     ctest --test-dir "$build_dir" --output-on-failure
 
 hardware-build-native device:
@@ -306,8 +315,8 @@ hardware-test-native device:
 @daemon-build-alpine device:
     just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" daemon
 
-@kvs-build-alpine device:
-    just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" kvs-master
+@kvs-build-alpine:
+    just --quiet --justfile "{{board_justfile}}" _alpine-build shared kvs-master
 
 @hardware-build-alpine device:
     just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" hardware-worker
@@ -334,6 +343,7 @@ nerdctl-build device:
     metadata_path="$output_root/metadata.json"
     bin_dir="$output_root/bin"
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
+    kvs_version="$(just --quiet --justfile "{{board_justfile}}" _kvs-version)"
     commit="$(git -C "$project_root" rev-parse HEAD)"
     timestamp="$(date -u +%s)"
 
@@ -341,18 +351,19 @@ nerdctl-build device:
       unit)
         jq -n \
           --arg version "$version" \
+          --arg kvsVersion "$kvs_version" \
           --arg commit "$commit" \
           --argjson timestamp "$timestamp" \
           --arg daemonBinaryName "txing-$device-daemon" \
           --arg daemonBinaryPath "$bin_dir/txing-$device-daemon" \
-          --arg kvsMasterBinaryName "txing-$device-kvs-master" \
-          --arg kvsMasterBinaryPath "$bin_dir/txing-$device-kvs-master" \
+          --arg kvsMasterBinaryName "txing-board-kvs-master" \
+          --arg kvsMasterBinaryPath "$bin_dir/txing-board-kvs-master" \
           --arg hardwareWorkerBinaryName "txing-$device-hardware-worker" \
           --arg hardwareWorkerBinaryPath "$bin_dir/txing-$device-hardware-worker" \
           --arg projectRoot "$project_root" \
           --arg buildImage "{{alpine_build_image}}" \
           --arg buildPlatform "{{alpine_build_platform}}" \
-          '{version: $version, commit: $commit, timestamp: $timestamp, outputs: {($daemonBinaryName): $daemonBinaryPath, ($kvsMasterBinaryName): $kvsMasterBinaryPath, ($hardwareWorkerBinaryName): $hardwareWorkerBinaryPath}, projectRoot: $projectRoot, buildImage: $buildImage, buildPlatform: $buildPlatform}' \
+          '{version: $version, kvsVersion: $kvsVersion, commit: $commit, timestamp: $timestamp, outputs: {($daemonBinaryName): $daemonBinaryPath, ($kvsMasterBinaryName): $kvsMasterBinaryPath, ($hardwareWorkerBinaryName): $hardwareWorkerBinaryPath}, projectRoot: $projectRoot, buildImage: $buildImage, buildPlatform: $buildPlatform}' \
           >"$metadata_path"
         component_binary="txing-$device-hardware-worker"
         component_label="hardware worker"
@@ -360,18 +371,19 @@ nerdctl-build device:
       cyberbrick)
         jq -n \
           --arg version "$version" \
+          --arg kvsVersion "$kvs_version" \
           --arg commit "$commit" \
           --argjson timestamp "$timestamp" \
           --arg daemonBinaryName "txing-$device-daemon" \
           --arg daemonBinaryPath "$bin_dir/txing-$device-daemon" \
-          --arg kvsMasterBinaryName "txing-$device-kvs-master" \
-          --arg kvsMasterBinaryPath "$bin_dir/txing-$device-kvs-master" \
+          --arg kvsMasterBinaryName "txing-board-kvs-master" \
+          --arg kvsMasterBinaryPath "$bin_dir/txing-board-kvs-master" \
           --arg mavlinkBinaryName "txing-$device-mavlink" \
           --arg mavlinkBinaryPath "$bin_dir/txing-$device-mavlink" \
           --arg projectRoot "$project_root" \
           --arg buildImage "{{alpine_build_image}}" \
           --arg buildPlatform "{{alpine_build_platform}}" \
-          '{version: $version, commit: $commit, timestamp: $timestamp, outputs: {($daemonBinaryName): $daemonBinaryPath, ($kvsMasterBinaryName): $kvsMasterBinaryPath, ($mavlinkBinaryName): $mavlinkBinaryPath}, projectRoot: $projectRoot, buildImage: $buildImage, buildPlatform: $buildPlatform}' \
+          '{version: $version, kvsVersion: $kvsVersion, commit: $commit, timestamp: $timestamp, outputs: {($daemonBinaryName): $daemonBinaryPath, ($kvsMasterBinaryName): $kvsMasterBinaryPath, ($mavlinkBinaryName): $mavlinkBinaryPath}, projectRoot: $projectRoot, buildImage: $buildImage, buildPlatform: $buildPlatform}' \
           >"$metadata_path"
         component_binary="txing-$device-mavlink"
         component_label="MAVLink"
@@ -388,7 +400,7 @@ nerdctl-build device:
     printf '  commit: %s\n' "$commit"
     printf '  build image: %s\n' "{{alpine_build_image}}"
     printf '  daemon binary: %s\n' "$bin_dir/txing-$device-daemon"
-    printf '  KVS master binary: %s\n' "$bin_dir/txing-$device-kvs-master"
+    printf '  KVS master binary: %s (%s)\n' "$bin_dir/txing-board-kvs-master" "$kvs_version"
     printf '  %s binary: %s\n' "$component_label" "$bin_dir/$component_binary"
     printf '  metadata: %s\n' "$metadata_path"
 
@@ -398,12 +410,13 @@ nerdctl-smoke device:
     device="{{device}}"
     bin_dir="{{board_dir}}/target/nerdctl-build-$device/bin"
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
+    kvs_version="$(just --quiet --justfile "{{board_justfile}}" _kvs-version)"
     case "$device" in
       unit) component_binary="txing-$device-hardware-worker" ;;
       cyberbrick) component_binary="txing-$device-mavlink" ;;
       *) echo "Unsupported board device type '$device'." >&2; exit 2 ;;
     esac
-    for binary in "txing-$device-daemon" "txing-$device-kvs-master" "$component_binary"; do
+    for binary in "txing-$device-daemon" "txing-board-kvs-master" "$component_binary"; do
       if [ ! -x "$bin_dir/$binary" ]; then
         echo "Missing $bin_dir/$binary. Run just common::board::nerdctl-build $device first." >&2
         exit 1
@@ -414,23 +427,29 @@ nerdctl-smoke device:
     TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/$component_binary" static "$component_binary $version"
     TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
-      "$bin_dir/txing-$device-kvs-master" musl-libcamera "txing-$device-kvs-master $version"
+      "$bin_dir/txing-board-kvs-master" musl-libcamera "txing-board-kvs-master $kvs_version"
 
 [private]
 @_alpine-build device component:
     #!/bin/sh
     set -eu
 
-    just --quiet --justfile "{{board_justfile}}" _require-device "{{device}}"
     device="{{device}}"
     component="{{component}}"
     project_root="{{project_root}}"
-    output_root="{{board_dir}}/target/nerdctl-build-$device"
+    if [ "$device" = "shared" ] && [ "$component" = "kvs-master" ]; then
+      output_root="{{board_dir}}/target/nerdctl-build-kvs-master"
+      version="0.0.0-unused"
+    else
+      just --quiet --justfile "{{board_justfile}}" _require-device "$device"
+      output_root="{{board_dir}}/target/nerdctl-build-$device"
+      version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
+    fi
     output_stage="$output_root/alpine-out"
     toolchain_dir="{{static_toolchain_dir}}"
     image="{{alpine_build_image}}"
     platform="{{alpine_build_platform}}"
-    version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
+    kvs_version="$(just --quiet --justfile "{{board_justfile}}" _kvs-version)"
 
     case "$component" in
       daemon|kvs-master|hardware-worker|mavlink|all) ;;
@@ -477,6 +496,7 @@ nerdctl-smoke device:
       -e TXING_ALPINE_COMPONENT="$component" \
       -e TXING_BOARD_DEVICE_TYPE="$device" \
       -e TXING_BOARD_RELEASE_VERSION="$version" \
+      -e TXING_BOARD_KVS_MASTER_RELEASE_VERSION="$kvs_version" \
       -e TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="{{aws_kvs_sdk_commit}}" \
       -e TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH="{{default_kvs_system_ca_cert_path}}" \
       -e TXING_PROTOC_GEN_GO_VERSION="{{protoc_gen_go_version}}" \
@@ -498,6 +518,7 @@ nerdctl-smoke device:
 
     device="$TXING_BOARD_DEVICE_TYPE"
     version="$TXING_BOARD_RELEASE_VERSION"
+    kvs_version="$TXING_BOARD_KVS_MASTER_RELEASE_VERSION"
     daemon_module="github.com/mparkachov/txing/devices/common/board/daemon"
 
     apk add --no-cache \
@@ -642,8 +663,7 @@ nerdctl-smoke device:
         -B "$kvs_build" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_TESTING=ON \
-        -DTXING_BOARD_DEVICE_TYPE="$device" \
-        -DTXING_BOARD_KVS_MASTER_VERSION="$version" \
+        -DTXING_BOARD_KVS_MASTER_VERSION="$kvs_version" \
         -DTXING_KVS_SYSTEM_CA_CERT_PATH="$TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH" \
         -DTXING_KVS_GRPC_BRIDGE=ON \
         -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$TXING_AWS_KVS_WEBRTC_SDK_GIT_TAG" \
@@ -653,12 +673,12 @@ nerdctl-smoke device:
         -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
       cmake --build "$kvs_build" --config Release
       ctest --test-dir "$kvs_build" --output-on-failure
-      assert_musl_dynamic "$kvs_build/txing-$device-kvs-master" "txing-$device-kvs-master"
-      kvs_ldd="$(ldd "$kvs_build/txing-$device-kvs-master")"
+      assert_musl_dynamic "$kvs_build/txing-board-kvs-master" "txing-board-kvs-master"
+      kvs_ldd="$(ldd "$kvs_build/txing-board-kvs-master")"
       printf '%s\n' "$kvs_ldd" | grep -F 'libcamera.so.0.7'
       printf '%s\n' "$kvs_ldd" | grep -F 'libcamera-base.so.0.7'
-      "$kvs_build/txing-$device-kvs-master" --version
-      install -m 755 "$kvs_build/txing-$device-kvs-master" "/out/txing-$device-kvs-master"
+      "$kvs_build/txing-board-kvs-master" --version
+      install -m 755 "$kvs_build/txing-board-kvs-master" "/out/txing-board-kvs-master"
     }
 
     case "$TXING_ALPINE_COMPONENT" in
@@ -693,7 +713,7 @@ nerdctl-smoke device:
         install -m 755 "$output_stage/txing-$device-daemon" "$output_root/bin/txing-$device-daemon"
         ;;
       kvs-master)
-        install -m 755 "$output_stage/txing-$device-kvs-master" "$output_root/bin/txing-$device-kvs-master"
+        install -m 755 "$output_stage/txing-board-kvs-master" "$output_root/bin/txing-board-kvs-master"
         ;;
       hardware-worker)
         install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
@@ -703,7 +723,7 @@ nerdctl-smoke device:
         ;;
       all)
         install -m 755 "$output_stage/txing-$device-daemon" "$output_root/bin/txing-$device-daemon"
-        install -m 755 "$output_stage/txing-$device-kvs-master" "$output_root/bin/txing-$device-kvs-master"
+        install -m 755 "$output_stage/txing-board-kvs-master" "$output_root/bin/txing-board-kvs-master"
         case "$device" in
           unit)
             install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
@@ -739,6 +759,10 @@ clean device='':
         "{{board_dir}}/aws-kvs-webrtc-sdk-system-deps" \
         "{{static_toolchain_dir}}"
     fi
+    rm -rf \
+      "{{native_kvs_master_dir}}/build" \
+      "{{native_kvs_master_dir}}/build-tests" \
+      "{{board_dir}}/target/nerdctl-build-kvs-master"
     rm -rf "{{daemon_dir}}/internal/proto"
 
 @default:

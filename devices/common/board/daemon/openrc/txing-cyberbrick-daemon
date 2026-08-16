@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+description="Cyberbrick daemon"
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-cyberbrick-daemon/latest/txing-cyberbrick-daemon
+directory=/root
+respawn_delay=5
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-cyberbrick-daemon.log
+error_log=/var/log/txing-cyberbrick-daemon.log
+depend() { need net; use dns ntpd; after txing-cyberbrick-mavlink; }
+start_pre() {
+    test -x "$command" || return 1
+    checkpath --directory --mode 0755 --owner root:root /run/txing-cyberbrick-daemon || return 1
+    export HOME=/root
+    export TXING_DAEMON_CONFIG_DIR=/root/.config/txing/cyberbrick-daemon
+}

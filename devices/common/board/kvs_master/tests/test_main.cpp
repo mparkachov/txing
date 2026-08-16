@@ -15,7 +15,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -194,6 +193,7 @@ class FakeVideoCapturer final : public VideoCapturer {
 
 struct FakeBridgeState {
     std::vector<txing::board::kvs_master::BridgeVideoState> reported_states;
+    std::string requested_worker_name;
 };
 
 class FakeBridgeClient final : public txing::board::kvs_master::BoardVideoBridgeClient {
@@ -201,9 +201,10 @@ class FakeBridgeClient final : public txing::board::kvs_master::BoardVideoBridge
     explicit FakeBridgeClient(FakeBridgeState* state) : state_(state) {}
 
     txing::board::kvs_master::BridgeWorkerConfig GetWorkerConfig(
-        const std::string&,
+        const std::string& worker_name,
         const std::string&
     ) override {
+        state_->requested_worker_name = worker_name;
         txing::board::kvs_master::BridgeWorkerConfig config;
         config.runtime_config.region = "eu-central-1";
         config.runtime_config.channel_name = "txing-board-video";
@@ -294,6 +295,8 @@ void TestCliParsing() {
             "eu-central-1",
             "--channel-name",
             "txing-board-video",
+            "--worker-name",
+            "txing-unit-kvs-master",
             "--client-id",
             "board-master",
             "--mcp-webrtc-socket-path",
@@ -322,6 +325,10 @@ void TestCliParsing() {
 
     Expect(parsed.config.region == "eu-central-1", "CLI should parse region");
     Expect(parsed.config.channel_name == "txing-board-video", "CLI should parse channel name");
+    Expect(
+        parsed.config.worker_name == "txing-unit-kvs-master",
+        "CLI should parse the runtime worker name"
+    );
     Expect(parsed.config.client_id == "board-master", "CLI should parse client id");
     Expect(
         parsed.config.mcp_webrtc_socket_path == "/tmp/txing_board_mcp_webrtc.sock",
@@ -345,36 +352,73 @@ void TestCliParsing() {
     Expect(parsed.config.camera.intra == 15, "CLI should parse intra");
 }
 
-void TestMavlinkCapabilitySelectsTheDeviceDerivedBridgeSocket() {
-    std::string daemon_binary_name = TXING_BOARD_KVS_MASTER_BINARY_NAME;
-    constexpr std::string_view kKvsMasterSuffix = "-kvs-master";
-    Expect(
-        daemon_binary_name.size() > kKvsMasterSuffix.size() &&
-            daemon_binary_name.compare(
-                daemon_binary_name.size() - kKvsMasterSuffix.size(),
-                kKvsMasterSuffix.size(),
-                kKvsMasterSuffix
-            ) == 0,
-        "KVS master binary name should derive a daemon name"
-    );
-    daemon_binary_name.resize(daemon_binary_name.size() - kKvsMasterSuffix.size());
-    daemon_binary_name += "-daemon";
+void TestMavlinkCapabilityRequiresRuntimeBridgeSocket() {
+    bool threw = false;
+    try {
+        ParseCli(
+            {
+                TXING_BOARD_KVS_MASTER_BINARY_NAME,
+                "--region",
+                "eu-central-1",
+                "--channel-name",
+                "txing-board-video",
+            },
+            EnvFrom({{"TXING_DAEMON_CAPABILITIES", "board,mavlink,video"}})
+        );
+    } catch (const std::exception& error) {
+        threw = true;
+        Expect(
+            std::string(error.what()).find("TXING_MAVLINK_BRIDGE_SOCKET_PATH") != std::string::npos,
+            "missing MAVLink runtime socket should identify the required setting"
+        );
+    }
+    Expect(threw, "MAVLink capability should require an explicit runtime bridge socket");
 
     const auto parsed = ParseCli(
-        {
-            TXING_BOARD_KVS_MASTER_BINARY_NAME,
-            "--region",
-            "eu-central-1",
-            "--channel-name",
-            "txing-board-video",
-        },
-        EnvFrom({{"TXING_DAEMON_CAPABILITIES", "board,mavlink,video"}})
+        {TXING_BOARD_KVS_MASTER_BINARY_NAME, "--board-video-bridge-socket-path", "/tmp/video.sock"},
+        EnvFrom(
+            {
+                {"TXING_DAEMON_CAPABILITIES", "board,mavlink,video"},
+                {"TXING_MAVLINK_BRIDGE_SOCKET_PATH", "/run/txing-cyberbrick-daemon/mavlink-bridge.sock"},
+                {"TXING_KVS_WORKER_NAME", "txing-cyberbrick-kvs-master"},
+            }
+        )
     );
     Expect(
         parsed.config.mavlink_bridge_socket_path ==
-            "/run/" + daemon_binary_name + "/mavlink-bridge.sock",
-        "MAVLink capability should select the device-derived bridge socket"
+            "/run/txing-cyberbrick-daemon/mavlink-bridge.sock",
+        "MAVLink bridge socket should come from runtime configuration"
     );
+    Expect(
+        parsed.config.worker_name == "txing-cyberbrick-kvs-master",
+        "worker identity should come from runtime configuration"
+    );
+    Expect(
+        parsed.config.client_id == parsed.config.worker_name,
+        "client id should default to the runtime worker identity"
+    );
+}
+
+void TestRuntimeWorkerNameMustNotBeEmpty() {
+    bool threw = false;
+    try {
+        ParseCli(
+            {
+                TXING_BOARD_KVS_MASTER_BINARY_NAME,
+                "--board-video-bridge-socket-path",
+                "/tmp/video.sock",
+                "--worker-name=",
+            },
+            EnvFrom({})
+        );
+    } catch (const std::exception& error) {
+        threw = true;
+        Expect(
+            std::string(error.what()).find("must not be empty") != std::string::npos,
+            "empty runtime worker identity should explain the validation failure"
+        );
+    }
+    Expect(threw, "runtime worker identity should not accept an empty value");
 }
 
 void TestBridgeCliDoesNotRequireStaticWorkerConfig() {
@@ -428,6 +472,10 @@ void TestUsageText() {
     Expect(
         usage.find("TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH") != std::string::npos,
         "usage text should document the board video bridge socket path environment variable"
+    );
+    Expect(
+        usage.find("TXING_KVS_WORKER_NAME") != std::string::npos,
+        "usage text should document runtime worker identity"
     );
     Expect(usage.find("--version") != std::string::npos, "usage text should document version output");
 }
@@ -683,8 +731,14 @@ void TestRuntimeReportsStoppedToBridgeOnCleanExit() {
     };
 
     auto config = TestRuntimeConfig();
+    config.worker_name = "txing-unit-kvs-master";
     config.board_video_bridge_socket_path = "/tmp/txing_board_video_bridge.sock";
     Run(config, hooks);
+
+    Expect(
+        bridge_state.requested_worker_name == "txing-unit-kvs-master",
+        "runtime should send the configured worker identity to the daemon bridge"
+    );
 
     Expect(
         bridge_state.reported_states.size() == 3,
@@ -706,7 +760,8 @@ void TestRuntimeReportsStoppedToBridgeOnCleanExit() {
 
 int main() {
     TestCliParsing();
-    TestMavlinkCapabilitySelectsTheDeviceDerivedBridgeSocket();
+    TestMavlinkCapabilityRequiresRuntimeBridgeSocket();
+    TestRuntimeWorkerNameMustNotBeEmpty();
     TestBridgeCliDoesNotRequireStaticWorkerConfig();
     TestCliRequiresStaticWorkerConfigWithoutBridge();
     TestUsageText();

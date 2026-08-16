@@ -409,9 +409,11 @@ Operational rules:
 
 ### 8. Final Reboot Check
 
+Seal the root, then reboot manually once you are ready to begin the
+post-reboot checks:
+
 ```bash
 root-ro
-reboot
 ```
 
 After reconnecting:
@@ -468,8 +470,9 @@ ldd /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-uni
 ldd /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master | grep -F "libcamera.so.0.7"
 ldd /root/.local/share/mise/installs/txing-unit-kvs-master/latest/txing-unit-kvs-master | grep -F "libcamera-base.so.0.7"
 sync
-reboot
 ```
+
+After reviewing the successful checks, reboot manually.
 
 The static daemon and hardware worker depend only on the kernel, so they stay
 current on Debian indefinitely. The board rejoins the camera update stream

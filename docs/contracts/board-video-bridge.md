@@ -1,6 +1,6 @@
 # Board Video Bridge Contract
 
-`txing-unit-daemon` and `txing-unit-kvs-master` communicate over a local,
+`txing-<device>-daemon` and the shared `txing-board-kvs-master` communicate over a local,
 versioned gRPC contract. The proto source is:
 
 ```text
@@ -42,7 +42,7 @@ daemon can drop video readiness immediately even when it does not supervise
 the worker process; crash exits still rely on daemon-side supervision.
 
 `OpenMcpSession`, `HandleMcp`, and `CloseMcpSession` forward MCP session
-lifecycle and opaque MCP JSON-RPC bytes. `txing-unit-kvs-master` does not
+lifecycle and opaque MCP JSON-RPC bytes. `txing-board-kvs-master` does not
 parse MCP tools and does not enforce active-control policy.
 
 ## Ownership

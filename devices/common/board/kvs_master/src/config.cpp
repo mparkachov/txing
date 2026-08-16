@@ -6,7 +6,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
-#include <string_view>
 
 namespace txing::board::kvs_master {
 namespace {
@@ -119,24 +118,6 @@ bool HasMavlinkCapability(const EnvLookup& lookup_env) {
     return false;
 }
 
-std::string DefaultMavlinkBridgeSocketPath() {
-    std::string daemon_binary_name = TXING_BOARD_KVS_MASTER_BINARY_NAME;
-    constexpr std::string_view kKvsMasterSuffix = "-kvs-master";
-    if (
-        daemon_binary_name.size() <= kKvsMasterSuffix.size() ||
-        daemon_binary_name.compare(
-            daemon_binary_name.size() - kKvsMasterSuffix.size(),
-            kKvsMasterSuffix.size(),
-            kKvsMasterSuffix
-        ) != 0
-    ) {
-        throw std::runtime_error("KVS master binary name cannot derive the daemon socket path");
-    }
-    daemon_binary_name.resize(daemon_binary_name.size() - kKvsMasterSuffix.size());
-    daemon_binary_name += "-daemon";
-    return "/run/" + daemon_binary_name + "/mavlink-bridge.sock";
-}
-
 std::unordered_map<std::string, std::string> ParseOptions(
     const std::vector<std::string>& arguments,
     bool& show_help,
@@ -200,6 +181,22 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         return parsed;
     }
 
+    parsed.config.worker_name = LookupValue(
+        options,
+        "worker-name",
+        lookup_env,
+        "TXING_KVS_WORKER_NAME"
+    ).value_or(parsed.config.worker_name);
+    if (parsed.config.worker_name.empty()) {
+        throw std::runtime_error("--worker-name or TXING_KVS_WORKER_NAME must not be empty");
+    }
+    parsed.config.client_id = LookupValue(
+        options,
+        "client-id",
+        lookup_env,
+        "TXING_KVS_CLIENT_ID"
+    ).value_or(parsed.config.worker_name);
+
     if (const auto socket_path = LookupValue(
             options,
             "board-video-bridge-socket-path",
@@ -218,9 +215,10 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         socket_path && !socket_path->empty()) {
         parsed.config.mavlink_bridge_socket_path = *socket_path;
     } else if (HasMavlinkCapability(lookup_env)) {
-        // The profile is the behavior selector. Device type only derives the
-        // socket's installed binary path, as it does for every board worker.
-        parsed.config.mavlink_bridge_socket_path = DefaultMavlinkBridgeSocketPath();
+        throw std::runtime_error(
+            "--mavlink-bridge-socket-path or TXING_MAVLINK_BRIDGE_SOCKET_PATH "
+            "is required when the mavlink capability is enabled"
+        );
     }
     if (parsed.config.board_video_bridge_socket_path.has_value() || parsed.camera_probe) {
         parsed.config.region = LookupValue(
@@ -254,9 +252,6 @@ ParsedCli ParseCli(const std::vector<std::string>& arguments, const EnvLookup& l
         );
     }
 
-    if (const auto client_id = LookupValue(options, "client-id", lookup_env, ""); client_id && !client_id->empty()) {
-        parsed.config.client_id = *client_id;
-    }
     if (const auto socket_path = LookupValue(
             options,
             "mcp-webrtc-socket-path",
@@ -311,7 +306,8 @@ std::string UsageText() {
         << "Options:\n"
         << "  --region <aws-region>                  or BOARD_VIDEO_REGION\n"
         << "  --channel-name <channel-name>          or BOARD_VIDEO_CHANNEL_NAME\n"
-        << "  --client-id <id>                       default: " TXING_BOARD_KVS_MASTER_BINARY_NAME "\n"
+        << "  --worker-name <name>                   or TXING_KVS_WORKER_NAME\n"
+        << "  --client-id <id>                       or TXING_KVS_CLIENT_ID; default: worker name\n"
         << "  --mcp-webrtc-socket-path <path>        or BOARD_MCP_WEBRTC_SOCKET_PATH\n"
         << "  --board-video-bridge-socket-path <path> or TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH\n"
         << "  --mavlink-bridge-socket-path <path>   or TXING_MAVLINK_BRIDGE_SOCKET_PATH\n"

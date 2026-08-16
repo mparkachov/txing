@@ -105,9 +105,9 @@ artifacts:
 - Board and rig binary updates are manual writable-root maintenance actions. The
   installed init service starts offline from root-owned mise installs and does
   not call GitHub during normal service restart.
-- `latest` is component scoped: rig hosts use `rig-v*`, board hosts use
-  `unit-v*` or `cyberbrick-v*` according to device type, and Lambda publishing
-  uses `lambda-v*`. Existing host mise configs are forward-only manual state;
+- `latest` is component scoped: rig hosts use `rig-v*`, device-specific board
+  tools use `unit-v*` or `cyberbrick-v*`, the shared board KVS master uses
+  `kvs-master-v*`, and Lambda publishing uses `lambda-v*`. Existing host mise configs are forward-only manual state;
   replace old configs that do not set the matching `version_prefix` before
   relying on `latest`.
 - The Lambda component version covers Go runtime Lambda artifacts only. Release
@@ -236,9 +236,9 @@ Board:
 ```bash
 just common::board::run unit
 just common::board::test unit
-just common::board::kvs-build-native unit
-just common::board::kvs-test-native unit
-just common::board::kvs-build-alpine unit
+just common::board::kvs-build-native
+just common::board::kvs-test-native
+just common::board::kvs-build-alpine
 just common::board::hardware-build-native unit
 just common::board::hardware-test-native unit
 just common::board::hardware-build-alpine unit

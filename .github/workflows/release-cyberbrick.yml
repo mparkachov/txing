@@ -15,7 +15,6 @@ env:
   RELEASE_VERSION_FILE: release/versions/cyberbrick
   RELEASE_TAG_PREFIX: cyberbrick-v
   CYBERBRICK_DAEMON_ASSET: txing-cyberbrick-daemon-linux-aarch64.tar.gz
-  KVS_MASTER_ASSET: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
   MAVLINK_BINARY: txing-cyberbrick-mavlink
   MAVLINK_ASSET: txing-cyberbrick-mavlink-linux-aarch64.tar.gz
   ARDUPILOT_BINARY: txing-cyberbrick-ardupilot
@@ -145,10 +144,6 @@ jobs:
             binary: txing-cyberbrick-daemon
             asset: txing-cyberbrick-daemon-linux-aarch64.tar.gz
             kind: static
-          - component: kvs-master
-            binary: txing-cyberbrick-kvs-master
-            asset: txing-cyberbrick-kvs-master-linux-aarch64.tar.gz
-            kind: musl-libcamera
           - component: mavlink
             binary: txing-cyberbrick-mavlink
             asset: txing-cyberbrick-mavlink-linux-aarch64.tar.gz
@@ -197,7 +192,6 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
           PROTOC_GEN_GO_VERSION: v1.36.10
           PROTOC_GEN_GO_GRPC_VERSION: v1.5.1
-          AWS_KVS_SDK_COMMIT: bb106510cf74edd2c24881c1ae94ceaa0083d15c
         shell: bash
         run: |
           docker exec -i \
@@ -206,7 +200,6 @@ jobs:
             -e VERSION="$VERSION" \
             -e PROTOC_GEN_GO_VERSION="$PROTOC_GEN_GO_VERSION" \
             -e PROTOC_GEN_GO_GRPC_VERSION="$PROTOC_GEN_GO_GRPC_VERSION" \
-            -e AWS_KVS_SDK_COMMIT="$AWS_KVS_SDK_COMMIT" \
             -e GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             -e RUNNER_TEMP="$RUNNER_TEMP" \
             board-build sh <<'EOF'
@@ -261,29 +254,6 @@ jobs:
                     -o "$output" \
                     "./cmd/$command"
               )
-              ;;
-            kvs-master)
-              source_dir="$GITHUB_WORKSPACE/devices/common/board/kvs_master"
-              build_dir="$RUNNER_TEMP/build-txing-cyberbrick-kvs-master"
-              openssl_libdir="$(pkg-config --variable=libdir openssl)"
-              openssl_includedir="$(pkg-config --variable=includedir openssl)"
-              cmake \
-                -S "$source_dir" \
-                -B "$build_dir" \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DBUILD_TESTING=ON \
-                -DTXING_KVS_SYSTEM_CA_CERT_PATH="${TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH:-/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem}" \
-                -DTXING_KVS_GRPC_BRIDGE=ON \
-                -DTXING_AWS_KVS_WEBRTC_SDK_GIT_TAG="$AWS_KVS_SDK_COMMIT" \
-                -DTXING_BOARD_DEVICE_TYPE=cyberbrick \
-                -DTXING_BOARD_KVS_MASTER_VERSION="$VERSION" \
-                -DOPENSSL_USE_STATIC_LIBS=FALSE \
-                -DOPENSSL_INCLUDE_DIR="$openssl_includedir" \
-                -DOPENSSL_SSL_LIBRARY="$openssl_libdir/libssl.so" \
-                -DOPENSSL_CRYPTO_LIBRARY="$openssl_libdir/libcrypto.so"
-              cmake --build "$build_dir" --config Release
-              ctest --test-dir "$build_dir" --output-on-failure
-              install -m 755 "$build_dir/$BINARY" "$output"
               ;;
             *)
               echo "Unsupported Cyberbrick release component: $COMPONENT" >&2
@@ -500,15 +470,12 @@ jobs:
           rm -rf "$smoke_dir"
           install -d "$smoke_dir"
           tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$CYBERBRICK_DAEMON_ASSET"
-          tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$KVS_MASTER_ASSET"
           tar -C "$smoke_dir" -xzf "$RELEASE_ASSETS_DIR/$MAVLINK_ASSET"
 
           sh release/scripts/smoke-board-cross-distro.sh \
             "$smoke_dir/txing-cyberbrick-daemon" static "txing-cyberbrick-daemon $VERSION"
           sh release/scripts/smoke-board-cross-distro.sh \
             "$smoke_dir/$MAVLINK_BINARY" static "$MAVLINK_BINARY $VERSION"
-          sh release/scripts/smoke-board-cross-distro.sh \
-            "$smoke_dir/txing-cyberbrick-kvs-master" musl-libcamera "txing-cyberbrick-kvs-master $VERSION"
 
       - name: Run Alpine ArduPilot smoke
         env:
@@ -587,7 +554,6 @@ jobs:
 
           release_assets=(
             "$CYBERBRICK_DAEMON_ASSET"
-            "$KVS_MASTER_ASSET"
             "$MAVLINK_ASSET"
             "$ARDUPILOT_ASSET"
             "$ARDUPILOT_SOURCE_ASSET"

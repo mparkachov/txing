@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+description="Cyberbrick ArduPilot ArduRover"
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
+defaults=/root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
+command_args="--defaults ${defaults} --serial0 udpin:127.0.0.1:14550 --storage-directory /var/tmp/txing-cyberbrick-ardupilot/storage --terrain-directory /var/tmp/txing-cyberbrick-ardupilot/terrain --log-directory /var/log/txing-cyberbrick-ardupilot"
+directory=/var/tmp/txing-cyberbrick-ardupilot
+respawn_delay=5
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
+error_log=/var/log/txing-cyberbrick-ardupilot/ardupilot.log
+depend() { need localmount net; }
+start_pre() {
+    test -x "$command" && test -r "$defaults" || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/storage || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-cyberbrick-ardupilot/terrain || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/log/txing-cyberbrick-ardupilot || return 1
+    export HOME=/root
+}

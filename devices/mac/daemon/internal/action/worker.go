@@ -44,7 +44,7 @@ func NewWorkerSupervisor(config Config, events chan<- VideoWorkerEvent, logf Log
 	return &WorkerSupervisor{
 		command:          config.KVSMasterCommand,
 		socketPath:       config.BridgeSocketPath,
-		logPath:          filepath.Join(filepath.Dir(config.BridgeSocketPath), "txing-unit-kvs-master.log"),
+		logPath:          filepath.Join(filepath.Dir(config.BridgeSocketPath), "txing-board-kvs-master.log"),
 		events:           events,
 		logf:             logf,
 		restartBaseDelay: workerRestartBaseDelay,

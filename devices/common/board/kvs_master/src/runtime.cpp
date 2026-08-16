@@ -113,12 +113,15 @@ void SleepUntilStopped(std::chrono::milliseconds duration) {
     }
 }
 
-BridgeWorkerConfig GetWorkerConfigWithRetry(BoardVideoBridgeClient& bridge_client) {
+BridgeWorkerConfig GetWorkerConfigWithRetry(
+    BoardVideoBridgeClient& bridge_client,
+    const std::string& worker_name
+) {
     auto delay = kBridgeRetryInitialDelay;
     while (!g_stop_requested.load()) {
         try {
             return bridge_client.GetWorkerConfig(
-                TXING_BOARD_KVS_MASTER_BINARY_NAME,
+                worker_name,
                 std::string(kTxingBoardKvsMasterVersion)
             );
         } catch (const std::exception& error) {
@@ -166,7 +169,7 @@ void RunMavlinkControlLoop(const RuntimeConfig& config) noexcept {
             }
             bridge->ReportControlChannelState(false, "MAVLink control KVS is starting");
             const auto channel = bridge->GetControlChannelConfig(
-                TXING_BOARD_KVS_MASTER_BINARY_NAME,
+                config.worker_name,
                 std::string(kTxingBoardKvsMasterVersion)
             );
             if (!channel.data_channel_ordered || !channel.data_channel_reliable) {
@@ -262,8 +265,9 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
             if (bridge_client == nullptr) {
                 throw std::runtime_error("board video bridge client is not initialized");
             }
-            auto worker_config = GetWorkerConfigWithRetry(*bridge_client);
+            auto worker_config = GetWorkerConfigWithRetry(*bridge_client, config.worker_name);
             worker_config.runtime_config.camera = config.camera;
+            worker_config.runtime_config.worker_name = config.worker_name;
             worker_config.runtime_config.board_video_bridge_socket_path = config.board_video_bridge_socket_path;
             effective_config = worker_config.runtime_config;
             credentials = worker_config.credentials.credentials;

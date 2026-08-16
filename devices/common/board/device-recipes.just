@@ -21,12 +21,6 @@
 @run:
     just --justfile "{{board_justfile}}" run "{{device}}"
 
-@kvs-build-native:
-    just --justfile "{{board_justfile}}" kvs-build-native "{{device}}"
-
-@kvs-test-native:
-    just --justfile "{{board_justfile}}" kvs-test-native "{{device}}"
-
 @hardware-build-native:
     just --justfile "{{board_justfile}}" hardware-build-native "{{device}}"
 
@@ -35,9 +29,6 @@
 
 @daemon-build-alpine:
     just --justfile "{{board_justfile}}" daemon-build-alpine "{{device}}"
-
-@kvs-build-alpine:
-    just --justfile "{{board_justfile}}" kvs-build-alpine "{{device}}"
 
 @hardware-build-alpine:
     just --justfile "{{board_justfile}}" hardware-build-alpine "{{device}}"

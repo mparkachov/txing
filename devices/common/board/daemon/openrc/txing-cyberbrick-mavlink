@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+description="Cyberbrick MAVLink transport"
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
+daemon_env=/root/.config/txing/cyberbrick-daemon/daemon.env
+directory=/root
+respawn_delay=2
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-cyberbrick-mavlink.log
+error_log=/var/log/txing-cyberbrick-mavlink.log
+depend() { need localmount; after txing-cyberbrick-ardupilot; }
+start_pre() {
+    test -x "$command" || {
+        eerror "MAVLink executable is missing: $command"
+        return 1
+    }
+    test -r "$daemon_env" || {
+        eerror "MAVLink daemon environment is missing: $daemon_env"
+        return 1
+    }
+    checkpath --directory --mode 0755 --owner root:root /run/txing-cyberbrick-mavlink || return 1
+    set -a; . "$daemon_env"; set +a
+    export HOME=/root
+}

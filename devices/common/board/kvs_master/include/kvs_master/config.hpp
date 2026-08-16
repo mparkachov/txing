@@ -28,6 +28,7 @@ enum class KvsSessionKind {
 struct RuntimeConfig {
     std::string region;
     std::string channel_name;
+    std::string worker_name = TXING_BOARD_KVS_MASTER_BINARY_NAME;
     std::string client_id = TXING_BOARD_KVS_MASTER_BINARY_NAME;
     std::optional<std::string> mcp_webrtc_socket_path;
     std::optional<std::string> board_video_bridge_socket_path;

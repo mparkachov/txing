@@ -4,17 +4,17 @@
 - This directory contains the single native board-side implementation shared by
   every board device type: the Go daemon, the KVS master, and the hardware
   worker. There is no per-device copy of any of them.
-- The device type is a build input, not a source axis. `TXING_BOARD_DEVICE_TYPE`
-  selects the proto package, binary names, socket paths, and the release stream
-  the version is injected from. Nothing in this tree may branch on the device
-  type any other way.
+- The device type is a build input for device-specific daemons and workers, not
+  a source axis. The KVS master is one `txing-board-kvs-master` build and release
+  artifact; its worker identity, capability profile, and socket paths are
+  runtime configuration.
 - Genuinely per-device material stays under `devices/<device>/`: the
   `manifest.toml` profile, shadow schemas and defaults in `aws/`, the web
   adapter, and the proto package.
 - This board is distinct from the `rig/` Raspberry Pi 5 gateway.
 - The production board runtime is the Go `txing-<device>-daemon`; this directory
   does not contain a Python board runtime.
-- `txing-<device>-kvs-master` connects to AWS KVS WebRTC signaling and talks to
+- `txing-board-kvs-master` connects to AWS KVS WebRTC signaling and talks to
   the daemon over the local BoardVideoBridge gRPC socket.
 - `txing-<device>-hardware-worker` owns board-local motor hardware access and
   talks to the daemon over the local BoardHardware gRPC socket.

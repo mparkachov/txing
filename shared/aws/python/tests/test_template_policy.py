@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import subprocess
+import tarfile
+import tempfile
 import unittest
 
 
@@ -252,6 +255,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
 
         self.assertIn("cert thing_id='':", aws_justfile)
         self.assertIn("device_daemon_env_template", aws_justfile)
+        self.assertIn('devices_dir := project_root + "/devices"', aws_justfile)
         self.assertNotIn("mac_daemon_env_template", aws_justfile)
         self.assertIn("txing_generate_iot_certificate_bundle", aws_justfile)
         self.assertIn("DeviceDaemonIotPolicyName", aws_lib)
@@ -284,6 +288,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn('printf \'%s/certs/%s\\n\' "$TXING_PROJECT_ROOT" "$thing_id"', aws_lib)
         self.assertIn('${thing_id}-daemon-config.tgz', aws_lib)
         self.assertIn('COPYFILE_DISABLE=1 tar -C "$output_dir" -czf "$tarball_path"', aws_lib)
+        self.assertIn('txing_cert_stage_board_services "$output_dir" "$devices_dir"', aws_lib)
+        self.assertIn('txing_cert_write_runtime_tarball "$output_dir" "$tarball_path" services', aws_lib)
         self.assertIn("configTarball", aws_lib)
         self.assertIn("/certs/", root_gitignore)
         self.assertIn('env_file="$output_dir/daemon.env"', aws_lib)
@@ -332,6 +338,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "TXING_MOTOR_WATCHDOG_TIMEOUT_MS",
         ):
             self.assertIn(key, daemon_env_values)
+
         self.assertIn(daemon_env_values["TXING_MOTOR_ENABLED"], {"true", "false"})
         self.assertIn(daemon_env_values["TXING_MOTOR_LEFT_INVERTED"], {"true", "false"})
         self.assertIn(daemon_env_values["TXING_MOTOR_RIGHT_INVERTED"], {"true", "false"})
@@ -378,6 +385,103 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("\nBOARD_VIDEO_", "\n" + daemon_env_template)
         self.assertNotIn("AWS_STACK_NAME", daemon_justfile)
         self.assertNotIn("DeviceDaemonCredentialRoleAlias", daemon_justfile)
+
+    def test_board_daemon_config_stages_every_openrc_service(self) -> None:
+        aws_lib = AWS_DIR / "scripts" / "aws_lib.sh"
+        base_files = {
+            "daemon.env",
+            "certificate.pem.crt",
+            "public.pem.key",
+            "private.pem.key",
+            "certificate.arn",
+            "AmazonRootCA1.pem",
+            "SFSRootCAG2.pem",
+        }
+        service_files = {
+            "txing-unit-hardware-worker",
+            "txing-unit-daemon",
+            "txing-kvs-master",
+            "txing-cyberbrick-ardupilot",
+            "txing-cyberbrick-mavlink",
+            "txing-cyberbrick-daemon",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "bundle"
+            tarball_path = Path(temp_dir) / "daemon-config.tgz"
+            runtime_only_tarball_path = Path(temp_dir) / "runtime-only-config.tgz"
+            output_dir.mkdir()
+            for name in base_files:
+                (output_dir / name).write_text(f"{name}\n", encoding="utf-8")
+
+            subprocess.run(
+                [
+                    "sh",
+                    "-eu",
+                    "-c",
+                    '. "$1"\n'
+                    'txing_cert_stage_board_services "$2" "$3"\n'
+                    'txing_cert_write_runtime_tarball "$2" "$4" services\n'
+                    'txing_cert_write_runtime_tarball "$2" "$5"',
+                    "test-board-services",
+                    str(aws_lib),
+                    str(output_dir),
+                    str(REPO_ROOT / "devices"),
+                    str(tarball_path),
+                    str(runtime_only_tarball_path),
+                ],
+                check=True,
+                cwd=REPO_ROOT,
+            )
+
+            with tarfile.open(tarball_path, "r:gz") as archive:
+                members = {member.name.rstrip("/"): member for member in archive}
+
+            self.assertEqual(
+                set(members),
+                base_files
+                | {"services"}
+                | {f"services/{name}" for name in service_files},
+            )
+            for name in service_files:
+                self.assertEqual(members[f"services/{name}"].mode, 0o755)
+
+            kvs_script = output_dir / "services" / "txing-kvs-master"
+            for service_name, device in (
+                ("txing-unit-kvs-master", "unit"),
+                ("txing-cyberbrick-kvs-master", "cyberbrick"),
+            ):
+                with self.subTest(service=service_name):
+                    resolved = subprocess.run(
+                        [
+                            "sh",
+                            "-eu",
+                            "-c",
+                            'RC_SVCNAME="$1"\n'
+                            '. "$2"\n'
+                            'printf \'%s\n%s\n%s\n\' "$device" "$command" "$ca_cert"',
+                            "test-kvs-service",
+                            service_name,
+                            str(kvs_script),
+                        ],
+                        check=True,
+                        text=True,
+                        stdout=subprocess.PIPE,
+                    )
+                    self.assertEqual(
+                        resolved.stdout.splitlines(),
+                        [
+                            device,
+                            "/root/.local/share/mise/installs/"
+                            "txing-board-kvs-master/latest/"
+                            "txing-board-kvs-master",
+                            f"/root/.config/txing/{device}-daemon/SFSRootCAG2.pem",
+                        ],
+                    )
+
+            with tarfile.open(runtime_only_tarball_path, "r:gz") as archive:
+                runtime_only_names = {member.name.rstrip("/") for member in archive}
+            self.assertEqual(runtime_only_names, base_files)
 
     def test_aws_cert_recipe_uses_shared_device_daemon_bundle_and_video_policy(self) -> None:
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")

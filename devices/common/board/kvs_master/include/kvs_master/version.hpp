@@ -5,9 +5,9 @@
 
 namespace txing::board::kvs_master {
 
-// Each device type keeps its own release stream, so the version is injected at
-// build time from release/versions/<device>. This fallback only ever reaches a
-// developer build that skipped the injection.
+// The board-wide KVS release version is injected from
+// release/versions/kvs-master. This fallback only ever reaches a developer
+// build that skipped the injection.
 #ifndef TXING_BOARD_KVS_MASTER_VERSION
 #define TXING_BOARD_KVS_MASTER_VERSION "0.0.0-dev"
 #endif

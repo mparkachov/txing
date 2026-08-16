@@ -1,0 +1,29 @@
+#!/sbin/openrc-run
+
+description="Txing Board Hardware Worker"
+
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
+directory=/root
+respawn_delay=2
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-unit-hardware-worker.log
+error_log=/var/log/txing-unit-hardware-worker.log
+
+daemon_env=/root/.config/txing/unit-daemon/daemon.env
+
+depend() {
+    need localmount
+    before txing-unit-daemon
+}
+
+start_pre() {
+    test -x "$command" || return 1
+    test -r "$daemon_env" || return 1
+    checkpath --directory --mode 0755 --owner root:root /run/txing-unit-hardware-worker
+    set -a
+    . "$daemon_env"
+    set +a
+    export HOME=/root
+}

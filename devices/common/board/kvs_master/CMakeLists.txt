@@ -6,25 +6,10 @@ include(GNUInstallDirs)
 include(CTest)
 include(ExternalProject)
 
-# One implementation serves every board device type over one device-independent
-# protocol package. The device profile selects only the binary name, the
-# hardware socket path, and the release stream the version comes from. Nothing
-# below may branch on the device type beyond these derivations.
-set(
-  TXING_BOARD_DEVICE_TYPE
-  ""
-  CACHE STRING
-  "Board device type this build targets (for example: unit, cyberbrick)"
-)
-if(TXING_BOARD_DEVICE_TYPE STREQUAL "")
-  message(FATAL_ERROR
-    "TXING_BOARD_DEVICE_TYPE is required; pass -DTXING_BOARD_DEVICE_TYPE=<device>."
-  )
-endif()
-
-set(_txing_device "${TXING_BOARD_DEVICE_TYPE}")
-set(_txing_kvs_lib "txing_${_txing_device}_kvs_master_lib")
-set(_txing_kvs_bin "txing-${_txing_device}-kvs-master")
+# The KVS master is one board-wide artifact. Device identity, capabilities, and
+# bridge socket paths are runtime configuration supplied by the service.
+set(_txing_kvs_lib "txing_board_kvs_master_lib")
+set(_txing_kvs_bin "txing-board-kvs-master")
 
 if(APPLE)
   enable_language(OBJCXX)
@@ -107,7 +92,7 @@ set(
   TXING_BOARD_KVS_MASTER_VERSION
   ""
   CACHE STRING
-  "Release version injected at build time from release/versions/<device>"
+  "Release version injected at build time from release/versions/kvs-master"
 )
 
 add_library(
@@ -126,8 +111,6 @@ target_include_directories(
 )
 
 target_compile_features(${_txing_kvs_lib} PUBLIC cxx_std_17)
-# The binary name stays per device: it is the mise install name, the OpenRC
-# service name, and the default KVS signaling client id.
 target_compile_definitions(
   ${_txing_kvs_lib}
   PUBLIC

@@ -87,7 +87,7 @@ The action layer requires the device certificate bundle: run
 watch-layer only (REDCON tops out at 3) and logs a warning when 2 or 1
 is commanded.
 
-Video comes from the shared unit KVS worker built natively for macOS:
+Video comes from the shared board KVS worker built natively for macOS:
 
 ```bash
 just mac::proto-gen       # regenerate BoardVideoBridge bindings from the shared proto
@@ -105,7 +105,7 @@ so the two ends cannot drift apart. `just mac::test` and `just mac::build` run
 which the `protobuf` formula below already provides.
 
 `kvs-build` compiles `devices/common/board/kvs_master` into
-`devices/common/board/kvs_master/build-macos-unit/txing-unit-kvs-master` with the
+`devices/common/board/kvs_master/build-macos/txing-board-kvs-master` with the
 AVFoundation + VideoToolbox capturer (Annex-B H.264, SPS/PPS on keyframes).
 It needs the Homebrew formulas `openssl@3 libwebsockets srtp libusrsctp
 log4cplus protobuf grpc`; the recipe lists anything missing. TLS for the
@@ -131,7 +131,7 @@ to 1. Leaving REDCON 1 sends the worker SIGTERM (SIGKILL after 5s), so
 the camera indicator is only lit at REDCON 1. If the worker dies, the
 daemon publishes a visible video error (reported REDCON degrades to 2),
 then restarts it with 1s-30s backoff until it recovers. Worker output goes
-to `/tmp/txing-mac/txing-unit-kvs-master.log`. For debugging, the worker
+to `/tmp/txing-mac/txing-board-kvs-master.log`. For debugging, the worker
 can still be run manually in the foreground against the bridge socket
 while the daemon holds REDCON 2.
 

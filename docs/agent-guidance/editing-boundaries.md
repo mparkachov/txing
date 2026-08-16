@@ -44,10 +44,11 @@ tooling, shell, infrastructure, or future-work implementation.
   repository code. Describe privileged work as explicit manual operator steps.
 - Narrow exception, board initial installation only: the board's first-boot
   card may configure base Alpine OS setup (Wi-Fi, `wlan0`, root SSH access, apk
-  repositories, and package upgrade). Everything from the mise step onward,
-  and every update on a board already in service, is a manual operator action.
-  Card files carry no AWS credentials, daemon configuration, or release
-  material.
+  repositories, package upgrade, the fixed board runtime-package baseline, and
+  the mise bootstrap). Device release artifacts, daemon configuration, service
+  installation, and every update on a board already in service remain manual
+  operator actions. Card files carry no AWS credentials, daemon configuration,
+  or release material.
 - IAM roles, managed policies, IoT role aliases, and IoT policies use
   CloudFormation-generated physical names. Use `/txing/stack/...` parameters or
   AWS API lookups; do not depend on historical fixed names.

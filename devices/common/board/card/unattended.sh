@@ -3,10 +3,10 @@
 # first boot, as root, once networking is up.
 #
 # Takes the board from a diskless Alpine boot to a persistent sys install on the
-# standard Raspberry Pi layout, and stops there. It does base OS setup only:
-# hostname, wlan0, apk repositories, package upgrade, operator ssh, and mise on
-# root's PATH. Everything past that -- runtime packages, camera support, release
-# binaries, daemon config, and services -- is a manual runbook step over ssh.
+# standard Raspberry Pi layout, and installs the fixed Alpine runtime-package
+# baseline. It configures hostname, wlan0, apk repositories, package upgrade,
+# operator ssh, and mise on root's PATH. Device release binaries, daemon config,
+# and services remain manual runbook steps over ssh.
 #
 # Modelled on contribs/unattended_sysdisk.sh from the headless bootstrap
 # project. The important part borrowed from it is the config re-import below:
@@ -261,11 +261,14 @@ chmod 644 "$NEW_ROOT/etc/apk/repositories"
 grep -q "^https://${MIRROR}/community\$" "$NEW_ROOT/etc/apk/repositories" \
     || die "sys install repositories are not on https"
 
-log "installing wpa_supplicant, openssh and tzdata into the new root"
-if ! apk --root "$NEW_ROOT" --no-cache add wpa_supplicant openssh tzdata >>"$LOG" 2>&1; then
-    tail -n 20 "$LOG" >&2
-    die "installing wpa_supplicant/openssh/tzdata into the new root (see $LOG)"
-fi
+run "installing Alpine runtime package baseline into the new root" \
+    apk --root "$NEW_ROOT" --no-cache add \
+    wpa_supplicant openssh tzdata \
+    curl jq ca-certificates \
+    curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev \
+    libwebsockets-dev zlib-dev libcamera-dev \
+    protobuf-dev grpc-dev \
+    libcamera-raspberrypi eudev v4l-utils iproute2
 
 # setup-alpine set the timezone on the running diskless system; the sys install
 # is a fresh base and does not inherit it.
@@ -517,6 +520,6 @@ else
 fi
 
 sync
-log "base OS provisioning complete, rebooting into the sys install"
-log "runtime packages and release binaries remain manual runbook steps over ssh"
+log "base OS and runtime package baseline complete, rebooting into the sys install"
+log "release binaries, daemon configuration, and services remain manual runbook steps over ssh"
 reboot

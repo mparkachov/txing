@@ -65,6 +65,10 @@ COMPONENTS = {
         name="cyberbrick",
         version_path=Path("release/versions/cyberbrick"),
     ),
+    "kvs-master": Component(
+        name="kvs-master",
+        version_path=Path("release/versions/kvs-master"),
+    ),
     "office": Component(
         name="office",
         version_path=Path("release/versions/office"),
