@@ -37,7 +37,6 @@ import (
 
 const (
 	DefaultMCPResponseTimeoutMillis          = uint32(7000)
-	videoStatusHeartbeatSeconds              = 5
 	cloudWatchLogBatchMaxEvents              = 100
 	cloudWatchLogBatchMaxBytes               = 256 * 1024
 	cloudWatchLogEventOverheadBytes          = 26
@@ -790,8 +789,6 @@ func RunConnectedRuntime(ctx context.Context, config RuntimeConfig, publisher in
 	defer heartbeat.Stop()
 	watchdog := time.NewTicker(100 * time.Millisecond)
 	defer watchdog.Stop()
-	videoStatus := time.NewTicker(videoStatusHeartbeatSeconds * time.Second)
-	defer videoStatus.Stop()
 
 	for {
 		select {
@@ -814,20 +811,25 @@ func RunConnectedRuntime(ctx context.Context, config RuntimeConfig, publisher in
 			_ = state.RefreshCapabilities(ctx, publisher, nowMillis())
 		case <-watchdog.C:
 			_ = state.TickWatchdogs(ctx, publisher, nowMillis())
-		case <-videoStatus.C:
-			_ = state.RefreshVideoStatus(ctx, publisher, nowMillis())
 		}
 	}
 }
 
 func (s *RuntimeState) RefreshCapabilities(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
+	// Retained dynamic topics expire and need a liveness refresh. Named shadows
+	// do not expire, so only state-change paths should write them.
 	if s.mcpEnabled() {
-		if err := s.publishMCPStatus(ctx, publisher, observedAtMS); err != nil {
+		if err := s.refreshMCPStatus(ctx, publisher, observedAtMS); err != nil {
 			return err
 		}
 	}
 	if s.mavlinkEnabled() {
-		if err := s.publishMAVLinkStatus(ctx, publisher); err != nil {
+		if err := s.refreshMAVLinkStatus(ctx, publisher); err != nil {
+			return err
+		}
+	}
+	if s.videoEnabled() {
+		if err := s.RefreshVideoStatus(ctx, publisher, observedAtMS); err != nil {
 			return err
 		}
 	}
@@ -839,7 +841,7 @@ func (s *RuntimeState) RefreshVideoStatus(ctx context.Context, publisher Publish
 		return nil
 	}
 	s.video.UpdatedAtMS = observedAtMS
-	return s.publishVideoStatusAndShadow(ctx, publisher)
+	return s.publishVideoRetainedStatus(ctx, publisher, s.videoStatus())
 }
 
 func (s *RuntimeState) PublishOffline(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
@@ -1114,11 +1116,19 @@ func (s *RuntimeState) publishMCPDiscovery(ctx context.Context, publisher Publis
 
 func (s *RuntimeState) publishMCPStatus(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
 	statusPayload := s.mcp.Status(observedAtMS)
-	statusTopic, _ := BuildMCPStatusTopic(s.config.ThingID)
-	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
+	if err := s.publishMCPRetainedStatus(ctx, publisher, statusPayload); err != nil {
 		return err
 	}
 	return s.publishMCPShadow(ctx, publisher, s.mcpDescriptor(), statusPayload)
+}
+
+func (s *RuntimeState) refreshMCPStatus(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
+	return s.publishMCPRetainedStatus(ctx, publisher, s.mcp.Status(observedAtMS))
+}
+
+func (s *RuntimeState) publishMCPRetainedStatus(ctx context.Context, publisher Publisher, statusPayload map[string]interface{}) error {
+	statusTopic, _ := BuildMCPStatusTopic(s.config.ThingID)
+	return publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL)
 }
 
 func (s *RuntimeState) publishMCPUnavailable(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
@@ -1166,11 +1176,19 @@ func (s *RuntimeState) publishMAVLinkDiscovery(ctx context.Context, publisher Pu
 
 func (s *RuntimeState) publishMAVLinkStatus(ctx context.Context, publisher Publisher) error {
 	statusPayload := s.mavlinkStatusPayload()
-	statusTopic, _ := BuildMAVLinkStatusTopic(s.config.ThingID)
-	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
+	if err := s.publishMAVLinkRetainedStatus(ctx, publisher, statusPayload); err != nil {
 		return err
 	}
 	return s.publishMAVLinkShadow(ctx, publisher, statusPayload)
+}
+
+func (s *RuntimeState) refreshMAVLinkStatus(ctx context.Context, publisher Publisher) error {
+	return s.publishMAVLinkRetainedStatus(ctx, publisher, s.mavlinkStatusPayload())
+}
+
+func (s *RuntimeState) publishMAVLinkRetainedStatus(ctx context.Context, publisher Publisher, statusPayload map[string]interface{}) error {
+	statusTopic, _ := BuildMAVLinkStatusTopic(s.config.ThingID)
+	return publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL)
 }
 
 func (s *RuntimeState) publishMAVLinkShadow(ctx context.Context, publisher Publisher, statusPayload map[string]interface{}) error {
@@ -1197,11 +1215,15 @@ func (s *RuntimeState) publishVideoDiscovery(ctx context.Context, publisher Publ
 func (s *RuntimeState) publishVideoStatusAndShadow(ctx context.Context, publisher Publisher) error {
 	descriptor := s.videoDescriptor()
 	statusPayload := s.videoStatus()
-	statusTopic, _ := BuildVideoStatusTopic(s.config.ThingID)
-	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
+	if err := s.publishVideoRetainedStatus(ctx, publisher, statusPayload); err != nil {
 		return err
 	}
 	return s.publishVideoShadow(ctx, publisher, descriptor, statusPayload)
+}
+
+func (s *RuntimeState) publishVideoRetainedStatus(ctx context.Context, publisher Publisher, statusPayload map[string]interface{}) error {
+	statusTopic, _ := BuildVideoStatusTopic(s.config.ThingID)
+	return publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL)
 }
 
 func (s *RuntimeState) publishVideoShadow(ctx context.Context, publisher Publisher, descriptor, statusPayload map[string]interface{}) error {

@@ -220,6 +220,27 @@ func TestMAVLinkRuntimePublishesDedicatedDescriptorStatusAndShadow(t *testing.T)
 	if _, hasTimestamp := reported["updatedAtMs"]; hasTimestamp || reported["armed"] != true {
 		t.Fatalf("shadow = %#v", shadow)
 	}
+
+	publisher.Clear()
+	if err := state.RefreshCapabilities(context.Background(), publisher, 20); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := publisher.Messages()
+	expectedTopics := []string{
+		"txings/cyberbrick-a1/mavlink/status",
+		"txings/cyberbrick-a1/video/status",
+		"txings/cyberbrick-a1/capability/v2/state",
+	}
+	if len(heartbeat) != len(expectedTopics) {
+		t.Fatalf("heartbeat messages = %#v", heartbeat)
+	}
+	expectedExpiry := uint32(150)
+	for index, topic := range expectedTopics {
+		if heartbeat[index].Topic != topic {
+			t.Fatalf("heartbeat topic[%d] = %q, want %q", index, heartbeat[index].Topic, topic)
+		}
+		assertPublishRetention(t, heartbeat[index], true, &expectedExpiry)
+	}
 }
 
 func TestMAVLinkStatusAlwaysPublishesAnErrorArray(t *testing.T) {

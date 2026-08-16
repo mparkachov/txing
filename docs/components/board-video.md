@@ -76,7 +76,9 @@ The current implementation publishes retained board video service topics:
   and has no MQTT message expiry.
 - `txings/<device_id>/video/status` is retained dynamic state and is published
   with a MQTT 5 Message Expiry Interval equal to
-  `TXING_CAPABILITY_TTL_SECONDS`, defaulting to `150` seconds.
+  `TXING_CAPABILITY_TTL_SECONDS`, defaulting to `150` seconds. The daemon
+  refreshes it at `TXING_HEARTBEAT_SECONDS`, defaulting to `60` seconds, so the
+  retained liveness record remains inside that expiry window.
 
 ```json
 // txings/<device_id>/video/descriptor
@@ -111,6 +113,11 @@ The current implementation publishes retained board video service topics:
 
 The retained video topics are used directly by `rig` for REDCON readiness and
 by the owning device control contract for client-visible video runtime state.
+The `video` named shadow is a durable read model, not a liveness heartbeat: the
+daemon updates it at startup, shutdown, and video state transitions, but does
+not rewrite it during an unchanged periodic heartbeat. The same rule applies
+to the device-specific `mcp` or `mavlink` named shadow. Periodic heartbeats
+refresh only retained dynamic status and capability topics.
 Existing retained AWS IoT messages published before expiry was added are
 replaced only by a same-topic daemon republish; orphaned retained topics require
 manual AWS IoT retained-message cleanup if they matter operationally.

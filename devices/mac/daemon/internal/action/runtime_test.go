@@ -170,6 +170,43 @@ func TestPublishOfflineContract(t *testing.T) {
 	}
 }
 
+func TestHeartbeatRefreshesRetainedStatusWithoutShadowWrites(t *testing.T) {
+	publisher := &recordingPublisher{}
+	state := &sessionState{
+		config:  testConfig(),
+		version: "0.0.0-dev",
+		caps:    &capabilityPublisher{capabilities: testConfig().Capabilities},
+		video:   VideoRuntimeStarting(1),
+	}
+	if err := state.refresh(context.Background(), publisher, 20); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	expectedTopics := []string{
+		"txings/mac-rcg3rg/mcp/status",
+		"txings/mac-rcg3rg/video/status",
+		"txings/mac-rcg3rg/capability/v2/state",
+	}
+	if len(publisher.messages) != len(expectedTopics) {
+		t.Fatalf("heartbeat messages: %+v", publisher.messages)
+	}
+	for index, topic := range expectedTopics {
+		message := publisher.messages[index]
+		if message.Topic != topic {
+			t.Fatalf("heartbeat topic[%d] = %q, want %q", index, message.Topic, topic)
+		}
+		if strings.Contains(message.Topic, "/shadow/") {
+			t.Fatalf("heartbeat wrote named shadow: %s", message.Topic)
+		}
+		if !message.Retain || message.MessageExpirySeconds == nil || *message.MessageExpirySeconds != 150 {
+			t.Fatalf("heartbeat retention[%d]: %+v", index, message)
+		}
+	}
+	if publisher.messages[1].Payload["updatedAtMs"] != float64(20) {
+		t.Fatalf("video heartbeat timestamp: %+v", publisher.messages[1].Payload)
+	}
+}
+
 func TestVideoReadyRaisesCapabilityAndSwitchesTransport(t *testing.T) {
 	publisher := &recordingPublisher{}
 	state := &sessionState{config: testConfig(), version: "0.0.0-dev", caps: &capabilityPublisher{capabilities: testConfig().Capabilities}}

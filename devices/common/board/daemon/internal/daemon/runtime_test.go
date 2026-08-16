@@ -161,7 +161,7 @@ func TestRuntimePublishesBoardShadowMCPVideoAndCapabilityPayloads(t *testing.T) 
 		"$aws/things/unit-local/shadow/name/video/update",
 		"txings/unit-local/capability/v2/state",
 		"txings/unit-local/mcp/status",
-		"$aws/things/unit-local/shadow/name/mcp/update",
+		"txings/unit-local/video/status",
 		"txings/unit-local/capability/v2/state",
 		"$aws/things/unit-local/shadow/name/board/update",
 		"txings/unit-local/mcp/status",
@@ -183,6 +183,7 @@ func TestRuntimePublishesBoardShadowMCPVideoAndCapabilityPayloads(t *testing.T) 
 	assertPublishRetention(t, messages[5], true, &expectedExpiry)
 	assertPublishRetention(t, messages[7], true, &expectedExpiry)
 	assertPublishRetention(t, messages[8], true, &expectedExpiry)
+	assertPublishRetention(t, messages[9], true, &expectedExpiry)
 	assertPublishRetention(t, messages[10], true, &expectedExpiry)
 	assertPublishRetention(t, messages[12], true, &expectedExpiry)
 	assertPublishRetention(t, messages[14], true, &expectedExpiry)
@@ -196,6 +197,16 @@ func TestRuntimePublishesBoardShadowMCPVideoAndCapabilityPayloads(t *testing.T) 
 	mustJSON(t, messages[5].Payload, &videoStatus)
 	if videoStatus["available"] != true || videoStatus["ready"] != false || videoStatus["status"] != VideoStatusStarting {
 		t.Fatalf("unexpected video status: %#v", videoStatus)
+	}
+	var refreshedVideoStatus map[string]interface{}
+	mustJSON(t, messages[9].Payload, &refreshedVideoStatus)
+	if refreshedVideoStatus["updatedAtMs"] != float64(20) {
+		t.Fatalf("unexpected refreshed video status: %#v", refreshedVideoStatus)
+	}
+	for _, message := range messages[8:11] {
+		if strings.HasPrefix(message.Topic, "$aws/things/") {
+			t.Fatalf("heartbeat wrote named shadow: %s", message.Topic)
+		}
 	}
 	var third CapabilityStatePayload
 	mustJSON(t, messages[16].Payload, &third)

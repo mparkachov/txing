@@ -173,6 +173,11 @@ The device-specific control status is retained separately: Unit uses
 `txings/<device_id>/mcp/status`; Cyberbrick uses
 `txings/<device_id>/mavlink/status`.
 
+The daemon refreshes these dynamic status and capability topics at
+`TXING_HEARTBEAT_SECONDS`, which defaults to `60` seconds. Named shadows are
+durable read models and are updated only at startup, shutdown, or a semantic
+state transition; an unchanged periodic heartbeat does not rewrite them.
+
 Descriptor topics are retained discovery/config records and must not expire:
 
 - `txings/<device_id>/video/descriptor`

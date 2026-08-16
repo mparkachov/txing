@@ -16,9 +16,8 @@ import (
 )
 
 const (
-	videoStatusHeartbeatSeconds = 5
-	mqttReconnectDelay          = 3 * time.Second
-	offlinePublishTimeout       = 5 * time.Second
+	mqttReconnectDelay    = 3 * time.Second
+	offlinePublishTimeout = 5 * time.Second
 )
 
 type Logf func(level string, message string)
@@ -218,8 +217,6 @@ func runSession(ctx context.Context, config Config, version string, publisher *M
 	}
 	heartbeat := time.NewTicker(config.Heartbeat)
 	defer heartbeat.Stop()
-	videoStatus := time.NewTicker(videoStatusHeartbeatSeconds * time.Second)
-	defer videoStatus.Stop()
 
 	for {
 		select {
@@ -242,10 +239,6 @@ func runSession(ctx context.Context, config Config, version string, publisher *M
 		case <-heartbeat.C:
 			if err := state.refresh(ctx, publisher, nowMillis()); err != nil {
 				logf("warning", fmt.Sprintf("capability refresh failed error=%q", err))
-			}
-		case <-videoStatus.C:
-			if err := state.refreshVideoStatus(ctx, publisher, nowMillis()); err != nil {
-				logf("warning", fmt.Sprintf("video status refresh failed error=%q", err))
 			}
 		}
 	}
@@ -292,7 +285,12 @@ func (s *sessionState) publishOffline(ctx context.Context, publisher Publisher, 
 }
 
 func (s *sessionState) refresh(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
-	if err := s.publishMCPStatus(ctx, publisher, observedAtMS); err != nil {
+	// Retained dynamic topics expire and need a liveness refresh. Named shadows
+	// do not expire, so only state-change paths should write them.
+	if err := s.refreshMCPStatus(ctx, publisher, observedAtMS); err != nil {
+		return err
+	}
+	if err := s.refreshVideoStatus(ctx, publisher, observedAtMS); err != nil {
 		return err
 	}
 	return s.caps.publish(ctx, publisher, s.config, s.onlineCapabilities(), observedAtMS)
@@ -303,7 +301,7 @@ func (s *sessionState) refreshVideoStatus(ctx context.Context, publisher Publish
 		return nil
 	}
 	s.video.UpdatedAtMS = observedAtMS
-	return s.publishVideoStatusAndShadow(ctx, publisher)
+	return s.publishVideoRetainedStatus(ctx, publisher, s.videoStatus())
 }
 
 func (s *sessionState) handleVideoEvent(ctx context.Context, publisher Publisher, event VideoWorkerEvent, observedAtMS uint64) error {
@@ -393,11 +391,19 @@ func (s *sessionState) publishMCPDiscovery(ctx context.Context, publisher Publis
 
 func (s *sessionState) publishMCPStatus(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
 	statusPayload := MCPStatusPayload(observedAtMS)
-	statusTopic, _ := BuildMCPStatusTopic(s.config.ThingID)
-	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
+	if err := s.publishMCPRetainedStatus(ctx, publisher, statusPayload); err != nil {
 		return err
 	}
 	return s.publishMCPShadow(ctx, publisher, s.mcpDescriptor(), statusPayload)
+}
+
+func (s *sessionState) refreshMCPStatus(ctx context.Context, publisher Publisher, observedAtMS uint64) error {
+	return s.publishMCPRetainedStatus(ctx, publisher, MCPStatusPayload(observedAtMS))
+}
+
+func (s *sessionState) publishMCPRetainedStatus(ctx context.Context, publisher Publisher, statusPayload map[string]interface{}) error {
+	statusTopic, _ := BuildMCPStatusTopic(s.config.ThingID)
+	return publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL)
 }
 
 func (s *sessionState) publishMCPShadow(ctx context.Context, publisher Publisher, descriptor, statusPayload map[string]interface{}) error {
@@ -410,14 +416,18 @@ func (s *sessionState) publishMCPShadow(ctx context.Context, publisher Publisher
 func (s *sessionState) publishVideoStatusAndShadow(ctx context.Context, publisher Publisher) error {
 	descriptor := VideoDescriptor(s.config, s.version)
 	statusPayload := s.videoStatus()
-	statusTopic, _ := BuildVideoStatusTopic(s.config.ThingID)
-	if err := publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL); err != nil {
+	if err := s.publishVideoRetainedStatus(ctx, publisher, statusPayload); err != nil {
 		return err
 	}
 	topic, _ := BuildVideoShadowUpdateTopic(s.config.ThingID)
 	return publishJSON(ctx, publisher, topic, map[string]interface{}{
 		"state": map[string]interface{}{"reported": map[string]interface{}{"descriptor": descriptor, "status": statusPayload}},
 	}, false)
+}
+
+func (s *sessionState) publishVideoRetainedStatus(ctx context.Context, publisher Publisher, statusPayload map[string]interface{}) error {
+	statusTopic, _ := BuildVideoStatusTopic(s.config.ThingID)
+	return publishRetainedDynamicJSON(ctx, publisher, statusTopic, statusPayload, s.config.CapabilityTTL)
 }
 
 func (s *sessionState) videoStatus() map[string]interface{} {
