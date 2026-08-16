@@ -525,6 +525,7 @@ jobs:
             -e ARDUPILOT_SOURCE_ASSET="$ARDUPILOT_SOURCE_ASSET" \
             -e ARDUPILOT_SOURCE_ROOT="$ARDUPILOT_SOURCE_ROOT" \
             -e RELEASE_ASSETS_DIR="$RELEASE_ASSETS_DIR" \
+            -e GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             -e RUNNER_TEMP="$RUNNER_TEMP" \
             docker.io/library/alpine:3.24.1 \
             sh <<'EOF'

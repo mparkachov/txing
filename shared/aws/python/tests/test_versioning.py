@@ -1676,6 +1676,8 @@ class VersionEnvironmentTests(unittest.TestCase):
             'expected_listing="$(printf \'%s\\n%s\' "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS")"',
             workflow,
         )
+        ardupilot_smoke = workflow.split("- name: Run Alpine ArduPilot smoke", 1)[1]
+        self.assertIn('-e GITHUB_WORKSPACE="$GITHUB_WORKSPACE"', ardupilot_smoke)
         self.assertIn("--defaults ${defaults}", runbook)
         self.assertIn("udpin:127.0.0.1:14550", runbook)
         self.assertNotIn("udpin:0.0.0.0:14550", runbook)
