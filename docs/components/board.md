@@ -779,7 +779,8 @@ apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf iprout
 All seven named packages must be listed.
 
 `iproute2` supplies `ss`, used below to confirm that ArduPilot's MAVLink
-listener is restricted to `127.0.0.1:14550`.
+endpoint is restricted to `127.0.0.1:14550` both before and after the local
+MAVLink service connects.
 
 The dev packages are the proven runtime superset from the pinned Alpine build
 container: installing them guarantees every shared library the musl-dynamic
@@ -1393,8 +1394,8 @@ done
 test ! -e /etc/init.d/txing-cyberbrick-hardware-worker
 test ! -e /root/.local/share/mise/installs/txing-cyberbrick-hardware-worker
 ! rc-status default | grep -F txing-cyberbrick-hardware-worker
-ss -lunp | grep -F '127.0.0.1:14550'
-! ss -lunp | grep -F '0.0.0.0:14550'
+ss -uanp | grep -F '127.0.0.1:14550'
+! ss -uanp | grep -F '0.0.0.0:14550'
 grep -F -- '--defaults' /etc/init.d/txing-cyberbrick-ardupilot
 grep -Fx 'FS_GCS_TIMEOUT 1' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
 grep -Fx 'SERVO1_FUNCTION 73' /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot.defaults.parm
@@ -1402,6 +1403,14 @@ grep -Fx 'SERVO2_FUNCTION 74' /root/.local/share/mise/installs/txing-cyberbrick-
 root-ro
 sync
 ```
+
+Use `ss -a`, not `ss -l`, for this check. ArduPilot initially binds the
+`udpin:` endpoint, then connects that UDP socket to the first sender after the
+MAVLink service transmits. At that point `ss -lunp` hides the healthy connected
+socket. The expected steady state is two loopback `ESTAB` rows: ArduPilot at
+`127.0.0.1:14550` and the MAVLink service at an ephemeral local port, each
+pointing at the other. Empty ArduPilot and MAVLink stdout logs are normal when
+neither process has an error to report.
 
 After reviewing the successful checks, reboot manually. It is deliberately
 separate from the copy-paste block.
