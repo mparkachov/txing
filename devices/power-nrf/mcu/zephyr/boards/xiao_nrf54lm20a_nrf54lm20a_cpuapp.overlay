@@ -35,3 +35,21 @@
 		};
 	};
 };
+
+/*
+ * Zephyr's split Nordic clock drivers require the child clock nodes to be
+ * enabled separately.  The LM20A temperature sensor used by the 802.15.4
+ * radio calibration path requires xo; keep the complete stock LM20A clock set
+ * aligned with the Nordic development-board configuration.
+ */
+&xo {
+	status = "okay";
+};
+
+&lfclk {
+	status = "okay";
+};
+
+&xo24m {
+	status = "okay";
+};

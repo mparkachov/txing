@@ -104,6 +104,17 @@ class PowerNrfSedConfigTests(unittest.TestCase):
         self.assertIn('"batteryMv\\\":null}', source)
         self.assertIn("nPM1300 battery measurement unavailable", source)
 
+    def test_split_nordic_clock_nodes_are_enabled(self) -> None:
+        overlay = (
+            POWER_NRF_MCU
+            / "zephyr"
+            / "boards"
+            / "xiao_nrf54lm20a_nrf54lm20a_cpuapp.overlay"
+        ).read_text(encoding="ascii")
+
+        for node in ("xo", "lfclk", "xo24m"):
+            self.assertIn(f'&{node} {{\n\tstatus = "okay";\n}};', overlay)
+
     def test_matter_chip_and_ble_redcon_are_absent(self) -> None:
         contents = "\n".join(
             path.read_text(encoding="ascii").lower()

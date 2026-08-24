@@ -16,9 +16,11 @@ standalone Thread/CoAP firmware app and includes neither Matter/CHIP nor BLE.
 
 The device starts receiver-on only long enough to attach to Thread and register
 its SRP service. It then operates as an MTD sleepy end device using a 5 second
-poll period. REDCON 3 enables power capability, drives XIAO D1 and blue `led0`,
-and changes Thread mode to `rn`. REDCON 4 disables those outputs, returns the
-CoAP response, and then returns Thread mode to `n`.
+poll period. REDCON 3 enables power capability, drives XIAO header pin A1 (SoC
+GPIO `P1.31`) and blue `led0`, and changes Thread mode to `rn`. REDCON 4
+disables those outputs, returns the CoAP response, and then returns Thread mode
+to `n`. The stock Zephyr board definition calls A1 connector index 1, or D1,
+internally.
 
 ## Device and network contract
 

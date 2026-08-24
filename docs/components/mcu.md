@@ -131,6 +131,14 @@ its stock OpenOCD support files; no local board or radio patch is introduced.
 
 - The shared driver provides release, debug, and SED-debug profiles in separate
   `zephyr-xiao_nrf54lm20a_nrf54lm20a_cpuapp*` build directories.
+- `just power-nrf::mcu::build` builds the production release with serial,
+  console, shell, and logging diagnostics disabled; `build-sed-debug` is the
+  diagnostic hardware-acceptance profile.  The default
+  `just power-nrf::mcu::flash` flashes the production release, while
+  `just power-nrf::mcu::flash sed-debug` selects the diagnostic image.
+- The active-high controlled output is header pin A1, SoC GPIO `P1.31`; the
+  stock Zephyr board definition exposes it as `xiao_d` connector index 1 and
+  calls it D1 internally.  The blue `led0` follows the same REDCON state.
 - Factory data uses the versioned `TXN1` layout: magic, version, Thing name,
   Thread Active Operational Dataset TLVs, CoAP port, and CRC32. It is written
   at `0x001f4000` into an 8 KiB read-only factory partition. The remaining
