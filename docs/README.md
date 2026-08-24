@@ -18,6 +18,10 @@ design notes have been folded into the owning component guides.
 - [Repository editing and operational boundaries](./agent-guidance/editing-boundaries.md)
 - [Board operating-system baseline](./components/board.md#operating-system-baseline)
 
+## Approved Designs Pending Implementation
+
+- [TBot Thread device architecture](./history/architecture/tbot-thread-device-architecture.md)
+
 ## Component Guides
 
 - [Rig](./components/rig.md)
