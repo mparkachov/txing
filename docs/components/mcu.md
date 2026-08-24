@@ -1,9 +1,9 @@
 # MCU
 
 Firmware covers the XIAO nRF54L15 BLE targets (`unit`, `power`, and `weather`),
-the XIAO MG24 Thread target (`power-si`), and the XIAO nRF54LM20A Thread target
-(`power-nrf`). These are separate board and transport stacks that share the
-stock Zephyr workspace and MCU command surface.
+the XIAO MG24 Thread target (`power-si`), and the XIAO nRF54LM20A Thread targets
+(`power-nrf` and `tbot`). These are separate board and transport stacks that
+share the stock Zephyr workspace and MCU command surface.
 
 ## nRF Shared Stack Invariant
 
@@ -123,19 +123,22 @@ over Thread, and no Matter/CHIP stack.
 See [devices/power-si/README.md](../../devices/power-si/README.md) for OTBR
 prerequisites, provisioning, manual flashing, and hardware acceptance steps.
 
-## Power nRF XIAO nRF54LM20A
+## nRF54LM20A Thread devices
 
-`power-nrf` is a standalone stock Zephyr/OpenThread application for
-`xiao_nrf54lm20a/nrf54lm20a/cpuapp`. It uses the stock board definition and
-its stock OpenOCD support files; no local board or radio patch is introduced.
+`power-nrf` and `tbot` use one shared stock Zephyr/OpenThread implementation
+under `devices/common/mcu/xiao_nrf54lm20a` for
+`xiao_nrf54lm20a/nrf54lm20a/cpuapp`. Device-owned application configuration
+selects the SRP TXT `type`, default Thing name, and diagnostic-recovery
+Kconfig symbols. They use the stock board definition and stock OpenOCD support
+files; no local board or radio patch is introduced.
 
 - The shared driver provides release, debug, and SED-debug profiles in separate
   `zephyr-xiao_nrf54lm20a_nrf54lm20a_cpuapp*` build directories.
-- `just power-nrf::mcu::build` builds the production release with serial,
+- `just power-nrf::mcu::build` and `just tbot::mcu::build` build the production release with serial,
   console, shell, and logging diagnostics disabled; `build-sed-debug` is the
   diagnostic hardware-acceptance profile.  The default
-  `just power-nrf::mcu::flash` flashes the production release, while
-  `just power-nrf::mcu::flash sed-debug` selects the diagnostic image.
+  `just <device>::mcu::flash` flashes the production release, while
+  `just <device>::mcu::flash sed-debug` selects the diagnostic image.
 - The active-high controlled output is header pin A1, SoC GPIO `P1.31`; the
   stock Zephyr board definition exposes it as `xiao_d` connector index 1 and
   calls it D1 internally.  The blue `led0` follows the same REDCON state.
@@ -144,7 +147,8 @@ its stock OpenOCD support files; no local board or radio patch is introduced.
   at `0x001f4000` into an 8 KiB read-only factory partition. The remaining
   28 KiB of the stock 36 KiB storage region, at `0x001f6000`, is the
   OpenThread settings partition.
-- `just power-nrf::mcu::nve <thing-name> <dataset-tlvs-file>` creates the
+- `just power-nrf::mcu::nve <thing-name> <dataset-tlvs-file>` or
+  `just tbot::mcu::nve <thing-name> <dataset-tlvs-file>` creates the
   factory Intel-HEX using the TXN1 writer and uses the stock LM20A OpenOCD
   configuration to program it. Flashing and provisioning remain manual
   operator actions.
@@ -163,6 +167,8 @@ just power-si::mcu::build
 just power-si::mcu::build-sed-debug
 just power-nrf::mcu::build
 just power-nrf::mcu::build-sed-debug
+just tbot::mcu::build
+just tbot::mcu::build-sed-debug
 ```
 
 Or from `devices/unit/mcu/`:
@@ -185,6 +191,8 @@ just power-si::mcu::flash debug
 just power-si::mcu::flash sed-debug
 just power-nrf::mcu::flash
 just power-nrf::mcu::nve <thing-name> <dataset-tlvs-file>
+just tbot::mcu::flash
+just tbot::mcu::nve <thing-name> <dataset-tlvs-file>
 just mcu::nve <thing-name>
 just mcu::nve <thing-name> <dataset-tlvs-file>
 ```

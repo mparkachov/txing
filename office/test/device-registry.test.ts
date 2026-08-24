@@ -6,6 +6,7 @@ describe('device web adapter registry', () => {
   test('registers installed device detail adapters and returns null for unknown device types', () => {
     const cloudMcuAdapter = getDeviceWebAdapter('cloud-mcu')
     const unitAdapter = getDeviceWebAdapter('unit')
+    const tbotAdapter = getDeviceWebAdapter('tbot')
     const cyberbrickAdapter = getDeviceWebAdapter('cyberbrick')
     const weatherAdapter = getDeviceWebAdapter('weather')
     const powerAdapter = getDeviceWebAdapter('power')
@@ -22,6 +23,12 @@ describe('device web adapter registry', () => {
     expect(unitAdapter?.canUseDriveControl(1)).toBe(true)
     expect(unitAdapter?.canUseDriveControl(2)).toBe(true)
     expect(unitAdapter?.canUseDriveControl(3)).toBe(false)
+    expect(tbotAdapter?.type).toBe('tbot')
+    expect(tbotAdapter?.displayName).toBe('TBot')
+    expect(tbotAdapter?.buildVideoChannelName('tbot-a1')).toBe('tbot-a1-board-video')
+    expect(tbotAdapter?.canUseBoardVideo(1)).toBe(true)
+    expect(tbotAdapter?.canUseDriveControl(1)).toBe(true)
+    expect(tbotAdapter?.canUseDriveControl(2)).toBe(true)
     expect(cyberbrickAdapter?.type).toBe('cyberbrick')
     expect(cyberbrickAdapter?.displayName).toBe('Cyberbrick')
     expect(cyberbrickAdapter?.buildVideoChannelName('cyberbrick-a1')).toBe(
@@ -59,6 +66,7 @@ describe('device web adapter registry', () => {
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
       'cloud-mcu',
       'unit',
+      'tbot',
       'cyberbrick',
       'weather',
       'power',
@@ -103,6 +111,23 @@ describe('device web adapter registry', () => {
         nextRedcon: 1,
       }),
     ).toBeNull()
+  })
+
+  test('keeps the Unit active-control and detail behavior for tbot', () => {
+    const tbotAdapter = getDeviceWebAdapter('tbot')
+
+    expect(
+      tbotAdapter?.getAutoOpenState({
+        detailRedcon: 2,
+        routeKind: 'device',
+        hasActiveSession: true,
+        nextRedcon: 1,
+      }),
+    ).toEqual({
+      isDetailPanelOpen: true,
+      isBoardVideoExpanded: true,
+    })
+    expect(tbotAdapter?.shouldCloseDetail({ detailRedcon: 1, reportedRedcon: 3 })).toBe(true)
   })
 
   test('keeps registered non-mcp device detail panels view-only', () => {

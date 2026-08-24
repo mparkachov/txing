@@ -1,9 +1,10 @@
 # Power nRF device
 
 `power-nrf` is the Thread-only Power device type for the Seeed XIAO
-nRF54LM20A Sense running stock Zephyr.  It has the same `sparkplug`, `thread`,
-and `power` shadow contract and REDCON 3/4 behavior as `power-si`; it has no
-Matter/CHIP or BLE implementation.
+nRF54LM20A Sense running the shared stock Zephyr/OpenThread implementation. It
+has the same `sparkplug`, `thread`, and `power` shadow contract and REDCON 3/4
+behavior as `power-si`; it has no Matter/CHIP or BLE implementation. Its
+device-owned configuration preserves the `power-nrf` SRP service identity.
 
 ## Release status: bench and production behavior passed; enclosure validation outstanding
 

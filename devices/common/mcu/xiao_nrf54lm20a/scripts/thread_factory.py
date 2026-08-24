@@ -221,7 +221,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build power-nrf TXN1 factory data.")
+    parser = argparse.ArgumentParser(description="Build nRF54LM20A Thread TXN1 factory data.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     write_parser = subparsers.add_parser("write-hex", help="write a TXN1 factory HEX file")
     write_parser.add_argument("thing_name", help="Thing name to store")

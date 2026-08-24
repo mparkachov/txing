@@ -10,11 +10,8 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "thread_factory.py"
-POWER_NRF_OVERLAY = (
-    Path(__file__).resolve().parents[4]
-    / "power-nrf"
-    / "mcu"
-    / "zephyr"
+LM20A_OVERLAY = (
+    Path(__file__).resolve().parents[1]
     / "boards"
     / "xiao_nrf54lm20a_nrf54lm20a_cpuapp.overlay"
 )
@@ -97,8 +94,8 @@ class PowerNrfTxn1FactoryTests(unittest.TestCase):
             len(payload),
         )
 
-    def test_overlay_splits_stock_storage_into_factory_and_settings(self) -> None:
-        overlay = POWER_NRF_OVERLAY.read_text(encoding="ascii")
+    def test_shared_overlay_splits_stock_storage_into_factory_and_settings(self) -> None:
+        overlay = LM20A_OVERLAY.read_text(encoding="ascii")
 
         self.assertIn("/delete-node/ partition@1f4000;", overlay)
         self.assertIn("txing_factory_partition: partition@1f4000", overlay)

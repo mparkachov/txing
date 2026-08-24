@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-tbot-video-shadow.schema.json",
+  "title": "TBot Video Named Shadow Contract",
+  "description": "Named shadow 'video' mirrors board video descriptor and status topics.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["descriptor", "status"],
+          "properties": {
+            "descriptor": {"type": ["object", "null"], "additionalProperties": true},
+            "status": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["serviceId", "available", "ready", "status", "viewerConnected", "lastError"],
+              "properties": {
+                "serviceId": {"const": "video"},
+                "available": {"type": "boolean"},
+                "ready": {"type": "boolean"},
+                "status": {"enum": ["starting", "ready", "error", "unavailable"]},
+                "viewerConnected": {"type": "boolean"},
+                "lastError": {"type": ["string", "null"]}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

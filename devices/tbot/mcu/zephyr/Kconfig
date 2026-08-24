@@ -1,0 +1,16 @@
+mainmenu "txing tbot MCU"
+
+source "Kconfig.zephyr"
+
+config TXING_TBOT_SED_RECOVERY
+	bool "Use bounded SED-only Thread recovery"
+	help
+	  Retry a lost sleepy Thread attachment at most three times without
+	  returning to receiver-on bootstrap mode.
+
+config TXING_TBOT_RECEIVER_ON_DIAGNOSTICS
+	bool "Use receiver-on Thread recovery diagnostics"
+	help
+	  Keep ordinary debug recovery in receiver-on mode after a lost SED
+	  attachment. This diagnostic option is intentionally incompatible with
+	  the release and SED-debug bounded SED-only policy.

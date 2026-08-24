@@ -52,6 +52,7 @@ capabilities for each AWS IoT ThingType:
 - `cloud`: `sparkplug`
 - `local`: `sparkplug`
 - `unit`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
+- `tbot`: `sparkplug`, `thread`, `power`, `board`, `mcp`, `video`
 - `cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mavlink`, `video`
 - `cloud-mcu`: `sparkplug`, `sqs`, `power`, `ecs`
 - `weather`: `sparkplug`, `ble`, `power`, `weather`

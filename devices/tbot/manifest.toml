@@ -1,0 +1,42 @@
+type = "tbot"
+device_name = "tbot"
+display_name = "TBot"
+capabilities = ["sparkplug", "thread", "power", "board", "mcp", "video"]
+compatible_rig_types = ["raspi"]
+redcon_command_levels = [4, 3, 2, 1]
+
+[redcon_rules]
+4 = ["sparkplug", "thread"]
+3 = ["sparkplug", "thread", "power"]
+2 = ["sparkplug", "thread", "power", "board", "mcp"]
+1 = ["sparkplug", "thread", "power", "board", "mcp", "video"]
+
+[shadows.sparkplug]
+schema = "aws/sparkplug-shadow.schema.json"
+default = "aws/default-sparkplug-shadow.json"
+
+[shadows.thread]
+schema = "aws/thread-shadow.schema.json"
+default = "aws/default-thread-shadow.json"
+
+[shadows.power]
+schema = "aws/power-shadow.schema.json"
+default = "aws/default-power-shadow.json"
+
+[shadows.board]
+schema = "aws/board-shadow.schema.json"
+default = "aws/default-board-shadow.json"
+
+[shadows.mcp]
+schema = "aws/mcp-shadow.schema.json"
+default = "aws/default-mcp-shadow.json"
+
+[shadows.video]
+schema = "aws/video-shadow.schema.json"
+default = "aws/default-video-shadow.json"
+
+[web]
+adapter = "web/tbot-adapter.tsx"
+
+[resources.board_video]
+channel_name = "{device_id}-board-video"

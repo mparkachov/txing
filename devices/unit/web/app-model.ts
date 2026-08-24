@@ -319,6 +319,10 @@ export const extractReportedMcuOnline = (shadow: unknown): boolean | null => {
   if (reportedBle !== null) {
     return reportedBle
   }
+  const reportedThread = extractSparkplugCapabilityAvailability(shadow, 'thread')
+  if (reportedThread !== null) {
+    return reportedThread
+  }
   return null
 }
 

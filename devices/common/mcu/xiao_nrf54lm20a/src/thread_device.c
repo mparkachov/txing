@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "txing_lm20a_thread_config.h"
+
 #include <zephyr/data/json.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
@@ -23,7 +25,7 @@
 #include <openthread/srp_client.h>
 #include <openthread/thread.h>
 
-LOG_MODULE_REGISTER(txing_power_nrf, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(txing_lm20a_thread, LOG_LEVEL_INF);
 
 #define TXING_PROTOCOL_VERSION 1
 #define TXING_COAP_DEFAULT_PORT 5683
@@ -42,11 +44,11 @@ LOG_MODULE_REGISTER(txing_power_nrf, LOG_LEVEL_INF);
 #define SED_RECOVERY_MAX_ATTEMPTS 3
 
 BUILD_ASSERT(IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED),
-	     "power-nrf must build as a Thread Sleepy End Device");
+	     "LM20A Thread devices must build as Thread Sleepy End Devices");
 BUILD_ASSERT(CONFIG_OPENTHREAD_POLL_PERIOD == 5000,
-	     "power-nrf SED poll period must stay at 5000 ms");
-BUILD_ASSERT(!(IS_ENABLED(CONFIG_TXING_POWER_NRF_SED_RECOVERY) &&
-	       IS_ENABLED(CONFIG_TXING_POWER_NRF_RECEIVER_ON_DIAGNOSTICS)),
+	     "LM20A Thread device SED poll period must stay at 5000 ms");
+BUILD_ASSERT(!(IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG) &&
+	       IS_ENABLED(TXING_LM20A_RECEIVER_ON_DIAGNOSTICS_CONFIG)),
 	     "SED-only recovery and receiver-on diagnostics are mutually exclusive");
 
 static const struct gpio_dt_spec power_gpio = GPIO_DT_SPEC_GET(DT_ALIAS(power), gpios);
@@ -71,7 +73,7 @@ struct redcon_request {
 };
 
 static struct factory_data factory = {
-	.thing_name = "power-nrf-unconfigured",
+	.thing_name = TXING_LM20A_DEFAULT_THING_NAME,
 	.coap_port = TXING_COAP_DEFAULT_PORT,
 };
 static int redcon_level = TXING_REDCON_OFF;
@@ -88,7 +90,7 @@ static const struct json_obj_descr redcon_request_descr[] = {
 };
 
 static otIp6Address srp_host_address;
-static const uint8_t txt_type[] = "power-nrf";
+static const uint8_t txt_type[] = TXING_LM20A_SRP_SERVICE_TYPE;
 static const uint8_t txt_proto[] = "1";
 static const otDnsTxtEntry service_txt[] = {
 	{.mKey = "type", .mValue = txt_type, .mValueLength = sizeof(txt_type) - 1},
@@ -629,7 +631,7 @@ static void schedule_recovery(void)
 	if (atomic_get(&sed_mode_active) == 0 || atomic_get(&recovery_pending) != 0) {
 		return;
 	}
-#if IS_ENABLED(CONFIG_TXING_POWER_NRF_SED_RECOVERY)
+#if IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG)
 	if (atomic_get(&receiver_on_when_idle) != 0 ||
 	    atomic_get(&recovery_attempts) >= SED_RECOVERY_MAX_ATTEMPTS) {
 		return;
@@ -667,14 +669,14 @@ static void recovery_work_handler(struct k_work *work)
 		return;
 	}
 
-#if IS_ENABLED(CONFIG_TXING_POWER_NRF_SED_RECOVERY)
+#if IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG)
 	if (expected_receiver_on || atomic_get(&recovery_attempts) >= SED_RECOVERY_MAX_ATTEMPTS) {
 		openthread_mutex_unlock();
 		return;
 	}
 	atomic_inc(&recovery_attempts);
 	rc = restart_thread_mode_locked(ot, false);
-#elif IS_ENABLED(CONFIG_TXING_POWER_NRF_RECEIVER_ON_DIAGNOSTICS)
+#elif IS_ENABLED(TXING_LM20A_RECEIVER_ON_DIAGNOSTICS_CONFIG)
 	rc = restart_thread_mode_locked(ot, true);
 #else
 	rc = -EOPNOTSUPP;

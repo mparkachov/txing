@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-tbot-mcp-shadow.schema.json",
+  "title": "TBot MCP Named Shadow Contract",
+  "description": "Named shadow 'mcp' mirrors board MCP descriptor and status topics.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["descriptor", "status"],
+          "properties": {
+            "descriptor": {"type": ["object", "null"], "additionalProperties": true},
+            "status": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["serviceId", "available"],
+              "properties": {
+                "serviceId": {"const": "mcp"},
+                "available": {"type": "boolean"},
+                "activeControl": {"type": ["object", "null"]},
+                "updatedAtMs": {"type": "integer", "minimum": 0}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

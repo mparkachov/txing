@@ -21,6 +21,8 @@ type TxingPanelProps = {
   videoChannelName: string
   resolveIdToken: () => Promise<string>
   onBoardVideoRuntimeError: (message: string) => void
+  watchTransport?: 'BLE' | 'Thread'
+  deviceLabel?: string
 }
 
 type TrackGaugeProps = {
@@ -63,8 +65,8 @@ const getBoardWifiToneClass = (boardWifiOnline: boolean | null): string => {
   return 'status-wifi-unknown'
 }
 
-const getBleSignalToneClass = (bleStatusOnline: boolean | null): string =>
-  bleStatusOnline === true ? 'status-signal-online' : 'status-signal-offline'
+const getWatchSignalToneClass = (watchStatusOnline: boolean | null): string =>
+  watchStatusOnline === true ? 'status-signal-online' : 'status-signal-offline'
 
 const getBatteryPercent = (batteryMv: number | null): number | null => {
   if (batteryMv === null || Number.isNaN(batteryMv)) {
@@ -344,9 +346,11 @@ function TxingPanel({
   videoChannelName,
   resolveIdToken,
   onBoardVideoRuntimeError,
+  watchTransport = 'BLE',
+  deviceLabel = 'BOT',
 }: TxingPanelProps) {
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
-  const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
+  const watchSignalToneClass = getWatchSignalToneClass(reportedMcuOnline)
   const shouldRenderBoardVideo = isBoardVideoExpanded && reportedRedcon === 1
   const activeControlOwnership = getActiveControlOwnership(robotControl)
   const activeControlActor = robotControl?.activeControl?.actor
@@ -409,25 +413,25 @@ function TxingPanel({
         <McpTransportGlyph transport={mcpTransport} />
       </div>
       <div className="status-video-overlay-lockup">
-        <div className="status-txing-title-group" role="group" aria-label="Bot drive indicators">
+        <div className="status-txing-title-group" role="group" aria-label={`${deviceLabel} drive indicators`}>
           <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />
           <div className="status-name status-txing-name status-video-overlay-name" aria-hidden="true">
-            BOT
+            {deviceLabel}
           </div>
           <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
         </div>
       </div>
       <div className="status-video-overlay-side status-video-overlay-side-end">
-        <div className="status-video-overlay-metrics" aria-label="Bot connectivity indicators">
+        <div className="status-video-overlay-metrics" aria-label={`${deviceLabel} connectivity indicators`}>
           <div
-            className={`status-signal ${bleSignalToneClass}`}
+            className={`status-signal ${watchSignalToneClass}`}
             role="img"
             aria-label={
               reportedMcuOnline === true
-                ? 'BLE online'
+                ? `${watchTransport} online`
                 : reportedMcuOnline === false
-                  ? 'BLE offline'
-                  : 'BLE status unavailable'
+                  ? `${watchTransport} offline`
+                  : `${watchTransport} status unavailable`
             }
           >
             <span className="status-signal-bar status-signal-bar-1" aria-hidden="true" />

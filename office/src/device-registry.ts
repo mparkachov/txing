@@ -1,5 +1,6 @@
 import cloudMcuDeviceAdapter from '../../devices/cloud-mcu/web/cloud-mcu-adapter'
 import unitDeviceAdapter from '../../devices/unit/web/unit-adapter'
+import tbotDeviceAdapter from '../../devices/tbot/web/tbot-adapter'
 import cyberbrickDeviceAdapter from '../../devices/cyberbrick/web/cyberbrick-adapter'
 import weatherDeviceAdapter from '../../devices/weather/web/weather-adapter'
 import powerDeviceAdapter from '../../devices/power/web/power-adapter'
@@ -11,6 +12,7 @@ import type { DeviceWebAdapter } from './device-adapter'
 const installedDeviceAdapters: readonly DeviceWebAdapter[] = [
   cloudMcuDeviceAdapter,
   unitDeviceAdapter,
+  tbotDeviceAdapter,
   cyberbrickDeviceAdapter,
   weatherDeviceAdapter,
   powerDeviceAdapter,

@@ -1,3 +1,4 @@
+/* Shared XIAO nRF54LM20A D1 output and TXN1/OpenThread storage layout. */
 / {
 	aliases {
 		power = &power_out;

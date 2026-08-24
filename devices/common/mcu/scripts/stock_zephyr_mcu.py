@@ -39,6 +39,7 @@ COMMON_BUILD_DIR = COMMON_MCU_DIR / "build"
 NVE_HEX = COMMON_BUILD_DIR / "redcon-factory-nve.hex"
 POWER_SI_FACTORY_HEX = COMMON_BUILD_DIR / "power-si-thread-factory.hex"
 POWER_NRF_FACTORY_HEX = COMMON_BUILD_DIR / "power-nrf-thread-factory.hex"
+TBOT_FACTORY_HEX = COMMON_BUILD_DIR / "tbot-thread-factory.hex"
 NRF_OPENOCD_SUPPORT_DIR = ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54l15" / "support"
 NRF_OPENOCD_CFG = NRF_OPENOCD_SUPPORT_DIR / "openocd.cfg"
 POWER_NRF_OPENOCD_SUPPORT_DIR = (
@@ -208,6 +209,30 @@ DEVICE_CONFIGS = {
         release_conf=PROJECT_ROOT
         / "devices"
         / "power-nrf"
+        / "mcu"
+        / "zephyr"
+        / "release.conf",
+        flash_runner="openocd-nrf54lm20a",
+    ),
+    "tbot": DeviceConfig(
+        board="xiao_nrf54lm20a/nrf54lm20a/cpuapp",
+        build_name="zephyr-xiao_nrf54lm20a_nrf54lm20a_cpuapp",
+        overlay_name="xiao_nrf54lm20a_nrf54lm20a_cpuapp.overlay",
+        debug_conf=PROJECT_ROOT
+        / "devices"
+        / "tbot"
+        / "mcu"
+        / "zephyr"
+        / "debug.conf",
+        sed_debug_conf=PROJECT_ROOT
+        / "devices"
+        / "tbot"
+        / "mcu"
+        / "zephyr"
+        / "sed-debug.conf",
+        release_conf=PROJECT_ROOT
+        / "devices"
+        / "tbot"
         / "mcu"
         / "zephyr"
         / "release.conf",
@@ -438,9 +463,9 @@ def build_profile(device: str, *, profile: str = "release", debug: bool = False)
         )
     if device == "power-si" and selected.name == "release":
         selected = POWER_SI_RELEASE_PROFILE
-    if device == "power-nrf" and selected.name == "release":
+    if device in ("power-nrf", "tbot") and selected.name == "release":
         selected = POWER_NRF_RELEASE_PROFILE
-    if device == "power-nrf" and selected.name == "sed-debug":
+    if device in ("power-nrf", "tbot") and selected.name == "sed-debug":
         selected = POWER_NRF_SED_DEBUG_PROFILE
     if selected.use_silabs_ccm_candidate and device != "power-si":
         fail(f"{selected.name} is only supported for power-si")
@@ -582,7 +607,7 @@ def check() -> None:
     if not THREAD_FACTORY_SCRIPT.exists():
         fail(f"missing power-si TXT1 factory script: {THREAD_FACTORY_SCRIPT}")
     if not POWER_NRF_FACTORY_SCRIPT.exists():
-        fail(f"missing power-nrf TXN1 factory script: {POWER_NRF_FACTORY_SCRIPT}")
+        fail(f"missing nRF54LM20A TXN1 factory script: {POWER_NRF_FACTORY_SCRIPT}")
     if not (ZEPHYR_BASE / "boards" / "seeed" / "xiao_mg24").is_dir():
         fail("missing stock Zephyr Seeed XIAO MG24 board support. Run: just mcu::install")
     if not (ZEPHYR_BASE / "boards" / "seeed" / "xiao_nrf54lm20a").is_dir():
@@ -634,6 +659,13 @@ def prj_conf(device: str) -> Path:
 
 
 def overlay_file(device: str) -> Path:
+    if device in ("power-nrf", "tbot"):
+        return (
+            COMMON_MCU_DIR
+            / "xiao_nrf54lm20a"
+            / "boards"
+            / device_config(device).overlay_name
+        )
     return app_dir(device) / "boards" / device_config(device).overlay_name
 
 
@@ -768,7 +800,7 @@ def build(device: str, *, debug: bool = False, profile: str = "release") -> None
 
 def clean(device: str) -> None:
     for profile in ACTIVE_BUILD_PROFILES:
-        if profile == "sed-debug" and device not in ("power-si", "power-nrf"):
+        if profile == "sed-debug" and device not in ("power-si", "power-nrf", "tbot"):
             continue
         path = build_dir(device, profile=profile)
         if path.exists():
@@ -999,12 +1031,13 @@ def power_si_nve(thing_name: str, dataset_tlvs: Path, port: int) -> None:
     run_west_flash("power-si", POWER_SI_FACTORY_HEX)
 
 
-def build_power_nrf_factory_hex(
-    thing_name: str, dataset_tlvs: Path, output: Path | None, port: int
+def build_lm20a_thread_factory_hex(
+    device: str, thing_name: str, dataset_tlvs: Path, output: Path | None, port: int
 ) -> None:
     if not POWER_NRF_FACTORY_SCRIPT.exists():
-        fail(f"missing power-nrf TXN1 factory script: {POWER_NRF_FACTORY_SCRIPT}")
-    factory_hex = output or POWER_NRF_FACTORY_HEX
+        fail(f"missing nRF54LM20A TXN1 factory script: {POWER_NRF_FACTORY_SCRIPT}")
+    default_output = POWER_NRF_FACTORY_HEX if device == "power-nrf" else TBOT_FACTORY_HEX
+    factory_hex = output or default_output
     factory_hex.parent.mkdir(parents=True, exist_ok=True)
     run(
         [
@@ -1024,19 +1057,20 @@ def build_power_nrf_factory_hex(
     )
 
 
-def power_nrf_nve(thing_name: str, dataset_tlvs: Path, port: int) -> None:
-    build_power_nrf_factory_hex(thing_name, dataset_tlvs, POWER_NRF_FACTORY_HEX, port)
-    run_openocd("power-nrf", POWER_NRF_FACTORY_HEX)
+def lm20a_thread_nve(device: str, thing_name: str, dataset_tlvs: Path, port: int) -> None:
+    factory_hex = POWER_NRF_FACTORY_HEX if device == "power-nrf" else TBOT_FACTORY_HEX
+    build_lm20a_thread_factory_hex(device, thing_name, dataset_tlvs, factory_hex, port)
+    run_openocd(device, factory_hex)
 
 
 def nve(device: str | None, thing_name: str, dataset_tlvs: Path | None, port: int) -> None:
-    if device == "power-nrf":
+    if device in ("power-nrf", "tbot"):
         if dataset_tlvs is None:
-            fail("power-nrf nve requires <thing-name> <dataset-tlvs-file>")
-        power_nrf_nve(thing_name, dataset_tlvs, port)
+            fail(f"{device} nve requires <thing-name> <dataset-tlvs-file>")
+        lm20a_thread_nve(device, thing_name, dataset_tlvs, port)
         return
     if device not in (None, "power-si"):
-        fail("nve supports power-nrf or the existing TXR1/TXT1 command forms")
+        fail("nve supports power-nrf, tbot, or the existing TXR1/TXT1 command forms")
     if dataset_tlvs is None:
         nrf_nve(thing_name)
         return
@@ -1119,8 +1153,8 @@ def main() -> None:
         )
     elif args.command == "thread-factory-hex":
         device = require_device(args.command, args.device)
-        if device not in ("power-si", "power-nrf"):
-            fail("thread-factory-hex is only supported for --device power-si or power-nrf")
+        if device not in ("power-si", "power-nrf", "tbot"):
+            fail("thread-factory-hex is only supported for --device power-si, power-nrf, or tbot")
         if args.thing_name is None or args.dataset_tlvs is None:
             fail("thread-factory-hex requires <thing-name> <dataset-tlvs-file>")
         if device == "power-si":
@@ -1131,7 +1165,8 @@ def main() -> None:
                 args.port,
             )
         else:
-            build_power_nrf_factory_hex(
+            build_lm20a_thread_factory_hex(
+                device,
                 args.thing_name,
                 Path(args.dataset_tlvs),
                 args.output,

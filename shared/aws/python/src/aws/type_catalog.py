@@ -227,6 +227,7 @@ def build_type_records(*, repo_root: Path | None = None) -> dict[str, dict[str, 
 
     for device_type in (
         "unit",
+        "tbot",
         "cyberbrick",
         "cloud-mcu",
         "weather",

@@ -33,5 +33,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "../devices/unit/web/**/*.ts", "../devices/unit/web/**/*.tsx"]
+  "include": ["src", "../devices/unit/web/**/*.ts", "../devices/unit/web/**/*.tsx", "../devices/tbot/web/**/*.ts", "../devices/tbot/web/**/*.tsx"]
 }

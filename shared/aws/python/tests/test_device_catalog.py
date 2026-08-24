@@ -25,7 +25,7 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_lists_only_loadable_device_types(self) -> None:
         self.assertEqual(
             list_loadable_device_types(repo_root=REPO_ROOT),
-            ["cloud-mcu", "cyberbrick", "mac", "power", "power-nrf", "power-si", "unit", "weather"],
+            ["cloud-mcu", "cyberbrick", "mac", "power", "power-nrf", "power-si", "tbot", "unit", "weather"],
         )
 
     def test_loads_unit_manifest(self) -> None:
@@ -56,6 +56,41 @@ class DeviceCatalogTests(unittest.TestCase):
             REPO_ROOT / "devices" / "unit" / "aws" / "default-board-shadow.json",
         )
         self.assertEqual(manifest.web_adapter, "web/unit-adapter.tsx")
+
+    def test_loads_tbot_manifest_with_unit_board_and_thread_contracts(self) -> None:
+        manifest = load_device_manifest("tbot", repo_root=REPO_ROOT)
+
+        self.assertEqual(manifest.type, "tbot")
+        self.assertEqual(manifest.device_name, "tbot")
+        self.assertEqual(manifest.display_name, "TBot")
+        self.assertEqual(
+            manifest.capabilities,
+            ("sparkplug", "thread", "power", "board", "mcp", "video"),
+        )
+        self.assertEqual(manifest.compatible_rig_types, ("raspi",))
+        self.assertEqual(manifest.redcon_command_levels, (4, 3, 2, 1))
+        self.assertEqual(
+            manifest.redcon_rules,
+            {
+                1: ("sparkplug", "thread", "power", "board", "mcp", "video"),
+                2: ("sparkplug", "thread", "power", "board", "mcp"),
+                3: ("sparkplug", "thread", "power"),
+                4: ("sparkplug", "thread"),
+            },
+        )
+        self.assertEqual(
+            [contract.name for contract in manifest.shadows.values()],
+            ["sparkplug", "thread", "power", "board", "mcp", "video"],
+        )
+        self.assertEqual(
+            manifest.render_board_video_channel_name(device_id="tbot-a1"),
+            "tbot-a1-board-video",
+        )
+        self.assertEqual(manifest.web_adapter, "web/tbot-adapter.tsx")
+        for shadow_name in manifest.capabilities:
+            contract = manifest.shadow_contract(shadow_name)
+            self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
+            self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
 
     def test_loads_cyberbrick_manifest_with_mavlink_contract(self) -> None:
         manifest = load_device_manifest("cyberbrick", repo_root=REPO_ROOT)
@@ -232,6 +267,10 @@ class DeviceCatalogTests(unittest.TestCase):
             ("sparkplug", "ble", "power", "board", "mcp", "video"),
         )
         self.assertEqual(
+            capabilities["tbot"],
+            ("sparkplug", "thread", "power", "board", "mcp", "video"),
+        )
+        self.assertEqual(
             capabilities["cyberbrick"],
             ("sparkplug", "ble", "power", "board", "mavlink", "video"),
         )
@@ -247,6 +286,10 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(
             capabilities_for_thing_type("unit", repo_root=REPO_ROOT),
             ("sparkplug", "ble", "power", "board", "mcp", "video"),
+        )
+        self.assertEqual(
+            capabilities_for_thing_type("tbot", repo_root=REPO_ROOT),
+            ("sparkplug", "thread", "power", "board", "mcp", "video"),
         )
         self.assertEqual(
             capabilities_for_thing_type("cyberbrick", repo_root=REPO_ROOT),

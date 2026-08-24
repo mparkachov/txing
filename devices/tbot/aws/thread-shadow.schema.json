@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/txing-tbot-thread-shadow.schema.json",
+  "title": "TBot Thread Named Shadow Contract",
+  "description": "Named shadow 'thread' AWS-side materialized Thread endpoint view for a tbot.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "online": {"type": "boolean"},
+            "service": {"type": ["string", "null"]},
+            "serviceInstance": {"type": ["string", "null"]},
+            "host": {"type": ["string", "null"]},
+            "address": {"type": ["string", "null"]},
+            "port": {"type": ["integer", "null"], "minimum": 0, "maximum": 65535},
+            "protocolVersion": {"type": ["string", "null"]}
+          }
+        }
+      }
+    }
+  }
+}

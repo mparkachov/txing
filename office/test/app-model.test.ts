@@ -398,6 +398,36 @@ describe('app model helpers', () => {
     expect(extractReportedMcuOnline(shadow)).toBe(true)
   })
 
+  test('extracts reported Thread online when BLE is not a device capability', () => {
+    const shadow = {
+      namedShadows: {
+        sparkplug: {
+          state: {
+            reported: {
+              topic: {
+                namespace: 'spBv1.0',
+                groupId: 'town',
+                messageType: 'DDATA',
+                edgeNodeId: 'rig',
+                deviceId: 'tbot-a1',
+              },
+              payload: {
+                metrics: {
+                  redcon: 4,
+                  capability: {
+                    thread: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }
+
+    expect(extractReportedMcuOnline(shadow)).toBe(true)
+  })
+
   test('derives txing power from redcon first and falls back to reported flags', () => {
     expect(
       deriveTxingPoweredOn({

@@ -1,0 +1,46 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet := true
+
+mcu_dir := source_directory()
+project_root := canonicalize(mcu_dir + "/../../..")
+tmp_dir := project_root + "/tmp"
+export TMPDIR := tmp_dir
+common_mcu_dir := canonicalize(project_root + "/devices/common/mcu")
+zephyr_python := env_var_or_default("TXING_MCU_ZEPHYR_PYTHON", "python3")
+zephyr_script := common_mcu_dir + "/scripts/stock_zephyr_mcu.py"
+serial_python := common_mcu_dir + "/.venv/bin/python"
+device_type := "tbot"
+
+@build:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build
+
+@build-debug:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build-debug
+
+@build-sed-debug:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" build-sed-debug
+
+@flash profile='release':
+    @case "{{ profile }}" in \
+      release) "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" flash ;; \
+      debug) "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" --debug flash ;; \
+      sed-debug) "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" --profile sed-debug flash ;; \
+      *) echo "usage: just tbot::mcu::flash [release|debug|sed-debug]" >&2; exit 2 ;; \
+    esac
+
+@nve thing_name dataset_tlvs:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" nve "{{ thing_name }}" "{{ dataset_tlvs }}"
+
+@log port='' baud='115200':
+    @if [ -z "{{ port }}" ]; then \
+      "{{ serial_python }}" -m serial.tools.list_ports; \
+      echo "usage: just tbot::mcu::log <serial-port> [baud]" >&2; \
+    else \
+      "{{ serial_python }}" -m serial.tools.miniterm "{{ port }}" "{{ baud }}"; \
+    fi
+
+@clean:
+    "{{ zephyr_python }}" "{{ zephyr_script }}" --device "{{ device_type }}" clean
+
+@default:
+    @just --list
