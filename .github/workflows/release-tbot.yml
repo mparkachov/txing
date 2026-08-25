@@ -92,7 +92,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
+          docker run --rm -i \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$RUNNER_TEMP:$RUNNER_TEMP" \
             -w /workspace \

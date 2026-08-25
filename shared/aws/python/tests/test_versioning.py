@@ -621,6 +621,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("mise/shims", unit_workflow)
 
         self.assertIn("Build static board artifacts", tbot_workflow)
+        self.assertIn("docker run --rm -i", tbot_workflow)
         self.assertIn("TBOT_DAEMON_ASSET: txing-tbot-daemon-linux-aarch64.tar.gz", tbot_workflow)
         self.assertIn("HARDWARE_WORKER_ASSET: txing-tbot-hardware-worker-linux-aarch64.tar.gz", tbot_workflow)
         self.assertIn("DeviceType=tbot", tbot_workflow)
