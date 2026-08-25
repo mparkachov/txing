@@ -61,6 +61,21 @@ func unitInventory() protocol.InventoryDevice {
 	}
 }
 
+func tbotInventory() protocol.InventoryDevice {
+	return protocol.InventoryDevice{
+		ThingName:           "tbot-1",
+		ThingType:           "tbot",
+		Capabilities:        []string{"sparkplug", "thread", PowerCapability, BoardCapability, MCPCapability, VideoCapability},
+		RedconCommandLevels: []uint8{4, 3, 2, 1},
+		RedconRules: map[uint8][]string{
+			4: {"sparkplug", "thread"},
+			3: {"sparkplug", "thread", PowerCapability},
+			2: {"sparkplug", "thread", PowerCapability, BoardCapability, MCPCapability},
+			1: {"sparkplug", "thread", PowerCapability, BoardCapability, MCPCapability, VideoCapability},
+		},
+	}
+}
+
 func cyberbrickInventory() protocol.InventoryDevice {
 	return protocol.InventoryDevice{
 		ThingName:           "cyberbrick-1",
@@ -686,6 +701,99 @@ func TestBleRedcon4ForgetsOlderBoardCapabilitiesUntilFreshBoardUpdate(t *testing
 	snapshot = state.Snapshot(3000)
 	if got := redconValue(t, snapshot.Redcon); got != 1 {
 		t.Fatalf("redcon = %d, want 1", got)
+	}
+}
+
+func TestTbotThreadLossForgetsBoardEvidenceAndRecoversOnlyAfterFreshState(t *testing.T) {
+	state := NewDeviceRuntimeState(tbotInventory())
+	threadAdapter := "dev.txing.rig.ThreadConnectivity"
+	boardAdapter := "dev.txing.tbot.DaemonBoard"
+	threadOnline := map[string]bool{"sparkplug": true, "thread": true, PowerCapability: true}
+	threadOffline := map[string]bool{"sparkplug": false, "thread": false, PowerCapability: false}
+	boardAndMCPReady := map[string]bool{BoardCapability: true, MCPCapability: true, VideoCapability: false}
+	boardReady := map[string]bool{BoardCapability: true, MCPCapability: true, VideoCapability: true}
+
+	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1", threadOnline,
+		map[string]protocol.MetricValue{protocol.TransportRedconMetric: protocol.MetricInt32(3)}, 1000, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardReady, nil, 1100, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if got := redconValue(t, state.Snapshot(1100).Redcon); got != 1 {
+		t.Fatalf("initial REDCON = %d, want 1", got)
+	}
+	if publication, err := state.DecidePublication(1100); err != nil || publication.Kind != PublicationBirth {
+		t.Fatalf("initial publication = %#v, %v; want DBIRTH", publication, err)
+	}
+
+	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1", threadOffline, nil, 2000, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := state.Snapshot(2000); snapshot.Redcon != nil || snapshot.Capabilities[BoardCapability] || snapshot.Capabilities[MCPCapability] || snapshot.Capabilities[VideoCapability] {
+		t.Fatalf("Thread loss snapshot = %#v, want unavailable with board capabilities cleared", snapshot)
+	}
+	if publication, err := state.DecidePublication(2000); err != nil || publication.Kind != PublicationDeath {
+		t.Fatalf("Thread loss publication = %#v, %v; want one DDEATH", publication, err)
+	}
+	if publication, err := state.DecidePublication(2001); err != nil || publication.Kind != PublicationNone {
+		t.Fatalf("duplicate Thread loss publication = %#v, %v; want none", publication, err)
+	}
+
+	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1", threadOnline,
+		map[string]protocol.MetricValue{protocol.TransportRedconMetric: protocol.MetricInt32(3)}, 3000, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if got := redconValue(t, state.Snapshot(3000).Redcon); got != 3 {
+		t.Fatalf("recovered REDCON = %d, want 3 until fresh board evidence", got)
+	}
+	if publication, err := state.DecidePublication(3000); err != nil || publication.Kind != PublicationBirth || publication.Redcon != 3 {
+		t.Fatalf("recovery publication = %#v, %v; want REDCON 3 DBIRTH", publication, err)
+	}
+
+	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardAndMCPReady, nil, 3100, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if publication, err := state.DecidePublication(3100); err != nil || publication.Kind != PublicationData || publication.Redcon != 2 {
+		t.Fatalf("fresh board/MCP publication = %#v, %v; want REDCON 2 DDATA", publication, err)
+	}
+	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardReady, nil, 3200, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if publication, err := state.DecidePublication(3200); err != nil || publication.Kind != PublicationData || publication.Redcon != 1 {
+		t.Fatalf("fresh video publication = %#v, %v; want REDCON 1 DDATA", publication, err)
+	}
+}
+
+func TestTbotThreadRedconFourForgetsBoardEvidenceUntilFreshUpdate(t *testing.T) {
+	state := NewDeviceRuntimeState(tbotInventory())
+	threadAdapter := "dev.txing.rig.ThreadConnectivity"
+	boardAdapter := "dev.txing.tbot.DaemonBoard"
+	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1",
+		map[string]bool{"sparkplug": true, "thread": true, PowerCapability: true},
+		map[string]protocol.MetricValue{protocol.TransportRedconMetric: protocol.MetricInt32(3)}, 1000, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1",
+		map[string]bool{BoardCapability: true, MCPCapability: true, VideoCapability: true}, nil, 1100, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1",
+		map[string]bool{"sparkplug": true, "thread": true, PowerCapability: false},
+		map[string]protocol.MetricValue{protocol.TransportRedconMetric: protocol.MetricInt32(4)}, 2000, 2)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := state.Snapshot(2000)
+	if got := redconValue(t, snapshot.Redcon); got != 4 || snapshot.Capabilities[BoardCapability] || snapshot.Capabilities[MCPCapability] || snapshot.Capabilities[VideoCapability] {
+		t.Fatalf("REDCON 4 snapshot = %#v, want REDCON 4 with board capabilities cleared", snapshot)
+	}
+	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1",
+		map[string]bool{"sparkplug": true, "thread": true, PowerCapability: true},
+		map[string]protocol.MetricValue{protocol.TransportRedconMetric: protocol.MetricInt32(3)}, 3000, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if got := redconValue(t, state.Snapshot(3000).Redcon); got != 3 {
+		t.Fatalf("wake REDCON = %d, want 3 until fresh board state", got)
 	}
 }
 

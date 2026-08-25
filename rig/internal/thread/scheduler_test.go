@@ -11,12 +11,13 @@ import (
 
 func TestSchedulerPrioritizesCommandOverInFlightMaintenancePoll(t *testing.T) {
 	client := &blockingMaintenanceClient{
+		thingName:   "tbot-001",
 		getStarted:  make(chan struct{}),
 		getCanceled: make(chan struct{}),
 		secondGet:   make(chan struct{}),
 		putStarted:  make(chan struct{}),
 	}
-	runtime := schedulerRuntime(t, client)
+	runtime := tbotSchedulerRuntime(t, client)
 	scheduler := NewScheduler(runtime, 4)
 	scheduler.Start(context.Background())
 	defer scheduler.Close()
@@ -24,12 +25,18 @@ func TestSchedulerPrioritizesCommandOverInFlightMaintenancePoll(t *testing.T) {
 	scheduler.RequestMaintenance()
 	waitForSignal(t, client.getStarted, "maintenance GET start")
 
-	command := schedulerCommand(t, "command-priority", 3)
+	command, err := protocol.NewCapabilityCommand("command-priority", "tbot-001", 1, "test", 9000, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := scheduler.SubmitCommand(command); err != nil {
 		t.Fatal(err)
 	}
 	waitForSignal(t, client.getCanceled, "maintenance GET cancellation")
 	waitForSignal(t, client.putStarted, "command PUT start")
+	if target := client.commandTarget(); target != 3 {
+		t.Fatalf("tbot public REDCON 1 command target = %d, want transport REDCON 3", target)
+	}
 
 	// The cancelled maintenance cycle finishes before a new one may start. A
 	// subsequent tick must still restore periodic state maintenance.
@@ -130,6 +137,16 @@ func schedulerRuntime(t *testing.T, client DeviceClient) *Runtime {
 	return runtime
 }
 
+func tbotSchedulerRuntime(t *testing.T, client DeviceClient) *Runtime {
+	t.Helper()
+	publisher := &recordingPublisher{}
+	runtime := NewRuntime(&fakeDiscoverer{endpoints: []Endpoint{testEndpointFor("tbot-001", DeviceTypeTBot)}}, client, publisher)
+	runtime.NowMS = func() uint64 { return 9000 }
+	runtime.ReconcileInventory(testInventoryFor("tbot-001", DeviceTypeTBot))
+	runtime.recordEndpoints([]Endpoint{testEndpointFor("tbot-001", DeviceTypeTBot)})
+	return runtime
+}
+
 func schedulerCommand(t *testing.T, id string, target uint8) protocol.CapabilityCommand {
 	t.Helper()
 	command, err := protocol.NewCapabilityCommand(id, "power-si-001", target, "test", 9000, 1, nil)
@@ -152,6 +169,8 @@ type blockingMaintenanceClient struct {
 	mu sync.Mutex
 
 	getCalls    int
+	thingName   string
+	putTarget   uint8
 	getStarted  chan struct{}
 	getCanceled chan struct{}
 	secondGet   chan struct{}
@@ -170,12 +189,30 @@ func (c *blockingMaintenanceClient) GetState(ctx context.Context, _ Endpoint) (D
 		return DeviceState{}, ctx.Err()
 	}
 	close(c.secondGet)
-	return DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 3}, nil
+	return DeviceState{ThingName: c.deviceThingName(), ProtocolVersion: "1", Redcon: 3}, nil
 }
 
 func (c *blockingMaintenanceClient) PutRedcon(_ context.Context, _ Endpoint, target uint8) (DeviceState, error) {
+	c.mu.Lock()
+	c.putTarget = target
+	c.mu.Unlock()
 	close(c.putStarted)
-	return DeviceState{ThingName: "power-si-001", ProtocolVersion: "1", Redcon: target}, nil
+	return DeviceState{ThingName: c.deviceThingName(), ProtocolVersion: "1", Redcon: target}, nil
+}
+
+func (c *blockingMaintenanceClient) commandTarget() uint8 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.putTarget
+}
+
+func (c *blockingMaintenanceClient) deviceThingName() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.thingName == "" {
+		return "power-si-001"
+	}
+	return c.thingName
 }
 
 type orderedCommandClient struct {

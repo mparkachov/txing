@@ -142,13 +142,14 @@ func (r *Runtime) HandleCommand(ctx context.Context, command protocol.Capability
 	if r.Publisher == nil || r.Client == nil {
 		return fmt.Errorf("thread runtime is not fully configured")
 	}
-	target, err := protocol.NormalizeThreadTargetRedcon(command.Target.Redcon)
+	spec, ok := r.specFor(command.ThingName)
+	if !ok {
+		return nil
+	}
+	target, err := NormalizeTargetRedcon(spec, command.Target.Redcon)
 	if err != nil {
 		message := err.Error()
 		return r.publishCommandResult(command, protocol.CommandRejected, &message, &command.Target.Redcon)
-	}
-	if _, ok := r.specFor(command.ThingName); !ok {
-		return nil
 	}
 	if protocol.CommandDeadlineExpired(command, r.nowMS()) {
 		message := "command deadline expired"

@@ -16,6 +16,7 @@ const (
 	AdapterID          = "dev.txing.rig.ThreadConnectivity"
 	DeviceTypePowerSI  = "power-si"
 	DeviceTypePowerNRF = "power-nrf"
+	DeviceTypeTBot     = "tbot"
 	ServiceName        = "_txing-coap._udp"
 	DefaultDomain      = "default.service.arpa"
 	DefaultCoAPPort    = uint16(5683)
@@ -98,7 +99,25 @@ func DeviceSpecFromInventory(device protocol.InventoryDevice) *DeviceSpec {
 // this Thread adapter. Keep this list deliberately closed: other Thread
 // services must not be mistaken for a managed power device.
 func IsSupportedDeviceType(thingType string) bool {
-	return thingType == DeviceTypePowerSI || thingType == DeviceTypePowerNRF
+	return thingType == DeviceTypePowerSI || thingType == DeviceTypePowerNRF || thingType == DeviceTypeTBot
+}
+
+// NormalizeTargetRedcon converts a public REDCON command into the two-level
+// MCU transport used by Thread devices. Only tbot exposes the board-backed
+// four-level public ladder; standalone power devices remain commandable at
+// REDCON 3 and 4 only.
+func NormalizeTargetRedcon(spec DeviceSpec, redcon uint8) (uint8, error) {
+	if spec.ThingType == DeviceTypeTBot {
+		switch redcon {
+		case 1, 2, 3:
+			return 3, nil
+		case 4:
+			return 4, nil
+		default:
+			return 0, fmt.Errorf("unsupported tbot target REDCON %d", redcon)
+		}
+	}
+	return protocol.NormalizeThreadTargetRedcon(redcon)
 }
 
 func BuildServiceFQDN(domain string) string {

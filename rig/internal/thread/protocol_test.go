@@ -11,18 +11,20 @@ import (
 	"github.com/mparkachov/txing/rig/internal/protocol"
 )
 
-func TestDiscovererAcceptsSupportedPowerDeviceEndpoints(t *testing.T) {
+func TestDiscovererAcceptsSupportedThreadDeviceEndpoints(t *testing.T) {
 	resolver := &fakeResolver{
 		ptr: map[string][]string{
 			BuildServiceFQDN(DefaultDomain): {
 				"power-si-001._txing-coap._udp.default.service.arpa.",
 				"power-nrf-001._txing-coap._udp.default.service.arpa.",
+				"tbot-001._txing-coap._udp.default.service.arpa.",
 				"unit-001._txing-coap._udp.default.service.arpa.",
 			},
 		},
 		txt: map[string][]string{
 			"power-si-001._txing-coap._udp.default.service.arpa.":  {"type=power-si", "pv=1"},
 			"power-nrf-001._txing-coap._udp.default.service.arpa.": {"type=power-nrf", "pv=1"},
+			"tbot-001._txing-coap._udp.default.service.arpa.":      {"type=tbot", "pv=1"},
 			"unit-001._txing-coap._udp.default.service.arpa.":      {"type=unit", "pv=1"},
 		},
 		srv: map[string][]SRVRecord{
@@ -32,6 +34,9 @@ func TestDiscovererAcceptsSupportedPowerDeviceEndpoints(t *testing.T) {
 			"power-nrf-001._txing-coap._udp.default.service.arpa.": {
 				{Target: "power-nrf-001.default.service.arpa.", Port: 5683},
 			},
+			"tbot-001._txing-coap._udp.default.service.arpa.": {
+				{Target: "tbot-001.default.service.arpa.", Port: 5683},
+			},
 			"unit-001._txing-coap._udp.default.service.arpa.": {
 				{Target: "unit-001.default.service.arpa.", Port: 5683},
 			},
@@ -39,6 +44,7 @@ func TestDiscovererAcceptsSupportedPowerDeviceEndpoints(t *testing.T) {
 		aaaa: map[string][]net.IP{
 			"power-si-001.default.service.arpa.":  {net.ParseIP("fdde:ad00:beef::1")},
 			"power-nrf-001.default.service.arpa.": {net.ParseIP("fdde:ad00:beef::2")},
+			"tbot-001.default.service.arpa.":      {net.ParseIP("fdde:ad00:beef::3")},
 			"unit-001.default.service.arpa.":      {net.ParseIP("fdde:ad00:beef::3")},
 		},
 	}
@@ -53,16 +59,17 @@ func TestDiscovererAcceptsSupportedPowerDeviceEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(endpoints) != 2 {
-		t.Fatalf("endpoints = %#v, want power-si and power-nrf endpoints", endpoints)
+	if len(endpoints) != 3 {
+		t.Fatalf("endpoints = %#v, want supported Thread endpoints", endpoints)
 	}
 	if endpoints[0].ThingName != "power-nrf-001" || endpoints[0].TXT["type"] != DeviceTypePowerNRF ||
-		endpoints[1].ThingName != "power-si-001" || endpoints[1].TXT["type"] != DeviceTypePowerSI {
+		endpoints[1].ThingName != "power-si-001" || endpoints[1].TXT["type"] != DeviceTypePowerSI ||
+		endpoints[2].ThingName != "tbot-001" || endpoints[2].TXT["type"] != DeviceTypeTBot {
 		t.Fatalf("endpoints = %#v", endpoints)
 	}
 }
 
-func TestParseOTCTLSRPServicesFiltersActiveSupportedPowerDevices(t *testing.T) {
+func TestParseOTCTLSRPServicesFiltersActiveSupportedThreadDevices(t *testing.T) {
 	output := `power-si-001._txing-coap._udp.default.service.arpa.
     deleted: false
     port: 5683
@@ -75,6 +82,12 @@ power-nrf-001._txing-coap._udp.default.service.arpa.
     TXT: [type=706f7765722d6e7266, pv=31]
     host: power-nrf-001.default.service.arpa.
     addresses: [fdde:ad00:beef::2]
+tbot-001._txing-coap._udp.default.service.arpa.
+    deleted: false
+    port: 5683
+    TXT: [type=74626f74, pv=31]
+    host: tbot-001.default.service.arpa.
+    addresses: [fdde:ad00:beef::3]
 unit-001._txing-coap._udp.default.service.arpa.
     deleted: false
     port: 5683
@@ -94,11 +107,12 @@ Done
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(endpoints) != 2 {
-		t.Fatalf("endpoints = %#v, want two active supported endpoints", endpoints)
+	if len(endpoints) != 3 {
+		t.Fatalf("endpoints = %#v, want three active supported endpoints", endpoints)
 	}
 	if endpoints[0].ThingName != "power-nrf-001" || endpoints[0].TXT["type"] != DeviceTypePowerNRF ||
-		endpoints[1].ThingName != "power-si-001" || endpoints[1].TXT["type"] != DeviceTypePowerSI {
+		endpoints[1].ThingName != "power-si-001" || endpoints[1].TXT["type"] != DeviceTypePowerSI ||
+		endpoints[2].ThingName != "tbot-001" || endpoints[2].TXT["type"] != DeviceTypeTBot {
 		t.Fatalf("endpoints = %#v", endpoints)
 	}
 	endpoint := endpoints[1]
@@ -204,6 +218,7 @@ func TestDeviceSpecFromInventoryRetainsSupportedDeviceType(t *testing.T) {
 	}{
 		{name: "power-si", thingName: "power-si-001", thingType: DeviceTypePowerSI, want: true},
 		{name: "power-nrf", thingName: "power-nrf-001", thingType: DeviceTypePowerNRF, want: true},
+		{name: "tbot", thingName: "tbot-001", thingType: DeviceTypeTBot, want: true},
 		{name: "unsupported", thingName: "unit-001", thingType: "unit", want: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -244,6 +259,36 @@ func TestRuntimeRejectsEndpointWithMismatchedEnlistedType(t *testing.T) {
 	}
 	if state.Capabilities[ThreadCapability] || state.Capabilities[PowerCapability] {
 		t.Fatalf("mismatched endpoint capability state = %#v", state.Capabilities)
+	}
+}
+
+func TestRuntimeRejectsMismatchedEnlistedTbotEndpoint(t *testing.T) {
+	publisher := &recordingPublisher{}
+	client := &fakeDeviceClient{}
+	runtime := NewRuntime(
+		&fakeDiscoverer{endpoints: []Endpoint{testEndpointFor("tbot-001", DeviceTypePowerNRF)}},
+		client,
+		publisher,
+	)
+	runtime.NowMS = func() uint64 { return 3600 }
+	runtime.ReconcileInventory(testInventoryFor("tbot-001", DeviceTypeTBot))
+
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	command, err := protocol.NewCapabilityCommand("cmd-tbot-mismatch", "tbot-001", 1, "test", 3600, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.HandleCommand(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	if client.putTarget != 0 {
+		t.Fatalf("mismatched tbot endpoint received target REDCON %d", client.putTarget)
+	}
+	results := publisher.commandResults(t)
+	if len(results) == 0 || results[len(results)-1].Status != protocol.CommandFailed {
+		t.Fatalf("command results = %#v, want unavailable failure", results)
 	}
 }
 
@@ -299,16 +344,49 @@ func TestRuntimeConfirmsREDCONAndPublishesShadowsForBothDeviceTypes(t *testing.T
 	}
 }
 
+func TestRuntimeNormalizesTbotPublicRedconWithoutChangingPowerDeviceRules(t *testing.T) {
+	publisher := &recordingPublisher{}
+	client := &fakeDeviceClient{putState: DeviceState{ThingName: "tbot-001", ProtocolVersion: "1", Redcon: 3}}
+	runtime := NewRuntime(
+		&fakeDiscoverer{endpoints: []Endpoint{testEndpointFor("tbot-001", DeviceTypeTBot)}},
+		client,
+		publisher,
+	)
+	runtime.NowMS = func() uint64 { return 4050 }
+	runtime.ReconcileInventory(testInventoryFor("tbot-001", DeviceTypeTBot))
+	runtime.recordEndpoints([]Endpoint{testEndpointFor("tbot-001", DeviceTypeTBot)})
+
+	for _, publicTarget := range []uint8{1, 2, 3} {
+		command, err := protocol.NewCapabilityCommand("cmd-tbot", "tbot-001", publicTarget, "test", 4050, uint64(publicTarget), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := runtime.HandleCommand(context.Background(), command); err != nil {
+			t.Fatal(err)
+		}
+		if client.putTarget != 3 {
+			t.Fatalf("public REDCON %d put target = %d, want transport REDCON 3", publicTarget, client.putTarget)
+		}
+	}
+
+	powerSpec := DeviceSpec{ThingName: "power-si-001", ThingType: DeviceTypePowerSI}
+	if _, err := NormalizeTargetRedcon(powerSpec, 2); err == nil {
+		t.Fatal("power-si accepted public REDCON 2")
+	}
+}
+
 func TestRuntimePollsMixedThreadPowerDeviceTypes(t *testing.T) {
 	publisher := &recordingPublisher{}
 	runtime := NewRuntime(
 		&fakeDiscoverer{endpoints: []Endpoint{
 			testEndpointFor("power-si-001", DeviceTypePowerSI),
 			testEndpointFor("power-nrf-001", DeviceTypePowerNRF),
+			testEndpointFor("tbot-001", DeviceTypeTBot),
 		}},
 		&stateByThingClient{states: map[string]DeviceState{
 			"power-si-001":  {ThingName: "power-si-001", ProtocolVersion: "1", Redcon: 3},
 			"power-nrf-001": {ThingName: "power-nrf-001", ProtocolVersion: "1", Redcon: 4},
+			"tbot-001":      {ThingName: "tbot-001", ProtocolVersion: "1", Redcon: 3},
 		}},
 		publisher,
 	)
@@ -316,6 +394,7 @@ func TestRuntimePollsMixedThreadPowerDeviceTypes(t *testing.T) {
 	runtime.ReconcileInventory(protocol.NewInventory("manager", []protocol.InventoryDevice{
 		testInventoryDevice("power-si-001", DeviceTypePowerSI),
 		testInventoryDevice("power-nrf-001", DeviceTypePowerNRF),
+		testInventoryDevice("tbot-001", DeviceTypeTBot),
 	}, 1, 1000))
 
 	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
@@ -327,6 +406,7 @@ func TestRuntimePollsMixedThreadPowerDeviceTypes(t *testing.T) {
 	}{
 		{thingName: "power-si-001", power: true},
 		{thingName: "power-nrf-001", power: false},
+		{thingName: "tbot-001", power: true},
 	} {
 		stateTopic, err := protocol.BuildCapabilityStateTopic(testCase.thingName, AdapterID)
 		if err != nil {
@@ -593,6 +673,20 @@ func testInventoryFor(thingName string, thingType string) protocol.Inventory {
 }
 
 func testInventoryDevice(thingName string, thingType string) protocol.InventoryDevice {
+	if thingType == DeviceTypeTBot {
+		return protocol.InventoryDevice{
+			ThingName:           thingName,
+			ThingType:           thingType,
+			Capabilities:        []string{"sparkplug", "thread", "power", "board", "mcp", "video"},
+			RedconCommandLevels: []uint8{4, 3, 2, 1},
+			RedconRules: map[uint8][]string{
+				4: {"sparkplug", "thread"},
+				3: {"sparkplug", "thread", "power"},
+				2: {"sparkplug", "thread", "power", "board", "mcp"},
+				1: {"sparkplug", "thread", "power", "board", "mcp", "video"},
+			},
+		}
+	}
 	return protocol.InventoryDevice{
 		ThingName:           thingName,
 		ThingType:           thingType,

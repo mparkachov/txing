@@ -10,10 +10,10 @@ ships three standalone Go daemons:
   publishes local capability state, command results, and BLE-owned shadow
   updates.
 - `txing-thread-connectivity`: owns Thread SRP/DNS-SD discovery and CoAP
-  communication for `power-si` devices, and publishes local capability state,
-  command results, and Thread/power shadow updates. It reads SRP records from
-  a colocated, already-configured OTBR through `ot-ctl`; it does not install or
-  configure OTBR.
+  communication for `power-si`, `power-nrf`, and `tbot` devices, and publishes
+  local capability state, command results, and Thread/power shadow updates. It
+  reads SRP records from a colocated, already-configured OTBR through `ot-ctl`;
+  it does not install or configure OTBR.
 
 The daemons communicate only through local IPC. The default Linux IPC socket is
 `/run/txing-rig/rig-ipc.sock`; the macOS development default is under
@@ -84,15 +84,20 @@ process lifetime. This prevents periodic BLE measurement notifications from
 creating shadow writes when their reported values did not change. A changed
 payload, a new manager process, or a re-enlisted device publishes normally.
 
-`power-si` is a Thread Sleepy End Device with a 5 second poll period. Thread
-REDCON commands remain synchronous, so the Thread CoAP timeout is longer than
-the BLE command timeout to allow one sleepy poll window plus network jitter.
-The Thread daemon coalesces overlapping discovery/state-maintenance cycles and
-uses bounded per-device work scheduling: a received REDCON command cancels an
-in-flight maintenance GET for that device and runs before queued maintenance.
-This prevents a command for a sleeping device from missing its next child poll
-behind periodic state work. The daemon's command-received and
-transition-confirmed logs are the operator evidence for this bound.
+`power-si`, `power-nrf`, and `tbot` are Thread Sleepy End Devices with a 5
+second poll period. Thread REDCON commands remain synchronous, so the Thread
+CoAP timeout is longer than the BLE command timeout to allow one sleepy poll
+window plus network jitter. The Thread daemon coalesces overlapping
+discovery/state-maintenance cycles and uses bounded per-device work scheduling:
+a received REDCON command cancels an in-flight maintenance GET for that device
+and runs before queued maintenance. This prevents a command for a sleeping
+device from missing its next child poll behind periodic state work. `tbot`
+normalizes public REDCON 1, 2, and 3 to transport REDCON 3; `power-si` and
+`power-nrf` accept only transport REDCON 3 and 4. A Thread loss or REDCON 4
+invalidates retained board evidence, so a later tbot wake requires fresh board,
+MCP, and video state before it can project REDCON 2 or 1. The daemon's
+command-received and transition-confirmed logs are the operator evidence for
+this bound.
 The Thread daemon reads the active SRP registry through the configured
 `TXING_THREAD_OT_CTL` command (`ot-ctl` by default). It does not require mDNS
 publication or DNS records in `/etc/resolv.conf`; a rig using `power-si` must

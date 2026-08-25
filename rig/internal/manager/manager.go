@@ -14,6 +14,7 @@ const (
 
 	SparkplugCapability = "sparkplug"
 	BLECapability       = "ble"
+	ThreadCapability    = "thread"
 	PowerCapability     = "power"
 	BoardCapability     = "board"
 	MCPCapability       = "mcp"
@@ -114,7 +115,7 @@ func (s *DeviceRuntimeState) ObserveState(state protocol.CapabilityState) error 
 			return nil
 		}
 	}
-	if stateReportsTransportRedcon4(state) {
+	if stateInvalidatesBoardEvidence(state) {
 		observedAtMS := state.ObservedAtMS
 		for adapterID, existing := range s.adapterStates {
 			if stateDeclaresBoardOwnedCapability(existing) && existing.ObservedAtMS <= observedAtMS {
@@ -123,7 +124,7 @@ func (s *DeviceRuntimeState) ObserveState(state protocol.CapabilityState) error 
 		}
 	} else if stateDeclaresBoardOwnedCapability(state) {
 		for _, existing := range s.adapterStates {
-			if stateReportsTransportRedcon4(existing) && existing.ObservedAtMS >= state.ObservedAtMS {
+			if stateInvalidatesBoardEvidence(existing) && existing.ObservedAtMS >= state.ObservedAtMS {
 				delete(s.adapterStates, state.AdapterID)
 				return nil
 			}
@@ -300,6 +301,19 @@ func stateReportsTransportRedcon4(state protocol.CapabilityState) bool {
 		}
 	}
 	return false
+}
+
+// stateInvalidatesBoardEvidence marks a transport boundary after which board
+// status must be freshly observed. Thread offline state has no transport
+// REDCON metric, unlike a confirmed REDCON 4, so it is explicitly included.
+func stateInvalidatesBoardEvidence(state protocol.CapabilityState) bool {
+	if stateReportsTransportRedcon4(state) {
+		return true
+	}
+	return capabilityIsDeclared(state.Capabilities, PowerCapability) &&
+		!capabilityIsAvailable(state.Capabilities, PowerCapability) &&
+		capabilityIsDeclared(state.Capabilities, ThreadCapability) &&
+		!capabilityIsAvailable(state.Capabilities, ThreadCapability)
 }
 
 func stateReportsOnlyScannerReachability(state protocol.CapabilityState) bool {
