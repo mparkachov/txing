@@ -67,3 +67,30 @@ serial output.
 Target-enclosure hardware acceptance remains a separate milestone task. Do not
 ship a TBot until the specified antenna and enclosure demonstrate repeatable
 Thread control, board boot/recovery, video, and motion-control acceptance.
+
+## Board runtime
+
+TBot uses the shared board daemon, KVS master, and motor hardware worker with
+the `tbot` build identity. Its Thread adapter delivers the same public board,
+MCP, active-control, motor-failsafe, and video behavior as Unit. Build and test
+the board artifacts from the repository root:
+
+```sh
+just tbot::board::test
+just tbot::board::hardware-test-native
+just tbot::board::nerdctl-build
+just tbot::board::nerdctl-smoke
+```
+
+The Alpine/OpenRC installation and maintenance runbook is shared with Unit;
+set `TXING_DEVICE=tbot` and follow [Board](../../docs/components/board.md).
+TBot binaries use the independent `tbot-v*` release stream:
+
+```sh
+just release::build tbot
+```
+
+Release publication never upgrades a board automatically. On the board, an
+operator installs the TBot daemon and hardware worker plus the shared KVS
+master using the documented root-owned `mise` flow, verifies the services, and
+restarts only the affected OpenRC services.

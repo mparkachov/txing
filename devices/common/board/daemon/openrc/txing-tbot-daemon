@@ -1,0 +1,36 @@
+#!/sbin/openrc-run
+
+description="Txing TBot Board Daemon"
+
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-tbot-daemon/latest/txing-tbot-daemon
+directory=/root
+respawn_delay=5
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-tbot-daemon.log
+error_log=/var/log/txing-tbot-daemon.log
+
+depend() {
+    need net
+    use dns ntpd
+    after txing-tbot-hardware-worker
+}
+
+start_pre() {
+    test -x "$command" || return 1
+    checkpath --directory --mode 0755 --owner root:root /run/txing-tbot-daemon
+    # busybox ntpd has no waitsync equivalent, so the gate is the clock
+    # itself: a Pi has no RTC and boots far in the past, which fails TLS
+    # certificate validation. Anything past 2025 means ntpd has stepped it.
+    ntp_waited=0
+    while [ "$(date -u +%Y)" -lt 2025 ] && [ "$ntp_waited" -lt 60 ]; do
+        sleep 2
+        ntp_waited=$((ntp_waited + 2))
+    done
+    if [ "$(date -u +%Y)" -lt 2025 ]; then
+        ewarn "clock is not confirmed synchronized; AWS TLS setup may retry"
+    fi
+    export HOME=/root
+    export TXING_DAEMON_CONFIG_DIR=/root/.config/txing/tbot-daemon
+}

@@ -16,7 +16,7 @@ placeholders to substitute by hand. The one value that varies is the device
 type, carried in `TXING_DEVICE`. Set it once in the shell you are pasting into:
 
 ```sh
-export TXING_DEVICE=cyberbrick      # or: unit
+export TXING_DEVICE=tbot            # or: unit, cyberbrick
 ```
 
 [Confirm OS Baseline](#2-confirm-os-baseline) writes it into the board's
@@ -56,26 +56,26 @@ development paths have independent OS baselines.
 Every value that differs between device types is listed here. Nothing else in
 this document is device-specific.
 
-| Value | `unit` | `cyberbrick` |
-| --- | --- | --- |
-| Daemon binary | `txing-unit-daemon` | `txing-cyberbrick-daemon` |
-| KVS master binary | `txing-board-kvs-master` | `txing-board-kvs-master` |
-| Hardware worker binary | `txing-unit-hardware-worker` | none |
-| MAVLink binary | not applicable | `txing-cyberbrick-mavlink` |
-| ArduPilot binary/defaults | not applicable | `txing-cyberbrick-ardupilot` and `txing-cyberbrick-ardupilot.defaults.parm` |
-| Daemon config directory | `/root/.config/txing/unit-daemon` | `/root/.config/txing/cyberbrick-daemon` |
-| Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | none after MAVLink cutover |
-| MCP adapter id | `dev.txing.unit.Daemon` | not applicable |
-| MAVLink socket | not applicable | `/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock` |
-| Device release version file | `release/versions/unit` | `release/versions/cyberbrick` |
-| Device release tag prefix | `unit-v` | `cyberbrick-v` |
-| Device manifest | `devices/unit/manifest.toml` | `devices/cyberbrick/manifest.toml` |
-| Shadow schemas and defaults | `devices/unit/aws/` | `devices/cyberbrick/aws/` |
+| Value | `unit` | `tbot` | `cyberbrick` |
+| --- | --- | --- | --- |
+| Daemon binary | `txing-unit-daemon` | `txing-tbot-daemon` | `txing-cyberbrick-daemon` |
+| KVS master binary | `txing-board-kvs-master` | `txing-board-kvs-master` | `txing-board-kvs-master` |
+| Hardware worker binary | `txing-unit-hardware-worker` | `txing-tbot-hardware-worker` | none |
+| MAVLink binary | not applicable | not applicable | `txing-cyberbrick-mavlink` |
+| ArduPilot binary/defaults | not applicable | not applicable | `txing-cyberbrick-ardupilot` and `txing-cyberbrick-ardupilot.defaults.parm` |
+| Daemon config directory | `/root/.config/txing/unit-daemon` | `/root/.config/txing/tbot-daemon` | `/root/.config/txing/cyberbrick-daemon` |
+| Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | `/run/txing-tbot-hardware-worker/tbot-hardware.sock` | none after MAVLink cutover |
+| MCP adapter id | `dev.txing.unit.Daemon` | `dev.txing.tbot.Daemon` | not applicable |
+| MAVLink socket | not applicable | not applicable | `/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock` |
+| Device release version file | `release/versions/unit` | `release/versions/tbot` | `release/versions/cyberbrick` |
+| Device release tag prefix | `unit-v` | `tbot-v` | `cyberbrick-v` |
+| Device manifest | `devices/unit/manifest.toml` | `devices/tbot/manifest.toml` | `devices/cyberbrick/manifest.toml` |
+| Shadow schemas and defaults | `devices/unit/aws/` | `devices/tbot/aws/` | `devices/cyberbrick/aws/` |
 
 The daemon derives its values from the device type injected at build time. The
 shared KVS master instead reads `TXING_KVS_WORKER_NAME`,
 `TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH`, `TXING_MAVLINK_BRIDGE_SOCKET_PATH`, and
-the daemon capability profile at service start. Both device types install the
+the daemon capability profile at service start. All device types install the
 same KVS bytes from `release/versions/kvs-master` / `kvs-master-v*`.
 
 Operator commands are device-owned, matching the MCU commands:
@@ -83,7 +83,7 @@ Operator commands are device-owned, matching the MCU commands:
 ```sh
 just ${TXING_DEVICE}::board::nerdctl-build
 just ${TXING_DEVICE}::board::nerdctl-smoke
-just unit::board::hardware-test-native
+just tbot::board::hardware-test-native
 just cyberbrick::board::mavlink-build-alpine
 ```
 
@@ -108,7 +108,7 @@ sockets using two device-independent gRPC packages, defined once in
   daemon calls it for actuator readiness, `cmd_vel`, and stop requests.
   Contract: [Hardware worker](../contracts/unit-hardware-worker.md).
 
-Neither package carries a device name. They remain the shared Unit board
+Neither package carries a device name. They remain the shared Unit/TBot board
 contracts. Cyberbrick is a device-specific exception: it does not expose Board
 MCP and instead has the dedicated local service and daemon bridge in the
 [Cyberbrick MAVLink capability contract](../contracts/cyberbrick-mavlink.md).
@@ -116,9 +116,9 @@ Unit upgrades its three common binaries as a set. Cyberbrick upgrades daemon,
 KVS, MAVLink, and ArduPilot/defaults as a set; see [Maintenance](#maintenance)
 for why a partial upgrade is the worst failure this board has.
 
-## Unit Responsibilities
+## Unit and TBot Responsibilities
 
-The following hardware/MCP responsibilities are Unit-specific. Cyberbrick
+The following hardware/MCP responsibilities apply to Unit and TBot. Cyberbrick
 uses the dedicated MAVLink contract linked above.
 
 - publish the `board` named shadow
@@ -142,10 +142,10 @@ uses the dedicated MAVLink contract linked above.
 ## REDCON Contract
 
 The ladder is declared per device type in `devices/<device>/manifest.toml`.
-For Unit:
+For Unit and TBot:
 
-- `REDCON 4`: BLE GATT is confirmed commandable and the device is in the sleep state.
-- `REDCON 3`: BLE GATT is confirmed commandable and MCU-controlled wakeup power/D1 is enabled.
+- `REDCON 4`: the device transport is confirmed commandable and the device is in the sleep state.
+- `REDCON 3`: the device transport is confirmed commandable and MCU-controlled wakeup power/D1 is enabled.
 - `REDCON 2`: board and MCP are available; video is unavailable or not ready.
 - `REDCON 1`: board, MCP, and video are available.
 
@@ -154,8 +154,8 @@ REDCON1 additionally requires video and the internal `mavlinkArmed` rule.
 
 The board publishes retained v2 capability state for `board`, the
 device-specific control capability, and `video`. `txing-sparkplug-manager`
-consumes that retained state directly for REDCON projection. When BLE confirms
-REDCON `4` / `power=false`, Sparkplug projection clears board-owned capabilities
+consumes that retained state directly for REDCON projection. When the device
+transport confirms REDCON `4` / `power=false`, Sparkplug projection clears board-owned capabilities
 and does not reuse stale retained board state on the next wake; fresh board
 daemon state must arrive before the device's control capability can become
 available again.
@@ -506,7 +506,8 @@ env file.
 
 ## Release Artifacts
 
-Unit installs its daemon and hardware worker from `unit-v*`. Cyberbrick installs
+Unit and TBot install their daemons and hardware workers from their own device
+release streams. Cyberbrick installs
 its daemon, MAVLink, and ArduPilot from `cyberbrick-v*`. Both install the exact
 same KVS master from the independent `kvs-master-v*` stream.
 
@@ -514,6 +515,10 @@ same KVS master from the independent `kvs-master-v*` stream.
 # Unit
 txing-unit-daemon-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
+
+# TBot
+txing-tbot-daemon-linux-aarch64.tar.gz
+txing-tbot-hardware-worker-linux-aarch64.tar.gz
 
 # Cyberbrick
 txing-cyberbrick-daemon-linux-aarch64.tar.gz
@@ -535,6 +540,7 @@ tmpfs-backed boot. Boards use root's persistent mise config and install tree:
 /root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
+/root/.local/share/mise/installs/txing-tbot-hardware-worker/latest/txing-tbot-hardware-worker
 /root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
 /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
 ```
@@ -747,7 +753,7 @@ reboots below, because `/root/.profile` survives them:
 
 ```sh
 root-rw
-export TXING_DEVICE=cyberbrick      # or: unit
+export TXING_DEVICE=tbot            # or: unit, cyberbrick
 grep -qxF "export TXING_DEVICE=$TXING_DEVICE" /root/.profile \
   || echo "export TXING_DEVICE=$TXING_DEVICE" >> /root/.profile
 echo "device type: $TXING_DEVICE"
@@ -880,7 +886,7 @@ On the operator machine, set the thing id and the board's ssh host once, then
 paste:
 
 ```sh
-export TXING_DEVICE=cyberbrick      # or: unit
+export TXING_DEVICE=tbot            # or: unit, cyberbrick
 export THING_ID=...                 # the AWS IoT thing id for this board
 export BOARD_HOST=...               # hostname or address you ssh to
 
@@ -911,6 +917,8 @@ chmod 644 "$CONFIG_DIR/SFSRootCAG2.pem"
 for service in \
   txing-unit-hardware-worker \
   txing-unit-daemon \
+  txing-tbot-hardware-worker \
+  txing-tbot-daemon \
   txing-kvs-master \
   txing-cyberbrick-ardupilot \
   txing-cyberbrick-mavlink \
@@ -1088,7 +1096,7 @@ Each line names the step that fixes it:
 | `step 2a runlevel` | `3` |
 | `step 2a database` | hundreds, not `0` |
 | `step 5 hardware` | `pwmchip0`, the H.264 encoder at `video11`, and one `camera:` line |
-| `step 2 device` | `unit` or `cyberbrick` |
+| `step 2 device` | `unit`, `tbot`, or `cyberbrick` |
 
 These fail in a chain, so fix them in step order: without step 2's package
 baseline there is no `eudev`, so step 2a's `rc-update add udev sysinit` fails
@@ -1097,10 +1105,10 @@ minutes; found later it is a wall of `Error loading shared library` from a
 correct binary, or `configured camera index is not available` from a working
 camera.
 
-#### Unit runtime
+#### Unit and TBot runtime
 
-The following runtime install is for **Unit only**. It installs the Unit daemon,
-KVS master, and hardware worker. Cyberbrick uses [Cyberbrick
+The following runtime install is for **Unit and TBot**. It installs the selected
+device daemon, KVS master, and hardware worker. Cyberbrick uses [Cyberbrick
 runtime](#cyberbrick-runtime) below. Both `"0s"` settings exist
 because a board installs first-party releases minutes after they are published,
 which is exactly the case each default is tuned against:
@@ -1121,10 +1129,13 @@ idempotent, so running it on an already-writable root is harmless.
 
 ```sh
 : "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
-test "$TXING_DEVICE" = unit || {
-  echo 'This Unit runtime block does not apply to Cyberbrick; use Cyberbrick runtime.' >&2
-  exit 1
-}
+case "$TXING_DEVICE" in
+  unit|tbot) ;;
+  *)
+    echo 'This runtime block applies only to Unit and TBot; use Cyberbrick runtime.' >&2
+    exit 1
+    ;;
+esac
 root-rw
 
 install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
@@ -1173,10 +1184,13 @@ loader), and the musl-dynamic KVS master must use the musl interpreter and
 resolve all shared libraries:
 
 ```sh
-test "${TXING_DEVICE:?export the board device type}" = unit || {
-  echo 'Use the Cyberbrick runtime instructions below.' >&2
-  exit 1
-}
+case "${TXING_DEVICE:?export the board device type}" in
+  unit|tbot) ;;
+  *)
+    echo 'Use the Cyberbrick runtime instructions below.' >&2
+    exit 1
+    ;;
+esac
 INSTALLS=/root/.local/share/mise/installs
 DAEMON="$INSTALLS/txing-${TXING_DEVICE}-daemon/latest/txing-${TXING_DEVICE}-daemon"
 KVS="$INSTALLS/txing-board-kvs-master/latest/txing-board-kvs-master"
@@ -1213,7 +1227,7 @@ The KVS service points its TLS at this file through
 SDK cannot verify the signaling chain against the full OS bundle. This anchor
 is stable (valid to 2037).
 
-Install the Unit-owned OpenRC init scripts from the daemon config bundle.
+Install the selected device's OpenRC init scripts from the daemon config bundle.
 There is no OpenRC equivalent of
 unit's `txing-unit.target`; each service is enabled individually and OpenRC
 dependencies order them hardware worker, then daemon, then KVS master. The
@@ -1228,10 +1242,10 @@ supervise-daemon stop signal.
 : "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
 SERVICE_DIR=/root/.config/txing/${TXING_DEVICE}-daemon/services
 install -m 755 \
-  "$SERVICE_DIR/txing-unit-hardware-worker" \
-  /etc/init.d/txing-unit-hardware-worker
-install -m 755 "$SERVICE_DIR/txing-unit-daemon" /etc/init.d/txing-unit-daemon
-install -m 755 "$SERVICE_DIR/txing-kvs-master" /etc/init.d/txing-unit-kvs-master
+  "$SERVICE_DIR/txing-${TXING_DEVICE}-hardware-worker" \
+  /etc/init.d/txing-${TXING_DEVICE}-hardware-worker
+install -m 755 "$SERVICE_DIR/txing-${TXING_DEVICE}-daemon" /etc/init.d/txing-${TXING_DEVICE}-daemon
+install -m 755 "$SERVICE_DIR/txing-kvs-master" /etc/init.d/txing-${TXING_DEVICE}-kvs-master
 for s in hardware-worker daemon kvs-master; do
   service=txing-${TXING_DEVICE}-$s
   sh -n "/etc/init.d/$service"
@@ -1528,10 +1542,10 @@ post-reboot checks:
 root-ro
 ```
 
-The following generic check is Unit-only. Cyberbrick operators use the
+The following generic check is for Unit and TBot. Cyberbrick operators use the
 post-reboot checks in [Cyberbrick runtime](#cyberbrick-runtime) instead.
 
-After reconnecting to a Unit board:
+After reconnecting to a Unit or TBot board:
 
 ```sh
 INSTALLS=/root/.local/share/mise/installs
@@ -1562,7 +1576,7 @@ Expected:
 - the daemon and KVS master start under OpenRC and stay up without a source
   checkout and without network access to GitHub; the KVS master also autostarts
   and completes signaling but stays up only with a camera attached
-- the Unit hardware worker is enabled and owns the Unit motor hardware
+- the selected device's hardware worker is enabled and owns its motor hardware
 - the daemon reports version, MQTT connect, and retained board/MCP/video state
   to CloudWatch (its local OpenRC log is empty by design); confirm locally by a
   stable daemon PID and the bound bridge socket
@@ -1863,7 +1877,7 @@ coupled `apk upgrade` + `mise upgrade` window above.
 Daemon and native board worker commands:
 
 ```sh
-export TXING_DEVICE=cyberbrick      # or: unit
+export TXING_DEVICE=tbot            # or: unit, cyberbrick
 
 just ${TXING_DEVICE}::board::test
 just ${TXING_DEVICE}::board::run

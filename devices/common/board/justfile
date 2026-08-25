@@ -58,10 +58,13 @@ static_toolchain_dir := board_dir + "/target/alpine-static-toolchain"
 @_require-hardware-worker-device device:
     #!/bin/sh
     set -eu
-    if [ "{{device}}" != "unit" ]; then
-      echo "the hardware worker is a Unit-only board component; Cyberbrick uses ArduPilot and MAVLink" >&2
-      exit 2
-    fi
+    case "{{device}}" in
+      unit | tbot) ;;
+      *)
+        echo "the hardware worker is a Unit/TBot board component; Cyberbrick uses ArduPilot and MAVLink" >&2
+        exit 2
+        ;;
+    esac
 
 [private]
 @_device-version device:
@@ -348,7 +351,7 @@ nerdctl-build device:
     timestamp="$(date -u +%s)"
 
     case "$device" in
-      unit)
+      unit | tbot)
         jq -n \
           --arg version "$version" \
           --arg kvsVersion "$kvs_version" \
@@ -412,7 +415,7 @@ nerdctl-smoke device:
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
     kvs_version="$(just --quiet --justfile "{{board_justfile}}" _kvs-version)"
     case "$device" in
-      unit) component_binary="txing-$device-hardware-worker" ;;
+      unit | tbot) component_binary="txing-$device-hardware-worker" ;;
       cyberbrick) component_binary="txing-$device-mavlink" ;;
       *) echo "Unsupported board device type '$device'." >&2; exit 2 ;;
     esac
@@ -459,9 +462,14 @@ nerdctl-smoke device:
         ;;
     esac
 
-    if [ "$component" = "hardware-worker" ] && [ "$device" != "unit" ]; then
-      echo "the hardware worker is a Unit-only board component; Cyberbrick uses ArduPilot and MAVLink" >&2
-      exit 2
+    if [ "$component" = "hardware-worker" ]; then
+      case "$device" in
+        unit | tbot) ;;
+        *)
+          echo "the hardware worker is a Unit/TBot board component; Cyberbrick uses ArduPilot and MAVLink" >&2
+          exit 2
+          ;;
+      esac
     fi
     if [ "$component" = "mavlink" ] && [ "$device" != "cyberbrick" ]; then
       echo "the MAVLink service is a Cyberbrick-only board component" >&2
@@ -701,7 +709,7 @@ nerdctl-smoke device:
         build_daemon
         build_kvs_master
         case "$device" in
-          unit) build_hardware_worker ;;
+          unit | tbot) build_hardware_worker ;;
           cyberbrick) build_mavlink ;;
         esac
         ;;
@@ -725,7 +733,7 @@ nerdctl-smoke device:
         install -m 755 "$output_stage/txing-$device-daemon" "$output_root/bin/txing-$device-daemon"
         install -m 755 "$output_stage/txing-board-kvs-master" "$output_root/bin/txing-board-kvs-master"
         case "$device" in
-          unit)
+          unit | tbot)
             install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
             ;;
           cyberbrick)

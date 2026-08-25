@@ -221,6 +221,8 @@ txing_cert_stage_board_services() {
   install -d -m 700 "$services_dir"
   txing_cert_install_board_service "$devices_dir/common/board/hardware_worker/openrc/txing-unit-hardware-worker" "$services_dir"
   txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-unit-daemon" "$services_dir"
+  txing_cert_install_board_service "$devices_dir/common/board/hardware_worker/openrc/txing-tbot-hardware-worker" "$services_dir"
+  txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-tbot-daemon" "$services_dir"
   txing_cert_install_board_service "$devices_dir/common/board/kvs_master/openrc/txing-kvs-master" "$services_dir"
   txing_cert_install_board_service "$devices_dir/cyberbrick/ardupilot/openrc/txing-cyberbrick-ardupilot" "$services_dir"
   txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-cyberbrick-mavlink" "$services_dir"
@@ -454,7 +456,7 @@ txing_cert_generate_device_daemon_bundle() {
   fi
 
   case "$thing_type" in
-    unit | cyberbrick)
+    unit | tbot | cyberbrick)
       txing_cert_refuse_existing_material "$output_dir" "$tarball_path" "$output_dir/services"
       ;;
     *)
@@ -463,7 +465,7 @@ txing_cert_generate_device_daemon_bundle() {
   esac
   install -d -m 700 "$output_dir"
   case "$thing_type" in
-    unit | cyberbrick)
+    unit | tbot | cyberbrick)
       txing_cert_stage_board_services "$output_dir" "$devices_dir"
       ;;
   esac
@@ -490,7 +492,7 @@ txing_cert_generate_device_daemon_bundle() {
   cert_arn="$(txing_cert_create_iot_bundle "$thing_id" "$output_dir" "$daemon_policy_name")"
   txing_cert_write_daemon_env "$output_dir" "$daemon_env_template" "$thing_id" "$iot_data_endpoint" "$iot_credential_endpoint" "$iot_role_alias" "$video_channel_name" "$cloudwatch_log_group" "$daemon_capabilities"
   case "$thing_type" in
-    unit | cyberbrick)
+    unit | tbot | cyberbrick)
       txing_cert_write_runtime_tarball "$output_dir" "$tarball_path" services
       ;;
     *)
@@ -547,6 +549,9 @@ txing_generate_iot_certificate_bundle() {
       ;;
     deviceType:unit)
       txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" unit-daemon "$devices_dir"
+      ;;
+    deviceType:tbot)
+      txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" tbot-daemon "$devices_dir"
       ;;
     deviceType:cyberbrick)
       txing_cert_generate_device_daemon_bundle "$thing_id" "$thing_type" "$thing_kind" "$output_dir" "$device_env_template" "$thing_json" cyberbrick-daemon "$devices_dir"

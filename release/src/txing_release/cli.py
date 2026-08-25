@@ -61,6 +61,10 @@ COMPONENTS = {
         name="unit",
         version_path=Path("release/versions/unit"),
     ),
+    "tbot": Component(
+        name="tbot",
+        version_path=Path("release/versions/tbot"),
+    ),
     "cyberbrick": Component(
         name="cyberbrick",
         version_path=Path("release/versions/cyberbrick"),

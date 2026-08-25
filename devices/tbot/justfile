@@ -8,5 +8,7 @@ export TMPDIR := tmp_dir
 
 mod mcu 'mcu/justfile'
 
+mod board 'board.just'
+
 @default:
     @just --list

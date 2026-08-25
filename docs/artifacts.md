@@ -27,6 +27,7 @@ publish normal GitHub Releases with component-prefixed tags:
 - Lambda: `release/versions/lambda` publishes Go runtime Lambda artifacts as
   `lambda-vX.Y.Z`
 - unit: `release/versions/unit` publishes `unit-vX.Y.Z`
+- tbot: `release/versions/tbot` publishes `tbot-vX.Y.Z`
 - cyberbrick: `release/versions/cyberbrick` publishes `cyberbrick-vX.Y.Z`
 - shared KVS master: `release/versions/kvs-master` publishes
   `kvs-master-vX.Y.Z`
@@ -51,6 +52,13 @@ Unit releases publish these Linux `aarch64` assets:
 ```text
 txing-unit-daemon-linux-aarch64.tar.gz
 txing-unit-hardware-worker-linux-aarch64.tar.gz
+```
+
+TBot releases publish these Linux `aarch64` assets:
+
+```text
+txing-tbot-daemon-linux-aarch64.tar.gz
+txing-tbot-hardware-worker-linux-aarch64.tar.gz
 ```
 
 Cyberbrick releases publish these Alpine Linux `aarch64` assets:
@@ -88,8 +96,8 @@ file. Each runtime Lambda `.zip` contains one root-level Go executable named
 `bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
-Unit, Cyberbrick, and shared KVS binaries are built in the same pinned Alpine
-release under one linkage contract: the Go daemons plus the Unit hardware
+Unit, TBot, Cyberbrick, and shared KVS binaries are built in the same pinned Alpine
+release under one linkage contract: the Go daemons plus the Unit and TBot hardware
 worker and Cyberbrick MAVLink service are fully static musl binaries that run
 on both Debian and Alpine hosts. The one shared KVS master is dynamically linked
 against musl and stock Alpine libcamera, so it runs on Alpine hosts only. The
@@ -124,12 +132,12 @@ just release::bump kvs-master X.Y.Z
 just release::build kvs-master
 ```
 
-No Unit, Cyberbrick, AWS, or Lambda release/deploy is required unless that
+No Unit, TBot, Cyberbrick, AWS, or Lambda release/deploy is required unless that
 component also changed.
 
 Host `latest` resolution is component-specific: rig mise configs use
 `version_prefix = "rig-v"`, device board configs use `version_prefix = "unit-v"`
-or `version_prefix = "cyberbrick-v"`, and their shared KVS tool uses
+`, `version_prefix = "tbot-v"`, or `version_prefix = "cyberbrick-v"`, and their shared KVS tool uses
 `version_prefix = "kvs-master-v"`. This is
 forward-only operator state; manually replace old host configs that do not
 include the appropriate prefix before relying on `latest`.

@@ -27,7 +27,7 @@ class ReleaseCliTests(unittest.TestCase):
         full_path.write_text(content, encoding="utf-8")
 
     def _write_minimal_repo(self, version: str = "1.2.3") -> None:
-        for component in ("rig", "lambda", "unit", "cyberbrick", "kvs-master", "office"):
+        for component in ("rig", "lambda", "unit", "tbot", "cyberbrick", "kvs-master", "office"):
             self._write(f"release/versions/{component}", f"{version}\n")
         self._write(
             "shared/aws/python/pyproject.toml",
@@ -67,6 +67,7 @@ class ReleaseCliTests(unittest.TestCase):
             self.assertEqual(
                 (cli.ROOT / "release/versions/cyberbrick").read_text(), "1.2.3\n"
             )
+            self.assertEqual((cli.ROOT / "release/versions/tbot").read_text(), "1.2.3\n")
             self.assertEqual(
                 (cli.ROOT / "release/versions/kvs-master").read_text(), "1.2.3\n"
             )
@@ -208,7 +209,7 @@ class ReleaseCliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(
                 stdout.getvalue(),
-                "rig: 1.2.3\nlambda: 1.2.3\nunit: 1.2.3\ncyberbrick: 1.2.3\n"
+                "rig: 1.2.3\nlambda: 1.2.3\nunit: 1.2.3\ntbot: 1.2.3\ncyberbrick: 1.2.3\n"
                 "kvs-master: 1.2.3\noffice: 4.5.6\n",
             )
 

@@ -418,6 +418,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         rig_workflow = (workflow_dir / "release-rig.yml").read_text(encoding="utf-8")
         lambda_workflow = (workflow_dir / "release-lambda.yml").read_text(encoding="utf-8")
         unit_workflow = (workflow_dir / "release-unit.yml").read_text(encoding="utf-8")
+        tbot_workflow = (workflow_dir / "release-tbot.yml").read_text(encoding="utf-8")
         cyberbrick_workflow = (workflow_dir / "release-cyberbrick.yml").read_text(
             encoding="utf-8"
         )
@@ -438,7 +439,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         root_justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
         rig_justfile = (REPO_ROOT / "rig" / "justfile").read_text(encoding="utf-8")
-        # Both device types build from the one shared board justfile.
+        # All board device types build from the one shared board justfile.
         board_justfile = (
             REPO_ROOT / "devices" / "common" / "board" / "justfile"
         ).read_text(encoding="utf-8")
@@ -455,6 +456,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "rig": rig_workflow,
             "lambda": lambda_workflow,
             "unit": unit_workflow,
+            "tbot": tbot_workflow,
             "cyberbrick": cyberbrick_workflow,
         }
         existing_go_workflows = {
@@ -618,6 +620,21 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("curl https://mise.run | sh", unit_workflow)
         self.assertNotIn("mise/shims", unit_workflow)
 
+        self.assertIn("Build static board artifacts", tbot_workflow)
+        self.assertIn("TBOT_DAEMON_ASSET: txing-tbot-daemon-linux-aarch64.tar.gz", tbot_workflow)
+        self.assertIn("HARDWARE_WORKER_ASSET: txing-tbot-hardware-worker-linux-aarch64.tar.gz", tbot_workflow)
+        self.assertIn("DeviceType=tbot", tbot_workflow)
+        self.assertIn("mavlink_proto_root=devices/cyberbrick/proto", tbot_workflow)
+        self.assertIn("txing/board/mavlink_bridge/v1/mavlink_bridge.proto", tbot_workflow)
+        self.assertIn('-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', tbot_workflow)
+        self.assertIn("-DTXING_BOARD_DEVICE_TYPE=tbot", tbot_workflow)
+        self.assertIn("go test ./...", tbot_workflow)
+        self.assertIn("ctest --test-dir", tbot_workflow)
+        self.assertIn("sh release/scripts/assert-board-musl.sh", tbot_workflow)
+        self.assertNotIn("component: kvs-master", tbot_workflow)
+        self.assertNotIn("txing-board-kvs-master", tbot_workflow)
+        self.assertNotIn("apt-get", tbot_workflow)
+
         self.assertIn("build:", cyberbrick_workflow)
         self.assertIn("matrix:", cyberbrick_workflow)
         self.assertIn("component: daemon", cyberbrick_workflow)
@@ -703,6 +720,7 @@ class VersionEnvironmentTests(unittest.TestCase):
                 "release/scripts/smoke-board-cross-distro.sh", workflow
             )
             self.assertIn("- smoke", workflow)
+        self.assertIn("needs: [metadata, build, smoke]", tbot_workflow)
         # One shared board justfile serves both device types; only the
         # device-neutral KVS recipes omit the device argument.
         self.assertIn("nerdctl-smoke device:", board_justfile)
@@ -734,11 +752,12 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("HARDWARE_WORKER_VERSION", release_cli)
         self.assertNotIn("packageVersion", release_cli)
         self.assertIn(
-            'components := "rig lambda unit cyberbrick kvs-master office"', release_justfile
+            'components := "rig lambda unit tbot cyberbrick kvs-master office"', release_justfile
         )
+        self.assertIn('tbot) workflow="release-tbot.yml"', release_justfile)
         self.assertIn('cyberbrick) workflow="release-cyberbrick.yml"', release_justfile)
         self.assertIn('kvs-master) workflow="release-kvs-master.yml"', release_justfile)
-        self.assertIn("unit|cyberbrick|kvs-master|office)", release_justfile)
+        self.assertIn("unit|tbot|cyberbrick|kvs-master|office)", release_justfile)
         self.assertNotIn("kTxingBoardKvsMasterVersion", release_cli)
         self.assertNotIn("shared/aws/python/pyproject.toml", release_cli)
         self.assertNotIn("shared/aws/python/uv.lock", release_cli)
@@ -1239,17 +1258,18 @@ class VersionEnvironmentTests(unittest.TestCase):
         # There is exactly one copy of each board component.
         for component in ("daemon", "kvs_master", "hardware_worker"):
             self.assertTrue((board_dir / component).is_dir())
-        for device_type in ("unit", "cyberbrick"):
+        for device_type in ("unit", "tbot", "cyberbrick"):
             device_dir = REPO_ROOT / "devices" / device_type
             self.assertFalse((device_dir / "board").exists())
             self.assertFalse((device_dir / "daemon").exists())
             # Genuinely per-device material stays with the device.
             self.assertTrue((device_dir / "manifest.toml").is_file())
             self.assertTrue((device_dir / "aws").is_dir())
-        # Unit uses only the shared board contracts. Cyberbrick's flight-control
+        # Unit and TBot use only the shared board contracts. Cyberbrick's flight-control
         # boundary is intentionally device-owned rather than a second copy of a
         # shared board component.
         self.assertFalse((REPO_ROOT / "devices" / "unit" / "proto").exists())
+        self.assertFalse((REPO_ROOT / "devices" / "tbot" / "proto").exists())
         cyberbrick_mavlink = (
             REPO_ROOT
             / "devices"
@@ -1394,7 +1414,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("txing-board-kvs-master", kvs_workflow)
         self.assertNotIn("TXING_BOARD_DEVICE_TYPE", kvs_workflow)
 
-        for device_type in ("unit", "cyberbrick"):
+        for device_type in ("unit", "tbot", "cyberbrick"):
             with self.subTest(device_type=device_type):
                 self.assertTrue(
                     (REPO_ROOT / "release" / "versions" / device_type).is_file()
@@ -1407,7 +1427,7 @@ class VersionEnvironmentTests(unittest.TestCase):
                 ).read_text(encoding="utf-8")
                 self.assertNotIn("TXING_BOARD_KVS_MASTER_VERSION", workflow)
                 self.assertNotIn("component: kvs-master", workflow)
-                if device_type == "unit":
+                if device_type in ("unit", "tbot"):
                     self.assertIn(
                         '-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', workflow
                     )
@@ -1650,7 +1670,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "    txing-${TXING_DEVICE}-hardware-worker\n",
             cyberbrick_board_docs,
         )
-        self.assertIn("#### Unit runtime", cyberbrick_board_docs)
+        self.assertIn("#### Unit and TBot runtime", cyberbrick_board_docs)
         self.assertIn("#### Cyberbrick runtime", cyberbrick_board_docs)
         self.assertNotIn("#### Cyberbrick MAVLink cutover", cyberbrick_board_docs)
         self.assertIn("txing-cyberbrick-mavlink", cyberbrick_board_docs)
@@ -1951,6 +1971,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         service_paths = (
             REPO_ROOT / "devices" / "common" / "board" / "hardware_worker" / "openrc" / "txing-unit-hardware-worker",
             REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-unit-daemon",
+            REPO_ROOT / "devices" / "common" / "board" / "hardware_worker" / "openrc" / "txing-tbot-hardware-worker",
+            REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-tbot-daemon",
             REPO_ROOT / "devices" / "common" / "board" / "kvs_master" / "openrc" / "txing-kvs-master",
             REPO_ROOT / "devices" / "cyberbrick" / "ardupilot" / "openrc" / "txing-cyberbrick-ardupilot",
             REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-cyberbrick-mavlink",
@@ -1968,7 +1990,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn(
             'install -m 755 "$SERVICE_DIR/txing-kvs-master" '
-            "/etc/init.d/txing-unit-kvs-master",
+            "/etc/init.d/txing-${TXING_DEVICE}-kvs-master",
             runbook,
         )
         self.assertIn(

@@ -400,6 +400,8 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         service_files = {
             "txing-unit-hardware-worker",
             "txing-unit-daemon",
+            "txing-tbot-hardware-worker",
+            "txing-tbot-daemon",
             "txing-kvs-master",
             "txing-cyberbrick-ardupilot",
             "txing-cyberbrick-mavlink",
@@ -449,6 +451,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             kvs_script = output_dir / "services" / "txing-kvs-master"
             for service_name, device in (
                 ("txing-unit-kvs-master", "unit"),
+                ("txing-tbot-kvs-master", "tbot"),
                 ("txing-cyberbrick-kvs-master", "cyberbrick"),
             ):
                 with self.subTest(service=service_name):
@@ -493,7 +496,9 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("device_daemon_env_template", aws_justfile)
         self.assertNotIn("mac_daemon_env_template", aws_justfile)
         self.assertNotIn("cyberbrick_daemon_env_template", aws_justfile)
+        self.assertIn("deviceType:tbot)", aws_lib)
         self.assertIn("deviceType:cyberbrick)", aws_lib)
+        self.assertIn("tbot-daemon", aws_lib)
         self.assertIn('"$device_env_template"', aws_lib)
         self.assertIn("cyberbrick-daemon", aws_lib)
         self.assertIn("DaemonKvsMaster", aws_lib)
@@ -1173,6 +1178,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("case \"$thing_kind:$thing_type\" in", aws_lib)
         self.assertIn("rigType:raspi | rigType:local)", aws_lib)
         self.assertIn("deviceType:unit)", aws_lib)
+        self.assertIn("deviceType:tbot)", aws_lib)
         self.assertIn("deviceType:cyberbrick)", aws_lib)
         self.assertIn("deviceType:mac)", aws_lib)
         self.assertIn("txing_cert_generate_generic_bundle", aws_lib)

@@ -26,7 +26,7 @@ depend() {
 
 start_pre() {
     case "$device" in
-        unit | cyberbrick) ;;
+        unit | tbot | cyberbrick) ;;
         *)
             eerror "Unsupported board device type derived from $service_name: $device"
             return 1
@@ -55,7 +55,7 @@ start_pre() {
         cyberbrick)
             export TXING_MAVLINK_BRIDGE_SOCKET_PATH=/run/txing-cyberbrick-daemon/mavlink-bridge.sock
             ;;
-        unit)
+        unit | tbot)
             unset TXING_MAVLINK_BRIDGE_SOCKET_PATH
             ;;
     esac

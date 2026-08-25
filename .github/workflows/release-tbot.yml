@@ -1,0 +1,205 @@
+name: Release tbot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: txing-release-tbot-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_COMPONENT: tbot
+  RELEASE_VERSION_FILE: release/versions/tbot
+  RELEASE_TAG_PREFIX: tbot-v
+  TBOT_DAEMON_ASSET: txing-tbot-daemon-linux-aarch64.tar.gz
+  HARDWARE_WORKER_ASSET: txing-tbot-hardware-worker-linux-aarch64.tar.gz
+
+jobs:
+  metadata:
+    name: Resolve release metadata
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      release_target: ${{ steps.metadata.outputs.release_target }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < "$RELEASE_VERSION_FILE")"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "$RELEASE_VERSION_FILE must contain a semantic version like x.y.z, got: $version" >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
+            echo "$RELEASE_COMPONENT release workflow must be run manually from a branch, got ref type: ${GITHUB_REF_TYPE}" >&2
+            exit 1
+          fi
+          git fetch --tags --force origin
+          latest=""
+          for tag in $(git tag --list "$RELEASE_TAG_PREFIX*"); do
+            candidate="${tag#$RELEASE_TAG_PREFIX}"
+            if [[ "$candidate" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] && { [ -z "$latest" ] || [ "$(printf '%s\n%s\n' "$latest" "$candidate" | sort -V | tail -1)" = "$candidate" ]; }; then
+              latest="$candidate"
+            fi
+          done
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]; then
+            echo "$RELEASE_VERSION_FILE version $version must be greater than latest $RELEASE_COMPONENT release tag ${RELEASE_TAG_PREFIX}${latest}." >&2
+            exit 1
+          fi
+          tag="${RELEASE_TAG_PREFIX}${version}"
+          release_target="$(git rev-parse HEAD)"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "release_target=$release_target" >>"$GITHUB_OUTPUT"
+
+      - name: Reject existing immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; releases are immutable." >&2
+            exit 1
+          fi
+
+  build:
+    name: Build static board artifacts
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/static-toolchain
+          key: board-static-toolchain-alpine3.24.1-${{ hashFiles('release/scripts/build-board-static-toolchain.sh') }}
+
+      - name: Build, test, package, and verify artifacts
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w /workspace \
+            -e VERSION \
+            -e RUNNER_TEMP \
+            docker.io/library/alpine:3.24.1 sh -se <<'EOF'
+          set -eu
+          test "$(cat /etc/alpine-release)" = "3.24.1"
+          test "$(uname -m)" = "aarch64"
+          apk add --no-cache build-base cmake pkgconf git perl ca-certificates curl \
+            curl-dev openssl-dev openssl-libs-static log4cplus-dev libsrtp-dev \
+            libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
+            linux-headers protobuf-dev protobuf grpc-dev grpc-plugins go binutils file tar gzip
+
+          daemon_module=github.com/mparkachov/txing/devices/common/board/daemon
+          plugin_dir="$RUNNER_TEMP/tbot-protoc-plugins"
+          GOBIN="$plugin_dir" go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.10
+          GOBIN="$plugin_dir" go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+          proto_root=devices/common/board/proto
+          mavlink_proto_root=devices/cyberbrick/proto
+          out_dir=devices/common/board/daemon/internal/proto
+          rm -rf "$out_dir"
+          install -d "$out_dir"
+          PATH="$plugin_dir:$PATH" protoc --proto_path="$proto_root" --proto_path="$mavlink_proto_root" \
+            --go_out="$out_dir" --go_opt=module="$daemon_module/internal/proto" \
+            --go_opt=Mtxing/board/hardware/v1/hardware.proto="$daemon_module/internal/proto/hardwarev1" \
+            --go_opt=Mtxing/board/board_video/v1/board_video.proto="$daemon_module/internal/proto/boardvideov1" \
+            --go_opt=Mtxing/board/mavlink/v1/mavlink.proto="$daemon_module/internal/proto/mavlinkv1" \
+            --go_opt=Mtxing/board/mavlink_bridge/v1/mavlink_bridge.proto="$daemon_module/internal/proto/mavlinkbridgev1" \
+            --go-grpc_out="$out_dir" --go-grpc_opt=module="$daemon_module/internal/proto" \
+            --go-grpc_opt=Mtxing/board/hardware/v1/hardware.proto="$daemon_module/internal/proto/hardwarev1" \
+            --go-grpc_opt=Mtxing/board/board_video/v1/board_video.proto="$daemon_module/internal/proto/boardvideov1" \
+            --go-grpc_opt=Mtxing/board/mavlink/v1/mavlink.proto="$daemon_module/internal/proto/mavlinkv1" \
+            --go-grpc_opt=Mtxing/board/mavlink_bridge/v1/mavlink_bridge.proto="$daemon_module/internal/proto/mavlinkbridgev1" \
+            txing/board/hardware/v1/hardware.proto txing/board/board_video/v1/board_video.proto \
+            txing/board/mavlink/v1/mavlink.proto txing/board/mavlink_bridge/v1/mavlink_bridge.proto
+
+          daemon_bin="$RUNNER_TEMP/txing-tbot-daemon"
+          (cd devices/common/board/daemon && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./... && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DeviceType=tbot -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DaemonVersion=$VERSION" -o "$daemon_bin" ./cmd/txing-board-daemon)
+
+          toolchain="$RUNNER_TEMP/static-toolchain"
+          sh release/scripts/build-board-static-toolchain.sh "$toolchain"
+          worker_build="$RUNNER_TEMP/build-txing-tbot-hardware-worker"
+          PATH="$toolchain/bin:$PATH" cmake -S devices/common/board/hardware_worker -B "$worker_build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DTXING_HARDWARE_WORKER_GRPC=ON -DTXING_BOARD_DEVICE_TYPE=tbot -DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION" -DCMAKE_PREFIX_PATH="$toolchain" -DCMAKE_EXE_LINKER_FLAGS=-static -DOPENSSL_USE_STATIC_LIBS=TRUE -DZLIB_USE_STATIC_LIBS=ON
+          PATH="$toolchain/bin:$PATH" cmake --build "$worker_build" --config Release
+          ctest --test-dir "$worker_build" --output-on-failure
+          worker_bin="$worker_build/txing-tbot-hardware-worker"
+
+          for pair in "$daemon_bin:txing-tbot-daemon:txing-tbot-daemon-linux-aarch64.tar.gz" "$worker_bin:txing-tbot-hardware-worker:txing-tbot-hardware-worker-linux-aarch64.tar.gz"; do
+            source="${pair%%:*}"; rest="${pair#*:}"; binary="${rest%%:*}"; asset="${rest#*:}"
+            test "$("$source" --version)" = "$binary $VERSION"
+            package="$RUNNER_TEMP/package-$binary"
+            rm -rf "$package"; install -d "$package"; install -m 755 "$source" "$package/$binary"; strip "$package/$binary"
+            sh release/scripts/assert-board-musl.sh "$package/$binary" static
+            tar -C "$package" -czf "$RUNNER_TEMP/$asset" "$binary"
+            test "$(tar -tzf "$RUNNER_TEMP/$asset")" = "$binary"
+          done
+          EOF
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tbot-board-assets
+          path: |
+            ${{ runner.temp }}/txing-tbot-daemon-linux-aarch64.tar.gz
+            ${{ runner.temp }}/txing-tbot-hardware-worker-linux-aarch64.tar.gz
+          if-no-files-found: error
+
+  smoke:
+    name: Cross-distro smoke
+    runs-on: ubuntu-24.04-arm
+    needs: [metadata, build]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+      - env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          TXING_CONTAINER_CLI: docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_dir="$RUNNER_TEMP/smoke-bin"
+          install -d "$smoke_dir"
+          tar -C "$smoke_dir" -xzf "$RUNNER_TEMP/release-assets/$TBOT_DAEMON_ASSET"
+          tar -C "$smoke_dir" -xzf "$RUNNER_TEMP/release-assets/$HARDWARE_WORKER_ASSET"
+          sh release/scripts/smoke-board-cross-distro.sh "$smoke_dir/txing-tbot-daemon" static "txing-tbot-daemon $VERSION"
+          sh release/scripts/smoke-board-cross-distro.sh "$smoke_dir/txing-tbot-hardware-worker" static "txing-tbot-hardware-worker $VERSION"
+
+  publish:
+    name: Publish release
+    runs-on: ubuntu-24.04-arm
+    needs: [metadata, build, smoke]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_TARGET: ${{ needs.metadata.outputs.release_target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=("$RUNNER_TEMP/release-assets/$TBOT_DAEMON_ASSET" "$RUNNER_TEMP/release-assets/$HARDWARE_WORKER_ASSET")
+          for asset in "${assets[@]}"; do test -s "$asset"; done
+          gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_TARGET" --title "$TAG" --notes "Txing tbot $VERSION release; static Alpine-built daemon and hardware worker." --latest=false
