@@ -835,20 +835,34 @@ runtime. `setup-udev` from `alpine-conf` is not present on all Alpine images;
 wire the services directly, which is equivalent and image-independent:
 
 ```sh
-for s in udev udev-trigger udev-settle; do rc-update add $s sysinit; done
-rc-service udev start
-rc-service udev-trigger start
+for s in udev udev-trigger udev-settle; do
+  rc-update add "$s" sysinit
+  rc-service "$s" start
+done
 ```
 
 Verify:
 
 ```sh
-rc-status sysinit | grep -i udev
-udevadm info --export-db | grep -c '^P:'
+for s in udev udev-trigger udev-settle; do
+  rc-update show sysinit | grep -qxF "$s" || {
+    echo "$s is not enabled in sysinit" >&2
+    exit 1
+  }
+  rc-service "$s" status
+done
+
+UDEV_DEVICE_COUNT="$(udevadm info --export-db | grep -c '^P:')"
+echo "udev database entries: $UDEV_DEVICE_COUNT"
+test "$UDEV_DEVICE_COUNT" -ge 100 || {
+  echo 'udev database is not populated; rerun udev-trigger' >&2
+  exit 1
+}
 ```
 
-All three services must show `started`, and the device count must be in the
-hundreds. `udev-trigger` is the one that matters and the one easiest to skip:
+All three services must be enabled in `sysinit` and report `started`; the
+device count must be at least 100 (normally in the hundreds). `udev-trigger`
+is the one that matters and the one easiest to skip:
 `udevd` alone starts happily with an **empty database**, and libcamera reads the
 database rather than the devices, so it enumerates zero cameras while
 `/run/udev` exists, `rc-service udev status` says `started`, and `/dev/media0`
@@ -983,18 +997,38 @@ grep -qxF 'include usercfg.txt' /boot/config.txt || {
   exit 1
 }
 
-grep -qxF 'dtoverlay=pwm-2chan' /boot/usercfg.txt ||
-  echo 'dtoverlay=pwm-2chan' >> /boot/usercfg.txt
+case "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}" in
+  unit|tbot)
+    PWM_OVERLAY='dtoverlay=pwm-2chan,pin=12,func=4,pin2=13,func2=4'
+    ;;
+  cyberbrick)
+    PWM_OVERLAY='dtoverlay=pwm-2chan'
+    ;;
+  *)
+    echo "unsupported board device type: $TXING_DEVICE" >&2
+    exit 1
+    ;;
+esac
+
+sed -i '/^dtoverlay=pwm-2chan/d' /boot/usercfg.txt
+echo "$PWM_OVERLAY" >> /boot/usercfg.txt
+grep -qxF "$PWM_OVERLAY" /boot/usercfg.txt
 ```
 
 The `pwm-2chan.dtbo` overlay ships in Alpine's `raspberrypi-bootloader`
-content already present on the boot FAT partition. Its standard two-channel
-mapping is GPIO 18 for PWM0 and GPIO 19 for PWM1; the patched ArduPilot target
-uses the corresponding `pwmchip0` channels 0 and 1, so it needs no extra
-`usercfg.txt` parameters. `/sys/class/pwm/pwmchip0` appears only after a reboot;
-until then the hardware worker logs `PWM chip path does not exist` on every
-start. The camera changes below need a reboot too, so the single one at the end
-of this step covers both.
+content already present on the boot FAT partition. The kernel exposes its two
+channels as `pwmchip0` channels 0 and 1 regardless of which header pins the
+overlay assigns. Unit and TBot motor controllers are wired to GPIO 12 and 13,
+so they require the explicit `pin`/`func` parameters above; their hardware
+worker uses those PWM channels with direction GPIO 5 and 6. Cyberbrick uses the
+overlay defaults, GPIO 18 for PWM0 and GPIO 19 for PWM1, and has no direction
+GPIO configuration. Do not substitute the Cyberbrick default overlay on Unit
+or TBot: the worker can report ready while the motor controller receives no
+PWM signal.
+
+`/sys/class/pwm/pwmchip0` appears only after a reboot; until then the hardware
+worker logs `PWM chip path does not exist` on every start. The camera changes
+below need a reboot too, so the single one at the end of this step covers both.
 
 Enable firmware autodetection for the connected supported CSI camera and the
 two kernel modules needed by the current KVS video path. These settings belong
@@ -1071,13 +1105,26 @@ printf 'step 2  packages: '
 apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf iproute2 \
   | sort | tr '\n' ' '; echo
 
-printf 'step 2a runlevel: '
-rc-status sysinit | grep -c -E 'udev|udev-trigger|udev-settle'
+printf 'step 2a runlevel:\n'
+for s in udev udev-trigger udev-settle; do
+  rc-update show sysinit | grep -qxF "$s" || {
+    echo "$s is not enabled in sysinit" >&2
+    exit 1
+  }
+  rc-service "$s" status
+done
 
 printf 'step 2a database: '
-command -v udevadm >/dev/null \
-  && udevadm info --export-db | grep -c '^P:' \
-  || echo 'udevadm absent - eudev not installed, do step 2 first'
+command -v udevadm >/dev/null || {
+  echo 'udevadm absent - eudev not installed, do step 2 first' >&2
+  exit 1
+}
+UDEV_DEVICE_COUNT="$(udevadm info --export-db | grep -c '^P:')"
+echo "$UDEV_DEVICE_COUNT"
+test "$UDEV_DEVICE_COUNT" -ge 100 || {
+  echo 'udev database is not populated; rerun udev-trigger' >&2
+  exit 1
+}
 
 printf 'step 5  hardware: '
 ls -d /sys/class/pwm/pwmchip0 /dev/video11 2>&1 | tr '\n' ' '; echo
@@ -1093,8 +1140,8 @@ Each line names the step that fixes it:
 | Line | Expected |
 | --- | --- |
 | `step 2 packages` | all seven named |
-| `step 2a runlevel` | `3` |
-| `step 2a database` | hundreds, not `0` |
+| `step 2a runlevel` | each of `udev`, `udev-trigger`, and `udev-settle` reports `status: started` |
+| `step 2a database` | at least `100` (normally hundreds) |
 | `step 5 hardware` | `pwmchip0`, the H.264 encoder at `video11`, and one `camera:` line |
 | `step 2 device` | `unit`, `tbot`, or `cyberbrick` |
 
@@ -1552,6 +1599,19 @@ INSTALLS=/root/.local/share/mise/installs
 
 mount | grep ' / '
 rc-status default
+for s in udev udev-trigger udev-settle; do
+  rc-update show sysinit | grep -qxF "$s" || {
+    echo "$s is not enabled in sysinit" >&2
+    exit 1
+  }
+  rc-service "$s" status
+done
+UDEV_DEVICE_COUNT="$(udevadm info --export-db | grep -c '^P:')"
+echo "udev database entries: $UDEV_DEVICE_COUNT"
+test "$UDEV_DEVICE_COUNT" -ge 100 || {
+  echo 'udev database is not populated; rerun udev-trigger' >&2
+  exit 1
+}
 for s in hardware-worker daemon kvs-master; do
   rc-service txing-${TXING_DEVICE}-$s status
 done
@@ -1580,9 +1640,10 @@ Expected:
 - the daemon reports version, MQTT connect, and retained board/MCP/video state
   to CloudWatch (its local OpenRC log is empty by design); confirm locally by a
   stable daemon PID and the bound bridge socket
-- udev is in the `sysinit` runlevel and `/run/udev` exists after the reboot,
-  so libcamera enumerates the camera on a cold boot and not only in the
-  session where the modules were loaded by hand
+- `udev`, `udev-trigger`, and `udev-settle` are each enabled in `sysinit`,
+  report `started`, and have a populated database after the reboot; this is
+  required for libcamera to enumerate the camera on a cold boot rather than
+  only in the session where the modules were loaded by hand
 
 With a camera attached, confirm the full video path end to end:
 
@@ -1600,6 +1661,9 @@ and H.264 encoding without opening a KVS session, which separates camera
 faults from AWS faults. Under the service, `TXING_KVS_READY` is emitted on the
 first encoded keyframe and is the same event that reports `READY` over the
 bridge and raises the `video` capability; REDCON reaches `1` shortly after.
+Do not treat the generic service checks as a video pass: this section is
+complete only when the direct probe prints `TXING_KVS_CAMERA_PROBE_OK` and the
+restarted service logs `TXING_KVS_READY`.
 
 Motor movement on both PWM channels is the remaining first bring-up
 confirmation. Record deviations as milestone findings instead of patching
