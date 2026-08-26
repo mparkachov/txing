@@ -19,7 +19,9 @@ code changes begin.
    terminology, safety rules, and cross-cutting decisions there instead of
    burying them in tasks.
 5. End Plan Mode by materializing the plan into the undated GitHub Milestone
-   and implementation-step GitHub Issues assigned to it, then stop.
+   and implementation-step GitHub Issues assigned to it. After the Issues
+   exist, add their explicit dependency-ordered implementation sequence to the
+   Milestone description, then stop.
 6. `/goal <one milestone>`: execute exactly one milestone at a time. Stay within
    the selected milestone and do not continue into later milestones without the
    user's explicit instruction.
@@ -54,6 +56,11 @@ otherwise approves a plan:
   reviewable change, split it into smaller follow-up Issues under the same
   Milestone. Use native sub-issues where a parent/child relationship clarifies
   the work breakdown.
+- After all Issues exist, update the Milestone description with an
+  `Implementation order` section that lists every Issue by number in the order
+  it should be executed. Derive the order from dependencies, put final
+  integration or acceptance work after its prerequisites, and update the list
+  whenever the Milestone's Issue set or dependencies change.
 - Make each Issue atomic and verifiable.
 - Use outcome-based acceptance criteria in each Issue description. Avoid criteria that merely name a
   function, file, class, or implementation technique.

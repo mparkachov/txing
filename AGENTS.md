@@ -82,6 +82,9 @@ unless a shared contract or consistency issue requires coordinated updates.
 - Create Milestones without a due date. Their descriptions hold the approved
   plan's outcome, scope, dependencies, validation strategy, risks, non-goals,
   and exit criteria.
+- After creating the Milestone's Issues, update its description with an
+  explicit implementation order that lists every Issue by number. Order the
+  Issues by dependency and keep the list current if the Issue set changes.
 - Assign every implementation Issue to its Milestone. Use native sub-issues when
   a parent/child relationship improves the work breakdown; keep both Issues in
   the same Milestone.
