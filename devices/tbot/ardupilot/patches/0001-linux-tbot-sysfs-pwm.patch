@@ -1,0 +1,529 @@
+diff --git a/libraries/AP_HAL/AP_HAL_Boards.h b/libraries/AP_HAL/AP_HAL_Boards.h
+index 6bb859cfdb..b6b894f1b7 100644
+--- a/libraries/AP_HAL/AP_HAL_Boards.h
++++ b/libraries/AP_HAL/AP_HAL_Boards.h
+@@ -52,6 +52,7 @@
+ #define HAL_BOARD_SUBTYPE_LINUX_T3_GEM_O1  1029
+ #define HAL_BOARD_SUBTYPE_LINUX_RSAXVC_V1  1030
+ #define HAL_BOARD_SUBTYPE_LINUX_RPI        1031
++#define HAL_BOARD_SUBTYPE_LINUX_TBOT_SYSFS_PWM 1032
+ 
+ /* HAL CHIBIOS sub-types, starting at 5000
+ 
+diff --git a/libraries/AP_HAL_Linux/HAL_Linux_Class.cpp b/libraries/AP_HAL_Linux/HAL_Linux_Class.cpp
+index 0a20a51134..47ae686fe5 100644
+--- a/libraries/AP_HAL_Linux/HAL_Linux_Class.cpp
++++ b/libraries/AP_HAL_Linux/HAL_Linux_Class.cpp
+@@ -60,7 +60,8 @@ using namespace Linux;
+     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIGATOR ||  \
+     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_OBAL_V1 || \
+     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_CANZERO || \
+-    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PILOTPI
++    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PILOTPI || \
++    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_TBOT_SYSFS_PWM
+ static UtilRPI utilInstance;
+ #else
+ static Util utilInstance;
+@@ -233,6 +234,10 @@ RCOutput_Multi::RCOutputGroup rcoutSysfsDriver = {2, NEW_NOTHROW RCOutput_Sysfs(
+ static RCOutput_Multi rcoutDriver{2, &rcoutPcaDriver, &rcoutSysfsDriver};
+ #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_T3_GEM_O1
+ static RCOutput_Sysfs rcoutDriver(0, 0, 7);
++#elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_TBOT_SYSFS_PWM
++static RCOutput_Sysfs rcoutDriver(HAL_RCOUT_SYSFS_CHIP,
++                                  HAL_RCOUT_SYSFS_CHANNEL_BASE,
++                                  HAL_RCOUT_SYSFS_CHANNEL_COUNT);
+ #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_RPI
+ static RCOutput_RPI rcoutDriver;
+ #else
+diff --git a/libraries/AP_HAL_Linux/PWM_Sysfs.cpp b/libraries/AP_HAL_Linux/PWM_Sysfs.cpp
+index 9c7997e242..33d542b203 100644
+--- a/libraries/AP_HAL_Linux/PWM_Sysfs.cpp
++++ b/libraries/AP_HAL_Linux/PWM_Sysfs.cpp
+@@ -46,31 +46,44 @@ PWM_Sysfs_Base::~PWM_Sysfs_Base()
+ {
+     ::close(_duty_cycle_fd);
+ 
++    free(_export_path);
+     free(_polarity_path);
+     free(_enable_path);
++    free(_duty_path);
+     free(_period_path);
+ }
+ 
+ void PWM_Sysfs_Base::init()
++{
++    if (!init_no_panic()) {
++        AP_HAL::panic("LinuxPWM_Sysfs: unable to initialize PWM channel");
++    }
++}
++
++bool PWM_Sysfs_Base::init_no_panic()
+ {
+     if (_export_path == nullptr || _enable_path == nullptr ||
+         _period_path == nullptr || _duty_path == nullptr) {
+-        AP_HAL::panic("PWM_Sysfs: export=%p enable=%p period=%p duty=%p"
+-                      " required path is NULL", _export_path, _enable_path,
+-                      _period_path, _duty_path);
++        hal.console->printf("PWM_Sysfs: export=%p enable=%p period=%p duty=%p required path is NULL\n",
++                            _export_path, _enable_path, _period_path, _duty_path);
++        return false;
+     }
+     /* Not checking the return of write_file since it will fail if
+      * the pwm has already been exported
+      */
+     Util::from(hal.util)->write_file(_export_path, "%u", _channel);
+     free(_export_path);
++    _export_path = nullptr;
+ 
+     _duty_cycle_fd = ::open(_duty_path, O_RDWR | O_CLOEXEC);
+     if (_duty_cycle_fd < 0) {
+-        AP_HAL::panic("LinuxPWM_Sysfs:Unable to open file %s: %s",
+-                      _duty_path, strerror(errno));
++        hal.console->printf("LinuxPWM_Sysfs: unable to open file %s: %s\n",
++                            _duty_path, strerror(errno));
++        return false;
+     }
+     free(_duty_path);
++    _duty_path = nullptr;
++    return true;
+ }
+ 
+ void PWM_Sysfs_Base::enable(bool value)
+diff --git a/libraries/AP_HAL_Linux/PWM_Sysfs.h b/libraries/AP_HAL_Linux/PWM_Sysfs.h
+index 678b4aeb3b..e8a4ea69d2 100644
+--- a/libraries/AP_HAL_Linux/PWM_Sysfs.h
++++ b/libraries/AP_HAL_Linux/PWM_Sysfs.h
+@@ -17,25 +17,26 @@ public:
+     };
+ 
+     void init();
+-    void enable(bool value);
++    bool init_no_panic();
++    virtual void enable(bool value);
+     bool is_enabled();
+     void set_period(uint32_t nsec_period);
+-    uint32_t get_period();
+-    void set_freq(uint32_t freq);
+-    uint32_t get_freq();
++    virtual uint32_t get_period();
++    virtual void set_freq(uint32_t freq);
++    virtual uint32_t get_freq();
+ 
+     /*
+      * This is the main method, to be called on hot path. It doesn't log any
+      * failure so not to risk flooding the log. If logging is necessary, check
+      * the return value.
+      */
+-    bool set_duty_cycle(uint32_t nsec_duty_cycle);
++    virtual bool set_duty_cycle(uint32_t nsec_duty_cycle);
+ 
+     /*
+      * This is supposed to be called in the hot path, so it returns the cached
+      * value rather than getting it from hardware.
+      */
+-    uint32_t get_duty_cycle();
++    virtual uint32_t get_duty_cycle();
+ 
+     virtual void set_polarity(PWM_Sysfs_Base::Polarity polarity);
+     virtual PWM_Sysfs_Base::Polarity get_polarity();
+diff --git a/libraries/AP_HAL_Linux/RCOutput_Sysfs.cpp b/libraries/AP_HAL_Linux/RCOutput_Sysfs.cpp
+index e18af16352..ff3bd8afb3 100644
+--- a/libraries/AP_HAL_Linux/RCOutput_Sysfs.cpp
++++ b/libraries/AP_HAL_Linux/RCOutput_Sysfs.cpp
+@@ -25,22 +25,32 @@ RCOutput_Sysfs::RCOutput_Sysfs(uint8_t chip, uint8_t channel_base, uint8_t chann
+     : _chip(chip)
+     , _channel_base(channel_base)
+     , _channel_count(channel_count)
+-    , _pwm_channels(NEW_NOTHROW PWM_Sysfs_Base *[_channel_count])
+-    , _pending(NEW_NOTHROW uint16_t[_channel_count])
++    , _pwm_channels(NEW_NOTHROW PWM_Sysfs_Base *[_channel_count]())
++    , _corked(false)
++    , _pending(NEW_NOTHROW uint16_t[_channel_count]())
++    , _pending_mask(0)
++    , _brushed_mask(0)
+ {
+ }
+ 
+ RCOutput_Sysfs::~RCOutput_Sysfs()
+ {
+-    for (uint8_t i = 0; i < _channel_count; i++) {
+-        delete _pwm_channels[i];
++    neutralize_all();
++    if (_pwm_channels != nullptr) {
++        for (uint8_t i = 0; i < _channel_count; i++) {
++            delete _pwm_channels[i];
++        }
+     }
+ 
+     delete [] _pwm_channels;
++    delete [] _pending;
+ }
+ 
+ void RCOutput_Sysfs::init()
+ {
++    if (_pwm_channels == nullptr || _pending == nullptr) {
++        fail("allocate PWM channel state");
++    }
+     for (uint8_t i = 0; i < _channel_count; i++) {
+ #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_DISCO
+         _pwm_channels[i] = NEW_NOTHROW PWM_Sysfs_Bebop(_channel_base+i);
+@@ -59,14 +69,18 @@ void RCOutput_Sysfs::init()
+         _pwm_channels[i] = NEW_NOTHROW PWM_Sysfs(_chip, _channel_base+i);
+ #endif
+         if (!_pwm_channels[i]) {
+-            AP_HAL::panic("RCOutput_Sysfs_PWM: Unable to setup PWM pin.");
++            fail("allocate PWM channel");
++        }
++        if (!_pwm_channels[i]->init_no_panic()) {
++            fail("initialize PWM channel");
+         }
+-        _pwm_channels[i]->init();
+         _pwm_channels[i]->enable(false);
+ 
+         /* Set the initial frequency */
+         _pwm_channels[i]->set_freq(50);
+-        _pwm_channels[i]->set_duty_cycle(0);
++        if (!_pwm_channels[i]->set_duty_cycle(0)) {
++            fail("initialize PWM duty cycle");
++        }
+         _pwm_channels[i]->set_polarity(PWM_Sysfs::Polarity::NORMAL);
+     }
+ }
+@@ -74,7 +88,7 @@ void RCOutput_Sysfs::init()
+ void RCOutput_Sysfs::set_freq(uint32_t chmask, uint16_t freq_hz)
+ {
+     for (uint8_t i = 0; i < _channel_count; i++) {
+-        if (chmask & 1 << i) {
++        if (chmask & (1U << i)) {
+             _pwm_channels[i]->set_freq(freq_hz);
+         }
+     }
+@@ -89,6 +103,16 @@ uint16_t RCOutput_Sysfs::get_freq(uint8_t ch)
+     return _pwm_channels[ch]->get_freq();
+ }
+ 
++void RCOutput_Sysfs::set_output_mode(uint32_t mask, enum output_mode mode)
++{
++    const uint32_t channel_mask = (1U << _channel_count) - 1U;
++    mask &= channel_mask;
++    _brushed_mask &= ~mask;
++    if (mode == MODE_PWM_BRUSHED) {
++        _brushed_mask |= mask;
++    }
++}
++
+ void RCOutput_Sysfs::enable_ch(uint8_t ch)
+ {
+     if (ch >= _channel_count) {
+@@ -104,9 +128,17 @@ void RCOutput_Sysfs::disable_ch(uint8_t ch)
+         return;
+     }
+ 
++    if (!_pwm_channels[ch]->set_duty_cycle(0)) {
++        fail("neutralize disabled PWM channel");
++    }
+     _pwm_channels[ch]->enable(false);
+ }
+ 
++bool RCOutput_Sysfs::force_safety_on()
++{
++    return neutralize_all();
++}
++
+ void RCOutput_Sysfs::write(uint8_t ch, uint16_t period_us)
+ {
+     if (ch >= _channel_count) {
+@@ -115,8 +147,8 @@ void RCOutput_Sysfs::write(uint8_t ch, uint16_t period_us)
+     if (_corked) {
+         _pending[ch] = period_us;
+         _pending_mask |= (1U<<ch);
+-    } else {
+-        _pwm_channels[ch]->set_duty_cycle(usec_to_nsec(period_us));
++    } else if (!set_duty_cycle(ch, period_us)) {
++        fail("write PWM duty cycle");
+     }
+ }
+ 
+@@ -126,7 +158,18 @@ uint16_t RCOutput_Sysfs::read(uint8_t ch)
+         return 1000;
+     }
+ 
+-    return nsec_to_usec(_pwm_channels[ch]->get_duty_cycle());
++    if (!is_brushed(ch)) {
++        return nsec_to_usec(_pwm_channels[ch]->get_duty_cycle());
++    }
++
++    const uint32_t period_ns = _pwm_channels[ch]->get_period();
++    if (period_ns == 0 || _esc_pwm_max <= _esc_pwm_min) {
++        return _esc_pwm_min;
++    }
++    const uint32_t duty_ns = _pwm_channels[ch]->get_duty_cycle();
++    const uint64_t output_us = _esc_pwm_min +
++        (static_cast<uint64_t>(duty_ns) * (_esc_pwm_max - _esc_pwm_min)) / period_ns;
++    return MIN(output_us, _esc_pwm_max);
+ }
+ 
+ void RCOutput_Sysfs::read(uint16_t *period_us, uint8_t len)
+@@ -151,12 +194,79 @@ void RCOutput_Sysfs::push(void)
+     }
+     for (uint8_t i=0; i<_channel_count; i++) {
+         if ((1U<<i) & _pending_mask) {
+-            _pwm_channels[i]->set_duty_cycle(usec_to_nsec(_pending[i]));
++            if (!set_duty_cycle(i, _pending[i])) {
++                fail("write corked PWM duty cycle");
++            }
+         }
+     }
+     _pending_mask = 0;
+     _corked = false;
+ }
++
++uint32_t RCOutput_Sysfs::brushed_duty_cycle(uint16_t output_us,
++                                             uint16_t minimum_us,
++                                             uint16_t maximum_us,
++                                             uint32_t period_ns)
++{
++    if (output_us <= minimum_us) {
++        return 0;
++    }
++    if (output_us >= maximum_us || maximum_us <= minimum_us) {
++        return period_ns;
++    }
++    return static_cast<uint32_t>((static_cast<uint64_t>(period_ns) *
++                                  (output_us - minimum_us)) /
++                                 (maximum_us - minimum_us));
++}
++
++bool RCOutput_Sysfs::is_brushed(uint8_t ch) const
++{
++    return ch < _channel_count && (_brushed_mask & (1U << ch));
++}
++
++void RCOutput_Sysfs::replace_pwm_channel_for_test(uint8_t ch, PWM_Sysfs_Base *channel)
++{
++    if (ch >= _channel_count || _pwm_channels == nullptr) {
++        delete channel;
++        return;
++    }
++    delete _pwm_channels[ch];
++    _pwm_channels[ch] = channel;
++}
++
++bool RCOutput_Sysfs::set_duty_cycle(uint8_t ch, uint16_t output_us)
++{
++    if (ch >= _channel_count || _pwm_channels[ch] == nullptr) {
++        return false;
++    }
++    const uint32_t duty_ns = is_brushed(ch) ?
++        brushed_duty_cycle(output_us, _esc_pwm_min, _esc_pwm_max,
++                           _pwm_channels[ch]->get_period()) :
++        usec_to_nsec(output_us);
++    return _pwm_channels[ch]->set_duty_cycle(duty_ns);
++}
++
++bool RCOutput_Sysfs::neutralize_all()
++{
++    bool success = true;
++    if (_pwm_channels == nullptr) {
++        return false;
++    }
++    for (uint8_t i = 0; i < _channel_count; i++) {
++        if (_pwm_channels[i] == nullptr) {
++            continue;
++        }
++        success &= _pwm_channels[i]->set_duty_cycle(0);
++        _pwm_channels[i]->enable(false);
++    }
++    return success;
++}
++
++void RCOutput_Sysfs::fail(const char *operation)
++{
++    neutralize_all();
++    AP_HAL::panic("RCOutput_Sysfs: failed to %s", operation);
++}
+     
+ }
+     
+diff --git a/libraries/AP_HAL_Linux/RCOutput_Sysfs.h b/libraries/AP_HAL_Linux/RCOutput_Sysfs.h
+index f2c48a3d8b..a612a0b0e4 100644
+--- a/libraries/AP_HAL_Linux/RCOutput_Sysfs.h
++++ b/libraries/AP_HAL_Linux/RCOutput_Sysfs.h
+@@ -18,15 +18,30 @@ public:
+     void init() override;
+     void set_freq(uint32_t chmask, uint16_t freq_hz) override;
+     uint16_t get_freq(uint8_t ch) override;
++    void set_output_mode(uint32_t mask, enum output_mode mode) override;
+     void enable_ch(uint8_t ch) override;
+     void disable_ch(uint8_t ch) override;
++    bool force_safety_on() override;
+     void write(uint8_t ch, uint16_t period_us) override;
+     uint16_t read(uint8_t ch) override;
+     void read(uint16_t *period_us, uint8_t len) override;
+     void cork(void) override;
+     void push(void) override;
+ 
++    static uint32_t brushed_duty_cycle(uint16_t output_us,
++                                       uint16_t minimum_us,
++                                       uint16_t maximum_us,
++                                       uint32_t period_ns);
++
++protected:
++    bool is_brushed(uint8_t ch) const;
++    void replace_pwm_channel_for_test(uint8_t ch, PWM_Sysfs_Base *channel);
++
+ private:
++    bool set_duty_cycle(uint8_t ch, uint16_t output_us);
++    bool neutralize_all();
++    void fail(const char *operation);
++
+     const uint8_t _chip;
+     const uint8_t _channel_base;
+     const uint8_t _channel_count;
+@@ -36,6 +51,7 @@ private:
+     bool _corked;
+     uint16_t *_pending;
+     uint32_t _pending_mask;
++    uint32_t _brushed_mask;
+ };
+ 
+ }
+diff --git a/libraries/AP_HAL_Linux/Util_RPI.cpp b/libraries/AP_HAL_Linux/Util_RPI.cpp
+index 99dcfdac30..e472afd142 100644
+--- a/libraries/AP_HAL_Linux/Util_RPI.cpp
++++ b/libraries/AP_HAL_Linux/Util_RPI.cpp
+@@ -10,7 +10,8 @@
+     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIGATOR || \
+     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_OBAL_V1 || \
+     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_CANZERO || \
+-    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PILOTPI
++    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PILOTPI || \
++    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_TBOT_SYSFS_PWM
+ 
+ #include <dirent.h>
+ #include <errno.h>
+diff --git a/libraries/AP_HAL_Linux/tests/test_rcoutput_sysfs_brushed.cpp b/libraries/AP_HAL_Linux/tests/test_rcoutput_sysfs_brushed.cpp
+new file mode 100644
+index 0000000000..cf6aa2be21
+--- /dev/null
++++ b/libraries/AP_HAL_Linux/tests/test_rcoutput_sysfs_brushed.cpp
+@@ -0,0 +1,106 @@
++#include <AP_gtest.h>
++
++#include <AP_HAL_Linux/RCOutput_Sysfs.h>
++
++using namespace Linux;
++
++const AP_HAL::HAL& hal = AP_HAL::get_HAL();
++
++class TestRCOutputSysfs : public RCOutput_Sysfs {
++public:
++    using RCOutput_Sysfs::RCOutput_Sysfs;
++    using RCOutput_Sysfs::is_brushed;
++    using RCOutput_Sysfs::replace_pwm_channel_for_test;
++};
++
++class FakePWM final : public PWM_Sysfs_Base {
++public:
++    explicit FakePWM(uint32_t period)
++        : PWM_Sysfs_Base(nullptr, nullptr, nullptr, nullptr, nullptr, 0)
++        , period_ns(period)
++    {
++    }
++
++    void enable(bool value) override { enabled = value; }
++    uint32_t get_period() override { return period_ns; }
++    void set_freq(uint32_t frequency_hz) override { frequency = frequency_hz; }
++    uint32_t get_freq() override { return frequency; }
++    bool set_duty_cycle(uint32_t value) override
++    {
++        duty_cycle_ns = value;
++        return true;
++    }
++    uint32_t get_duty_cycle() override { return duty_cycle_ns; }
++
++    uint32_t period_ns;
++    uint32_t frequency = 0;
++    uint32_t duty_cycle_ns = 0;
++    bool enabled = true;
++};
++
++TEST(RCOutputSysfs, brushed_duty_cycle_clamps_and_scales)
++{
++    constexpr uint32_t period_ns = 62500;
++
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(999, 1000, 2000, period_ns), 0U);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(1000, 1000, 2000, period_ns), 0U);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(1250, 1000, 2000, period_ns), 15625U);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(1500, 1000, 2000, period_ns), 31250U);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(1750, 1000, 2000, period_ns), 46875U);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(2000, 1000, 2000, period_ns), period_ns);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(2001, 1000, 2000, period_ns), period_ns);
++}
++
++TEST(RCOutputSysfs, brushed_duty_cycle_uses_configured_range)
++{
++    constexpr uint32_t period_ns = 50000;
++
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(1100, 1100, 1900, period_ns), 0U);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(1500, 1100, 1900, period_ns), 25000U);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(1900, 1100, 1900, period_ns), period_ns);
++    EXPECT_EQ(RCOutput_Sysfs::brushed_duty_cycle(1600, 1500, 1500, period_ns), period_ns);
++}
++
++TEST(RCOutputSysfs, brushed_mode_tracks_each_output_channel)
++{
++    TestRCOutputSysfs output(0, 0, 2);
++
++    output.set_output_mode(1U << 0, AP_HAL::RCOutput::MODE_PWM_BRUSHED);
++    EXPECT_TRUE(output.is_brushed(0));
++    EXPECT_FALSE(output.is_brushed(1));
++
++    output.set_output_mode(1U << 1, AP_HAL::RCOutput::MODE_PWM_BRUSHED);
++    EXPECT_TRUE(output.is_brushed(0));
++    EXPECT_TRUE(output.is_brushed(1));
++
++    output.set_output_mode(1U << 0, AP_HAL::RCOutput::MODE_PWM_NORMAL);
++    EXPECT_FALSE(output.is_brushed(0));
++    EXPECT_TRUE(output.is_brushed(1));
++}
++
++TEST(RCOutputSysfs, frequency_mask_and_safety_apply_to_the_selected_channels)
++{
++    TestRCOutputSysfs output(0, 0, 2);
++    auto *left = new FakePWM(62500);
++    auto *right = new FakePWM(62500);
++    output.replace_pwm_channel_for_test(0, left);
++    output.replace_pwm_channel_for_test(1, right);
++
++    output.set_freq(1U << 1, 16000);
++    EXPECT_EQ(left->frequency, 0U);
++    EXPECT_EQ(right->frequency, 16000U);
++
++    output.set_output_mode((1U << 0) | (1U << 1), AP_HAL::RCOutput::MODE_PWM_BRUSHED);
++    output.write(0, 2000);
++    output.write(1, 1500);
++    EXPECT_EQ(left->duty_cycle_ns, 62500U);
++    EXPECT_EQ(right->duty_cycle_ns, 31250U);
++
++    EXPECT_TRUE(output.force_safety_on());
++    EXPECT_EQ(left->duty_cycle_ns, 0U);
++    EXPECT_EQ(right->duty_cycle_ns, 0U);
++    EXPECT_FALSE(left->enabled);
++    EXPECT_FALSE(right->enabled);
++}
++
++AP_GTEST_MAIN()
+diff --git a/libraries/AP_InertialSensor/AP_InertialSensor.cpp b/libraries/AP_InertialSensor/AP_InertialSensor.cpp
+index 2de182369f..e4e63dc1c5 100644
+--- a/libraries/AP_InertialSensor/AP_InertialSensor.cpp
++++ b/libraries/AP_InertialSensor/AP_InertialSensor.cpp
+@@ -871,7 +871,7 @@ void AP_InertialSensor::_start_backends()
+         _backends[i]->start();
+     }
+ 
+-#if AP_INERTIALSENSOR_ALLOW_NO_SENSORS
++#if !AP_INERTIALSENSOR_ALLOW_NO_SENSORS
+     if (_gyro_count == 0 || _accel_count == 0) {
+         AP_HAL::panic("INS needs at least 1 gyro and 1 accel");
+     }

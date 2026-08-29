@@ -90,6 +90,26 @@ TBot binaries use the independent `tbot-v*` release stream:
 just release::build tbot
 ```
 
+## ArduPilot motor proof of concept
+
+The optional ArduRover proof of concept is separate from the normal board
+runtime. It starts from a disposable clean-upstream checkout and applies only
+TBot-owned patches; do not reuse a checkout that carries another device's patch
+stack.
+
+```sh
+just tbot::ardupilot::checkout
+just tbot::ardupilot::patch
+just tbot::ardupilot::test
+just tbot::ardupilot::build
+```
+
+The defaults use upstream `MOT_PWM_TYPE=3`, left/right throttle functions, and
+brushed-reverse relay functions on BCM GPIO 5 and 6. They deliberately leave
+`MOT_PWM_FREQ` unset so its upstream 16 kHz default remains configurable through
+MAVLink after restart. Installation and manual transfer of motor ownership are
+covered by the separate optional-service milestone.
+
 Release publication never upgrades a board automatically. On the board, an
 operator installs the TBot daemon and hardware worker plus the shared KVS
 master using the documented root-owned `mise` flow, verifies the services, and

@@ -1,0 +1,44 @@
+# Deterministic ArduRover defaults for the TBot DRV8835 proof of concept.
+#
+# Runtime storage is ephemeral, so this file is loaded on every service start.
+# MOT_PWM_FREQ is intentionally absent: upstream's 16 kHz brushed default is
+# retained and remains MAVLink-configurable in its supported 1..20 kHz range.
+
+# MAVLink service contract.
+SERIAL0_PROTOCOL 2
+SYSID_MYGCS 255
+FS_GCS_ENABLE 1
+FS_GCS_TIMEOUT 1
+FS_ACTION 2
+
+# Manual is the initial mode; Hold is available as the safe mode.
+INITIAL_MODE 0
+MODE1 0
+MODE2 4
+MODE_CH 0
+
+# Upstream brushed-with-relay motor behavior. PWM is motor magnitude and the
+# relay functions select direction; 1500 us is not a neutral point in this mode.
+MOT_PWM_TYPE 3
+SERVO1_FUNCTION 73
+SERVO1_MIN 1000
+SERVO1_TRIM 1000
+SERVO1_MAX 2000
+SERVO2_FUNCTION 74
+SERVO2_MIN 1000
+SERVO2_TRIM 1000
+SERVO2_MAX 2000
+RELAY1_FUNCTION 5
+RELAY1_PIN 5
+RELAY2_FUNCTION 6
+RELAY2_PIN 6
+
+# There is no RC receiver. Keep MAVLink manual-control overrides enabled.
+RC_OPTIONS 1
+FS_THR_ENABLE 0
+
+# The Linux target has no inertial sensors or physical safety switch. These
+# accommodations permit ordinary (non-forced) MAVLink arming for this PoC.
+ARMING_CHECK 0
+ARMING_RUDDER 0
+BRD_SAFETYENABLE 0
