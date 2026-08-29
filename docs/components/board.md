@@ -519,6 +519,7 @@ txing-unit-hardware-worker-linux-aarch64.tar.gz
 # TBot
 txing-tbot-daemon-linux-aarch64.tar.gz
 txing-tbot-hardware-worker-linux-aarch64.tar.gz
+txing-tbot-ardupilot-linux-aarch64.tar.gz
 
 # Cyberbrick
 txing-cyberbrick-daemon-linux-aarch64.tar.gz
@@ -530,10 +531,13 @@ txing-board-kvs-master-linux-aarch64.tar.gz
 ```
 
 Every daemon, KVS, MAVLink, and hardware-worker archive contains its one
-root-level executable. The Cyberbrick ArduPilot archive contains both
-`txing-cyberbrick-ardupilot` and
-`txing-cyberbrick-ardupilot.defaults.parm`; OpenRC loads the defaults on every
-tmpfs-backed boot. Boards use root's persistent mise config and install tree:
+root-level executable. The TBot and Cyberbrick ArduPilot archives each contain
+their device-specific executable and tracked defaults file. For TBot, they are
+`txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm`; for
+Cyberbrick, they are `txing-cyberbrick-ardupilot` and
+`txing-cyberbrick-ardupilot.defaults.parm`. Cyberbrick OpenRC loads its
+defaults on every tmpfs-backed boot; the TBot optional service is a later
+milestone. Boards use root's persistent mise config and install tree:
 
 ```text
 /root/.config/mise/conf.d/txing-<device>-daemon.toml
@@ -553,9 +557,11 @@ restarting an OpenRC service does not install or upgrade tools, invoke mise,
 or call GitHub. If a board needs new binaries, follow
 [Maintenance](#maintenance).
 
-Cyberbrick's corresponding patched ArduPilot source archive is published for
-provenance but is not installed on the board. Its current runtime installation
-and operational steps are in [Cyberbrick runtime](#cyberbrick-runtime).
+TBot and Cyberbrick each publish the corresponding patched ArduPilot source
+archive for provenance; source archives are not installed on the board. TBot's
+optional-service installation remains a later milestone. Cyberbrick's current
+runtime installation and operational steps are in
+[Cyberbrick runtime](#cyberbrick-runtime).
 
 The release gates bound what these artifacts prove. `assert-board-musl.sh`
 checks linkage kinds and `smoke-board-cross-distro.sh` runs each binary in

@@ -59,6 +59,7 @@ TBot releases publish these Linux `aarch64` assets:
 ```text
 txing-tbot-daemon-linux-aarch64.tar.gz
 txing-tbot-hardware-worker-linux-aarch64.tar.gz
+txing-tbot-ardupilot-linux-aarch64.tar.gz
 ```
 
 Cyberbrick releases publish these Alpine Linux `aarch64` assets:
@@ -82,6 +83,12 @@ Cyberbrick releases also publish the corresponding patched ArduPilot source:
 txing-cyberbrick-ardupilot-source.tar.gz
 ```
 
+TBot releases also publish the corresponding patched ArduPilot source:
+
+```text
+txing-tbot-ardupilot-source.tar.gz
+```
+
 Lambda releases publish these Linux `aarch64` assets:
 
 ```text
@@ -91,8 +98,8 @@ txing-cloud-mcu-lambda-linux-aarch64.zip
 ```
 
 Each `.tar.gz` archive contains one root-level executable with the same command
-name, except Cyberbrick ArduPilot which also contains its tracked defaults
-file. Each runtime Lambda `.zip` contains one root-level Go executable named
+name, except TBot and Cyberbrick ArduPilot which also contain their tracked
+defaults files. Each runtime Lambda `.zip` contains one root-level Go executable named
 `bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.

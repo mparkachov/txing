@@ -16,6 +16,11 @@ env:
   RELEASE_TAG_PREFIX: tbot-v
   TBOT_DAEMON_ASSET: txing-tbot-daemon-linux-aarch64.tar.gz
   HARDWARE_WORKER_ASSET: txing-tbot-hardware-worker-linux-aarch64.tar.gz
+  ARDUPILOT_BINARY: txing-tbot-ardupilot
+  ARDUPILOT_DEFAULTS: txing-tbot-ardupilot.defaults.parm
+  ARDUPILOT_ASSET: txing-tbot-ardupilot-linux-aarch64.tar.gz
+  ARDUPILOT_SOURCE_ASSET: txing-tbot-ardupilot-source.tar.gz
+  ARDUPILOT_SOURCE_ROOT: txing-tbot-ardupilot-source
 
 jobs:
   metadata:
@@ -160,10 +165,131 @@ jobs:
             ${{ runner.temp }}/txing-tbot-hardware-worker-linux-aarch64.tar.gz
           if-no-files-found: error
 
+  ardupilot:
+    name: Build TBot ArduPilot
+    runs-on: ubuntu-24.04-arm
+    needs: metadata
+    outputs:
+      upstream_sha: ${{ steps.upstream.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build, package, and verify ArduPilot
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -i \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" \
+            -e ARDUPILOT_BINARY \
+            -e ARDUPILOT_DEFAULTS \
+            -e ARDUPILOT_ASSET \
+            -e ARDUPILOT_SOURCE_ASSET \
+            -e ARDUPILOT_SOURCE_ROOT \
+            -e GITHUB_WORKSPACE \
+            -e RUNNER_TEMP \
+            docker.io/library/alpine:3.24.1 sh -se <<'EOF'
+          set -eu
+          set -o pipefail
+
+          test "$(cat /etc/alpine-release)" = "3.24.1"
+          test "$(uname -m)" = "aarch64"
+          apk add --no-cache ca-certificates file binutils git tar
+
+          source_dir="$RUNNER_TEMP/ardupilot"
+          source_package_dir="$RUNNER_TEMP/$ARDUPILOT_SOURCE_ROOT"
+          binary_package_dir="$RUNNER_TEMP/package-$ARDUPILOT_BINARY"
+          source_asset="$RUNNER_TEMP/$ARDUPILOT_SOURCE_ASSET"
+          binary_asset="$RUNNER_TEMP/$ARDUPILOT_ASSET"
+          patch="$GITHUB_WORKSPACE/devices/tbot/ardupilot/patches/0001-linux-tbot-sysfs-pwm.patch"
+          defaults_source="$GITHUB_WORKSPACE/devices/tbot/ardupilot/defaults.parm"
+          hwdef_source="$GITHUB_WORKSPACE/devices/tbot/ardupilot/hwdef.dat"
+
+          test ! -e "$source_dir"
+          test ! -e "$source_package_dir"
+          test ! -e "$binary_package_dir"
+          git clone --recurse-submodules --single-branch --branch master \
+            https://github.com/ArduPilot/ardupilot.git "$source_dir"
+          cd "$source_dir"
+          git apply --check "$patch"
+          git apply "$patch"
+          git rev-parse HEAD >"$RUNNER_TEMP/ardupilot-upstream-sha"
+          if git submodule status --recursive | grep -E '^[+-]' >/dev/null; then
+            echo "ArduPilot checkout has uninitialized or mismatched submodules." >&2
+            exit 1
+          fi
+          test -f COPYING.txt
+          test -f BUILD.md
+
+          install -d "$source_package_dir"
+          tar -C "$source_dir" --exclude-vcs -cf - . | \
+            tar -C "$source_package_dir" -xf -
+          tar -C "$RUNNER_TEMP" -czf "$source_asset" "$ARDUPILOT_SOURCE_ROOT"
+          source_listing="$RUNNER_TEMP/ardupilot-source-archive-listing"
+          tar -tzf "$source_asset" >"$source_listing"
+          if grep -Ev "^$ARDUPILOT_SOURCE_ROOT/" "$source_listing" >/dev/null; then
+            echo "$ARDUPILOT_SOURCE_ASSET contains an unexpected archive root." >&2
+            exit 1
+          fi
+          grep -Fx "$ARDUPILOT_SOURCE_ROOT/COPYING.txt" "$source_listing"
+          grep -Fx "$ARDUPILOT_SOURCE_ROOT/BUILD.md" "$source_listing"
+          grep -F "$ARDUPILOT_SOURCE_ROOT/modules/ChibiOS/" "$source_listing" >/dev/null
+
+          ./Tools/environment_install/install-prereqs-alpine.sh
+          ./waf configure --board linux --extra-hwdef "$hwdef_source" \
+            --static --define CANARD_64_BIT=1
+          ./waf rover
+
+          install -d "$binary_package_dir"
+          install -m 755 build/linux/bin/ardurover \
+            "$binary_package_dir/$ARDUPILOT_BINARY"
+          install -m 644 "$defaults_source" \
+            "$binary_package_dir/$ARDUPILOT_DEFAULTS"
+          strip "$binary_package_dir/$ARDUPILOT_BINARY"
+          sh "$GITHUB_WORKSPACE/release/scripts/assert-board-musl.sh" \
+            "$binary_package_dir/$ARDUPILOT_BINARY" static
+          "$binary_package_dir/$ARDUPILOT_BINARY" --help >/dev/null
+          tar -C "$binary_package_dir" -czf "$binary_asset" \
+            "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS"
+          archive_listing="$(tar -tzf "$binary_asset")"
+          expected_listing="$(printf '%s\n%s' "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS")"
+          if [ "$archive_listing" != "$expected_listing" ]; then
+            echo "Expected $ARDUPILOT_ASSET to contain root-level executable and defaults, got:" >&2
+            printf '%s\n' "$archive_listing" >&2
+            exit 1
+          fi
+          EOF
+
+      - name: Resolve ArduPilot upstream SHA
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream_sha="$(tr -d '[:space:]' < "$RUNNER_TEMP/ardupilot-upstream-sha")"
+          if ! printf '%s\n' "$upstream_sha" | grep -E -q '^[0-9a-f]{40}$'; then
+            echo "Expected a 40-character ArduPilot upstream SHA, got: $upstream_sha" >&2
+            exit 1
+          fi
+          echo "sha=$upstream_sha" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARDUPILOT_ASSET }}
+          path: ${{ runner.temp }}/${{ env.ARDUPILOT_ASSET }}
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARDUPILOT_SOURCE_ASSET }}
+          path: ${{ runner.temp }}/${{ env.ARDUPILOT_SOURCE_ASSET }}
+          if-no-files-found: error
+
   smoke:
     name: Cross-distro smoke
     runs-on: ubuntu-24.04-arm
-    needs: [metadata, build]
+    needs: [metadata, build, ardupilot]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
@@ -183,10 +309,52 @@ jobs:
           sh release/scripts/smoke-board-cross-distro.sh "$smoke_dir/txing-tbot-daemon" static "txing-tbot-daemon $VERSION"
           sh release/scripts/smoke-board-cross-distro.sh "$smoke_dir/txing-tbot-hardware-worker" static "txing-tbot-hardware-worker $VERSION"
 
+      - name: Run Alpine ArduPilot smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -i \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" \
+            -e ARDUPILOT_BINARY \
+            -e ARDUPILOT_DEFAULTS \
+            -e ARDUPILOT_ASSET \
+            -e ARDUPILOT_SOURCE_ASSET \
+            -e ARDUPILOT_SOURCE_ROOT \
+            -e GITHUB_WORKSPACE \
+            -e RUNNER_TEMP \
+            docker.io/library/alpine:3.24.1 sh -se <<'EOF'
+          set -eu
+
+          test "$(cat /etc/alpine-release)" = "3.24.1"
+          test "$(uname -m)" = "aarch64"
+          apk add --no-cache file binutils
+          smoke_dir="$RUNNER_TEMP/smoke-ardupilot"
+          test ! -e "$smoke_dir"
+          install -d "$smoke_dir"
+          tar -C "$smoke_dir" -xzf "$RUNNER_TEMP/release-assets/$ARDUPILOT_ASSET"
+          sh release/scripts/assert-board-musl.sh \
+            "$smoke_dir/$ARDUPILOT_BINARY" static
+          "$smoke_dir/$ARDUPILOT_BINARY" --help >/dev/null
+          cmp "$smoke_dir/$ARDUPILOT_DEFAULTS" \
+            "$GITHUB_WORKSPACE/devices/tbot/ardupilot/defaults.parm"
+
+          source_listing="$RUNNER_TEMP/smoke-ardupilot-source-archive-listing"
+          tar -tzf "$RUNNER_TEMP/release-assets/$ARDUPILOT_SOURCE_ASSET" >"$source_listing"
+          if grep -Ev "^$ARDUPILOT_SOURCE_ROOT/" "$source_listing" >/dev/null; then
+            echo "$ARDUPILOT_SOURCE_ASSET contains an unexpected archive root." >&2
+            exit 1
+          fi
+          grep -Fx "$ARDUPILOT_SOURCE_ROOT/COPYING.txt" "$source_listing"
+          grep -Fx "$ARDUPILOT_SOURCE_ROOT/BUILD.md" "$source_listing"
+          grep -F "$ARDUPILOT_SOURCE_ROOT/modules/ChibiOS/" "$source_listing" >/dev/null
+          EOF
+
   publish:
     name: Publish release
     runs-on: ubuntu-24.04-arm
-    needs: [metadata, build, smoke]
+    needs: [metadata, build, ardupilot, smoke]
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -197,9 +365,36 @@ jobs:
           TAG: ${{ needs.metadata.outputs.tag }}
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_TARGET: ${{ needs.metadata.outputs.release_target }}
+          ARDUPILOT_UPSTREAM_SHA: ${{ needs.ardupilot.outputs.upstream_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          assets=("$RUNNER_TEMP/release-assets/$TBOT_DAEMON_ASSET" "$RUNNER_TEMP/release-assets/$HARDWARE_WORKER_ASSET")
+          if ! [[ "$ARDUPILOT_UPSTREAM_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Expected a 40-character ArduPilot upstream SHA, got: $ARDUPILOT_UPSTREAM_SHA" >&2
+            exit 1
+          fi
+          assets=(
+            "$RUNNER_TEMP/release-assets/$TBOT_DAEMON_ASSET"
+            "$RUNNER_TEMP/release-assets/$HARDWARE_WORKER_ASSET"
+            "$RUNNER_TEMP/release-assets/$ARDUPILOT_ASSET"
+            "$RUNNER_TEMP/release-assets/$ARDUPILOT_SOURCE_ASSET"
+          )
           for asset in "${assets[@]}"; do test -s "$asset"; done
-          gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_TARGET" --title "$TAG" --notes "Txing tbot $VERSION release; static Alpine-built daemon and hardware worker." --latest=false
+
+          notes_file="$(mktemp)"
+          {
+            echo "Txing $RELEASE_COMPONENT release."
+            echo
+            echo "- Component: $RELEASE_COMPONENT"
+            echo "- Version: $VERSION"
+            echo "- Tag: $TAG"
+            echo "- Commit: $RELEASE_TARGET"
+            echo "- Build image: docker.io/library/alpine:3.24.1"
+            echo "- ArduPilot upstream SHA: $ARDUPILOT_UPSTREAM_SHA"
+            echo "- Assets:"
+            for asset in "$TBOT_DAEMON_ASSET" "$HARDWARE_WORKER_ASSET" "$ARDUPILOT_ASSET" "$ARDUPILOT_SOURCE_ASSET"; do
+              echo "  - $asset"
+            done
+          } >"$notes_file"
+
+          gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_TARGET" --title "$TAG" --notes-file "$notes_file" --latest=false

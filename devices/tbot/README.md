@@ -90,6 +90,14 @@ TBot binaries use the independent `tbot-v*` release stream:
 just release::build tbot
 ```
 
+The `tbot-v0.18.0` release also publishes the optional ArduPilot runtime as
+`txing-tbot-ardupilot-linux-aarch64.tar.gz`, containing
+`txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm`. Its matching
+`txing-tbot-ardupilot-source.tar.gz` contains the patched upstream source,
+initialized submodules, license, and upstream build instructions. The release
+notes record the upstream commit SHA. These artifacts do not install or start
+ArduPilot on a board; that optional-service work is separate.
+
 ## ArduPilot motor proof of concept
 
 The optional ArduRover proof of concept is separate from the normal board
