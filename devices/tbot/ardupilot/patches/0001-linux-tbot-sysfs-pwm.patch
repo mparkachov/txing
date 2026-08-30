@@ -14,17 +14,15 @@ diff --git a/libraries/AP_HAL_Linux/HAL_Linux_Class.cpp b/libraries/AP_HAL_Linux
 index 0a20a51134..47ae686fe5 100644
 --- a/libraries/AP_HAL_Linux/HAL_Linux_Class.cpp
 +++ b/libraries/AP_HAL_Linux/HAL_Linux_Class.cpp
-@@ -60,7 +60,8 @@ using namespace Linux;
-     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIGATOR ||  \
-     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_OBAL_V1 || \
-     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_CANZERO || \
--    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PILOTPI
-+    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PILOTPI || \
-+    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_TBOT_SYSFS_PWM
- static UtilRPI utilInstance;
- #else
- static Util utilInstance;
-@@ -233,6 +234,10 @@ RCOutput_Multi::RCOutputGroup rcoutSysfsDriver = {2, NEW_NOTHROW RCOutput_Sysfs(
+@@ -138,5 +138,7 @@ static GPIO_Navigator gpioDriver;
+ #elif HAL_LINUX_GPIO_RPI_ENABLED
+ static GPIO_RPI gpioDriver;
++#elif HAL_LINUX_GPIO_TBOT_ENABLED
++static GPIO_TBot gpioDriver;
+ #elif HAL_LINUX_GPIO_SYSFS_ENABLED
+ static GPIO_Sysfs gpioDriver;
+ #elif HAL_LINUX_GPIO_PB2_ENABLED
+@@ -233,6 +235,10 @@ RCOutput_Multi::RCOutputGroup rcoutSysfsDriver = {2, NEW_NOTHROW RCOutput_Sysfs(
  static RCOutput_Multi rcoutDriver{2, &rcoutPcaDriver, &rcoutSysfsDriver};
  #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_T3_GEM_O1
  static RCOutput_Sysfs rcoutDriver(0, 0, 7);
@@ -388,20 +386,6 @@ index f2c48a3d8b..a612a0b0e4 100644
  };
  
  }
-diff --git a/libraries/AP_HAL_Linux/Util_RPI.cpp b/libraries/AP_HAL_Linux/Util_RPI.cpp
-index 99dcfdac30..e472afd142 100644
---- a/libraries/AP_HAL_Linux/Util_RPI.cpp
-+++ b/libraries/AP_HAL_Linux/Util_RPI.cpp
-@@ -10,7 +10,8 @@
-     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIGATOR || \
-     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_OBAL_V1 || \
-     CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_CANZERO || \
--    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PILOTPI
-+    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PILOTPI || \
-+    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_TBOT_SYSFS_PWM
- 
- #include <dirent.h>
- #include <errno.h>
 diff --git a/libraries/AP_HAL_Linux/tests/test_rcoutput_sysfs_brushed.cpp b/libraries/AP_HAL_Linux/tests/test_rcoutput_sysfs_brushed.cpp
 new file mode 100644
 index 0000000000..cf6aa2be21
@@ -527,3 +511,210 @@ index 2de182369f..e4e63dc1c5 100644
      if (_gyro_count == 0 || _accel_count == 0) {
          AP_HAL::panic("INS needs at least 1 gyro and 1 accel");
      }
+diff --git a/libraries/AP_HAL_Linux/GPIO.h b/libraries/AP_HAL_Linux/GPIO.h
+index 03dfce4ca1..752db73d1b 100644
+--- a/libraries/AP_HAL_Linux/GPIO.h
++++ b/libraries/AP_HAL_Linux/GPIO.h
+@@ -26,6 +26,8 @@ class DigitalSource : public AP_HAL::DigitalSource {
+ #include "GPIO_Navigator.h"
+ #elif HAL_LINUX_GPIO_RPI_ENABLED
+ #include "GPIO_RPI.h"
++#elif HAL_LINUX_GPIO_TBOT_ENABLED
++#include "GPIO_TBot.h"
+ #elif HAL_LINUX_GPIO_NAVIO_ENABLED
+ #define HAL_LINUX_GPIO_SYSFS_ENABLED 1
+ #include "GPIO_Navio.h"
+diff --git a/libraries/AP_HAL_Linux/GPIO_TBot.cpp b/libraries/AP_HAL_Linux/GPIO_TBot.cpp
+new file mode 100644
+index 0000000000..1111111111
+--- /dev/null
++++ b/libraries/AP_HAL_Linux/GPIO_TBot.cpp
+@@ -0,0 +1,145 @@
++#include <AP_HAL/AP_HAL.h>
++
++#if HAL_LINUX_GPIO_TBOT_ENABLED
++
++#include "GPIO.h"
++#include "GPIO_TBot.h"
++
++#include <cerrno>
++#include <cstdio>
++#include <cstring>
++#include <fcntl.h>
++#include <linux/gpio.h>
++#include <sys/ioctl.h>
++#include <unistd.h>
++
++using namespace Linux;
++
++extern const AP_HAL::HAL& hal;
++
++GPIO_TBot::~GPIO_TBot()
++{
++    for (const int line_fd : _line_fds) {
++        if (line_fd >= 0) {
++            ::close(line_fd);
++        }
++    }
++    if (_chip_fd >= 0) {
++        ::close(_chip_fd);
++    }
++}
++
++bool GPIO_TBot::valid_pin(uint8_t pin) const
++{
++    return pin < _line_fds.size();
++}
++
++void GPIO_TBot::init()
++{
++    char path[32];
++    const int length = snprintf(path, sizeof(path), "/dev/gpiochip%u",
++                                HAL_LINUX_GPIO_TBOT_CHIP);
++    if (length < 0 || static_cast<size_t>(length) >= sizeof(path)) {
++        AP_HAL::panic("GPIO_TBot: invalid gpiochip path");
++        return;
++    }
++
++    _chip_fd = ::open(path, O_RDONLY | O_CLOEXEC);
++    if (_chip_fd < 0) {
++        AP_HAL::panic("GPIO_TBot: unable to open %s: %s", path, strerror(errno));
++    }
++}
++
++void GPIO_TBot::pinMode(uint8_t pin, uint8_t output)
++{
++    if (!valid_pin(pin)) {
++        AP_HAL::panic("GPIO_TBot: BCM pin %u is out of range", pin);
++        return;
++    }
++    if (output != HAL_GPIO_OUTPUT) {
++        AP_HAL::panic("GPIO_TBot: BCM pin %u only supports output mode", pin);
++        return;
++    }
++    if (_chip_fd < 0) {
++        AP_HAL::panic("GPIO_TBot: gpiochip is not open");
++        return;
++    }
++    if (_line_fds[pin] >= 0) {
++        return;
++    }
++
++    gpiohandle_request request{};
++    request.lineoffsets[0] = pin;
++    request.flags = GPIOHANDLE_REQUEST_OUTPUT;
++    request.default_values[0] = 0;
++    request.lines = 1;
++    snprintf(request.consumer_label, sizeof(request.consumer_label),
++             "ardupilot-tbot");
++    if (ioctl(_chip_fd, GPIO_GET_LINEHANDLE_IOCTL, &request) < 0) {
++        AP_HAL::panic("GPIO_TBot: request BCM pin %u from gpiochip%u: %s",
++                      pin, HAL_LINUX_GPIO_TBOT_CHIP, strerror(errno));
++        return;
++    }
++
++    _line_fds[pin] = request.fd;
++    _values[pin] = 0;
++}
++
++void GPIO_TBot::pinMode(uint8_t pin, uint8_t output, uint8_t alt)
++{
++    if (output == HAL_GPIO_OUTPUT) {
++        pinMode(pin, output);
++        return;
++    }
++    AP_HAL::panic("GPIO_TBot: BCM pin %u does not support alternate mode %u",
++                  pin, alt);
++}
++
++uint8_t GPIO_TBot::read(uint8_t pin)
++{
++    if (!valid_pin(pin) || _line_fds[pin] < 0) {
++        AP_HAL::panic("GPIO_TBot: BCM pin %u is not an output", pin);
++        return 0;
++    }
++
++    gpiohandle_data data{};
++    if (ioctl(_line_fds[pin], GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data) < 0) {
++        AP_HAL::panic("GPIO_TBot: read BCM pin %u: %s", pin, strerror(errno));
++        return 0;
++    }
++    _values[pin] = data.values[0] != 0;
++    return _values[pin];
++}
++
++void GPIO_TBot::write(uint8_t pin, uint8_t value)
++{
++    if (!valid_pin(pin) || _line_fds[pin] < 0) {
++        AP_HAL::panic("GPIO_TBot: BCM pin %u is not an output", pin);
++        return;
++    }
++
++    gpiohandle_data data{};
++    data.values[0] = value != 0;
++    if (ioctl(_line_fds[pin], GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data) < 0) {
++        AP_HAL::panic("GPIO_TBot: write BCM pin %u: %s", pin, strerror(errno));
++        return;
++    }
++    _values[pin] = data.values[0];
++}
++
++void GPIO_TBot::toggle(uint8_t pin)
++{
++    write(pin, !read(pin));
++}
++
++AP_HAL::DigitalSource* GPIO_TBot::channel(uint16_t pin)
++{
++    return NEW_NOTHROW DigitalSource(pin);
++}
++
++bool GPIO_TBot::usb_connected()
++{
++    return false;
++}
++
++#endif  // HAL_LINUX_GPIO_TBOT_ENABLED
+diff --git a/libraries/AP_HAL_Linux/GPIO_TBot.h b/libraries/AP_HAL_Linux/GPIO_TBot.h
+new file mode 100644
+index 0000000000..1111111111
+--- /dev/null
++++ b/libraries/AP_HAL_Linux/GPIO_TBot.h
+@@ -0,0 +1,37 @@
++#pragma once
++
++#include <array>
++#include <cstdint>
++
++#include "AP_HAL_Linux.h"
++
++namespace Linux {
++
++class GPIO_TBot : public AP_HAL::GPIO {
++public:
++    GPIO_TBot()
++    {
++        _line_fds.fill(-1);
++    }
++
++    ~GPIO_TBot();
++
++    void init() override;
++    void pinMode(uint8_t pin, uint8_t output) override;
++    void pinMode(uint8_t pin, uint8_t output, uint8_t alt) override;
++    uint8_t read(uint8_t pin) override;
++    void write(uint8_t pin, uint8_t value) override;
++    void toggle(uint8_t pin) override;
++    AP_HAL::DigitalSource* channel(uint16_t pin) override;
++    bool usb_connected() override;
++    bool valid_pin(uint8_t pin) const override;
++
++private:
++    static constexpr uint8_t kBCMLineCount = 32;
++
++    int _chip_fd = -1;
++    std::array<int, kBCMLineCount> _line_fds;
++    std::array<uint8_t, kBCMLineCount> _values{};
++};
++
++}  // namespace Linux

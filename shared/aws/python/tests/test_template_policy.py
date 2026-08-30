@@ -402,6 +402,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "txing-unit-daemon",
             "txing-tbot-hardware-worker",
             "txing-tbot-daemon",
+            "txing-tbot-ardupilot",
             "txing-kvs-master",
             "txing-cyberbrick-ardupilot",
             "txing-cyberbrick-mavlink",

@@ -247,6 +247,13 @@ does not upgrade a board; the operator must log in to the board, switch to
 root, run `root-rw`, run root-owned `mise upgrade`, verify versions, sync, and
 restart only the affected OpenRC services.
 
+TBot's optional `txing-tbot-ardupilot` tool is installed separately from the
+same `tbot-v*` release stream. Its source archive is provenance only; the
+runtime uses the binary/defaults asset. The service is intentionally excluded
+from the default runlevel, so installation never changes normal hardware-worker
+boot ownership. See [TBot optional ArduPilot runtime](./components/board.md#tbot-optional-ardupilot-runtime)
+for the manual transfer and reboot checks.
+
 ### Cyberbrick board
 
 Cyberbrick boards install three Cyberbrick release assets plus the shared KVS

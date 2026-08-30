@@ -721,7 +721,7 @@ class VersionEnvironmentTests(unittest.TestCase):
                 "release/scripts/smoke-board-cross-distro.sh", workflow
             )
             self.assertIn("- smoke", workflow)
-        self.assertIn("needs: [metadata, build, smoke]", tbot_workflow)
+        self.assertIn("needs: [metadata, build, ardupilot, smoke]", tbot_workflow)
         # One shared board justfile serves both device types; only the
         # device-neutral KVS recipes omit the device argument.
         self.assertIn("nerdctl-smoke device:", board_justfile)
@@ -1881,6 +1881,104 @@ class VersionEnvironmentTests(unittest.TestCase):
             ardupilot_service,
         )
 
+    def test_tbot_ardupilot_is_a_boot_disabled_manual_motor_owner(self) -> None:
+        """TBot installs ArduPilot separately and keeps worker ownership manual."""
+        defaults = (
+            REPO_ROOT / "devices" / "tbot" / "ardupilot" / "defaults.parm"
+        ).read_text(encoding="utf-8")
+        hwdef = (
+            REPO_ROOT / "devices" / "tbot" / "ardupilot" / "hwdef.dat"
+        ).read_text(encoding="utf-8")
+        patch = (
+            REPO_ROOT
+            / "devices"
+            / "tbot"
+            / "ardupilot"
+            / "patches"
+            / "0001-linux-tbot-sysfs-pwm.patch"
+        ).read_text(encoding="utf-8")
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "release-tbot.yml"
+        ).read_text(encoding="utf-8")
+        service = (
+            REPO_ROOT
+            / "devices"
+            / "tbot"
+            / "ardupilot"
+            / "openrc"
+            / "txing-tbot-ardupilot"
+        ).read_text(encoding="utf-8")
+        aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
+        runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
+            encoding="utf-8"
+        )
+        tbot_runtime = runbook.split("#### TBot optional ArduPilot runtime", 1)[1].split(
+            "#### Cyberbrick runtime", 1
+        )[0]
+
+        for value in {
+            "MOT_PWM_TYPE 3",
+            "SERVO1_FUNCTION 73",
+            "SERVO2_FUNCTION 74",
+            "RELAY1_FUNCTION 5",
+            "RELAY1_PIN 5",
+            "RELAY2_FUNCTION 6",
+            "RELAY2_PIN 6",
+        }:
+            with self.subTest(value=value):
+                self.assertIn(value, defaults)
+        self.assertNotRegex(defaults, r"(?m)^MOT_PWM_FREQ(?:\s|$)")
+        self.assertIn("HAL_LINUX_GPIO_TBOT_ENABLED 1", hwdef)
+        self.assertIn("HAL_LINUX_GPIO_TBOT_CHIP 0", hwdef)
+        self.assertNotIn("HAL_LINUX_GPIO_RPI_ENABLED", hwdef)
+        self.assertIn("GPIO_GET_LINEHANDLE_IOCTL", patch)
+        self.assertIn("GPIOHANDLE_SET_LINE_VALUES_IOCTL", patch)
+        self.assertIn('"/dev/gpiochip%u"', patch)
+        self.assertNotIn("Failed to get GPIO memory map", patch)
+        self.assertIn("txing-tbot-ardupilot-linux-aarch64.tar.gz", workflow)
+        self.assertIn("txing-tbot-ardupilot-source.tar.gz", workflow)
+        self.assertIn(
+            'txing_cert_install_board_service "$devices_dir/tbot/ardupilot/openrc/txing-tbot-ardupilot"',
+            aws_lib,
+        )
+
+        self.assertIn("#!/sbin/openrc-run", service)
+        self.assertIn("supervisor=supervise-daemon", service)
+        self.assertIn("udpin:0.0.0.0:14550", service)
+        self.assertIn("/var/tmp/txing-tbot-ardupilot/storage", service)
+        self.assertIn("/var/tmp/txing-tbot-ardupilot/terrain", service)
+        self.assertIn("/var/log/txing-tbot-ardupilot", service)
+        self.assertIn("respawn_delay=5", service)
+        self.assertIn("respawn_max=5", service)
+        self.assertIn("respawn_period=600", service)
+        self.assertNotIn("txing-tbot-hardware-worker", service)
+        self.assertNotIn("txing-tbot-daemon", service)
+        self.assertNotIn("rc-update", service)
+
+        self.assertIn("txing-tbot-ardupilot = \"github:mparkachov/txing\"", tbot_runtime)
+        self.assertIn('version_prefix = "tbot-v"', tbot_runtime)
+        self.assertIn(
+            'asset_pattern = "txing-tbot-ardupilot-linux-aarch64.tar.gz"',
+            tbot_runtime,
+        )
+        self.assertIn("does not install an\nArduPilot source checkout", tbot_runtime)
+        self.assertIn("does not change the daemon environment\nor its certificates", tbot_runtime)
+        self.assertIn("existing worker-unavailable behavior", tbot_runtime)
+        self.assertIn(
+            'install -m 755 "$SERVICE_DIR/txing-tbot-ardupilot" /etc/init.d/txing-tbot-ardupilot',
+            tbot_runtime,
+        )
+        self.assertNotIn("rc-update add txing-tbot-ardupilot default", tbot_runtime)
+        self.assertIn("rc-service txing-tbot-hardware-worker stop", tbot_runtime)
+        self.assertIn("rc-service txing-tbot-ardupilot start", tbot_runtime)
+        self.assertIn("rc-service txing-tbot-ardupilot stop", tbot_runtime)
+        self.assertIn("rc-service txing-tbot-hardware-worker start", tbot_runtime)
+        self.assertIn("ArduPilot is unexpectedly running after reboot", tbot_runtime)
+        self.assertIn("0.0.0.0:14550", tbot_runtime)
+        self.assertIn("they are ephemeral", tbot_runtime)
+        self.assertIn("test -c /dev/gpiochip0", tbot_runtime)
+        self.assertIn("Failed to get GPIO memory map", tbot_runtime)
+
     def test_board_runbook_shell_blocks_are_copy_pasteable(self) -> None:
         """Every `sh` block in the board runbook must run as pasted.
 
@@ -1974,6 +2072,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-unit-daemon",
             REPO_ROOT / "devices" / "common" / "board" / "hardware_worker" / "openrc" / "txing-tbot-hardware-worker",
             REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-tbot-daemon",
+            REPO_ROOT / "devices" / "tbot" / "ardupilot" / "openrc" / "txing-tbot-ardupilot",
             REPO_ROOT / "devices" / "common" / "board" / "kvs_master" / "openrc" / "txing-kvs-master",
             REPO_ROOT / "devices" / "cyberbrick" / "ardupilot" / "openrc" / "txing-cyberbrick-ardupilot",
             REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-cyberbrick-mavlink",

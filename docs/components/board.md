@@ -559,8 +559,9 @@ or call GitHub. If a board needs new binaries, follow
 
 TBot and Cyberbrick each publish the corresponding patched ArduPilot source
 archive for provenance; source archives are not installed on the board. TBot's
-optional-service installation remains a later milestone. Cyberbrick's current
-runtime installation and operational steps are in
+boot-disabled service and manual ownership procedure are in
+[TBot optional ArduPilot runtime](#tbot-optional-ardupilot-runtime). Cyberbrick's
+current runtime installation and operational steps are in
 [Cyberbrick runtime](#cyberbrick-runtime).
 
 The release gates bound what these artifacts prove. `assert-board-musl.sh`
@@ -1357,6 +1358,130 @@ Expected:
   pipeline
 - REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
   and `video` capability state
+
+#### TBot optional ArduPilot runtime
+
+TBot's normal default runlevel remains the hardware worker, daemon, and KVS
+master. The optional `txing-tbot-ardupilot` service is a separately installed
+motor owner: it is never added to the default runlevel, has no automatic
+handoff or reciprocal service guard, and does not change the daemon environment
+or its certificates. The daemon and KVS master stay running and use their
+existing worker-unavailable behavior while ArduPilot owns the tracks.
+
+Keep motor power isolated before installing or starting this service. The
+unsigned MAVLink endpoint is permitted only on a trusted isolated LAN.
+
+Install the TBot release asset through a separate root-owned mise entry. This
+installs the executable and defaults from `tbot-v*`; it does not install an
+ArduPilot source checkout:
+
+```sh
+root-rw
+install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
+cat >/root/.config/mise/conf.d/txing-tbot-ardupilot.toml <<'EOF'
+[settings]
+fetch_remote_versions_cache = "0s"
+minimum_release_age = "0s"
+
+[tool_alias]
+txing-tbot-ardupilot = "github:mparkachov/txing"
+
+[tools.txing-tbot-ardupilot]
+version = "latest"
+version_prefix = "tbot-v"
+asset_pattern = "txing-tbot-ardupilot-linux-aarch64.tar.gz"
+EOF
+
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise install txing-tbot-ardupilot@latest
+
+ARDUPILOT=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot
+DEFAULTS=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.defaults.parm
+test -x "$ARDUPILOT"
+test -r "$DEFAULTS"
+"$ARDUPILOT" --help >/dev/null
+```
+
+The board configuration bundle carries the complete service catalog. For an
+already provisioned board, obtain the updated catalog through the normal
+operator bundle process, then copy only the new service entry; do not unpack a
+new bundle over the existing `daemon.env` or certificates. Install and inspect
+the TBot service, but do not enable it:
+
+```sh
+SERVICE_DIR=/root/.config/txing/tbot-daemon/services
+install -m 755 "$SERVICE_DIR/txing-tbot-ardupilot" /etc/init.d/txing-tbot-ardupilot
+sh -n /etc/init.d/txing-tbot-ardupilot
+
+rc-update show default | grep -F txing-tbot-hardware-worker
+if rc-update show default | grep -Fq txing-tbot-ardupilot; then
+  echo 'txing-tbot-ardupilot must not be in the default runlevel' >&2
+  exit 1
+fi
+rc-service txing-tbot-hardware-worker status
+if rc-service txing-tbot-ardupilot status >/dev/null 2>&1; then
+  echo 'txing-tbot-ardupilot must be stopped before manual ownership transfer' >&2
+  exit 1
+fi
+```
+
+To give the lifted, secured chassis to ArduPilot, keep motor power isolated,
+disarm any previous controller, then stop and verify the hardware worker before
+starting ArduPilot. Confirm both tracks are stationary before continuing; never
+run both motor owners:
+
+```sh
+rc-service txing-tbot-hardware-worker stop
+if rc-service txing-tbot-hardware-worker status >/dev/null 2>&1; then
+  echo 'hardware worker did not stop; do not start ArduPilot' >&2
+  exit 1
+fi
+
+rc-service txing-tbot-ardupilot start
+rc-service txing-tbot-ardupilot status
+ss -uanp | grep -F '0.0.0.0:14550'
+```
+
+`txing-tbot-ardupilot` uses `udpin:0.0.0.0:14550`. Connect QGroundControl only
+after the service reports started, verify telemetry and parameter download, and
+keep the chassis lifted and secured before energizing motor power. Its storage,
+terrain, and logs are recreated under `/var/tmp/txing-tbot-ardupilot/` and
+`/var/log/txing-tbot-ardupilot/`; they are ephemeral on the board's tmpfs
+mounts. Do not change motor, relay, or failsafe defaults during this proof of
+concept.
+
+To return to normal control, first disarm in QGroundControl and isolate motor
+power. Stop and verify ArduPilot before restoring and verifying the hardware
+worker:
+
+```sh
+rc-service txing-tbot-ardupilot stop
+if rc-service txing-tbot-ardupilot status >/dev/null 2>&1; then
+  echo 'ArduPilot did not stop; do not restore the hardware worker' >&2
+  exit 1
+fi
+
+rc-service txing-tbot-hardware-worker start
+rc-service txing-tbot-hardware-worker status
+tail -n 160 /var/log/txing-tbot-hardware-worker.log
+```
+
+After the worker reports local actuator readiness, return the root filesystem
+to read-only and reboot manually. On reconnect, prove that boot has restored
+the normal owner and has not started ArduPilot:
+
+```sh
+rc-update show default | grep -F txing-tbot-hardware-worker
+if rc-update show default | grep -Fq txing-tbot-ardupilot; then
+  echo 'ArduPilot is unexpectedly enabled at boot' >&2
+  exit 1
+fi
+rc-service txing-tbot-hardware-worker status
+if rc-service txing-tbot-ardupilot status >/dev/null 2>&1; then
+  echo 'ArduPilot is unexpectedly running after reboot' >&2
+  exit 1
+fi
+```
 
 #### Cyberbrick runtime
 

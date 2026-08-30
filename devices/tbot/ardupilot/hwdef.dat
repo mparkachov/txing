@@ -1,7 +1,8 @@
 # TBot's minimal generic-Linux ArduPilot configuration.
 #
 # The board device tree exposes pwmchip0/pwm0 and pwmchip0/pwm1. Direction is
-# provided by the upstream Raspberry Pi GPIO HAL on BCM GPIO 5 and 6.
+# provided through the same gpiochip0 character-device interface as the TBot
+# hardware worker, on BCM GPIO 5 and 6.
 define CONFIG_HAL_BOARD_SUBTYPE HAL_BOARD_SUBTYPE_LINUX_TBOT_SYSFS_PWM
 
 env TOOLCHAIN native
@@ -10,7 +11,8 @@ env OPTIMIZE -O2 -fomit-frame-pointer
 define HAL_RCOUT_SYSFS_CHIP 0
 define HAL_RCOUT_SYSFS_CHANNEL_BASE 0
 define HAL_RCOUT_SYSFS_CHANNEL_COUNT 2
-define HAL_LINUX_GPIO_RPI_ENABLED 1
+define HAL_LINUX_GPIO_TBOT_ENABLED 1
+define HAL_LINUX_GPIO_TBOT_CHIP 0
 
 define HAL_INS_DEFAULT HAL_INS_NONE
 define AP_INERTIALSENSOR_ALLOW_NO_SENSORS 1

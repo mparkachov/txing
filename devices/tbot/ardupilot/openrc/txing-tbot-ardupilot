@@ -1,0 +1,27 @@
+#!/sbin/openrc-run
+
+description="TBot ArduPilot ArduRover"
+
+supervisor=supervise-daemon
+command=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot
+defaults=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.defaults.parm
+command_args="--defaults ${defaults} --serial0 udpin:0.0.0.0:14550 --storage-directory /var/tmp/txing-tbot-ardupilot/storage --terrain-directory /var/tmp/txing-tbot-ardupilot/terrain --log-directory /var/log/txing-tbot-ardupilot"
+directory=/var/tmp/txing-tbot-ardupilot
+respawn_delay=5
+respawn_max=5
+respawn_period=600
+output_log=/var/log/txing-tbot-ardupilot/ardupilot.log
+error_log=/var/log/txing-tbot-ardupilot/ardupilot.log
+
+depend() {
+    need localmount net
+}
+
+start_pre() {
+    test -x "$command" && test -r "$defaults" || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-tbot-ardupilot || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-tbot-ardupilot/storage || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-tbot-ardupilot/terrain || return 1
+    checkpath --directory --mode 0755 --owner root:root /var/log/txing-tbot-ardupilot || return 1
+    export HOME=/root
+}

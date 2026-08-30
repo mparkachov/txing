@@ -223,6 +223,7 @@ txing_cert_stage_board_services() {
   txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-unit-daemon" "$services_dir"
   txing_cert_install_board_service "$devices_dir/common/board/hardware_worker/openrc/txing-tbot-hardware-worker" "$services_dir"
   txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-tbot-daemon" "$services_dir"
+  txing_cert_install_board_service "$devices_dir/tbot/ardupilot/openrc/txing-tbot-ardupilot" "$services_dir"
   txing_cert_install_board_service "$devices_dir/common/board/kvs_master/openrc/txing-kvs-master" "$services_dir"
   txing_cert_install_board_service "$devices_dir/cyberbrick/ardupilot/openrc/txing-cyberbrick-ardupilot" "$services_dir"
   txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-cyberbrick-mavlink" "$services_dir"

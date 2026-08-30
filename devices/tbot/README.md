@@ -95,8 +95,9 @@ The `tbot-v0.18.0` release also publishes the optional ArduPilot runtime as
 `txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm`. Its matching
 `txing-tbot-ardupilot-source.tar.gz` contains the patched upstream source,
 initialized submodules, license, and upstream build instructions. The release
-notes record the upstream commit SHA. These artifacts do not install or start
-ArduPilot on a board; that optional-service work is separate.
+notes record the upstream commit SHA. Installation remains a manual root-owned
+mise action; the service is boot-disabled and the required manual motor-owner
+transfer is documented in [Board](../../docs/components/board.md#tbot-optional-ardupilot-runtime).
 
 ## ArduPilot motor proof of concept
 
@@ -113,10 +114,14 @@ just tbot::ardupilot::build
 ```
 
 The defaults use upstream `MOT_PWM_TYPE=3`, left/right throttle functions, and
-brushed-reverse relay functions on BCM GPIO 5 and 6. They deliberately leave
+brushed-reverse relay functions on BCM GPIO 5 and 6. The small TBot patch
+claims those two direction lines through `/dev/gpiochip0`, using the same Linux
+GPIO character-device API as the hardware worker; it deliberately does not use
+ArduPilot's legacy Raspberry Pi `/dev/mem` GPIO mapper. They deliberately leave
 `MOT_PWM_FREQ` unset so its upstream 16 kHz default remains configurable through
 MAVLink after restart. Installation and manual transfer of motor ownership are
-covered by the separate optional-service milestone.
+covered by the optional-service runbook in
+[Board](../../docs/components/board.md#tbot-optional-ardupilot-runtime).
 
 Release publication never upgrades a board automatically. On the board, an
 operator installs the TBot daemon and hardware worker plus the shared KVS
