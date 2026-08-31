@@ -1917,6 +1917,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         )[0]
 
         for value in {
+            "SERIAL0_PROTOCOL -1",
+            "SERIAL1_PROTOCOL 2",
             "MOT_PWM_TYPE 3",
             "SERVO1_FUNCTION 73",
             "SERVO2_FUNCTION 74",
@@ -1944,7 +1946,8 @@ class VersionEnvironmentTests(unittest.TestCase):
 
         self.assertIn("#!/sbin/openrc-run", service)
         self.assertIn("supervisor=supervise-daemon", service)
-        self.assertIn("udpin:0.0.0.0:14550", service)
+        self.assertIn("--serial1 udpin:0.0.0.0:14550", service)
+        self.assertNotIn("--serial0 udpin:", service)
         self.assertIn("/var/tmp/txing-tbot-ardupilot/storage", service)
         self.assertIn("/var/tmp/txing-tbot-ardupilot/terrain", service)
         self.assertIn("/var/log/txing-tbot-ardupilot", service)
@@ -1972,10 +1975,11 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("rc-service txing-tbot-hardware-worker stop", tbot_runtime)
         self.assertIn("rc-service txing-tbot-ardupilot start", tbot_runtime)
         self.assertIn("rc-service txing-tbot-ardupilot stop", tbot_runtime)
+        self.assertIn("Rover.stg.pre-serial1", tbot_runtime)
         self.assertIn("rc-service txing-tbot-hardware-worker start", tbot_runtime)
         self.assertIn("ArduPilot is unexpectedly running after reboot", tbot_runtime)
         self.assertIn("0.0.0.0:14550", tbot_runtime)
-        self.assertIn("they are ephemeral", tbot_runtime)
+        self.assertIn("ephemeral on the board's tmpfs", tbot_runtime)
         self.assertIn("test -c /dev/gpiochip0", tbot_runtime)
         self.assertIn("Failed to get GPIO memory map", tbot_runtime)
 

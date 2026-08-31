@@ -1,6 +1,7 @@
 #include "kvs_master/aws_env.hpp"
 #include "kvs_master/config.hpp"
 #include "kvs_master/markers.hpp"
+#include "kvs_master/peer_negotiation.hpp"
 #include "kvs_master/runtime.hpp"
 #include "kvs_master/version.hpp"
 #include "kvs_master/video_capturer.hpp"
@@ -642,6 +643,79 @@ void TestMarkerFormatting() {
     Expect(line == "TXING_KVS_ERROR detail=bad line here", "marker values should be sanitized");
 }
 
+void TestMasterAnswerPreparationOrder() {
+    std::vector<std::string> calls;
+    const auto success = [](int status) { return status != 0; };
+
+    const int trickle_status = txing::board::kvs_master::PrepareMasterAnswer<int>(
+        true,
+        [&calls] {
+            calls.emplace_back("create");
+            return 0;
+        },
+        [&calls] {
+            calls.emplace_back("set-local");
+            return 0;
+        },
+        [&calls] {
+            calls.emplace_back("send");
+            return 0;
+        },
+        success
+    );
+    Expect(trickle_status == 0, "trickle answer preparation should succeed");
+    Expect(
+        calls == std::vector<std::string>({"create", "set-local", "send"}),
+        "trickle negotiation must create the answer before setting and sending the local description"
+    );
+
+    calls.clear();
+    const int non_trickle_status = txing::board::kvs_master::PrepareMasterAnswer<int>(
+        false,
+        [&calls] {
+            calls.emplace_back("create");
+            return 0;
+        },
+        [&calls] {
+            calls.emplace_back("set-local");
+            return 0;
+        },
+        [&calls] {
+            calls.emplace_back("send");
+            return 0;
+        },
+        success
+    );
+    Expect(non_trickle_status == 0, "non-trickle answer preparation should succeed");
+    Expect(
+        calls == std::vector<std::string>({"create", "set-local"}),
+        "non-trickle negotiation must defer sending until ICE gathering completes"
+    );
+
+    calls.clear();
+    const int failure_status = txing::board::kvs_master::PrepareMasterAnswer<int>(
+        true,
+        [&calls] {
+            calls.emplace_back("create");
+            return 7;
+        },
+        [&calls] {
+            calls.emplace_back("set-local");
+            return 0;
+        },
+        [&calls] {
+            calls.emplace_back("send");
+            return 0;
+        },
+        success
+    );
+    Expect(failure_status == 7, "answer creation failure should be returned");
+    Expect(
+        calls == std::vector<std::string>({"create"}),
+        "answer creation failure must not install or send an invalid local description"
+    );
+}
+
 void TestCameraProbeCliDoesNotRequireStaticWorkerConfig() {
     const auto parsed = ParseCli({TXING_BOARD_KVS_MASTER_BINARY_NAME, "--camera-probe"}, EnvFrom({}));
 
@@ -772,6 +846,7 @@ int main() {
     TestRuntimePropagatesCapturerErrors();
     TestRuntimeDoesNotExportTlsCaEnvironment();
     TestMarkerFormatting();
+    TestMasterAnswerPreparationOrder();
     TestCameraProbeCliDoesNotRequireStaticWorkerConfig();
     TestCameraProbeCapturesFramesWithoutKvs();
     TestCameraProbeFailsWithoutFrames();

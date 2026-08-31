@@ -3,6 +3,7 @@
 #include "kvs_master/board_mavlink_bridge.hpp"
 #include "kvs_master/board_video_bridge.hpp"
 #include "kvs_master/markers.hpp"
+#include "kvs_master/peer_negotiation.hpp"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -1224,20 +1225,21 @@ class RealKvsSession final : public KvsSession {
         }
         session->remote_can_trickle = can_trickle.value;
 
-        status = setLocalDescription(session->peer_connection, &session->answer_description);
-        if (STATUS_FAILED(status)) {
-            return status;
-        }
-
-        if (session->remote_can_trickle) {
-            status = createAnswer(session->peer_connection, &session->answer_description);
-            if (STATUS_FAILED(status)) {
-                return status;
+        return PrepareMasterAnswer<STATUS>(
+            session->remote_can_trickle,
+            [&]() {
+                return createAnswer(session->peer_connection, &session->answer_description);
+            },
+            [&]() {
+                return setLocalDescription(session->peer_connection, &session->answer_description);
+            },
+            [&]() {
+                return SendAnswer(session);
+            },
+            [](STATUS candidate_status) {
+                return STATUS_FAILED(candidate_status);
             }
-            return SendAnswer(session);
-        }
-
-        return STATUS_SUCCESS;
+        );
     }
 
     STATUS HandleAnswer(StreamingSession* session, PSignalingMessage signaling_message) {
@@ -1542,13 +1544,6 @@ class RealKvsSession final : public KvsSession {
 
         if (candidate_json == nullptr) {
             if (!session->remote_can_trickle) {
-                {
-                    std::lock_guard<std::mutex> peer_lock(session->peer_connection_lock);
-                    if (session->terminate_requested.load() || session->peer_connection == nullptr) {
-                        return;
-                    }
-                    ThrowIfFailed(createAnswer(session->peer_connection, &session->answer_description), "createAnswer");
-                }
                 ThrowIfFailed(SendAnswer(session), "send answer");
             }
             return;

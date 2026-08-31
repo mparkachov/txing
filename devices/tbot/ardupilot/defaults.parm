@@ -4,8 +4,10 @@
 # MOT_PWM_FREQ is intentionally absent: upstream's 16 kHz brushed default is
 # retained and remains MAVLink-configurable in its supported 1..20 kHz range.
 
-# MAVLink service contract.
-SERIAL0_PROTOCOL 2
+# MAVLink service contract. On Linux SERIAL0 is the process console; use the
+# normal telemetry UART for the UDP GCS endpoint so it has one active backend.
+SERIAL0_PROTOCOL -1
+SERIAL1_PROTOCOL 2
 SYSID_MYGCS 255
 FS_GCS_ENABLE 1
 FS_GCS_TIMEOUT 1

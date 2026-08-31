@@ -1425,6 +1425,22 @@ if rc-service txing-tbot-ardupilot status >/dev/null 2>&1; then
 fi
 ```
 
+ArduPilot persistent storage takes precedence over the supplied defaults. Once,
+when updating an existing board to the `SERIAL1` UDP endpoint, retain the old
+storage file under a distinct name before its first start with the new release:
+
+```sh
+rc-service txing-tbot-ardupilot stop
+STORAGE=/var/tmp/txing-tbot-ardupilot/storage
+if test -f "$STORAGE/Rover.stg"; then
+  test ! -e "$STORAGE/Rover.stg.pre-serial1" || {
+    echo 'existing pre-serial1 storage backup; inspect it before continuing' >&2
+    exit 1
+  }
+  mv "$STORAGE/Rover.stg" "$STORAGE/Rover.stg.pre-serial1"
+fi
+```
+
 To give the lifted, secured chassis to ArduPilot, keep motor power isolated,
 disarm any previous controller, then stop and verify the hardware worker before
 starting ArduPilot. Confirm both tracks are stationary before continuing; never
@@ -1436,19 +1452,27 @@ if rc-service txing-tbot-hardware-worker status >/dev/null 2>&1; then
   echo 'hardware worker did not stop; do not start ArduPilot' >&2
   exit 1
 fi
+test -c /dev/gpiochip0 || {
+  echo '/dev/gpiochip0 is required for the TBot direction outputs' >&2
+  exit 1
+}
 
 rc-service txing-tbot-ardupilot start
 rc-service txing-tbot-ardupilot status
 ss -uanp | grep -F '0.0.0.0:14550'
 ```
 
-`txing-tbot-ardupilot` uses `udpin:0.0.0.0:14550`. Connect QGroundControl only
-after the service reports started, verify telemetry and parameter download, and
-keep the chassis lifted and secured before energizing motor power. Its storage,
-terrain, and logs are recreated under `/var/tmp/txing-tbot-ardupilot/` and
-`/var/log/txing-tbot-ardupilot/`; they are ephemeral on the board's tmpfs
-mounts. Do not change motor, relay, or failsafe defaults during this proof of
-concept.
+`txing-tbot-ardupilot` exposes `udpin:0.0.0.0:14550` through Linux `SERIAL1`,
+the normal telemetry UART. `SERIAL0` is the process console and is disabled for
+MAVLink by the defaults, so the UDP endpoint is the sole GCS backend. Connect
+QGroundControl only after the service reports started, verify telemetry and
+parameter download, and keep the chassis lifted and secured before energizing
+motor power. Its storage, terrain, and logs are recreated under
+`/var/tmp/txing-tbot-ardupilot/` and `/var/log/txing-tbot-ardupilot/`; they are
+ephemeral on the board's tmpfs mounts. Do not change motor, relay, or failsafe
+defaults during this proof of concept. `Failed to get GPIO memory map` in the
+ArduPilot log identifies an obsolete TBot artifact that still selects the
+legacy Raspberry Pi GPIO mapper; stop it and install the current release.
 
 To return to normal control, first disarm in QGroundControl and isolate motor
 power. Stop and verify ArduPilot before restoring and verifying the hardware
