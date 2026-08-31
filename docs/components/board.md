@@ -1425,19 +1425,21 @@ if rc-service txing-tbot-ardupilot status >/dev/null 2>&1; then
 fi
 ```
 
-ArduPilot persistent storage takes precedence over the supplied defaults. Once,
-when updating an existing board to the `SERIAL1` UDP endpoint, retain the old
-storage file under a distinct name before its first start with the new release:
+ArduPilot persistent storage takes precedence over the supplied defaults. Before
+the first start of the current TBot ArduPilot release, retain the old storage
+file under a distinct name. This is required for the `SERIAL1` UDP endpoint,
+the synthetic IMU, current skid-steer outputs, and ArduPilot's
+`ARMING_SKIPCHK` parameter (which replaced `ARMING_CHECK`):
 
 ```sh
 rc-service txing-tbot-ardupilot stop
 STORAGE=/var/tmp/txing-tbot-ardupilot/storage
 if test -f "$STORAGE/Rover.stg"; then
-  test ! -e "$STORAGE/Rover.stg.pre-serial1" || {
-    echo 'existing pre-serial1 storage backup; inspect it before continuing' >&2
+  test ! -e "$STORAGE/Rover.stg.pre-tbot-defaults" || {
+    echo 'existing TBot-defaults storage backup; inspect it before continuing' >&2
     exit 1
   }
-  mv "$STORAGE/Rover.stg" "$STORAGE/Rover.stg.pre-serial1"
+  mv "$STORAGE/Rover.stg" "$STORAGE/Rover.stg.pre-tbot-defaults"
 fi
 ```
 
@@ -1467,7 +1469,11 @@ the normal telemetry UART. `SERIAL0` is the process console and is disabled for
 MAVLink by the defaults, so the UDP endpoint is the sole GCS backend. Connect
 QGroundControl only after the service reports started, verify telemetry and
 parameter download, and keep the chassis lifted and secured before energizing
-motor power. Its storage, terrain, and logs are recreated under
+motor power. In particular, confirm `ARMING_SKIPCHK` is `-1` and both
+`SERVO1_FUNCTION` and `SERVO2_FUNCTION` are `73` and `74` respectively before
+an arm attempt; any earlier `Compass`, `3D Accel calibration`, or steering and
+throttle pre-arm warning shows that retained parameters still override the
+TBot defaults. Its storage, terrain, and logs are recreated under
 `/var/tmp/txing-tbot-ardupilot/` and `/var/log/txing-tbot-ardupilot/`; they are
 ephemeral on the board's tmpfs mounts. Do not change motor, relay, or failsafe
 defaults during this proof of concept. `Failed to get GPIO memory map` in the

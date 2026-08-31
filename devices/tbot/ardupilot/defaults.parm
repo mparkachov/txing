@@ -41,6 +41,8 @@ FS_THR_ENABLE 0
 
 # The Linux target has no inertial sensors or physical safety switch. These
 # accommodations permit ordinary (non-forced) MAVLink arming for this PoC.
-ARMING_CHECK 0
+# ArduPilot 4.7 renamed ARMING_CHECK to ARMING_SKIPCHK; -1 skips every
+# non-mandatory current and future pre-arm check.
+ARMING_SKIPCHK -1
 ARMING_RUDDER 0
 BRD_SAFETYENABLE 0

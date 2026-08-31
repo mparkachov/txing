@@ -1926,9 +1926,11 @@ class VersionEnvironmentTests(unittest.TestCase):
             "RELAY1_PIN 5",
             "RELAY2_FUNCTION 6",
             "RELAY2_PIN 6",
+            "ARMING_SKIPCHK -1",
         }:
             with self.subTest(value=value):
                 self.assertIn(value, defaults)
+        self.assertNotRegex(defaults, r"(?m)^ARMING_CHECK(?:\s|$)")
         self.assertNotRegex(defaults, r"(?m)^MOT_PWM_FREQ(?:\s|$)")
         self.assertIn("HAL_LINUX_GPIO_TBOT_ENABLED 1", hwdef)
         self.assertIn("HAL_LINUX_GPIO_TBOT_CHIP 0", hwdef)
@@ -1978,7 +1980,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("rc-service txing-tbot-hardware-worker stop", tbot_runtime)
         self.assertIn("rc-service txing-tbot-ardupilot start", tbot_runtime)
         self.assertIn("rc-service txing-tbot-ardupilot stop", tbot_runtime)
-        self.assertIn("Rover.stg.pre-serial1", tbot_runtime)
+        self.assertIn("Rover.stg.pre-tbot-defaults", tbot_runtime)
         self.assertIn("rc-service txing-tbot-hardware-worker start", tbot_runtime)
         self.assertIn("ArduPilot is unexpectedly running after reboot", tbot_runtime)
         self.assertIn("0.0.0.0:14550", tbot_runtime)
