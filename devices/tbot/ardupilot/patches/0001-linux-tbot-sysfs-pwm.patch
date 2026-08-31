@@ -499,38 +499,54 @@ index 0000000000..cf6aa2be21
 +
 +AP_GTEST_MAIN()
 diff --git a/libraries/AP_InertialSensor/AP_InertialSensor.cpp b/libraries/AP_InertialSensor/AP_InertialSensor.cpp
-index 2de182369f..e4e63dc1c5 100644
+index 2de182369f..b44a692ab5 100644
 --- a/libraries/AP_InertialSensor/AP_InertialSensor.cpp
 +++ b/libraries/AP_InertialSensor/AP_InertialSensor.cpp
-@@ -871,7 +871,7 @@ void AP_InertialSensor::_start_backends()
-         _backends[i]->start();
-     }
- 
--#if AP_INERTIALSENSOR_ALLOW_NO_SENSORS
-+#if !AP_INERTIALSENSOR_ALLOW_NO_SENSORS
-     if (_gyro_count == 0 || _accel_count == 0) {
-         AP_HAL::panic("INS needs at least 1 gyro and 1 accel");
-     }
-@@ -2062 +2062,19 @@ void AP_InertialSensor::wait_for_sample(void)
-+#if AP_INERTIALSENSOR_ALLOW_NO_SENSORS
-+    // A sensorless target still needs a scheduler tick so vehicle startup can
-+    // complete and MAVLink heartbeats can be emitted.
-+    if (_gyro_count == 0 && _accel_count == 0) {
-+        const uint32_t period_usec = _sample_period_usec;
-+        if (_last_sample_usec == 0) {
-+            _last_sample_usec = AP_HAL::micros();
-+        }
-+        hal.scheduler->delay_microseconds_boost(period_usec);
-+        const uint32_t now = AP_HAL::micros();
-+        _delta_time = (now - _last_sample_usec) * 1.0e-6f;
-+        _last_sample_usec = now;
-+        _next_sample_usec = now + period_usec;
-+        _have_sample = true;
-+        return;
-+    }
+@@ -1312,4 +1312,4 @@ void AP_InertialSensor::detect_backends(void)
+         // no real INS backends avail, lets use an empty substitute to boot ok and get to mavlink
+-        #if CONFIG_HAL_BOARD == HAL_BOARD_ESP32
++        #if CONFIG_HAL_BOARD == HAL_BOARD_ESP32 || AP_INERTIALSENSOR_DUMMY_BACKEND
+         ADD_BACKEND(AP_InertialSensor_NONE::detect(*this, INS_NONE_SENSOR_A));
+         #else
+diff --git a/libraries/AP_InertialSensor/AP_InertialSensor_NONE.cpp b/libraries/AP_InertialSensor/AP_InertialSensor_NONE.cpp
+index 18a2b25cfc..80945d5ee2 100644
+--- a/libraries/AP_InertialSensor/AP_InertialSensor_NONE.cpp
++++ b/libraries/AP_InertialSensor/AP_InertialSensor_NONE.cpp
+@@ -7,4 +7,2 @@
+-#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32
++#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32 || AP_INERTIALSENSOR_DUMMY_BACKEND
+-
+-
+ static float sim_rand_float(void)
+@@ -318,3 +316,2 @@ void AP_InertialSensor_NONE::start()
+ }
+-
+-#endif // CONFIG_HAL_BOARD == HAL_BOARD_ESP32
 +#endif
-+
-     uint32_t now = AP_HAL::micros();
+diff --git a/libraries/AP_InertialSensor/AP_InertialSensor_NONE.h b/libraries/AP_InertialSensor/AP_InertialSensor_NONE.h
+index 2a6a044aa9..7195d773ca 100644
+--- a/libraries/AP_InertialSensor/AP_InertialSensor_NONE.h
++++ b/libraries/AP_InertialSensor/AP_InertialSensor_NONE.h
+@@ -10,3 +10,3 @@
+-#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32
++#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32 || AP_INERTIALSENSOR_DUMMY_BACKEND
+ #include "AP_InertialSensor.h"
+ #include "AP_InertialSensor_Backend.h"
+@@ -54,2 +54,2 @@ class AP_InertialSensor_NONE : public AP_InertialSensor_Backend
+ };
+-#endif // CONFIG_HAL_BOARD
++#endif
+diff --git a/libraries/AP_InertialSensor/AP_InertialSensor_config.h b/libraries/AP_InertialSensor/AP_InertialSensor_config.h
+index fa1cf382cc..fb05833e3f 100644
+--- a/libraries/AP_InertialSensor/AP_InertialSensor_config.h
++++ b/libraries/AP_InertialSensor/AP_InertialSensor_config.h
+@@ -23,3 +23,6 @@
+ #ifndef AP_INERTIALSENSOR_ALLOW_NO_SENSORS
+ #define AP_INERTIALSENSOR_ALLOW_NO_SENSORS 0
+ #endif
++#ifndef AP_INERTIALSENSOR_DUMMY_BACKEND
++#define AP_INERTIALSENSOR_DUMMY_BACKEND 0
++#endif
 diff --git a/libraries/AP_HAL_Linux/GPIO.h b/libraries/AP_HAL_Linux/GPIO.h
 index 03dfce4ca1..752db73d1b 100644
 --- a/libraries/AP_HAL_Linux/GPIO.h

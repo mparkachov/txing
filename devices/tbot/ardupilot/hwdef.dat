@@ -15,7 +15,9 @@ define HAL_LINUX_GPIO_TBOT_ENABLED 1
 define HAL_LINUX_GPIO_TBOT_CHIP 0
 
 define HAL_INS_DEFAULT HAL_INS_NONE
-define AP_INERTIALSENSOR_ALLOW_NO_SENSORS 1
+# TBot has no physical IMU. Reuse ArduPilot's upstream synthetic IMU backend
+# so Rover can run its normal scheduler and MAVLink telemetry loop.
+define AP_INERTIALSENSOR_DUMMY_BACKEND 1
 define HAL_BARO_ALLOW_INIT_NO_BARO 1
 
 define AP_HAL_LINUX_SET_HW_RTC_ENABLED 0
