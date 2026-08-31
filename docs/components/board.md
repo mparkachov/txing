@@ -1474,6 +1474,12 @@ defaults during this proof of concept. `Failed to get GPIO memory map` in the
 ArduPilot log identifies an obsolete TBot artifact that still selects the
 legacy Raspberry Pi GPIO mapper; stop it and install the current release.
 
+QGroundControl discovers a vehicle only after MAVLink `HEARTBEAT` frames; a
+`STATUSTEXT` frame alone is not a connection. If the UDP probe receives
+`Beginning INS calibration. Do not move vehicle` but never a heartbeat, the
+board is running an artifact without the TBot sensorless scheduler fix. Stop it
+and install the current TBot release before retrying.
+
 To return to normal control, first disarm in QGroundControl and isolate motor
 power. Stop and verify ArduPilot before restoring and verifying the hardware
 worker:

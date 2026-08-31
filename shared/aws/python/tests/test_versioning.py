@@ -1935,6 +1935,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("HAL_LINUX_GPIO_RPI_ENABLED", hwdef)
         self.assertIn("GPIO_GET_LINEHANDLE_IOCTL", patch)
         self.assertIn("GPIOHANDLE_SET_LINE_VALUES_IOCTL", patch)
+        self.assertIn("A sensorless target still needs a scheduler tick", patch)
+        self.assertIn("MAVLink heartbeats can be emitted", patch)
+        self.assertIn("_gyro_count == 0 && _accel_count == 0", patch)
         self.assertIn('"/dev/gpiochip%u"', patch)
         self.assertNotIn("Failed to get GPIO memory map", patch)
         self.assertIn("txing-tbot-ardupilot-linux-aarch64.tar.gz", workflow)
@@ -1982,6 +1985,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("ephemeral on the board's tmpfs", tbot_runtime)
         self.assertIn("test -c /dev/gpiochip0", tbot_runtime)
         self.assertIn("Failed to get GPIO memory map", tbot_runtime)
+        self.assertIn("`STATUSTEXT` frame alone is not a connection", tbot_runtime)
+        self.assertIn("sensorless scheduler fix", tbot_runtime)
 
     def test_board_runbook_shell_blocks_are_copy_pasteable(self) -> None:
         """Every `sh` block in the board runbook must run as pasted.
