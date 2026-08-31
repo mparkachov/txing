@@ -1473,7 +1473,9 @@ motor power. In particular, confirm `ARMING_SKIPCHK` is `-1` and both
 `SERVO1_FUNCTION` and `SERVO2_FUNCTION` are `73` and `74` respectively before
 an arm attempt; any earlier `Compass`, `3D Accel calibration`, or steering and
 throttle pre-arm warning shows that retained parameters still override the
-TBot defaults. Its storage, terrain, and logs are recreated under
+TBot defaults. The GCS-link failsafe is `FS_GCS_ENABLE=1`, `FS_TIMEOUT=1`, and
+`FS_ACTION=2` (Hold); do not change it during powered acceptance. Its storage,
+terrain, and logs are recreated under
 `/var/tmp/txing-tbot-ardupilot/` and `/var/log/txing-tbot-ardupilot/`; they are
 ephemeral on the board's tmpfs mounts. Do not change motor, relay, or failsafe
 defaults during this proof of concept. `Failed to get GPIO memory map` in the

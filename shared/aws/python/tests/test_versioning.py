@@ -1919,6 +1919,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         for value in {
             "SERIAL0_PROTOCOL -1",
             "SERIAL1_PROTOCOL 2",
+            "FS_GCS_ENABLE 1",
+            "FS_TIMEOUT 1",
+            "FS_ACTION 2",
             "MOT_PWM_TYPE 3",
             "SERVO1_FUNCTION 73",
             "SERVO2_FUNCTION 74",
@@ -1931,6 +1934,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(value, defaults)
         self.assertNotRegex(defaults, r"(?m)^ARMING_CHECK(?:\s|$)")
+        self.assertNotRegex(defaults, r"(?m)^FS_GCS_TIMEOUT(?:\s|$)")
         self.assertNotRegex(defaults, r"(?m)^MOT_PWM_FREQ(?:\s|$)")
         self.assertIn("HAL_LINUX_GPIO_TBOT_ENABLED 1", hwdef)
         self.assertIn("HAL_LINUX_GPIO_TBOT_CHIP 0", hwdef)
@@ -1989,6 +1993,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("Failed to get GPIO memory map", tbot_runtime)
         self.assertIn("`STATUSTEXT` frame alone is not a connection", tbot_runtime)
         self.assertIn("synthetic-IMU backend", tbot_runtime)
+        self.assertIn("FS_TIMEOUT=1", tbot_runtime)
 
     def test_board_runbook_shell_blocks_are_copy_pasteable(self) -> None:
         """Every `sh` block in the board runbook must run as pasted.

@@ -10,7 +10,8 @@ SERIAL0_PROTOCOL -1
 SERIAL1_PROTOCOL 2
 SYSID_MYGCS 255
 FS_GCS_ENABLE 1
-FS_GCS_TIMEOUT 1
+# Current ArduPilot Rover uses the common failsafe timeout parameter.
+FS_TIMEOUT 1
 FS_ACTION 2
 
 # Manual is the initial mode; Hold is available as the safe mode.
