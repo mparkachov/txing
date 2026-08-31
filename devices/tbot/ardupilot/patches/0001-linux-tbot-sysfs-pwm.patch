@@ -536,17 +536,6 @@ index 2a6a044aa9..7195d773ca 100644
  };
 -#endif // CONFIG_HAL_BOARD
 +#endif
-diff --git a/libraries/AP_InertialSensor/AP_InertialSensor_config.h b/libraries/AP_InertialSensor/AP_InertialSensor_config.h
-index fa1cf382cc..fb05833e3f 100644
---- a/libraries/AP_InertialSensor/AP_InertialSensor_config.h
-+++ b/libraries/AP_InertialSensor/AP_InertialSensor_config.h
-@@ -23,3 +23,6 @@
- #ifndef AP_INERTIALSENSOR_ALLOW_NO_SENSORS
- #define AP_INERTIALSENSOR_ALLOW_NO_SENSORS 0
- #endif
-+#ifndef AP_INERTIALSENSOR_DUMMY_BACKEND
-+#define AP_INERTIALSENSOR_DUMMY_BACKEND 0
-+#endif
 diff --git a/libraries/AP_HAL_Linux/GPIO.h b/libraries/AP_HAL_Linux/GPIO.h
 index 03dfce4ca1..752db73d1b 100644
 --- a/libraries/AP_HAL_Linux/GPIO.h
