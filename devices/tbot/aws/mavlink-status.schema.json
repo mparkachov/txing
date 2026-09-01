@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/tbot-mavlink-status-v1.schema.json",
+  "title": "TBot MAVLink retained status v1",
+  "description": "Retained with the capability TTL at txings/<thing>/mavlink/status. The status contains no generic timestamp fields; consumers use MQTT retention and shadow metadata for freshness.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["serviceId", "available", "link", "target", "armed", "mode", "peers", "activeControl", "errors"],
+  "properties": {
+    "serviceId": { "const": "mavlink" },
+    "available": { "type": "boolean" },
+    "link": { "$ref": "#/$defs/link" },
+    "target": { "$ref": "#/$defs/target" },
+    "armed": { "type": "boolean" },
+    "mode": { "type": ["string", "null"] },
+    "peers": { "$ref": "#/$defs/peers" },
+    "activeControl": { "$ref": "#/$defs/activeControl" },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/error" }
+    }
+  },
+  "$defs": {
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "heartbeatFresh", "mavlinkWireProtocolVersion", "dialect"],
+      "properties": {
+        "state": { "enum": ["starting", "ready", "degraded", "unavailable"] },
+        "heartbeatFresh": { "type": "boolean" },
+        "mavlinkWireProtocolVersion": { "const": "2.0" },
+        "dialect": { "const": "common" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["systemId", "componentId"],
+      "properties": {
+        "systemId": { "type": ["integer", "null"], "minimum": 1, "maximum": 255 },
+        "componentId": { "type": ["integer", "null"], "minimum": 1, "maximum": 255 }
+      }
+    },
+    "peers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connected", "observers"],
+      "properties": {
+        "connected": { "type": "integer", "minimum": 0 },
+        "observers": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "activeControl": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["sessionId", "actor", "epoch", "leaseTtlMs"],
+      "properties": {
+        "sessionId": { "type": "string", "minLength": 1 },
+        "actor": { "type": "string", "minLength": 1 },
+        "epoch": { "type": "integer", "minimum": 1 },
+        "leaseTtlMs": { "const": 5000 }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -4,9 +4,9 @@ package txing.board.mavlink_bridge.v1;
 
 import "google/protobuf/timestamp.proto";
 
-// The Cyberbrick KVS master calls this daemon-owned bridge. The daemon is the
-// sole authority for session identity, active ownership, lease epochs,
-// takeover, REDCON, and cloud state. Opening a peer never grants control.
+// A board KVS master calls this daemon-owned bridge. The daemon is the sole
+// authority for session identity, active ownership, lease epochs, takeover,
+// REDCON, and cloud state. Opening a peer never grants control.
 service BoardMavlinkBridge {
   rpc GetControlChannelConfig(WorkerHello) returns (ControlChannelConfig);
   rpc RefreshControlChannelCredentials(RefreshCredentialsRequest) returns (KvsCredentials);

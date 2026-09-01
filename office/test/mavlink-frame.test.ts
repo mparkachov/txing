@@ -4,13 +4,13 @@ import { describe, expect, test } from 'bun:test'
 import {
   MavlinkFrameValidationError,
   parseUnsignedMavlinkV2CommonFrame,
-} from '../../devices/cyberbrick/mavlink/typescript/frame'
+} from '../../devices/common/board/mavlink/typescript/frame'
 
 const heartbeatFrame = Uint8Array.from(
   Buffer.from('fd0900002affbe000000000000000a03000403d131', 'hex'),
 )
 
-describe('Cyberbrick MAVLink common frame contract', () => {
+describe('Board MAVLink common frame contract', () => {
   test('accepts the golden unsigned MAVLink 2 HEARTBEAT frame and preserves it byte-for-byte', () => {
     const frame = parseUnsignedMavlinkV2CommonFrame(heartbeatFrame)
 

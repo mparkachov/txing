@@ -1,8 +1,7 @@
 syntax = "proto3";
 
-// The local flight-controller boundary for Cyberbrick only. The MAVLink
-// service listens on:
-// unix:/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock
+// The local flight-controller boundary for a board device with the MAVLink
+// capability. The concrete service owns the device-specific Unix socket.
 package txing.board.mavlink.v1;
 
 // BoardMavlink owns the local flight-controller transport. Callers must not

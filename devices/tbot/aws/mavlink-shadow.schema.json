@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/tbot-mavlink-shadow-v1.schema.json",
+  "title": "TBot MAVLink named shadow v1",
+  "description": "Named shadow 'mavlink'. Reported fields are domain state only; generic observation and update timestamps are deliberately absent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["link", "target", "armed", "mode", "peers", "activeControl", "errors"],
+          "properties": {
+            "link": { "$ref": "mavlink-status.schema.json#/$defs/link" },
+            "target": { "$ref": "mavlink-status.schema.json#/$defs/target" },
+            "armed": { "type": "boolean" },
+            "mode": { "type": ["string", "null"] },
+            "peers": { "$ref": "mavlink-status.schema.json#/$defs/peers" },
+            "activeControl": { "$ref": "mavlink-status.schema.json#/$defs/activeControl" },
+            "errors": {
+              "type": "array",
+              "items": { "$ref": "mavlink-status.schema.json#/$defs/error" }
+            }
+          }
+        }
+      }
+    },
+    "clientToken": { "type": "string" },
+    "version": { "type": "integer", "minimum": 0 },
+    "timestamp": { "type": "integer", "minimum": 0 }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "serviceId": "mavlink",
+  "available": true,
+  "link": {
+    "state": "ready",
+    "heartbeatFresh": true,
+    "mavlinkWireProtocolVersion": "2.0",
+    "dialect": "common"
+  },
+  "target": {
+    "systemId": 1,
+    "componentId": 1
+  },
+  "armed": false,
+  "mode": "hold",
+  "peers": {
+    "connected": 2,
+    "observers": 1
+  },
+  "activeControl": {
+    "sessionId": "peer-a",
+    "actor": "operator@example.test",
+    "epoch": 7,
+    "leaseTtlMs": 5000
+  },
+  "errors": []
+}

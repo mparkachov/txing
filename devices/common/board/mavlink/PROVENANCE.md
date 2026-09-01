@@ -1,4 +1,4 @@
-# Cyberbrick MAVLink common bindings
+# Board MAVLink common bindings
 
 The C/C++ headers and TypeScript definitions in this directory are generated
 MAVLink 2 `common`-dialect bindings. They are source artifacts, not an Office
@@ -38,7 +38,7 @@ No pymavlink generator source is redistributed here.
 Run this networked, read-only verifier from the repository root:
 
 ```sh
-just cyberbrick::mavlink::regeneration-check
+just common::board::mavlink::regeneration-check
 ```
 
 It fetches exactly the two commits above into `./tmp`, regenerates both

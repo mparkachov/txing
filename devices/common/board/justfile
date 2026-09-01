@@ -20,6 +20,8 @@ board_proto_dir := board_dir + "/proto"
 aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
 default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
 
+mod mavlink 'mavlink.just'
+
 # Pinned to the versions the previously checked-in bindings were generated with.
 protoc_gen_go_version := "v1.36.10"
 protoc_gen_go_grpc_version := "v1.5.1"
@@ -33,9 +35,8 @@ alpine_build_platform := "linux/arm64"
 static_toolchain_dir := board_dir + "/target/alpine-static-toolchain"
 
 # Every recipe takes the board device type as its first argument. It selects the
-# proto package under devices/<device>/proto, the binary names, and the release
-# stream in release/versions/<device>. KVS recipes are board-wide and take no
-# device argument.
+# binary names and release stream in release/versions/<device>. KVS recipes are
+# board-wide and take no device argument.
 [private]
 @_require-device device:
     #!/bin/sh
@@ -115,10 +116,8 @@ proto-gen:
     board_video_proto="txing/board/board_video/v1/board_video.proto"
     mavlink_proto="txing/board/mavlink/v1/mavlink.proto"
     mavlink_bridge_proto="txing/board/mavlink_bridge/v1/mavlink_bridge.proto"
-    mavlink_proto_root="{{project_root}}/devices/cyberbrick/proto"
     PATH="$plugin_dir:$PATH" protoc \
       "--proto_path=$proto_root" \
-      "--proto_path=$mavlink_proto_root" \
       "--go_out=$out_dir" \
       "--go_opt=module={{daemon_module}}/internal/proto" \
       "--go_opt=M$hardware_proto={{daemon_module}}/internal/proto/hardwarev1" \
@@ -576,7 +575,6 @@ nerdctl-smoke device:
       GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$TXING_PROTOC_GEN_GO_VERSION"
       GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$TXING_PROTOC_GEN_GO_GRPC_VERSION"
       proto_root="$PWD/devices/common/board/proto"
-      mavlink_proto_root="$PWD/devices/cyberbrick/proto"
       out_dir="$daemon_workdir/internal/proto"
       hardware_proto="txing/board/hardware/v1/hardware.proto"
       board_video_proto="txing/board/board_video/v1/board_video.proto"
@@ -586,7 +584,6 @@ nerdctl-smoke device:
       install -d "$out_dir"
       PATH="$plugin_dir:$PATH" protoc \
         "--proto_path=$proto_root" \
-        "--proto_path=$mavlink_proto_root" \
         "--go_out=$out_dir" \
         "--go_opt=module=$daemon_module/internal/proto" \
         "--go_opt=M$hardware_proto=$daemon_module/internal/proto/hardwarev1" \

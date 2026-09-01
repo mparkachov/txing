@@ -8,7 +8,11 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-CYBERBRICK_DIR = REPO_ROOT / "devices" / "cyberbrick"
+BOARD_DIR = REPO_ROOT / "devices" / "common" / "board"
+DEVICE_DIRS = {
+    "cyberbrick": REPO_ROOT / "devices" / "cyberbrick",
+    "tbot": REPO_ROOT / "devices" / "tbot",
+}
 
 
 class SchemaValidationError(ValueError):
@@ -121,35 +125,39 @@ class ContractSchemaValidator:
         }.get(expected, False)
 
 
-def load_json(relative_path: str) -> Any:
-    return json.loads((CYBERBRICK_DIR / relative_path).read_text(encoding="utf-8"))
+def load_json(device: str, relative_path: str) -> Any:
+    return json.loads((DEVICE_DIRS[device] / relative_path).read_text(encoding="utf-8"))
 
 
-class CyberbrickMavlinkContractTests(unittest.TestCase):
-    def test_retained_descriptor_status_and_shadow_fixtures_match_schemas(self) -> None:
+class BoardMavlinkContractTests(unittest.TestCase):
+    def test_device_owned_descriptor_status_and_shadow_fixtures_match_schemas(self) -> None:
         cases = (
             ("aws/mavlink-descriptor.schema.json", "aws/fixtures/mavlink-descriptor.json"),
             ("aws/mavlink-status.schema.json", "aws/fixtures/mavlink-status.json"),
             ("aws/mavlink-shadow.schema.json", "aws/default-mavlink-shadow.json"),
             ("aws/mavlink-shadow.schema.json", "aws/fixtures/mavlink-shadow.json"),
         )
-        for schema_path, fixture_path in cases:
-            with self.subTest(fixture=fixture_path):
-                ContractSchemaValidator(CYBERBRICK_DIR / schema_path).validate(load_json(fixture_path))
+        for device, device_dir in DEVICE_DIRS.items():
+            for schema_path, fixture_path in cases:
+                with self.subTest(device=device, fixture=fixture_path):
+                    ContractSchemaValidator(device_dir / schema_path).validate(load_json(device, fixture_path))
 
     def test_status_and_shadow_reject_generic_timestamps(self) -> None:
-        status = load_json("aws/fixtures/mavlink-status.json")
-        status["updatedAtMs"] = 123
-        with self.assertRaisesRegex(SchemaValidationError, "unexpected"):
-            ContractSchemaValidator(CYBERBRICK_DIR / "aws/mavlink-status.schema.json").validate(status)
+        for device, device_dir in DEVICE_DIRS.items():
+            with self.subTest(device=device, contract="status"):
+                status = load_json(device, "aws/fixtures/mavlink-status.json")
+                status["updatedAtMs"] = 123
+                with self.assertRaisesRegex(SchemaValidationError, "unexpected"):
+                    ContractSchemaValidator(device_dir / "aws/mavlink-status.schema.json").validate(status)
 
-        shadow = load_json("aws/fixtures/mavlink-shadow.json")
-        shadow["state"]["reported"]["observedAtMs"] = 123
-        with self.assertRaisesRegex(SchemaValidationError, "unexpected"):
-            ContractSchemaValidator(CYBERBRICK_DIR / "aws/mavlink-shadow.schema.json").validate(shadow)
+            with self.subTest(device=device, contract="shadow"):
+                shadow = load_json(device, "aws/fixtures/mavlink-shadow.json")
+                shadow["state"]["reported"]["observedAtMs"] = 123
+                with self.assertRaisesRegex(SchemaValidationError, "unexpected"):
+                    ContractSchemaValidator(device_dir / "aws/mavlink-shadow.schema.json").validate(shadow)
 
     def test_control_envelopes_require_stable_requests_responses_and_errors(self) -> None:
-        validator = ContractSchemaValidator(CYBERBRICK_DIR / "protocol/mavlink-webrtc.schema.json")
+        validator = ContractSchemaValidator(BOARD_DIR / "protocol/mavlink-webrtc.schema.json")
         validator.validate({"type": "control.get_state", "requestId": "state-1"})
         validator.validate(
             {"type": "control.activate", "requestId": "activate-1", "actor": "operator", "takeover": False}
@@ -179,11 +187,11 @@ class CyberbrickMavlinkContractTests(unittest.TestCase):
             validator.validate(invalid)
 
     def test_protocol_sources_define_the_documented_services(self) -> None:
-        mavlink_proto = (CYBERBRICK_DIR / "proto/txing/board/mavlink/v1/mavlink.proto").read_text(encoding="utf-8")
-        bridge_proto = (CYBERBRICK_DIR / "proto/txing/board/mavlink_bridge/v1/mavlink_bridge.proto").read_text(encoding="utf-8")
+        mavlink_proto = (BOARD_DIR / "proto/txing/board/mavlink/v1/mavlink.proto").read_text(encoding="utf-8")
+        bridge_proto = (BOARD_DIR / "proto/txing/board/mavlink_bridge/v1/mavlink_bridge.proto").read_text(encoding="utf-8")
         for method in ("GetStatus", "Exchange", "EnterSafeState"):
             self.assertIn(method, mavlink_proto)
-        self.assertIn("/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock", mavlink_proto)
+        self.assertIn("package txing.board.mavlink.v1;", mavlink_proto)
         for method in (
             "GetControlChannelConfig",
             "RefreshControlChannelCredentials",
@@ -193,7 +201,20 @@ class CyberbrickMavlinkContractTests(unittest.TestCase):
             "ClosePeer",
         ):
             self.assertIn(method, bridge_proto)
-        self.assertIn("sole authority for session identity", bridge_proto)
+        self.assertIn("authority for session identity", bridge_proto)
+
+    def test_device_descriptors_preserve_the_shared_wire_contract(self) -> None:
+        for device in DEVICE_DIRS:
+            with self.subTest(device=device):
+                descriptor = load_json(device, "aws/fixtures/mavlink-descriptor.json")
+                self.assertEqual(descriptor["serviceId"], "mavlink")
+                self.assertEqual(descriptor["dataChannel"], {
+                    "label": "txing.mavlink.v1",
+                    "ordered": True,
+                    "reliable": True,
+                    "binaryMessage": "mavlink2-unsigned-common-frame",
+                    "textMessage": "cyberbrick-mavlink-control-json-v1",
+                })
 
 
 if __name__ == "__main__":

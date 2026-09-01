@@ -3,7 +3,7 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 mavlink_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-project_root=$(CDPATH= cd -- "$mavlink_dir/../../.." && pwd)
+project_root=$(CDPATH= cd -- "$mavlink_dir/../../../.." && pwd)
 work_dir=$(mktemp -d "$project_root/tmp/mavlink-regeneration.XXXXXX")
 
 c_library_url=https://github.com/mavlink/c_library_v2.git
@@ -90,4 +90,4 @@ diff -ru "$work_dir/generated-typescript/enums" "$vendor_ts/enums"
 diff -ru "$work_dir/generated-typescript/messages" "$vendor_ts/messages"
 diff -u "$work_dir/generated-typescript/message-registry.ts" "$vendor_ts/message-registry.ts"
 
-echo "Cyberbrick MAVLink bindings match pinned generator inputs."
+echo "Board MAVLink bindings match pinned generator inputs."

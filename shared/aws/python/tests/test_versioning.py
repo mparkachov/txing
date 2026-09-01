@@ -625,7 +625,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("TBOT_DAEMON_ASSET: txing-tbot-daemon-linux-aarch64.tar.gz", tbot_workflow)
         self.assertIn("HARDWARE_WORKER_ASSET: txing-tbot-hardware-worker-linux-aarch64.tar.gz", tbot_workflow)
         self.assertIn("DeviceType=tbot", tbot_workflow)
-        self.assertIn("mavlink_proto_root=devices/cyberbrick/proto", tbot_workflow)
+        self.assertIn("proto_root=devices/common/board/proto", tbot_workflow)
+        self.assertNotIn("devices/cyberbrick/proto", tbot_workflow)
         self.assertIn("txing/board/mavlink_bridge/v1/mavlink_bridge.proto", tbot_workflow)
         self.assertIn('-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', tbot_workflow)
         self.assertIn("-DTXING_BOARD_DEVICE_TYPE=tbot", tbot_workflow)
@@ -1266,15 +1267,12 @@ class VersionEnvironmentTests(unittest.TestCase):
             # Genuinely per-device material stays with the device.
             self.assertTrue((device_dir / "manifest.toml").is_file())
             self.assertTrue((device_dir / "aws").is_dir())
-        # Unit and TBot use only the shared board contracts. Cyberbrick's flight-control
-        # boundary is intentionally device-owned rather than a second copy of a
-        # shared board component.
+        # Unit and TBot have no per-device local protocol packages. MAVLink's
+        # neutral flight-control boundary is a single shared board contract.
         self.assertFalse((REPO_ROOT / "devices" / "unit" / "proto").exists())
         self.assertFalse((REPO_ROOT / "devices" / "tbot" / "proto").exists())
-        cyberbrick_mavlink = (
-            REPO_ROOT
-            / "devices"
-            / "cyberbrick"
+        board_mavlink = (
+            board_dir
             / "proto"
             / "txing"
             / "board"
@@ -1282,8 +1280,10 @@ class VersionEnvironmentTests(unittest.TestCase):
             / "v1"
             / "mavlink.proto"
         ).read_text(encoding="utf-8")
-        self.assertIn("package txing.board.mavlink.v1;", cyberbrick_mavlink)
-        self.assertIn("service BoardMavlink {", cyberbrick_mavlink)
+        self.assertIn("package txing.board.mavlink.v1;", board_mavlink)
+        self.assertIn("service BoardMavlink {", board_mavlink)
+        self.assertTrue((board_dir / "mavlink" / "PROVENANCE.md").is_file())
+        self.assertTrue((board_dir / "protocol" / "mavlink-webrtc.schema.json").is_file())
 
         # Hardware remains device-named. KVS is a device-neutral build whose
         # service supplies identity and sockets at runtime.

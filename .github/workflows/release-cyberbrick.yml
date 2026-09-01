@@ -214,7 +214,6 @@ jobs:
               GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$PROTOC_GEN_GO_VERSION"
               GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$PROTOC_GEN_GO_GRPC_VERSION"
               proto_root="$GITHUB_WORKSPACE/devices/common/board/proto"
-              mavlink_proto_root="$GITHUB_WORKSPACE/devices/cyberbrick/proto"
               out_dir="$GITHUB_WORKSPACE/devices/common/board/daemon/internal/proto"
               hardware_proto="txing/board/hardware/v1/hardware.proto"
               board_video_proto="txing/board/board_video/v1/board_video.proto"
@@ -224,7 +223,6 @@ jobs:
               install -d "$out_dir"
               PATH="$plugin_dir:$PATH" protoc \
                 "--proto_path=$proto_root" \
-                "--proto_path=$mavlink_proto_root" \
                 "--go_out=$out_dir" \
                 "--go_opt=module=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto" \
                 "--go_opt=M$hardware_proto=github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/hardwarev1" \

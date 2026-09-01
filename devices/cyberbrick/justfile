@@ -9,7 +9,6 @@ export TMPDIR := tmp_dir
 
 mod board 'board.just'
 mod ardupilot 'ardupilot.just'
-mod mavlink 'mavlink.just'
 
 @default:
     @just --list

@@ -93,19 +93,19 @@ describe('shadow protocol helpers', () => {
     })
   })
 
-  test('includes tbot Thread and Unit board named shadows from catalog capabilities', () => {
+  test('includes tbot Thread, board, and MAVLink named shadows from catalog capabilities', () => {
     const topics = buildNamedShadowTopics('tbot-001', [
       'sparkplug',
       'thread',
       'power',
       'board',
-      'mcp',
+      'mavlink',
       'video',
     ])
 
     expect(topics.thread.update).toBe('$aws/things/tbot-001/shadow/name/thread/update')
     expect(topics.board.update).toBe('$aws/things/tbot-001/shadow/name/board/update')
-    expect(topics.mcp.update).toBe('$aws/things/tbot-001/shadow/name/mcp/update')
+    expect(topics.mavlink.update).toBe('$aws/things/tbot-001/shadow/name/mavlink/update')
     expect(topics.video.update).toBe('$aws/things/tbot-001/shadow/name/video/update')
   })
 

@@ -1,8 +1,9 @@
-# Cyberbrick MAVLink capability contract
+# Cyberbrick MAVLink capability profile
 
-Cyberbrick has the `mavlink` capability and does not have `mcp`. Unit retains
-its existing MCP capability and payloads. Catalog validation rejects a device
-that declares both capabilities.
+Cyberbrick has the `mavlink` capability and does not have `mcp`. Its protocol
+uses the shared [Board MAVLink capability contract](./board-mavlink.md). Unit
+retains its existing MCP capability and payloads. Catalog validation rejects a
+device that declares both capabilities.
 
 ## Local ownership
 
@@ -25,10 +26,10 @@ takeover, epochs, lease expiry, REDCON, and cloud state. The KVS worker uses
 configuration and credentials, peer lifecycle, JSON controls, and binary frame
 exchange. Opening a peer never grants authority.
 
-The authoritative definitions are
-[`mavlink.proto`](../../devices/cyberbrick/proto/txing/board/mavlink/v1/mavlink.proto)
+The shared local APIs are defined by
+[`mavlink.proto`](../../devices/common/board/proto/txing/board/mavlink/v1/mavlink.proto)
 and
-[`mavlink_bridge.proto`](../../devices/cyberbrick/proto/txing/board/mavlink_bridge/v1/mavlink_bridge.proto).
+[`mavlink_bridge.proto`](../../devices/common/board/proto/txing/board/mavlink_bridge/v1/mavlink_bridge.proto).
 
 ## WebRTC data channel
 
@@ -38,7 +39,7 @@ single data channel is ordered and reliable with label `txing.mavlink.v1`.
 - Each binary message is exactly one unsigned MAVLink 2 `common` frame.
   Invalid framing or CRC, signed frames, and unsupported messages are rejected.
 - Text messages validate against
-  [`mavlink-webrtc.schema.json`](../../devices/cyberbrick/protocol/mavlink-webrtc.schema.json).
+  [`mavlink-webrtc.schema.json`](../../devices/common/board/protocol/mavlink-webrtc.schema.json).
   The only operations are `control.get_state`, `control.activate`,
   `control.renew_active`, and `control.release_active`.
 - Successful state and mutation messages include an epoch and a five-second
@@ -91,6 +92,6 @@ rollback to the former Cyberbrick MCP control path.
 
 Pinned MAVLink 2 `common` C/C++ and TypeScript generated bindings, their
 licenses, and regeneration verifier are in
-[`devices/cyberbrick/mavlink`](../../devices/cyberbrick/mavlink/). Office uses
+[`devices/common/board/mavlink`](../../devices/common/board/mavlink/). Office uses
 the checked-in definitions and local parser only; it has no runtime MAVLink npm
 package.

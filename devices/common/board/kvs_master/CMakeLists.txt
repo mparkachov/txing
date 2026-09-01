@@ -147,11 +147,6 @@ if(TXING_KVS_GRPC_BRIDGE)
     TXING_BOARD_VIDEO_PROTO_RELATIVE
     "txing/board/board_video/v1/board_video.proto"
   )
-  get_filename_component(
-    TXING_CYBERBRICK_PROTO_ROOT
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../cyberbrick/proto"
-    ABSOLUTE
-  )
   set(
     TXING_BOARD_MAVLINK_BRIDGE_PROTO_RELATIVE
     "txing/board/mavlink_bridge/v1/mavlink_bridge.proto"
@@ -195,12 +190,12 @@ if(TXING_KVS_GRPC_BRIDGE)
 
   set(
     TXING_BOARD_MAVLINK_BRIDGE_PROTO
-    "${TXING_CYBERBRICK_PROTO_ROOT}/${TXING_BOARD_MAVLINK_BRIDGE_PROTO_RELATIVE}"
+    "${TXING_BOARD_VIDEO_PROTO_ROOT}/${TXING_BOARD_MAVLINK_BRIDGE_PROTO_RELATIVE}"
   )
   if(NOT EXISTS "${TXING_BOARD_MAVLINK_BRIDGE_PROTO}")
     message(FATAL_ERROR
       "BoardMavlinkBridge proto not found at '${TXING_BOARD_MAVLINK_BRIDGE_PROTO}'. "
-      "The repository checkout must include devices/cyberbrick/proto."
+      "The repository checkout must include devices/common/board/proto."
     )
   endif()
   set(TXING_BOARD_MAVLINK_BRIDGE_PROTO_SRCS
@@ -214,13 +209,12 @@ if(TXING_KVS_GRPC_BRIDGE)
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
     COMMAND protobuf::protoc
       "--proto_path=${TXING_BOARD_VIDEO_PROTO_ROOT}"
-      "--proto_path=${TXING_CYBERBRICK_PROTO_ROOT}"
       "--cpp_out=${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
       "--grpc_out=${TXING_BOARD_VIDEO_PROTO_GEN_DIR}"
       "--plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN_EXECUTABLE}"
       "${TXING_BOARD_MAVLINK_BRIDGE_PROTO_RELATIVE}"
     DEPENDS "${TXING_BOARD_MAVLINK_BRIDGE_PROTO}"
-    WORKING_DIRECTORY "${TXING_CYBERBRICK_PROTO_ROOT}"
+    WORKING_DIRECTORY "${TXING_BOARD_VIDEO_PROTO_ROOT}"
     VERBATIM
   )
   add_library(txing_board_mavlink_bridge_proto OBJECT ${TXING_BOARD_MAVLINK_BRIDGE_PROTO_SRCS})

@@ -1,7 +1,7 @@
 # TBot device
 
 `tbot` is a new Thread-first device type for the Unit-equivalent board,
-MCP, control, and video contract. Its XIAO nRF54LM20A Sense MCU uses the shared
+MAVLink, control, and video contract. Its XIAO nRF54LM20A Sense MCU uses the shared
 stock Zephyr/OpenThread implementation with the `tbot` SRP service identity;
 it has no BLE or Matter/CHIP firmware path.
 
@@ -68,12 +68,23 @@ Target-enclosure hardware acceptance remains a separate milestone task. Do not
 ship a TBot until the specified antenna and enclosure demonstrate repeatable
 Thread control, board boot/recovery, video, and motion-control acceptance.
 
-## Board runtime
+## Board runtime and MAVLink contract
+
+TBot's catalog contract declares `mavlink`, not `mcp`, with an independent
+`<thing>-mavlink` WebRTC data channel and the REDCON 1 `mavlinkArmed` input.
+Its descriptor, status, named-shadow schema, defaults, and fixtures are owned
+under `devices/tbot/aws/`; the shared WebRTC and local APIs are documented in
+[Board MAVLink capability contract](../../docs/contracts/board-mavlink.md).
+
+This contract migration deliberately precedes the forward-only runtime service
+cutover. Do not deploy it independently of the coordinated TBot MAVLink runtime
+and cloud-provisioning work.
 
 TBot uses the shared board daemon, KVS master, and motor hardware worker with
 the `tbot` build identity. Its Thread adapter delivers the same public board,
-MCP, active-control, motor-failsafe, and video behavior as Unit. Build and test
-the board artifacts from the repository root:
+current deployed MCP, active-control, motor-failsafe, and video behavior as
+Unit until that cutover. Build and test the current board artifacts from the
+repository root:
 
 ```sh
 just tbot::board::test

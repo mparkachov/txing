@@ -146,18 +146,25 @@ class TypeCatalogTests(unittest.TestCase):
             ["sparkplug", "ble", "power", "board", "mavlink", "video"],
         )
         self.assertEqual(unit_record["capabilities"], ["sparkplug", "ble", "power", "board", "mcp", "video"])
-        self.assertEqual(tbot_record["capabilities"], ["sparkplug", "thread", "power", "board", "mcp", "video"])
+        self.assertEqual(tbot_record["capabilities"], ["sparkplug", "thread", "power", "board", "mavlink", "video"])
         self.assertEqual(
             tbot_record["redconRules"],
             {
-                "1": ["sparkplug", "thread", "power", "board", "mcp", "video"],
-                "2": ["sparkplug", "thread", "power", "board", "mcp"],
+                "1": ["sparkplug", "thread", "power", "board", "mavlink", "video"],
+                "2": ["sparkplug", "thread", "power", "board", "mavlink"],
                 "3": ["sparkplug", "thread", "power"],
                 "4": ["sparkplug", "thread"],
             },
         )
-        self.assertEqual(set(tbot_record["shadows"]), {"sparkplug", "thread", "power", "board", "mcp", "video"})
-        self.assertEqual(tbot_record["resources"], {"boardVideo": {"channelName": "{device_id}-board-video"}})
+        self.assertEqual(tbot_record["redconMetricRules"], {"1": ["mavlinkArmed"]})
+        self.assertEqual(set(tbot_record["shadows"]), {"sparkplug", "thread", "power", "board", "mavlink", "video"})
+        self.assertEqual(
+            tbot_record["resources"],
+            {
+                "boardVideo": {"channelName": "{device_id}-board-video"},
+                "mavlink": {"channelName": "{device_id}-mavlink"},
+            },
+        )
         self.assertEqual(tbot_record["web"], {"adapter": "web/tbot-adapter.tsx"})
         self.assertEqual(
             cyberbrick_record["redconRules"],
@@ -255,7 +262,7 @@ class TypeCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/tbot/capabilities"],
-            "sparkplug,thread,power,board,mcp,video",
+            "sparkplug,thread,power,board,mavlink,video",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/cyberbrick/capabilities"],
@@ -307,11 +314,11 @@ class TypeCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/tbot/redconRules/1"],
-            "sparkplug,thread,power,board,mcp,video",
+            "sparkplug,thread,power,board,mavlink,video",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/tbot/redconRules/2"],
-            "sparkplug,thread,power,board,mcp",
+            "sparkplug,thread,power,board,mavlink",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/tbot/redconRules/3"],
@@ -332,6 +339,14 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/tbot/resources/boardVideo/channelName"],
             "{device_id}-board-video",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/tbot/resources/mavlink/channelName"],
+            "{device_id}-mavlink",
+        )
+        self.assertEqual(
+            ssm.parameters["/txing/town/raspi/tbot/redconMetricRules/1"],
+            "mavlinkArmed",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/capabilities"],
