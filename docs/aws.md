@@ -315,11 +315,11 @@ All things receive:
 
 `town`, `cloud` rig, and non-host device things receive only that generic IoT
 certificate bundle attached to the base IoT policy. `raspi` rigs also receive
-`daemon.env` and `<thing-id>-rig-daemon-config.tgz`; `unit` and `cyberbrick`
-devices also receive `daemon.env` and `<thing-id>-daemon-config.tgz`. Every
-board daemon-config archive contains the complete Unit and Cyberbrick OpenRC
-service catalog under `services/`; the board install copies only the scripts
-for its device type.
+`daemon.env` and `<thing-id>-rig-daemon-config.tgz`; `unit`, `tbot`, and
+`cyberbrick` devices also receive `daemon.env` and
+`<thing-id>-daemon-config.tgz`. Every board daemon-config archive contains the
+complete board OpenRC service catalog under `services/`; the board install
+copies only the scripts for its device type.
 
 `certs/` is explicitly ignored by git. The recipe refuses to overwrite existing
 material; move or delete the files first if you intentionally rotate a

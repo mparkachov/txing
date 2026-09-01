@@ -25,6 +25,25 @@ func TestReconstructsRedconRulesFromSSMLeafParameters(t *testing.T) {
 	assertStrings(t, record.RedconMetricRules[1], []string{"mavlinkArmed"})
 }
 
+func TestReconstructsTbotMavlinkArmingRule(t *testing.T) {
+	record, err := ReconstructTypeRecord([][2]string{
+		{"/txing/town/raspi/tbot/thingType", "tbot"},
+		{"/txing/town/raspi/tbot/capabilities", "sparkplug,thread,power,board,mavlink,video"},
+		{"/txing/town/raspi/tbot/redconCommandLevels", "4,3,2,1"},
+		{"/txing/town/raspi/tbot/redconRules/2", "sparkplug,thread,power,board,mavlink"},
+		{"/txing/town/raspi/tbot/redconRules/1", "sparkplug,thread,power,board,mavlink,video"},
+		{"/txing/town/raspi/tbot/redconMetricRules/1", "mavlinkArmed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ThingType != "tbot" {
+		t.Fatalf("thingType = %s", record.ThingType)
+	}
+	assertStrings(t, record.RedconRules[2], []string{"sparkplug", "thread", "power", "board", "mavlink"})
+	assertStrings(t, record.RedconMetricRules[1], []string{"mavlinkArmed"})
+}
+
 func assertStrings(t *testing.T, got []string, want []string) {
 	t.Helper()
 	if len(got) != len(want) {

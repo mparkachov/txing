@@ -307,6 +307,29 @@ txing_cert_device_daemon_capabilities() {
   printf '%s\n' "$capabilities"
 }
 
+txing_cert_write_device_daemon_policy() {
+  credential_policy_file="$1"
+  partition="$2"
+  account_id="$3"
+  thing_id="$4"
+  cloudwatch_log_group="$5"
+  daemon_capabilities="$6"
+
+  jq -n \
+    --arg iotShadowArn "arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${thing_id}/sparkplug" \
+    --arg cloudwatchLogGroupArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
+    --arg cloudwatchLogStreamArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
+    --arg boardVideoChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-board-video/*" \
+    --arg mavlinkChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-mavlink/*" \
+    --arg daemonCapabilities "$daemon_capabilities" \
+    '{Version: "2012-10-17", Statement: [
+      {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
+      {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
+      {Sid: "DaemonKvsMaster", Effect: "Allow", Action: ["kinesisvideo:DescribeSignalingChannel", "kinesisvideo:GetSignalingChannelEndpoint", "kinesisvideo:GetIceServerConfig", "kinesisvideo:ConnectAsMaster"], Resource: ([$boardVideoChannelArn] + (if ($daemonCapabilities | split(",") | index("mavlink")) != null then [$mavlinkChannelArn] else [] end))}
+    ]}' \
+    >"$credential_policy_file"
+}
+
 txing_cert_upsert_credential_role() {
   role_name="$1"
   managed_policy_arn="$2"
@@ -473,19 +496,13 @@ txing_cert_generate_device_daemon_bundle() {
   trust_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-trust.XXXXXX")"
   credential_policy_file="$(mktemp "${TMPDIR:-/tmp}/txing-daemon-credential-policy.XXXXXX")"
   jq -n '{Version: "2012-10-17", Statement: [{Effect: "Allow", Principal: {Service: "credentials.iot.amazonaws.com"}, Action: "sts:AssumeRole"}]}' >"$trust_policy_file"
-  jq -n \
-    --arg iotShadowArn "arn:${partition}:iot:${TXING_AWS_REGION}:${account_id}:thing/${thing_id}/sparkplug" \
-    --arg cloudwatchLogGroupArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}" \
-    --arg cloudwatchLogStreamArn "arn:${partition}:logs:${TXING_AWS_REGION}:${account_id}:log-group:${cloudwatch_log_group}:log-stream:*" \
-    --arg boardVideoChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-board-video/*" \
-    --arg mavlinkChannelArn "arn:${partition}:kinesisvideo:${TXING_AWS_REGION}:${account_id}:channel/${thing_id}-mavlink/*" \
-    --arg thingType "$thing_type" \
-    '{Version: "2012-10-17", Statement: [
-      {Sid: "DaemonSparkplugShadowRead", Effect: "Allow", Action: "iot:GetThingShadow", Resource: $iotShadowArn},
-      {Sid: "DaemonCloudWatchLogsWrite", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:PutLogEvents"], Resource: [$cloudwatchLogGroupArn, $cloudwatchLogStreamArn]},
-      {Sid: "DaemonKvsMaster", Effect: "Allow", Action: ["kinesisvideo:DescribeSignalingChannel", "kinesisvideo:GetSignalingChannelEndpoint", "kinesisvideo:GetIceServerConfig", "kinesisvideo:ConnectAsMaster"], Resource: ([$boardVideoChannelArn] + (if $thingType == "cyberbrick" then [$mavlinkChannelArn] else [] end))}
-    ]}' \
-    >"$credential_policy_file"
+  txing_cert_write_device_daemon_policy \
+    "$credential_policy_file" \
+    "$partition" \
+    "$account_id" \
+    "$thing_id" \
+    "$cloudwatch_log_group" \
+    "$daemon_capabilities"
   daemon_role_arn="$(txing_cert_upsert_credential_role "$daemon_role_name" "" txing-daemon-own-thing "$credential_policy_file" "$trust_policy_file")"
   txing_cert_upsert_role_alias "$iot_role_alias" "$daemon_role_arn"
   iot_data_endpoint="$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)"

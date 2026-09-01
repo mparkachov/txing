@@ -68,6 +68,19 @@ class _FakeIotClient:
                     "townId": "town-3xvtqf",
                 },
             }
+        if thingName == "tbot-local":
+            return {
+                "thingName": thingName,
+                "thingTypeName": "tbot",
+                "attributes": {
+                    "name": "tbot",
+                    "shortId": "local",
+                    "capabilities": "sparkplug,thread,power,board,mavlink,video",
+                    "deviceType": "tbot",
+                    "rigId": "raspi-rig001",
+                    "townId": "town-3xvtqf",
+                },
+            }
         if thingName == "cloud-mcu-cloud":
             return {
                 "thingName": thingName,
@@ -390,6 +403,36 @@ class AwsCheckTests(unittest.TestCase):
         self.assertEqual(
             runtime.kinesisvideo.channel_names,
             ["cyberbrick-local-board-video", "cyberbrick-local-mavlink"],
+        )
+
+    def test_run_tbot_device_service_check_validates_mavlink_and_video_independently(self) -> None:
+        runtime = _FakeRuntime(endpoint="abc123-ats.iot.eu-central-1.amazonaws.com")
+
+        results = run_service_check(
+            "device",
+            environment={
+                "AWS_REGION": "eu-central-1",
+                "THING_NAME": "tbot-local",
+                "TXING_DEVICE_TYPE": "tbot",
+            },
+            aws_runtime=runtime,
+        )
+
+        self.assertTrue(all(result.ok for result in results), [result.message for result in results])
+        self.assertEqual(
+            runtime.iot_data.thing_names,
+            [
+                ("tbot-local", "sparkplug"),
+                ("tbot-local", "thread"),
+                ("tbot-local", "power"),
+                ("tbot-local", "board"),
+                ("tbot-local", "mavlink"),
+                ("tbot-local", "video"),
+            ],
+        )
+        self.assertEqual(
+            runtime.kinesisvideo.channel_names,
+            ["tbot-local-board-video", "tbot-local-mavlink"],
         )
 
 

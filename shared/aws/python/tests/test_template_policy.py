@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 import subprocess
@@ -66,6 +67,62 @@ def _parse_env_template_exports(text: str) -> dict[str, str]:
 
 
 class AwsTemplatePolicyTests(unittest.TestCase):
+    def test_device_daemon_policy_scopes_mavlink_master_access_to_capability(self) -> None:
+        script = AWS_DIR / "scripts" / "aws_lib.sh"
+
+        def render(thing_id: str, capabilities: str) -> dict[str, object]:
+            with tempfile.TemporaryDirectory() as tempdir:
+                policy_path = Path(tempdir) / "policy.json"
+                subprocess.run(
+                    [
+                        "sh",
+                        "-c",
+                        'set -eu; . "$1"; TXING_AWS_REGION=eu-central-1; export TXING_AWS_REGION; '
+                        'txing_cert_write_device_daemon_policy "$2" aws 123456789012 "$3" '
+                        'txing/town/rig/tbot-local "$4"',
+                        "sh",
+                        str(script),
+                        str(policy_path),
+                        thing_id,
+                        capabilities,
+                    ],
+                    check=True,
+                )
+                return json.loads(policy_path.read_text(encoding="utf-8"))
+
+        tbot_policy = render("tbot-local", "board,mavlink,video")
+        cyberbrick_policy = render("cyberbrick-local", "board,mavlink,video")
+        unit_policy = render("unit-local", "board,mcp,video")
+
+        def master_resources(policy: dict[str, object]) -> list[str]:
+            statements = policy["Statement"]
+            self.assertIsInstance(statements, list)
+            statement = next(
+                item for item in statements if item["Sid"] == "DaemonKvsMaster"
+            )
+            resources = statement["Resource"]
+            self.assertIsInstance(resources, list)
+            return resources
+
+        self.assertEqual(
+            master_resources(tbot_policy),
+            [
+                "arn:aws:kinesisvideo:eu-central-1:123456789012:channel/tbot-local-board-video/*",
+                "arn:aws:kinesisvideo:eu-central-1:123456789012:channel/tbot-local-mavlink/*",
+            ],
+        )
+        self.assertEqual(
+            master_resources(unit_policy),
+            ["arn:aws:kinesisvideo:eu-central-1:123456789012:channel/unit-local-board-video/*"],
+        )
+        self.assertEqual(
+            master_resources(cyberbrick_policy),
+            [
+                "arn:aws:kinesisvideo:eu-central-1:123456789012:channel/cyberbrick-local-board-video/*",
+                "arn:aws:kinesisvideo:eu-central-1:123456789012:channel/cyberbrick-local-mavlink/*",
+            ],
+        )
+
     def test_rig_and_device_video_topics_are_authorized(self) -> None:
         template = _template_text()
 
@@ -514,7 +571,12 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "channel/${thing_id}-mavlink/*",
             aws_lib,
         )
-        self.assertIn('if $thingType == "cyberbrick" then [$mavlinkChannelArn]', aws_lib)
+        self.assertIn('--arg daemonCapabilities "$daemon_capabilities"', aws_lib)
+        self.assertIn(
+            'if ($daemonCapabilities | split(",") | index("mavlink")) != null then [$mavlinkChannelArn]',
+            aws_lib,
+        )
+        self.assertNotIn('if $thingType == "cyberbrick" then [$mavlinkChannelArn]', aws_lib)
         self.assertIn(
             "TXING_BOARD_VIDEO_CHANNEL_NAME={{TXING_BOARD_VIDEO_CHANNEL_NAME}}",
             daemon_env_template,
@@ -706,6 +768,30 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertIn("CatalogBasePath: /txing/town/local", template)
         self.assertIn("CatalogBasePath: /txing/town/local/mac", template)
         self.assertIn("kind: deviceType", template)
+        tbot_catalog = root_template.split(
+            "  TBotTypeCatalogV2:",
+            1,
+        )[1].split("\n  CyberbrickTypeCatalogV2:", 1)[0]
+        for expected in (
+            "ThingTypeName: tbot",
+            "CatalogBasePath: /txing/town/raspi/tbot",
+            "deviceType: tbot",
+            "rigType: raspi",
+            "capabilities: sparkplug,thread,power,board,mavlink,video",
+            "redconCommandLevels: 4,3,2,1",
+            "redconRules/4: sparkplug,thread",
+            "redconRules/3: sparkplug,thread,power",
+            "redconRules/2: sparkplug,thread,power,board,mavlink",
+            "redconRules/1: sparkplug,thread,power,board,mavlink,video",
+            "redconMetricRules/1: mavlinkArmed",
+            "shadows/mavlink/schema: aws/mavlink-shadow.schema.json",
+            'resources/mavlink/channelName: "{device_id}-mavlink"',
+            "web/adapter: web/tbot-adapter.tsx",
+            'resources/boardVideo/channelName: "{device_id}-board-video"',
+        ):
+            self.assertIn(expected, tbot_catalog)
+        self.assertIn('"deviceId":"tbot-local"', tbot_catalog)
+        self.assertNotIn("shadows/mcp/schema", tbot_catalog)
         cyberbrick_catalog = root_template.split(
             "  CyberbrickTypeCatalogV2:",
             1,

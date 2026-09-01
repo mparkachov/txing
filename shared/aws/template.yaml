@@ -417,12 +417,13 @@ Resources:
         rigType: raspi
         displayName: TBot
         defaultName: tbot
-        capabilities: sparkplug,thread,power,board,mcp,video
+        capabilities: sparkplug,thread,power,board,mavlink,video
         redconCommandLevels: 4,3,2,1
         redconRules/4: sparkplug,thread
         redconRules/3: sparkplug,thread,power
-        redconRules/2: sparkplug,thread,power,board,mcp
-        redconRules/1: sparkplug,thread,power,board,mcp,video
+        redconRules/2: sparkplug,thread,power,board,mavlink
+        redconRules/1: sparkplug,thread,power,board,mavlink,video
+        redconMetricRules/1: mavlinkArmed
         requiredAttributes: name,shortId,townId,rigId
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
@@ -437,14 +438,15 @@ Resources:
         shadows/board/schema: aws/board-shadow.schema.json
         shadows/board/default: aws/default-board-shadow.json
         shadows/board/defaultPayload: '{"state":{"reported":{"power":false,"wifi":{"online":false,"ipv4":null,"ipv6":null}}}}'
-        shadows/mcp/schema: aws/mcp-shadow.schema.json
-        shadows/mcp/default: aws/default-mcp-shadow.json
-        shadows/mcp/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"mcp","available":false,"updatedAtMs":0}}}}'
+        shadows/mavlink/schema: aws/mavlink-shadow.schema.json
+        shadows/mavlink/default: aws/default-mavlink-shadow.json
+        shadows/mavlink/defaultPayload: '{"state":{"reported":{"link":{"state":"unavailable","heartbeatFresh":false,"mavlinkWireProtocolVersion":"2.0","dialect":"common"},"target":{"systemId":null,"componentId":null},"armed":false,"mode":null,"peers":{"connected":0,"observers":0},"activeControl":null,"errors":[]}}}'
         shadows/video/schema: aws/video-shadow.schema.json
         shadows/video/default: aws/default-video-shadow.json
         shadows/video/defaultPayload: '{"state":{"reported":{"descriptor":null,"status":{"serviceId":"video","available":false,"ready":false,"status":"unavailable","viewerConnected":false,"lastError":null}}}}'
         web/adapter: web/tbot-adapter.tsx
         resources/boardVideo/channelName: "{device_id}-board-video"
+        resources/mavlink/channelName: "{device_id}-mavlink"
 
   CyberbrickTypeCatalogV2:
     Type: Custom::TxingTypeCatalog

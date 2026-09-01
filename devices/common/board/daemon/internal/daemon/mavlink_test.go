@@ -243,6 +243,72 @@ func TestMAVLinkRuntimePublishesDedicatedDescriptorStatusAndShadow(t *testing.T)
 	}
 }
 
+func TestTbotMAVLinkAvailabilityRequiresLocalServiceHeartbeatAndKVSPath(t *testing.T) {
+	config := testRuntimeConfig()
+	config.ThingID = "tbot-a1"
+	config.Capabilities = []string{BoardCapability, MAVLinkCapability, VideoCapability}
+	config.MAVLinkChannelName = "tbot-a1-mavlink"
+	state, err := NewRuntimeState(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name           string
+		kvsReady       bool
+		linkState      string
+		heartbeatFresh bool
+		wantAvailable  bool
+	}{
+		{
+			name:           "KVS path unavailable",
+			kvsReady:       false,
+			linkState:      "ready",
+			heartbeatFresh: true,
+			wantAvailable:  false,
+		},
+		{
+			name:           "local MAVLink service unavailable",
+			kvsReady:       true,
+			linkState:      "unavailable",
+			heartbeatFresh: false,
+			wantAvailable:  false,
+		},
+		{
+			name:           "flight-controller heartbeat stale",
+			kvsReady:       true,
+			linkState:      "ready",
+			heartbeatFresh: false,
+			wantAvailable:  false,
+		},
+		{
+			name:           "ready without an Office peer",
+			kvsReady:       true,
+			linkState:      "ready",
+			heartbeatFresh: true,
+			wantAvailable:  true,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			state.mavlinkKVSReady = testCase.kvsReady
+			state.mavlinkStatus = MAVLinkRuntimeStatus{
+				LinkState:      testCase.linkState,
+				HeartbeatFresh: testCase.heartbeatFresh,
+			}
+
+			availability := state.onlineCapabilities()
+			if got := availability[MAVLinkCapability]; got != testCase.wantAvailable {
+				t.Fatalf("MAVLink availability = %t, want %t", got, testCase.wantAvailable)
+			}
+			if peers, _ := state.mavlink.PeerCounts(); peers != 0 {
+				t.Fatalf("MAVLink peer count = %d, want no Office peer", peers)
+			}
+		})
+	}
+}
+
 func TestMAVLinkStatusAlwaysPublishesAnErrorArray(t *testing.T) {
 	payload := MAVLinkUnavailableStatus("").StatusPayload(nil, false)
 	errors, ok := payload["errors"].([]MAVLinkError)

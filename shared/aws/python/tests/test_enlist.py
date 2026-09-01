@@ -359,7 +359,7 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertTrue(board_video["created"])
         self.assertIn(board_video["channelName"], self.runtime.kinesisvideo.channels)
 
-    def test_enlist_tbot_creates_thread_and_unit_board_shadows(self) -> None:
+    def test_enlist_tbot_creates_mavlink_shadow_and_independent_signaling_channels(self) -> None:
         town = self._enlist_town()
         raspi = self._enlist_rig(town["thingName"], "raspi", "server")
 
@@ -370,17 +370,36 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertEqual(result["attributes"]["webAdapter"], "web/tbot-adapter.tsx")
         self.assertEqual(
             result["attributes"]["capabilities"],
-            "sparkplug,thread,power,board,mcp,video",
+            "sparkplug,thread,power,board,mavlink,video",
         )
         self.assertEqual(result["attributes"]["redconCommandLevels"], "4,3,2,1")
         self.assertEqual(
             result["initializedShadows"],
-            ["sparkplug", "thread", "power", "board", "mcp", "video"],
+            ["sparkplug", "thread", "power", "board", "mavlink", "video"],
         )
         board_video = result["auxiliaryResources"]["boardVideo"]
+        mavlink = result["auxiliaryResources"]["mavlink"]
         self.assertEqual(board_video["channelName"], f"{result['thingName']}-board-video")
+        self.assertEqual(mavlink["channelName"], f"{result['thingName']}-mavlink")
         self.assertTrue(board_video["created"])
-        self.assertIn(board_video["channelName"], self.runtime.kinesisvideo.channels)
+        self.assertTrue(mavlink["created"])
+        self.assertEqual(
+            self.runtime.kinesisvideo.channels,
+            {board_video["channelName"], mavlink["channelName"]},
+        )
+
+        thing_name = result["thingName"]
+        board_shadow = b'{"state":{"reported":{"preserve":true}}}'
+        self.runtime.iot_data.shadows[(thing_name, "board")] = board_shadow
+        del self.runtime.iot_data.shadows[(thing_name, "mavlink")]
+        update_count = len(self.runtime.iot_data.update_calls)
+
+        repaired = self._enlist_device(raspi["thingName"], "tbot", "tbot")
+
+        self.assertFalse(repaired["created"])
+        self.assertEqual(repaired["initializedShadows"], ["mavlink"])
+        self.assertEqual(self.runtime.iot_data.shadows[(thing_name, "board")], board_shadow)
+        self.assertEqual(len(self.runtime.iot_data.update_calls), update_count + 1)
 
     def test_enlist_cyberbrick_creates_mavlink_shadow_and_independent_signaling_channels(self) -> None:
         town = self._enlist_town()

@@ -80,6 +80,30 @@ This contract migration deliberately precedes the forward-only runtime service
 cutover. Do not deploy it independently of the coordinated TBot MAVLink runtime
 and cloud-provisioning work.
 
+### Cloud catalog rollout
+
+Cloud catalog provisioning is forward-only and does not start or arm the rover.
+When the coordinated runtime release is available, the operator applies the
+catalog, re-enlists the existing TBot using its existing rig and device name,
+and creates a fresh board bundle:
+
+```sh
+just aws::deploy
+just aws::deploy-device <raspi-rig-id> tbot <existing-device-name>
+
+# aws::cert refuses to overwrite local material: move the old local bundle
+# aside first, then create and install the fresh bundle by the board runbook.
+just aws::cert <tbot-thing-id>
+```
+
+Re-enlistment preserves existing named-shadow payloads and creates only a
+missing `mavlink` shadow. The fresh daemon certificate policy grants master
+access to exactly `<thing>-board-video` and `<thing>-mavlink`; Office retains
+viewer-only Kinesis Video permissions. After the runtime is proven in service,
+an operator must manually delete the legacy named `mcp` shadow. Do not remove
+it before the MAVLink runtime cutover is verified, and no deploy or enlistment
+operation deletes it automatically.
+
 TBot uses the shared board daemon, KVS master, and motor hardware worker with
 the `tbot` build identity. Its Thread adapter delivers the same public board,
 current deployed MCP, active-control, motor-failsafe, and video behavior as

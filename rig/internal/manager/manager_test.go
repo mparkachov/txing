@@ -65,13 +65,16 @@ func tbotInventory() protocol.InventoryDevice {
 	return protocol.InventoryDevice{
 		ThingName:           "tbot-1",
 		ThingType:           "tbot",
-		Capabilities:        []string{"sparkplug", "thread", PowerCapability, BoardCapability, MCPCapability, VideoCapability},
+		Capabilities:        []string{"sparkplug", "thread", PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability},
 		RedconCommandLevels: []uint8{4, 3, 2, 1},
 		RedconRules: map[uint8][]string{
 			4: {"sparkplug", "thread"},
 			3: {"sparkplug", "thread", PowerCapability},
-			2: {"sparkplug", "thread", PowerCapability, BoardCapability, MCPCapability},
-			1: {"sparkplug", "thread", PowerCapability, BoardCapability, MCPCapability, VideoCapability},
+			2: {"sparkplug", "thread", PowerCapability, BoardCapability, MAVLinkCapability},
+			1: {"sparkplug", "thread", PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability},
+		},
+		RedconMetricRules: map[uint8][]string{
+			1: {protocol.MavlinkArmedMetric},
 		},
 	}
 }
@@ -252,6 +255,88 @@ func TestCyberbrickMavlinkRedconMatrix(t *testing.T) {
 			if err := state.ObserveState(capabilityState(
 				"dev.txing.cyberbrick.Daemon",
 				"cyberbrick-1",
+				map[string]bool{
+					BoardCapability:   true,
+					MAVLinkCapability: testCase.mavlinkAvailable,
+					VideoCapability:   testCase.videoAvailable,
+				},
+				map[string]protocol.MetricValue{
+					protocol.MavlinkArmedMetric: protocol.MetricBoolean(testCase.mavlinkArmed),
+				},
+				1000,
+				2,
+			)); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := redconValue(t, state.Snapshot(1000).Redcon); got != testCase.wantRedcon {
+				t.Fatalf("REDCON = %d, want %d", got, testCase.wantRedcon)
+			}
+		})
+	}
+}
+
+func TestTbotMavlinkRedconMatrix(t *testing.T) {
+	cases := []struct {
+		name             string
+		mavlinkAvailable bool
+		videoAvailable   bool
+		mavlinkArmed     bool
+		wantRedcon       uint8
+	}{
+		{
+			name:             "board powered with MAVLink unavailable",
+			mavlinkAvailable: false,
+			videoAvailable:   false,
+			mavlinkArmed:     false,
+			wantRedcon:       3,
+		},
+		{
+			name:             "MAVLink ready without an Office peer and disarmed",
+			mavlinkAvailable: true,
+			videoAvailable:   false,
+			mavlinkArmed:     false,
+			wantRedcon:       2,
+		},
+		{
+			name:             "MAVLink and video ready but disarmed",
+			mavlinkAvailable: true,
+			videoAvailable:   true,
+			mavlinkArmed:     false,
+			wantRedcon:       2,
+		},
+		{
+			name:             "MAVLink armed without video",
+			mavlinkAvailable: true,
+			videoAvailable:   false,
+			mavlinkArmed:     true,
+			wantRedcon:       2,
+		},
+		{
+			name:             "MAVLink armed with video",
+			mavlinkAvailable: true,
+			videoAvailable:   true,
+			mavlinkArmed:     true,
+			wantRedcon:       1,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			state := NewDeviceRuntimeState(tbotInventory())
+			if err := state.ObserveState(capabilityState(
+				"dev.txing.rig.ThreadConnectivity",
+				"tbot-1",
+				map[string]bool{"sparkplug": true, "thread": true, PowerCapability: true},
+				nil,
+				1000,
+				1,
+			)); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.ObserveState(capabilityState(
+				"dev.txing.tbot.Daemon",
+				"tbot-1",
 				map[string]bool{
 					BoardCapability:   true,
 					MAVLinkCapability: testCase.mavlinkAvailable,
@@ -710,14 +795,15 @@ func TestTbotThreadLossForgetsBoardEvidenceAndRecoversOnlyAfterFreshState(t *tes
 	boardAdapter := "dev.txing.tbot.DaemonBoard"
 	threadOnline := map[string]bool{"sparkplug": true, "thread": true, PowerCapability: true}
 	threadOffline := map[string]bool{"sparkplug": false, "thread": false, PowerCapability: false}
-	boardAndMCPReady := map[string]bool{BoardCapability: true, MCPCapability: true, VideoCapability: false}
-	boardReady := map[string]bool{BoardCapability: true, MCPCapability: true, VideoCapability: true}
+	boardAndMAVLinkReady := map[string]bool{BoardCapability: true, MAVLinkCapability: true, VideoCapability: false}
+	boardReady := map[string]bool{BoardCapability: true, MAVLinkCapability: true, VideoCapability: true}
 
 	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1", threadOnline,
 		map[string]protocol.MetricValue{protocol.TransportRedconMetric: protocol.MetricInt32(3)}, 1000, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardReady, nil, 1100, 1)); err != nil {
+	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardReady,
+		map[string]protocol.MetricValue{protocol.MavlinkArmedMetric: protocol.MetricBoolean(true)}, 1100, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if got := redconValue(t, state.Snapshot(1100).Redcon); got != 1 {
@@ -730,7 +816,7 @@ func TestTbotThreadLossForgetsBoardEvidenceAndRecoversOnlyAfterFreshState(t *tes
 	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1", threadOffline, nil, 2000, 2)); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot := state.Snapshot(2000); snapshot.Redcon != nil || snapshot.Capabilities[BoardCapability] || snapshot.Capabilities[MCPCapability] || snapshot.Capabilities[VideoCapability] {
+	if snapshot := state.Snapshot(2000); snapshot.Redcon != nil || snapshot.Capabilities[BoardCapability] || snapshot.Capabilities[MAVLinkCapability] || snapshot.Capabilities[VideoCapability] {
 		t.Fatalf("Thread loss snapshot = %#v, want unavailable with board capabilities cleared", snapshot)
 	}
 	if publication, err := state.DecidePublication(2000); err != nil || publication.Kind != PublicationDeath {
@@ -751,13 +837,15 @@ func TestTbotThreadLossForgetsBoardEvidenceAndRecoversOnlyAfterFreshState(t *tes
 		t.Fatalf("recovery publication = %#v, %v; want REDCON 3 DBIRTH", publication, err)
 	}
 
-	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardAndMCPReady, nil, 3100, 2)); err != nil {
+	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardAndMAVLinkReady,
+		map[string]protocol.MetricValue{protocol.MavlinkArmedMetric: protocol.MetricBoolean(false)}, 3100, 2)); err != nil {
 		t.Fatal(err)
 	}
 	if publication, err := state.DecidePublication(3100); err != nil || publication.Kind != PublicationData || publication.Redcon != 2 {
-		t.Fatalf("fresh board/MCP publication = %#v, %v; want REDCON 2 DDATA", publication, err)
+		t.Fatalf("fresh board/MAVLink publication = %#v, %v; want REDCON 2 DDATA", publication, err)
 	}
-	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardReady, nil, 3200, 3)); err != nil {
+	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1", boardReady,
+		map[string]protocol.MetricValue{protocol.MavlinkArmedMetric: protocol.MetricBoolean(true)}, 3200, 3)); err != nil {
 		t.Fatal(err)
 	}
 	if publication, err := state.DecidePublication(3200); err != nil || publication.Kind != PublicationData || publication.Redcon != 1 {
@@ -775,7 +863,8 @@ func TestTbotThreadRedconFourForgetsBoardEvidenceUntilFreshUpdate(t *testing.T) 
 		t.Fatal(err)
 	}
 	if err := state.ObserveState(capabilityState(boardAdapter, "tbot-1",
-		map[string]bool{BoardCapability: true, MCPCapability: true, VideoCapability: true}, nil, 1100, 1)); err != nil {
+		map[string]bool{BoardCapability: true, MAVLinkCapability: true, VideoCapability: true},
+		map[string]protocol.MetricValue{protocol.MavlinkArmedMetric: protocol.MetricBoolean(true)}, 1100, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1",
@@ -784,7 +873,7 @@ func TestTbotThreadRedconFourForgetsBoardEvidenceUntilFreshUpdate(t *testing.T) 
 		t.Fatal(err)
 	}
 	snapshot := state.Snapshot(2000)
-	if got := redconValue(t, snapshot.Redcon); got != 4 || snapshot.Capabilities[BoardCapability] || snapshot.Capabilities[MCPCapability] || snapshot.Capabilities[VideoCapability] {
+	if got := redconValue(t, snapshot.Redcon); got != 4 || snapshot.Capabilities[BoardCapability] || snapshot.Capabilities[MAVLinkCapability] || snapshot.Capabilities[VideoCapability] {
 		t.Fatalf("REDCON 4 snapshot = %#v, want REDCON 4 with board capabilities cleared", snapshot)
 	}
 	if err := state.ObserveState(capabilityState(threadAdapter, "tbot-1",
