@@ -14,7 +14,7 @@ error_log=/var/log/txing-tbot-daemon.log
 depend() {
     need net
     use dns ntpd
-    after txing-tbot-hardware-worker
+    after txing-tbot-mavlink
 }
 
 start_pre() {

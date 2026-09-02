@@ -2,8 +2,8 @@
 
 The board is the device-side Raspberry Pi. It is power-switched by the MCU, runs
 the root-owned Go daemon plus native workers under OpenRC, and publishes
-board-owned runtime state. Unit exposes board MCP for motion control; Cyberbrick
-uses the MAVLink contract documented below.
+board-owned runtime state. Unit exposes board MCP for motion control; TBot and
+Cyberbrick use the MAVLink contract documented below.
 
 One implementation serves every board device type. Device-specific daemons and
 workers are built from `devices/common/board/`; the KVS master is one
@@ -60,13 +60,13 @@ this document is device-specific.
 | --- | --- | --- | --- |
 | Daemon binary | `txing-unit-daemon` | `txing-tbot-daemon` | `txing-cyberbrick-daemon` |
 | KVS master binary | `txing-board-kvs-master` | `txing-board-kvs-master` | `txing-board-kvs-master` |
-| Hardware worker binary | `txing-unit-hardware-worker` | `txing-tbot-hardware-worker` | none |
-| MAVLink binary | not applicable | not applicable | `txing-cyberbrick-mavlink` |
-| ArduPilot binary/defaults | not applicable | not applicable | `txing-cyberbrick-ardupilot` and `txing-cyberbrick-ardupilot.defaults.parm` |
+| Hardware worker binary | `txing-unit-hardware-worker` | none | none |
+| MAVLink binary | not applicable | `txing-tbot-mavlink` | `txing-cyberbrick-mavlink` |
+| ArduPilot binary/defaults | not applicable | `txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm` | `txing-cyberbrick-ardupilot` and `txing-cyberbrick-ardupilot.defaults.parm` |
 | Daemon config directory | `/root/.config/txing/unit-daemon` | `/root/.config/txing/tbot-daemon` | `/root/.config/txing/cyberbrick-daemon` |
-| Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | `/run/txing-tbot-hardware-worker/tbot-hardware.sock` | none after MAVLink cutover |
-| MCP adapter id | `dev.txing.unit.Daemon` | `dev.txing.tbot.Daemon` | not applicable |
-| MAVLink socket | not applicable | not applicable | `/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock` |
+| Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | not applicable | not applicable |
+| MCP adapter id | `dev.txing.unit.Daemon` | not applicable | not applicable |
+| MAVLink socket | not applicable | `/run/txing-tbot-mavlink/tbot-mavlink.sock` | `/run/txing-cyberbrick-mavlink/cyberbrick-mavlink.sock` |
 | Device release version file | `release/versions/unit` | `release/versions/tbot` | `release/versions/cyberbrick` |
 | Device release tag prefix | `unit-v` | `tbot-v` | `cyberbrick-v` |
 | Device manifest | `devices/unit/manifest.toml` | `devices/tbot/manifest.toml` | `devices/cyberbrick/manifest.toml` |
@@ -83,7 +83,8 @@ Operator commands are device-owned, matching the MCU commands:
 ```sh
 just ${TXING_DEVICE}::board::nerdctl-build
 just ${TXING_DEVICE}::board::nerdctl-smoke
-just tbot::board::hardware-test-native
+just unit::board::hardware-test-native
+just tbot::board::mavlink-build-alpine
 just cyberbrick::board::mavlink-build-alpine
 ```
 
@@ -97,29 +98,31 @@ just common::board::kvs-test-native     # test the shared KVS master
 
 ## Local Protocol Contracts
 
-The daemon, KVS master, and hardware worker talk to each other over local unix
-sockets using two device-independent gRPC packages, defined once in
+The daemon, KVS master, MAVLink service, and Unit hardware worker talk to each
+other over local Unix sockets using device-independent gRPC packages, defined once in
 `devices/common/board/proto/txing/board/`:
 
 - `txing.board.board_video.v1.BoardVideoBridge` — the daemon serves it; the KVS
   master calls it for worker config, credentials, video state, and MCP
   forwarding. Contract: [Board video bridge](../contracts/board-video-bridge.md).
-- `txing.board.hardware.v1.BoardHardware` — the hardware worker serves it; the
+- `txing.board.hardware.v1.BoardHardware` — the Unit hardware worker serves it; the
   daemon calls it for actuator readiness, `cmd_vel`, and stop requests.
   Contract: [Hardware worker](../contracts/unit-hardware-worker.md).
+- `txing.board.mavlink.v1.MAVLink` — the TBot and Cyberbrick MAVLink services
+  serve it; the daemon reads flight-controller status and requests bounded safe
+  states. Contract: [Board MAVLink capability](../contracts/board-mavlink.md).
+- `txing.board.mavlink_bridge.v1.MAVLinkBridge` — the daemon serves it; the KVS
+  master calls it for the independent MAVLink WebRTC data peer. Contract:
+  [Board MAVLink capability](../contracts/board-mavlink.md).
 
-Neither package carries a device name. They remain the shared Unit/TBot board
-contracts. Cyberbrick is a device-specific exception: it does not expose Board
-MCP and instead has the dedicated local service and daemon bridge in the
-[Cyberbrick MAVLink capability contract](../contracts/cyberbrick-mavlink.md).
-Unit upgrades its three common binaries as a set. Cyberbrick upgrades daemon,
-KVS, MAVLink, and ArduPilot/defaults as a set; see [Maintenance](#maintenance)
-for why a partial upgrade is the worst failure this board has.
+None of these packages carries a device name. Unit upgrades its three common
+binaries as a set. TBot and Cyberbrick upgrade daemon, KVS, MAVLink, and
+ArduPilot/defaults as a set; see [Maintenance](#maintenance) for why a partial
+upgrade is the worst failure this board has.
 
-## Unit and TBot Responsibilities
+## Runtime Responsibilities
 
-The following hardware/MCP responsibilities apply to Unit and TBot. Cyberbrick
-uses the dedicated MAVLink contract linked above.
+The following hardware/MCP responsibilities apply to Unit:
 
 - publish the `board` named shadow
 - publish the `video` named shadow mirror
@@ -139,17 +142,25 @@ uses the dedicated MAVLink contract linked above.
 - neutralize motors inside the hardware worker on command expiry, explicit stop,
   shutdown, and hardware errors
 
+TBot and Cyberbrick use MAVLink rather than MCP. ArduPilot exclusively owns
+their motor outputs; the supervised local MAVLink service owns their loopback
+flight-controller connection; the daemon remains the sole authority for
+WebRTC sessions, epochs, leases, REDCON, safe-state requests, and retained
+publication. The shared KVS master runs a separate data-only MAVLink peer
+before and independently of camera/video setup. Neither device provides an
+MCP or hardware-worker fallback.
+
 ## REDCON Contract
 
 The ladder is declared per device type in `devices/<device>/manifest.toml`.
-For Unit and TBot:
+For Unit:
 
 - `REDCON 4`: the device transport is confirmed commandable and the device is in the sleep state.
 - `REDCON 3`: the device transport is confirmed commandable and MCU-controlled wakeup power/D1 is enabled.
 - `REDCON 2`: board and MCP are available; video is unavailable or not ready.
 - `REDCON 1`: board, MCP, and video are available.
 
-For Cyberbrick, MAVLink replaces MCP. REDCON2 requires board and MAVLink;
+For TBot and Cyberbrick, MAVLink replaces MCP. REDCON2 requires board and MAVLink;
 REDCON1 additionally requires video and the internal `mavlinkArmed` rule.
 
 The board publishes retained v2 capability state for `board`, the
@@ -170,7 +181,7 @@ freshness signals are retained with a MQTT 5 Message Expiry Interval equal to
 - `txings/<device_id>/video/status`
 
 The device-specific control status is retained separately: Unit uses
-`txings/<device_id>/mcp/status`; Cyberbrick uses
+`txings/<device_id>/mcp/status`; TBot and Cyberbrick use
 `txings/<device_id>/mavlink/status`.
 
 The daemon refreshes these dynamic status and capability topics at
@@ -182,7 +193,7 @@ Descriptor topics are retained discovery/config records and must not expire:
 
 - `txings/<device_id>/video/descriptor`
 
-The corresponding Unit MCP and Cyberbrick MAVLink descriptor topics use the
+The corresponding Unit MCP and TBot/Cyberbrick MAVLink descriptor topics use the
 same retention rule.
 
 Existing retained AWS IoT messages that were published before expiry was added
@@ -233,7 +244,7 @@ Current video is headless AWS Kinesis Video Streams WebRTC:
 The native worker owns camera capture, H.264 encode, AWS KVS master behavior,
 WebRTC peer connections, and data-channel transport. The Go daemon owns
 worker configuration, KVS temporary credentials, readiness interpretation,
-retained state publication, MCP business logic, and actuator policy.
+retained state publication, MCP/MAVLink business logic, and actuator policy.
 
 The daemon and native worker communicate through the local
 BoardVideoBridge gRPC contract:
@@ -252,7 +263,7 @@ not a media-quality guarantee or a control-transport readiness signal.
 The shared board video contract is documented in
 [Board video](./board-video.md).
 
-### Motion Hardware
+### Unit Motion Hardware
 
 Motion commands use strict ROS `Twist`/`cmd_vel` semantics. The daemon owns MCP
 active-control, epoch validation, REDCON handling, and all cloud publication.
@@ -506,10 +517,10 @@ env file.
 
 ## Release Artifacts
 
-Unit and TBot install their daemons and hardware workers from their own device
-release streams. Cyberbrick installs
-its daemon, MAVLink, and ArduPilot from `cyberbrick-v*`. Both install the exact
-same KVS master from the independent `kvs-master-v*` stream.
+Unit installs its daemon and hardware worker from its device release stream.
+TBot and Cyberbrick install daemon, MAVLink, and ArduPilot/defaults from their
+device release streams. All install the exact same KVS master from the
+independent `kvs-master-v*` stream.
 
 ```text
 # Unit
@@ -518,7 +529,7 @@ txing-unit-hardware-worker-linux-aarch64.tar.gz
 
 # TBot
 txing-tbot-daemon-linux-aarch64.tar.gz
-txing-tbot-hardware-worker-linux-aarch64.tar.gz
+txing-tbot-mavlink-linux-aarch64.tar.gz
 txing-tbot-ardupilot-linux-aarch64.tar.gz
 
 # Cyberbrick
@@ -535,16 +546,17 @@ root-level executable. The TBot and Cyberbrick ArduPilot archives each contain
 their device-specific executable and tracked defaults file. For TBot, they are
 `txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm`; for
 Cyberbrick, they are `txing-cyberbrick-ardupilot` and
-`txing-cyberbrick-ardupilot.defaults.parm`. Cyberbrick OpenRC loads its
-defaults on every tmpfs-backed boot; the TBot optional service is a later
-milestone. Boards use root's persistent mise config and install tree:
+`txing-cyberbrick-ardupilot.defaults.parm`. TBot and Cyberbrick OpenRC load
+their defaults on every tmpfs-backed boot. Boards use root's persistent mise
+config and install tree:
 
 ```text
 /root/.config/mise/conf.d/txing-<device>-daemon.toml
 /root/.local/share/mise/installs/txing-<device>-daemon/latest/txing-<device>-daemon
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
-/root/.local/share/mise/installs/txing-tbot-hardware-worker/latest/txing-tbot-hardware-worker
+/root/.local/share/mise/installs/txing-tbot-mavlink/latest/txing-tbot-mavlink
+/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot
 /root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
 /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
 ```
@@ -559,9 +571,9 @@ or call GitHub. If a board needs new binaries, follow
 
 TBot and Cyberbrick each publish the corresponding patched ArduPilot source
 archive for provenance; source archives are not installed on the board. TBot's
-boot-disabled service and manual ownership procedure are in
-[TBot optional ArduPilot runtime](#tbot-optional-ardupilot-runtime). Cyberbrick's
 current runtime installation and operational steps are in
+[TBot MAVLink runtime](#tbot-mavlink-runtime). Cyberbrick's current runtime
+installation and operational steps are in
 [Cyberbrick runtime](#cyberbrick-runtime).
 
 The release gates bound what these artifacts prove. `assert-board-musl.sh`
@@ -938,7 +950,8 @@ chmod 644 "$CONFIG_DIR/SFSRootCAG2.pem"
 for service in \
   txing-unit-hardware-worker \
   txing-unit-daemon \
-  txing-tbot-hardware-worker \
+  txing-tbot-ardupilot \
+  txing-tbot-mavlink \
   txing-tbot-daemon \
   txing-kvs-master \
   txing-cyberbrick-ardupilot \
@@ -1026,15 +1039,15 @@ The `pwm-2chan.dtbo` overlay ships in Alpine's `raspberrypi-bootloader`
 content already present on the boot FAT partition. The kernel exposes its two
 channels as `pwmchip0` channels 0 and 1 regardless of which header pins the
 overlay assigns. Unit and TBot motor controllers are wired to GPIO 12 and 13,
-so they require the explicit `pin`/`func` parameters above; their hardware
-worker uses those PWM channels with direction GPIO 5 and 6. Cyberbrick uses the
-overlay defaults, GPIO 18 for PWM0 and GPIO 19 for PWM1, and has no direction
-GPIO configuration. Do not substitute the Cyberbrick default overlay on Unit
-or TBot: the worker can report ready while the motor controller receives no
+so they require the explicit `pin`/`func` parameters above. Unit's hardware
+worker and TBot's ArduPilot defaults use those PWM channels with direction GPIO
+5 and 6. Cyberbrick uses the overlay defaults, GPIO 18 for PWM0 and GPIO 19
+for PWM1, and has no direction GPIO configuration. Do not substitute the
+Cyberbrick default overlay on Unit or TBot: the motor controller receives no
 PWM signal.
 
-`/sys/class/pwm/pwmchip0` appears only after a reboot; until then the hardware
-worker logs `PWM chip path does not exist` on every start. The camera changes
+`/sys/class/pwm/pwmchip0` appears only after a reboot; until then the Unit
+hardware worker or TBot ArduPilot cannot drive the tracks. The camera changes
 below need a reboot too, so the single one at the end of this step covers both.
 
 Enable firmware autodetection for the connected supported CSI camera and the
@@ -1159,11 +1172,11 @@ minutes; found later it is a wall of `Error loading shared library` from a
 correct binary, or `configured camera index is not available` from a working
 camera.
 
-#### Unit and TBot runtime
+#### Unit runtime
 
-The following runtime install is for **Unit and TBot**. It installs the selected
-device daemon, KVS master, and hardware worker. Cyberbrick uses [Cyberbrick
-runtime](#cyberbrick-runtime) below. Both `"0s"` settings exist
+The following runtime install is for **Unit**. It installs the Unit daemon, KVS
+master, and hardware worker. TBot uses [TBot MAVLink runtime](#tbot-mavlink-runtime)
+below; Cyberbrick uses [Cyberbrick runtime](#cyberbrick-runtime). Both `"0s"` settings exist
 because a board installs first-party releases minutes after they are published,
 which is exactly the case each default is tuned against:
 
@@ -1184,9 +1197,9 @@ idempotent, so running it on an already-writable root is harmless.
 ```sh
 : "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
 case "$TXING_DEVICE" in
-  unit|tbot) ;;
+  unit) ;;
   *)
-    echo 'This runtime block applies only to Unit and TBot; use Cyberbrick runtime.' >&2
+    echo 'This runtime block applies only to Unit; use the TBot or Cyberbrick runtime.' >&2
     exit 1
     ;;
 esac
@@ -1239,9 +1252,9 @@ resolve all shared libraries:
 
 ```sh
 case "${TXING_DEVICE:?export the board device type}" in
-  unit|tbot) ;;
+  unit) ;;
   *)
-    echo 'Use the Cyberbrick runtime instructions below.' >&2
+    echo 'Use the TBot or Cyberbrick runtime instructions below.' >&2
     exit 1
     ;;
 esac
@@ -1359,14 +1372,114 @@ Expected:
 - REDCON can reach `1` after Sparkplug projection sees fresh `board`, `mcp`,
   and `video` capability state
 
-#### TBot optional ArduPilot runtime
+#### TBot MAVLink runtime
 
-TBot's normal default runlevel remains the hardware worker, daemon, and KVS
-master. The optional `txing-tbot-ardupilot` service is a separately installed
-motor owner: it is never added to the default runlevel, has no automatic
-handoff or reciprocal service guard, and does not change the daemon environment
-or its certificates. The daemon and KVS master stay running and use their
-existing worker-unavailable behavior while ArduPilot owns the tracks.
+TBot starts ArduPilot, the local MAVLink service, the daemon, and the shared
+KVS master in that order. ArduPilot is the exclusive DRV8835 owner. Its
+MAVLink endpoint is loopback-only; Office reaches it only through the separate
+`<thing>-mavlink` WebRTC data peer. TBot has no MCP, hardware-worker, or
+automatic fallback path. Keep the chassis lifted and motor power isolated
+until the physical-acceptance milestone authorizes motion.
+
+Install a matching forward-only TBot daemon, MAVLink, ArduPilot/defaults, and
+shared KVS release together, then obtain a fresh TBot daemon bundle. Its
+`daemon.env` must declare `TXING_DAEMON_CAPABILITIES=board,mavlink,video`; do
+not reuse a pre-cutover MCP bundle. The service catalog in that bundle supplies
+the four TBot scripts below.
+
+On the board, install the owned scripts and remove the obsolete TBot hardware
+worker script before enabling the new default runlevel. The exact `rm` target
+is deliberate: it cannot affect Unit's worker or any other OpenRC service.
+
+```sh
+root-rw
+SERVICE_DIR=/root/.config/txing/tbot-daemon/services
+for service in txing-tbot-ardupilot txing-tbot-mavlink txing-tbot-daemon txing-kvs-master; do
+  test -x "$SERVICE_DIR/$service"
+done
+
+install -m 755 "$SERVICE_DIR/txing-tbot-ardupilot" /etc/init.d/txing-tbot-ardupilot
+install -m 755 "$SERVICE_DIR/txing-tbot-mavlink" /etc/init.d/txing-tbot-mavlink
+install -m 755 "$SERVICE_DIR/txing-tbot-daemon" /etc/init.d/txing-tbot-daemon
+install -m 755 "$SERVICE_DIR/txing-kvs-master" /etc/init.d/txing-tbot-kvs-master
+for service in txing-tbot-ardupilot txing-tbot-mavlink txing-tbot-daemon txing-tbot-kvs-master; do
+  sh -n "/etc/init.d/$service"
+done
+
+rc-service txing-tbot-hardware-worker stop || true
+rc-update del txing-tbot-hardware-worker default || true
+rm -f /etc/init.d/txing-tbot-hardware-worker
+test ! -e /etc/init.d/txing-tbot-hardware-worker
+```
+
+ArduPilot storage takes precedence over the supplied defaults. Before the
+first boot of the cutover release, retain old storage under a distinct name so
+`SERIAL1`, the synthetic IMU, skid-steer functions, and safety settings are
+loaded from the current defaults:
+
+```sh
+rc-service txing-tbot-ardupilot stop || true
+STORAGE=/var/tmp/txing-tbot-ardupilot/storage
+if test -f "$STORAGE/Rover.stg"; then
+  test ! -e "$STORAGE/Rover.stg.pre-mavlink-cutover" || {
+    echo 'existing MAVLink-cutover storage backup; inspect it before continuing' >&2
+    exit 1
+  }
+  mv "$STORAGE/Rover.stg" "$STORAGE/Rover.stg.pre-mavlink-cutover"
+fi
+```
+
+Enable and start the services in ownership order. OpenRC also encodes this as
+ArduPilot → MAVLink → daemon → KVS master, so a supervised restart preserves
+the same order:
+
+```sh
+for service in txing-tbot-ardupilot txing-tbot-mavlink txing-tbot-daemon txing-tbot-kvs-master; do
+  rc-update add "$service" default
+done
+rc-service txing-tbot-ardupilot restart
+rc-service txing-tbot-mavlink restart
+rc-service txing-tbot-daemon restart
+rc-service txing-tbot-kvs-master restart
+```
+
+Verify that no unsigned MAVLink listener is exposed beyond loopback and that
+the former motor owner cannot return:
+
+```sh
+for service in txing-tbot-ardupilot txing-tbot-mavlink txing-tbot-daemon txing-tbot-kvs-master; do
+  rc-service "$service" status
+done
+test ! -e /etc/init.d/txing-tbot-hardware-worker
+test ! -S /run/txing-tbot-hardware-worker/tbot-hardware.sock
+ss -uanp | grep -F '127.0.0.1:14550'
+if ss -uanp | grep -Fq '0.0.0.0:14550'; then
+  echo 'MAVLink must not listen on all network interfaces' >&2
+  exit 1
+fi
+test -S /run/txing-tbot-mavlink/tbot-mavlink.sock
+test -S /run/txing-tbot-daemon/mavlink-bridge.sock
+tail -n 160 /var/log/txing-tbot-ardupilot/ardupilot.log
+tail -n 160 /var/log/txing-tbot-mavlink.log
+```
+
+The MAVLink service reconnects to ArduPilot and reports link/heartbeat status
+to the daemon. The daemon advertises MAVLink only after that local status is
+ready and the independent KVS control peer is ready; it does not require an
+Office peer or working camera/video session. On active WebRTC control-channel
+loss, the existing 500 ms watchdog requests neutral and Hold while leaving
+ArduPilot armed. Shutdown and REDCON 4 additionally make bounded neutral,
+Hold, and disarm attempts.
+
+Return the root filesystem to read-only and reboot manually after the services
+remain healthy. On reconnect, repeat the status and loopback checks above
+before any physical control acceptance.
+
+#### Historical TBot direct-QGroundControl proof of concept
+
+This retained record describes the pre-cutover manual ArduPilot proof. It is
+not a supported runtime or a rollback path: do not follow its hardware-worker
+handoff steps on a MAVLink TBot. The current TBot runtime is the section above.
 
 Keep motor power isolated before installing or starting this service. The
 unsigned MAVLink endpoint is permitted only on a trusted isolated LAN.
@@ -1461,10 +1574,10 @@ test -c /dev/gpiochip0 || {
 
 rc-service txing-tbot-ardupilot start
 rc-service txing-tbot-ardupilot status
-ss -uanp | grep -F '0.0.0.0:14550'
+ss -uanp | grep -F '127.0.0.1:14550'
 ```
 
-`txing-tbot-ardupilot` exposes `udpin:0.0.0.0:14550` through Linux `SERIAL1`,
+`txing-tbot-ardupilot` exposes `udpin:127.0.0.1:14550` through Linux `SERIAL1`,
 the normal telemetry UART. `SERIAL0` is the process console and is disabled for
 MAVLink by the defaults, so the UDP endpoint is the sole GCS backend. Connect
 QGroundControl only after the service reports started, verify telemetry and
@@ -1758,10 +1871,10 @@ post-reboot checks:
 root-ro
 ```
 
-The following generic check is for Unit and TBot. Cyberbrick operators use the
-post-reboot checks in [Cyberbrick runtime](#cyberbrick-runtime) instead.
+The following generic check is for Unit. TBot and Cyberbrick operators use the
+post-reboot checks in their respective runtime sections instead.
 
-After reconnecting to a Unit or TBot board:
+After reconnecting to a Unit board:
 
 ```sh
 INSTALLS=/root/.local/share/mise/installs
@@ -1943,7 +2056,7 @@ expected and is not evidence of either problem.
 
 ### Restart Order
 
-Service restarts have a required order, dependencies first:
+Unit service restarts have a required order, dependencies first:
 
 ```sh
 rc-service txing-${TXING_DEVICE}-hardware-worker restart
@@ -1960,10 +2073,21 @@ to `2`, and MCP reports the WebRTC data channel as unavailable. State reporting
 over the bridge is best-effort and logs nothing when it fails, so the only
 symptom is video silently never becoming ready.
 
-Restarting the hardware worker or the KVS master alone is safe and needs no
-daemon restart: the daemon dials the worker per request and does not cache
+Restarting the Unit hardware worker or the KVS master alone is safe and needs
+no daemon restart: the daemon dials the worker per request and does not cache
 failed connections. *Upgrading* one of them alone is not safe; see
 [Maintenance](#maintenance).
+
+TBot restarts ArduPilot, MAVLink, daemon, and KVS in ownership order. Do not
+substitute a hardware-worker restart, even if an obsolete executable remains
+on disk:
+
+```sh
+rc-service txing-tbot-ardupilot restart
+rc-service txing-tbot-mavlink restart
+rc-service txing-tbot-daemon restart
+rc-service txing-tbot-kvs-master restart
+```
 
 ## Maintenance
 
@@ -1971,7 +2095,7 @@ Board update during a writable-root maintenance window. Publish a new
 immutable `<device>-vX.Y.Z` release for changed device-specific binaries and a
 `kvs-master-vX.Y.Z` release for KVS changes first.
 
-Upgrade the daemon, the hardware worker, and the KVS master together, in one
+For Unit, upgrade the daemon, hardware worker, and KVS master together in one
 window, as the `mise upgrade` below does. They speak the device-independent
 `txing.board.*` gRPC packages to each other over local sockets, and those
 contracts move as a set. A partial upgrade that leaves one binary on an older
@@ -2043,6 +2167,24 @@ reports `not found` or the expected
 libcamera sonames are missing; realign the apk branch and the installed
 release first, inside the same window.
 
+TBot upgrades its device release and shared KVS release as one maintenance
+set. Do not perform a component-only TBot upgrade or reintroduce the hardware
+worker:
+
+```sh
+root-rw
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise upgrade \
+    txing-tbot-daemon \
+    txing-board-kvs-master \
+    txing-tbot-mavlink \
+    txing-tbot-ardupilot
+for s in ardupilot mavlink daemon kvs-master; do
+  rc-service "txing-tbot-$s" restart
+done
+root-ro
+```
+
 Cyberbrick upgrades its device release and shared KVS release as one maintenance
 set. Do not perform a component-only Cyberbrick upgrade:
 
@@ -2107,20 +2249,22 @@ coupled `apk upgrade` + `mise upgrade` window above.
 
 ## Local Development
 
-Daemon and native board worker commands:
+Daemon and native board component commands:
 
 ```sh
 export TXING_DEVICE=tbot            # or: unit, cyberbrick
 
 just ${TXING_DEVICE}::board::test
 just ${TXING_DEVICE}::board::run
-just ${TXING_DEVICE}::board::hardware-test-native
 just ${TXING_DEVICE}::board::daemon-build-alpine
-just ${TXING_DEVICE}::board::hardware-build-alpine
 just ${TXING_DEVICE}::board::nerdctl-build
 just ${TXING_DEVICE}::board::nerdctl-smoke
 just common::board::kvs-test-native
 just common::board::kvs-build-alpine
+just unit::board::hardware-test-native
+just unit::board::hardware-build-alpine
+just tbot::board::mavlink-build-alpine
+just cyberbrick::board::mavlink-build-alpine
 ```
 
 The local daemon uses
@@ -2131,7 +2275,7 @@ resource changes are intended.
 The `*-build-alpine`, `nerdctl-build`, and `nerdctl-smoke` recipes build and
 verify inside pinned aarch64 containers and require `nerdctl` connected to a
 native `linux/arm64` containerd environment. They assert the linkage contract
-per binary — static daemon and hardware worker (no ELF interpreter),
+per binary — static daemon and Unit hardware worker or MAVLink service (no ELF interpreter),
 musl-dynamic KVS master with the
 expected libcamera sonames — and `nerdctl-smoke` executes the static pair on
 both `debian:trixie` and pinned Alpine and the KVS master on Alpine, the

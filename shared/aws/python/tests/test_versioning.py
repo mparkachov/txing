@@ -1585,9 +1585,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn('export TXING_KVS_WORKER_NAME="$service_name"', unit_kvs_service)
         self.assertIn(
             "TXING_MAVLINK_BRIDGE_SOCKET_PATH=/run/"
-            "txing-cyberbrick-daemon/mavlink-bridge.sock",
+            "txing-${device}-daemon/mavlink-bridge.sock",
             unit_kvs_service,
         )
+        self.assertIn("tbot | cyberbrick)", unit_kvs_service)
         self.assertIn('service_name="${RC_SVCNAME:-${0##*/}}"', unit_kvs_service)
         self.assertIn('device="${service_name#txing-}"', unit_kvs_service)
         self.assertNotIn("txing-unit-kvs-master/latest", unit_kvs_service)
@@ -1671,7 +1672,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "    txing-${TXING_DEVICE}-hardware-worker\n",
             cyberbrick_board_docs,
         )
-        self.assertIn("#### Unit and TBot runtime", cyberbrick_board_docs)
+        self.assertIn("#### Unit runtime", cyberbrick_board_docs)
         self.assertIn("#### Cyberbrick runtime", cyberbrick_board_docs)
         self.assertNotIn("#### Cyberbrick MAVLink cutover", cyberbrick_board_docs)
         self.assertIn("txing-cyberbrick-mavlink", cyberbrick_board_docs)
@@ -1881,8 +1882,8 @@ class VersionEnvironmentTests(unittest.TestCase):
             ardupilot_service,
         )
 
-    def test_tbot_ardupilot_is_a_boot_disabled_manual_motor_owner(self) -> None:
-        """TBot installs ArduPilot separately and keeps worker ownership manual."""
+    def test_tbot_ardupilot_is_the_loopback_mavlink_motor_owner(self) -> None:
+        """TBot boots ArduPilot and MAVLink without a hardware-worker fallback."""
         defaults = (
             REPO_ROOT / "devices" / "tbot" / "ardupilot" / "defaults.parm"
         ).read_text(encoding="utf-8")
@@ -1908,12 +1909,33 @@ class VersionEnvironmentTests(unittest.TestCase):
             / "openrc"
             / "txing-tbot-ardupilot"
         ).read_text(encoding="utf-8")
+        mavlink_service = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "daemon"
+            / "openrc"
+            / "txing-tbot-mavlink"
+        ).read_text(encoding="utf-8")
+        tbot_daemon_service = (
+            REPO_ROOT
+            / "devices"
+            / "common"
+            / "board"
+            / "daemon"
+            / "openrc"
+            / "txing-tbot-daemon"
+        ).read_text(encoding="utf-8")
         aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")
+        board_justfile = (
+            REPO_ROOT / "devices" / "common" / "board" / "justfile"
+        ).read_text(encoding="utf-8")
         runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
             encoding="utf-8"
         )
-        tbot_runtime = runbook.split("#### TBot optional ArduPilot runtime", 1)[1].split(
-            "#### Cyberbrick runtime", 1
+        tbot_runtime = runbook.split("#### TBot MAVLink runtime", 1)[1].split(
+            "#### Historical TBot direct-QGroundControl proof of concept", 1
         )[0]
 
         for value in {
@@ -1952,10 +1974,16 @@ class VersionEnvironmentTests(unittest.TestCase):
             'txing_cert_install_board_service "$devices_dir/tbot/ardupilot/openrc/txing-tbot-ardupilot"',
             aws_lib,
         )
+        self.assertIn(
+            'txing_cert_install_board_service "$devices_dir/common/board/daemon/openrc/txing-tbot-mavlink"',
+            aws_lib,
+        )
+        self.assertNotIn("txing-tbot-hardware-worker\" \"$services_dir", aws_lib)
 
         self.assertIn("#!/sbin/openrc-run", service)
         self.assertIn("supervisor=supervise-daemon", service)
-        self.assertIn("--serial1 udpin:0.0.0.0:14550", service)
+        self.assertIn("--serial1 udpin:127.0.0.1:14550", service)
+        self.assertNotIn("udpin:0.0.0.0:14550", service)
         self.assertNotIn("--serial0 udpin:", service)
         self.assertIn("/var/tmp/txing-tbot-ardupilot/storage", service)
         self.assertIn("/var/tmp/txing-tbot-ardupilot/terrain", service)
@@ -1967,33 +1995,45 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("txing-tbot-daemon", service)
         self.assertNotIn("rc-update", service)
 
-        self.assertIn("txing-tbot-ardupilot = \"github:mparkachov/txing\"", tbot_runtime)
-        self.assertIn('version_prefix = "tbot-v"', tbot_runtime)
         self.assertIn(
-            'asset_pattern = "txing-tbot-ardupilot-linux-aarch64.tar.gz"',
+            "ArduPilot, the local MAVLink service, the daemon, and the shared\n"
+            "KVS master in that order",
             tbot_runtime,
         )
-        self.assertIn("does not install an\nArduPilot source checkout", tbot_runtime)
-        self.assertIn("does not change the daemon environment\nor its certificates", tbot_runtime)
-        self.assertIn("existing worker-unavailable behavior", tbot_runtime)
+        self.assertIn("txing-tbot-mavlink", tbot_runtime)
+        self.assertIn("TBot has no MCP, hardware-worker, or\nautomatic fallback path", tbot_runtime)
         self.assertIn(
             'install -m 755 "$SERVICE_DIR/txing-tbot-ardupilot" /etc/init.d/txing-tbot-ardupilot',
             tbot_runtime,
         )
-        self.assertNotIn("rc-update add txing-tbot-ardupilot default", tbot_runtime)
-        self.assertIn("rc-service txing-tbot-hardware-worker stop", tbot_runtime)
-        self.assertIn("rc-service txing-tbot-ardupilot start", tbot_runtime)
-        self.assertIn("rc-service txing-tbot-ardupilot stop", tbot_runtime)
-        self.assertIn("Rover.stg.pre-tbot-defaults", tbot_runtime)
-        self.assertIn("rc-service txing-tbot-hardware-worker start", tbot_runtime)
-        self.assertIn("ArduPilot is unexpectedly running after reboot", tbot_runtime)
-        self.assertIn("0.0.0.0:14550", tbot_runtime)
-        self.assertIn("ephemeral on the board's tmpfs", tbot_runtime)
-        self.assertIn("test -c /dev/gpiochip0", tbot_runtime)
-        self.assertIn("Failed to get GPIO memory map", tbot_runtime)
-        self.assertIn("`STATUSTEXT` frame alone is not a connection", tbot_runtime)
-        self.assertIn("synthetic-IMU backend", tbot_runtime)
-        self.assertIn("FS_TIMEOUT=1", tbot_runtime)
+        self.assertIn(
+            'install -m 755 "$SERVICE_DIR/txing-tbot-mavlink" '
+            "/etc/init.d/txing-tbot-mavlink",
+            tbot_runtime,
+        )
+        self.assertIn(
+            "rc-update del txing-tbot-hardware-worker default || true",
+            tbot_runtime,
+        )
+        self.assertIn(
+            "test ! -e /etc/init.d/txing-tbot-hardware-worker", tbot_runtime
+        )
+        self.assertIn("127.0.0.1:14550", tbot_runtime)
+        self.assertNotIn("udpin:0.0.0.0:14550", tbot_runtime)
+        self.assertIn("Rover.stg.pre-mavlink-cutover", tbot_runtime)
+        self.assertIn(
+            "500 ms watchdog requests neutral and Hold while leaving\n"
+            "ArduPilot armed",
+            tbot_runtime,
+        )
+        self.assertIn("after txing-tbot-ardupilot", mavlink_service)
+        self.assertIn("after txing-tbot-mavlink", tbot_daemon_service)
+        self.assertIn("tbot | cyberbrick) build_mavlink", board_justfile)
+        self.assertIn(
+            'tbot | cyberbrick) component_binary="txing-$device-mavlink"',
+            board_justfile,
+        )
+        self.assertNotIn("unit | tbot) build_hardware_worker", board_justfile)
 
     def test_board_runbook_shell_blocks_are_copy_pasteable(self) -> None:
         """Every `sh` block in the board runbook must run as pasted.
@@ -2086,7 +2126,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         service_paths = (
             REPO_ROOT / "devices" / "common" / "board" / "hardware_worker" / "openrc" / "txing-unit-hardware-worker",
             REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-unit-daemon",
-            REPO_ROOT / "devices" / "common" / "board" / "hardware_worker" / "openrc" / "txing-tbot-hardware-worker",
+            REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-tbot-mavlink",
             REPO_ROOT / "devices" / "common" / "board" / "daemon" / "openrc" / "txing-tbot-daemon",
             REPO_ROOT / "devices" / "tbot" / "ardupilot" / "openrc" / "txing-tbot-ardupilot",
             REPO_ROOT / "devices" / "common" / "board" / "kvs_master" / "openrc" / "txing-kvs-master",

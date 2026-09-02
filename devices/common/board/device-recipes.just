@@ -33,6 +33,9 @@
 @hardware-build-alpine:
     just --justfile "{{board_justfile}}" hardware-build-alpine "{{device}}"
 
+@mavlink-build-alpine:
+    just --justfile "{{board_justfile}}" mavlink-build-alpine "{{device}}"
+
 @nerdctl-build:
     just --justfile "{{board_justfile}}" nerdctl-build "{{device}}"
 

@@ -104,42 +104,43 @@ an operator must manually delete the legacy named `mcp` shadow. Do not remove
 it before the MAVLink runtime cutover is verified, and no deploy or enlistment
 operation deletes it automatically.
 
-TBot uses the shared board daemon, KVS master, and motor hardware worker with
-the `tbot` build identity. Its Thread adapter delivers the same public board,
-current deployed MCP, active-control, motor-failsafe, and video behavior as
-Unit until that cutover. Build and test the current board artifacts from the
-repository root:
+TBot uses the shared board daemon and KVS master with TBot-derived MAVLink
+identities. ArduPilot exclusively owns the DRV8835; `txing-tbot-mavlink` owns
+the loopback flight-controller connection; the daemon remains the only owner
+of control sessions, epochs, leases, REDCON, and retained state. The KVS master
+starts its `<thing>-mavlink` data peer independently of video. There is no TBot
+MCP, hardware-worker, or automatic fallback path. Build and test the current
+board artifacts from the repository root:
 
 ```sh
 just tbot::board::test
-just tbot::board::hardware-test-native
+just tbot::board::mavlink-build-alpine
 just tbot::board::nerdctl-build
 just tbot::board::nerdctl-smoke
 ```
 
-The Alpine/OpenRC installation and maintenance runbook is shared with Unit;
-set `TXING_DEVICE=tbot` and follow [Board](../../docs/components/board.md).
-TBot binaries use the independent `tbot-v*` release stream:
+Follow the [TBot MAVLink runtime](../../docs/components/board.md#tbot-mavlink-runtime)
+runbook for Alpine/OpenRC installation and cutover. TBot binaries use the
+independent `tbot-v*` release stream:
 
 ```sh
 just release::build tbot
 ```
 
-The `tbot-v0.18.0` release also publishes the optional ArduPilot runtime as
+The `tbot-v0.18.0` release publishes the TBot ArduPilot runtime as
 `txing-tbot-ardupilot-linux-aarch64.tar.gz`, containing
 `txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm`. Its matching
 `txing-tbot-ardupilot-source.tar.gz` contains the patched upstream source,
 initialized submodules, license, and upstream build instructions. The release
-notes record the upstream commit SHA. Installation remains a manual root-owned
-mise action; the service is boot-disabled and the required manual motor-owner
-transfer is documented in [Board](../../docs/components/board.md#tbot-optional-ardupilot-runtime).
+notes record the upstream commit SHA. The forward-only runtime pairs it with
+the TBot MAVLink artifact and enables both services together; installation and
+ownership are documented in the [Board runbook](../../docs/components/board.md#tbot-mavlink-runtime).
 
-## ArduPilot motor proof of concept
+## ArduPilot motor implementation
 
-The optional ArduRover proof of concept is separate from the normal board
-runtime. It starts from a disposable clean-upstream checkout and applies only
-TBot-owned patches; do not reuse a checkout that carries another device's patch
-stack.
+The ArduRover implementation is the normal TBot motor runtime. It starts from a
+disposable clean-upstream checkout and applies only TBot-owned patches; do not
+reuse a checkout that carries another device's patch stack.
 
 ```sh
 just tbot::ardupilot::checkout
@@ -154,11 +155,12 @@ claims those two direction lines through `/dev/gpiochip0`, using the same Linux
 GPIO character-device API as the hardware worker; it deliberately does not use
 ArduPilot's legacy Raspberry Pi `/dev/mem` GPIO mapper. They deliberately leave
 `MOT_PWM_FREQ` unset so its upstream 16 kHz default remains configurable through
-MAVLink after restart. Installation and manual transfer of motor ownership are
-covered by the optional-service runbook in
-[Board](../../docs/components/board.md#tbot-optional-ardupilot-runtime).
+MAVLink after restart. Its OpenRC service binds `SERIAL1` only at
+`udpin:127.0.0.1:14550`, so no direct LAN/QGroundControl endpoint is exposed.
+The MAVLink cutover and exclusive motor ownership are covered by the
+[Board runbook](../../docs/components/board.md#tbot-mavlink-runtime).
 
 Release publication never upgrades a board automatically. On the board, an
-operator installs the TBot daemon and hardware worker plus the shared KVS
-master using the documented root-owned `mise` flow, verifies the services, and
-restarts only the affected OpenRC services.
+operator installs TBot daemon, MAVLink, ArduPilot/defaults, and the shared KVS
+master as one compatible set using the documented root-owned `mise` flow,
+verifies the services, and restarts them in ownership order.

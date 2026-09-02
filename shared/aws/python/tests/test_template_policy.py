@@ -457,7 +457,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         service_files = {
             "txing-unit-hardware-worker",
             "txing-unit-daemon",
-            "txing-tbot-hardware-worker",
+            "txing-tbot-mavlink",
             "txing-tbot-daemon",
             "txing-tbot-ardupilot",
             "txing-kvs-master",

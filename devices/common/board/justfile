@@ -60,9 +60,9 @@ static_toolchain_dir := board_dir + "/target/alpine-static-toolchain"
     #!/bin/sh
     set -eu
     case "{{device}}" in
-      unit | tbot) ;;
+      unit) ;;
       *)
-        echo "the hardware worker is a Unit/TBot board component; Cyberbrick uses ArduPilot and MAVLink" >&2
+        echo "the hardware worker is a Unit-only board component; TBot and Cyberbrick use ArduPilot and MAVLink" >&2
         exit 2
         ;;
     esac
@@ -350,7 +350,7 @@ nerdctl-build device:
     timestamp="$(date -u +%s)"
 
     case "$device" in
-      unit | tbot)
+      unit)
         jq -n \
           --arg version "$version" \
           --arg kvsVersion "$kvs_version" \
@@ -370,7 +370,7 @@ nerdctl-build device:
         component_binary="txing-$device-hardware-worker"
         component_label="hardware worker"
         ;;
-      cyberbrick)
+      tbot | cyberbrick)
         jq -n \
           --arg version "$version" \
           --arg kvsVersion "$kvs_version" \
@@ -414,8 +414,8 @@ nerdctl-smoke device:
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
     kvs_version="$(just --quiet --justfile "{{board_justfile}}" _kvs-version)"
     case "$device" in
-      unit | tbot) component_binary="txing-$device-hardware-worker" ;;
-      cyberbrick) component_binary="txing-$device-mavlink" ;;
+      unit) component_binary="txing-$device-hardware-worker" ;;
+      tbot | cyberbrick) component_binary="txing-$device-mavlink" ;;
       *) echo "Unsupported board device type '$device'." >&2; exit 2 ;;
     esac
     for binary in "txing-$device-daemon" "txing-board-kvs-master" "$component_binary"; do
@@ -463,16 +463,21 @@ nerdctl-smoke device:
 
     if [ "$component" = "hardware-worker" ]; then
       case "$device" in
-        unit | tbot) ;;
+        unit) ;;
         *)
-          echo "the hardware worker is a Unit/TBot board component; Cyberbrick uses ArduPilot and MAVLink" >&2
+          echo "the hardware worker is a Unit-only board component; TBot and Cyberbrick use ArduPilot and MAVLink" >&2
           exit 2
           ;;
       esac
     fi
-    if [ "$component" = "mavlink" ] && [ "$device" != "cyberbrick" ]; then
-      echo "the MAVLink service is a Cyberbrick-only board component" >&2
-      exit 2
+    if [ "$component" = "mavlink" ]; then
+      case "$device" in
+        tbot | cyberbrick) ;;
+        *)
+          echo "the MAVLink service is a TBot/Cyberbrick board component" >&2
+          exit 2
+          ;;
+      esac
     fi
 
     command -v nerdctl >/dev/null 2>&1 || {
@@ -706,8 +711,8 @@ nerdctl-smoke device:
         build_daemon
         build_kvs_master
         case "$device" in
-          unit | tbot) build_hardware_worker ;;
-          cyberbrick) build_mavlink ;;
+          unit) build_hardware_worker ;;
+          tbot | cyberbrick) build_mavlink ;;
         esac
         ;;
     esac
@@ -730,10 +735,10 @@ nerdctl-smoke device:
         install -m 755 "$output_stage/txing-$device-daemon" "$output_root/bin/txing-$device-daemon"
         install -m 755 "$output_stage/txing-board-kvs-master" "$output_root/bin/txing-board-kvs-master"
         case "$device" in
-          unit | tbot)
+          unit)
             install -m 755 "$output_stage/txing-$device-hardware-worker" "$output_root/bin/txing-$device-hardware-worker"
             ;;
-          cyberbrick)
+          tbot | cyberbrick)
             install -m 755 "$output_stage/txing-$device-mavlink" "$output_root/bin/txing-$device-mavlink"
             ;;
         esac

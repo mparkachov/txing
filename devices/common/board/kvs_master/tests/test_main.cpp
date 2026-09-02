@@ -398,6 +398,26 @@ void TestMavlinkCapabilityRequiresRuntimeBridgeSocket() {
         parsed.config.client_id == parsed.config.worker_name,
         "client id should default to the runtime worker identity"
     );
+
+    const auto tbot = ParseCli(
+        {TXING_BOARD_KVS_MASTER_BINARY_NAME, "--board-video-bridge-socket-path", "/tmp/video.sock"},
+        EnvFrom(
+            {
+                {"TXING_DAEMON_CAPABILITIES", "board,mavlink,video"},
+                {"TXING_MAVLINK_BRIDGE_SOCKET_PATH", "/run/txing-tbot-daemon/mavlink-bridge.sock"},
+                {"TXING_KVS_WORKER_NAME", "txing-tbot-kvs-master"},
+            }
+        )
+    );
+    Expect(
+        tbot.config.mavlink_bridge_socket_path ==
+            "/run/txing-tbot-daemon/mavlink-bridge.sock",
+        "TBot MAVLink bridge socket should come from runtime configuration"
+    );
+    Expect(
+        tbot.config.worker_name == "txing-tbot-kvs-master",
+        "TBot worker identity should come from runtime configuration"
+    );
 }
 
 void TestRuntimeWorkerNameMustNotBeEmpty() {

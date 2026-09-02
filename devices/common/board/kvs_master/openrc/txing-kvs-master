@@ -52,10 +52,10 @@ start_pre() {
     export TXING_KVS_WORKER_NAME="$service_name"
     export TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH=/run/txing-${device}-daemon/board-video-bridge.sock
     case "$device" in
-        cyberbrick)
-            export TXING_MAVLINK_BRIDGE_SOCKET_PATH=/run/txing-cyberbrick-daemon/mavlink-bridge.sock
+        tbot | cyberbrick)
+            export TXING_MAVLINK_BRIDGE_SOCKET_PATH=/run/txing-${device}-daemon/mavlink-bridge.sock
             ;;
-        unit | tbot)
+        unit)
             unset TXING_MAVLINK_BRIDGE_SOCKET_PATH
             ;;
     esac
