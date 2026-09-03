@@ -630,6 +630,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("devices/cyberbrick/proto", tbot_workflow)
         self.assertIn("txing/board/mavlink_bridge/v1/mavlink_bridge.proto", tbot_workflow)
         self.assertIn("go test ./...", tbot_workflow)
+        self.assertIn("protobuf-dev", tbot_workflow)
         self.assertIn("./cmd/txing-board-mavlink", tbot_workflow)
         self.assertIn("sh release/scripts/assert-board-musl.sh", tbot_workflow)
         self.assertIn("release/scripts/smoke-board-cross-distro.sh", tbot_workflow)

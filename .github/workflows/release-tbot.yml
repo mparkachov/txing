@@ -105,7 +105,9 @@ jobs:
           set -eu
           test "$(cat /etc/alpine-release)" = "3.24.1"
           test "$(uname -m)" = "aarch64"
-          apk add --no-cache git ca-certificates protobuf go binutils file tar gzip
+          # protobuf-dev supplies protoc's well-known .proto includes, including
+          # google/protobuf/timestamp.proto imported by the board-video contract.
+          apk add --no-cache git ca-certificates protobuf-dev protobuf go binutils file tar gzip
 
           daemon_module=github.com/mparkachov/txing/devices/common/board/daemon
           plugin_dir="$RUNNER_TEMP/tbot-protoc-plugins"
