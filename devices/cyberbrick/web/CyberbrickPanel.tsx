@@ -6,6 +6,8 @@ import VideoPanel from '../../../office/src/VideoPanel'
 import MavlinkControlPanel from './MavlinkControlPanel'
 
 type CyberbrickPanelProps = {
+  deviceLabel?: string
+  deviceName?: string
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
   mavlinkActor: string
@@ -20,6 +22,7 @@ type CyberbrickPanelProps = {
   onToggleDebug: () => void
   shadow: unknown
   videoChannelName: string
+  watchTransport?: 'BLE' | 'Thread'
   resolveIdToken: () => Promise<string>
   onBoardVideoRuntimeError: (message: string) => void
 }
@@ -188,6 +191,8 @@ function DebugGlyph() {
 }
 
 function CyberbrickPanel({
+  deviceLabel = 'CYBERBRICK',
+  deviceName = 'Cyberbrick',
   isBoardVideoExpanded,
   isDebugEnabled,
   mavlinkActor,
@@ -202,6 +207,7 @@ function CyberbrickPanel({
   onToggleDebug,
   shadow,
   videoChannelName,
+  watchTransport = 'BLE',
   resolveIdToken,
   onBoardVideoRuntimeError,
 }: CyberbrickPanelProps) {
@@ -239,25 +245,25 @@ function CyberbrickPanel({
         </span>
       </div>
       <div className="status-video-overlay-lockup">
-        <div className="status-txing-title-group" role="group" aria-label="Cyberbrick drive indicators">
+        <div className="status-txing-title-group" role="group" aria-label={`${deviceName} drive indicators`}>
           <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />
           <div className="status-name status-txing-name status-video-overlay-name" aria-hidden="true">
-            CYBERBRICK
+            {deviceLabel}
           </div>
           <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
         </div>
       </div>
       <div className="status-video-overlay-side status-video-overlay-side-end">
-        <div className="status-video-overlay-metrics" aria-label="Cyberbrick connectivity indicators">
+        <div className="status-video-overlay-metrics" aria-label={`${deviceName} connectivity indicators`}>
           <div
             className={`status-signal ${bleSignalToneClass}`}
             role="img"
             aria-label={
               reportedMcuOnline === true
-                ? 'BLE online'
+                ? `${watchTransport} online`
                 : reportedMcuOnline === false
-                  ? 'BLE offline'
-                  : 'BLE status unavailable'
+                  ? `${watchTransport} offline`
+                  : `${watchTransport} status unavailable`
             }
           >
             <span className="status-signal-bar status-signal-bar-1" aria-hidden="true" />
@@ -288,7 +294,7 @@ function CyberbrickPanel({
   )
 
   return (
-    <section className="status-hero status-hero-dashboard" aria-label="Cyberbrick status">
+    <section className="status-hero status-hero-dashboard" aria-label={`${deviceName} status`}>
       <div className="shadow-diagram">
         <div className={`status-node status-node-txing ${shouldRenderBoardVideo ? 'status-node-txing-expanded' : ''}`}>
           {shouldRenderBoardVideo ? (
@@ -302,7 +308,7 @@ function CyberbrickPanel({
           ) : (
             <div
               className="status-video-offline-surface"
-              aria-label="Cyberbrick drive status"
+              aria-label={`${deviceName} drive status`}
               data-drive-mode="mavlink"
             >
               {videoOverlay}
@@ -319,6 +325,7 @@ function CyberbrickPanel({
         onRuntimeError={onBoardVideoRuntimeError}
         region={mavlinkRegion}
         resolveIdToken={resolveIdToken}
+        vehicleName={deviceName}
       />
     </section>
   )

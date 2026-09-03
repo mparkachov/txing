@@ -20,6 +20,7 @@ type MavlinkControlPanelProps = {
   onRuntimeError: (message: string) => void
   region: string
   resolveIdToken: () => Promise<string>
+  vehicleName?: string
 }
 
 type ConnectionState = 'connecting' | 'error' | 'idle' | 'open' | 'reconnecting'
@@ -72,6 +73,7 @@ function MavlinkControlPanel({
   onRuntimeError,
   region,
   resolveIdToken,
+  vehicleName = 'Cyberbrick',
 }: MavlinkControlPanelProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const [controlState, setControlState] = useState<MavlinkControlState>(emptyControlState)
@@ -262,7 +264,7 @@ function MavlinkControlPanel({
   }
 
   return (
-    <section className="mavlink-control-panel" aria-label="Cyberbrick MAVLink control">
+    <section className="mavlink-control-panel" aria-label={`${vehicleName} MAVLink control`}>
       <div className="mavlink-control-heading">
         <strong>MAVLink control</strong>
         <span data-mavlink-connection={connectionState}>{describeConnectionState(connectionState)}</span>

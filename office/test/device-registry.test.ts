@@ -26,9 +26,10 @@ describe('device web adapter registry', () => {
     expect(tbotAdapter?.type).toBe('tbot')
     expect(tbotAdapter?.displayName).toBe('TBot')
     expect(tbotAdapter?.buildVideoChannelName('tbot-a1')).toBe('tbot-a1-board-video')
+    expect(tbotAdapter?.buildMavlinkChannelName?.('tbot-a1')).toBe('tbot-a1-mavlink')
     expect(tbotAdapter?.canUseBoardVideo(1)).toBe(true)
-    expect(tbotAdapter?.canUseDriveControl(1)).toBe(true)
-    expect(tbotAdapter?.canUseDriveControl(2)).toBe(true)
+    expect(tbotAdapter?.canUseDriveControl(1)).toBe(false)
+    expect(tbotAdapter?.canUseDriveControl(2)).toBe(false)
     expect(cyberbrickAdapter?.type).toBe('cyberbrick')
     expect(cyberbrickAdapter?.displayName).toBe('Cyberbrick')
     expect(cyberbrickAdapter?.buildVideoChannelName('cyberbrick-a1')).toBe(
@@ -113,7 +114,7 @@ describe('device web adapter registry', () => {
     ).toBeNull()
   })
 
-  test('keeps the Unit active-control and detail behavior for tbot', () => {
+  test('keeps TBot detail behavior while excluding the Unit MCP drive path', () => {
     const tbotAdapter = getDeviceWebAdapter('tbot')
 
     expect(
@@ -127,6 +128,8 @@ describe('device web adapter registry', () => {
       isDetailPanelOpen: true,
       isBoardVideoExpanded: true,
     })
+    expect(tbotAdapter?.canUseDriveControl(1)).toBe(false)
+    expect(tbotAdapter?.canUseDriveControl(2)).toBe(false)
     expect(tbotAdapter?.shouldCloseDetail({ detailRedcon: 1, reportedRedcon: 3 })).toBe(true)
   })
 

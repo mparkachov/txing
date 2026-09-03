@@ -92,7 +92,7 @@ const createSession = () => {
 const lastRequest = (messages: string[]): Record<string, unknown> =>
   JSON.parse(messages[messages.length - 1] ?? '{}') as Record<string, unknown>
 
-describe('Cyberbrick MAVLink Office control', () => {
+describe('shared MAVLink Office control', () => {
   test('negotiates a separate data-only peer with no video transceiver or VideoPanel lifecycle', () => {
     const runtime = readFileSync(new URL('../src/mavlink-session-runtime.ts', import.meta.url), 'utf8')
     const panel = readFileSync(
@@ -194,6 +194,44 @@ describe('Cyberbrick MAVLink Office control', () => {
     session.handleMessage(commandAckFrame(400))
     session.handleMessage(heartbeatFrame({ armed: false }))
     await expect(disarm).resolves.toBeUndefined()
+  })
+
+  test('uses ordinary Manual and Hold mode commands with acknowledgement and heartbeat confirmation', async () => {
+    const { binaryFrames, session, textMessages } = createSession()
+    const activate = session.activate(false)
+    const activateRequest = lastRequest(textMessages)
+    const owned = { sessionId: 'mavlink-2', actor: 'operator@example.test', epoch: 2 }
+    session.handleMessage(controlResponse(String(activateRequest.requestId), controlState({ activeControl: owned }), 'control.activated'))
+    await activate
+
+    const manual = session.selectMode(target, 'manual')
+    const manualFrame = parseMavlinkFrame(binaryFrames.at(-1) ?? new Uint8Array())
+    const manualPayload = new DataView(
+      manualFrame.payload.buffer,
+      manualFrame.payload.byteOffset,
+      manualFrame.payload.byteLength,
+    )
+    expect(manualFrame.messageId).toBe(76)
+    expect(manualPayload.getUint16(28, true)).toBe(176)
+    expect(manualPayload.getFloat32(0, true)).toBe(1)
+    expect(manualPayload.getFloat32(4, true)).toBe(0)
+    session.handleMessage(commandAckFrame(176))
+    session.handleMessage(heartbeatFrame({ armed: false, mode: 0 }))
+    await expect(manual).resolves.toBeUndefined()
+
+    const hold = session.selectMode(target, 'hold')
+    const holdFrame = parseMavlinkFrame(binaryFrames.at(-1) ?? new Uint8Array())
+    const holdPayload = new DataView(
+      holdFrame.payload.buffer,
+      holdFrame.payload.byteOffset,
+      holdFrame.payload.byteLength,
+    )
+    expect(holdPayload.getUint16(28, true)).toBe(176)
+    expect(holdPayload.getFloat32(0, true)).toBe(1)
+    expect(holdPayload.getFloat32(4, true)).toBe(4)
+    session.handleMessage(commandAckFrame(176))
+    session.handleMessage(heartbeatFrame({ armed: false, mode: 4 }))
+    await expect(hold).resolves.toBeUndefined()
   })
 
   test('maps Rover steering to y, throttle to z, and marks x/r invalid', () => {
