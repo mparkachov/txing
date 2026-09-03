@@ -623,16 +623,19 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("Build static board artifacts", tbot_workflow)
         self.assertIn("docker run --rm -i", tbot_workflow)
         self.assertIn("TBOT_DAEMON_ASSET: txing-tbot-daemon-linux-aarch64.tar.gz", tbot_workflow)
-        self.assertIn("HARDWARE_WORKER_ASSET: txing-tbot-hardware-worker-linux-aarch64.tar.gz", tbot_workflow)
+        self.assertIn("MAVLINK_BINARY: txing-tbot-mavlink", tbot_workflow)
+        self.assertIn("MAVLINK_ASSET: txing-tbot-mavlink-linux-aarch64.tar.gz", tbot_workflow)
         self.assertIn("DeviceType=tbot", tbot_workflow)
         self.assertIn("proto_root=devices/common/board/proto", tbot_workflow)
         self.assertNotIn("devices/cyberbrick/proto", tbot_workflow)
         self.assertIn("txing/board/mavlink_bridge/v1/mavlink_bridge.proto", tbot_workflow)
-        self.assertIn('-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', tbot_workflow)
-        self.assertIn("-DTXING_BOARD_DEVICE_TYPE=tbot", tbot_workflow)
         self.assertIn("go test ./...", tbot_workflow)
-        self.assertIn("ctest --test-dir", tbot_workflow)
+        self.assertIn("./cmd/txing-board-mavlink", tbot_workflow)
         self.assertIn("sh release/scripts/assert-board-musl.sh", tbot_workflow)
+        self.assertIn("release/scripts/smoke-board-cross-distro.sh", tbot_workflow)
+        self.assertNotIn("txing-tbot-hardware-worker", tbot_workflow)
+        self.assertNotIn("TXING_BOARD_HARDWARE_WORKER", tbot_workflow)
+        self.assertNotIn("ctest --test-dir", tbot_workflow)
         self.assertNotIn("component: kvs-master", tbot_workflow)
         self.assertNotIn("txing-board-kvs-master", tbot_workflow)
         self.assertNotIn("apt-get", tbot_workflow)
@@ -1428,10 +1431,14 @@ class VersionEnvironmentTests(unittest.TestCase):
                 ).read_text(encoding="utf-8")
                 self.assertNotIn("TXING_BOARD_KVS_MASTER_VERSION", workflow)
                 self.assertNotIn("component: kvs-master", workflow)
-                if device_type in ("unit", "tbot"):
+                if device_type == "unit":
                     self.assertIn(
                         '-DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION"', workflow
                     )
+                elif device_type == "tbot":
+                    self.assertIn("MAVLINK_BINARY: txing-tbot-mavlink", workflow)
+                    self.assertIn("./cmd/txing-board-mavlink", workflow)
+                    self.assertNotIn("txing-tbot-hardware-worker", workflow)
                 else:
                     self.assertIn("component: mavlink", workflow)
                     self.assertNotIn("txing-cyberbrick-hardware-worker", workflow)
@@ -1931,11 +1938,17 @@ class VersionEnvironmentTests(unittest.TestCase):
         board_justfile = (
             REPO_ROOT / "devices" / "common" / "board" / "justfile"
         ).read_text(encoding="utf-8")
+        artifacts_docs = (REPO_ROOT / "docs" / "artifacts.md").read_text(
+            encoding="utf-8"
+        )
         runbook = (REPO_ROOT / "docs" / "components" / "board.md").read_text(
             encoding="utf-8"
         )
         tbot_runtime = runbook.split("#### TBot MAVLink runtime", 1)[1].split(
             "#### Historical TBot direct-QGroundControl proof of concept", 1
+        )[0]
+        tbot_artifacts = artifacts_docs.split("### TBot board", 1)[1].split(
+            "### Cyberbrick board", 1
         )[0]
 
         for value in {
@@ -1970,6 +1983,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("Failed to get GPIO memory map", patch)
         self.assertIn("txing-tbot-ardupilot-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-tbot-ardupilot-source.tar.gz", workflow)
+        self.assertIn("MAVLINK_ASSET: txing-tbot-mavlink-linux-aarch64.tar.gz", workflow)
+        self.assertNotIn("txing-tbot-hardware-worker", workflow)
         self.assertIn(
             'txing_cert_install_board_service "$devices_dir/tbot/ardupilot/openrc/txing-tbot-ardupilot"',
             aws_lib,
@@ -1979,6 +1994,17 @@ class VersionEnvironmentTests(unittest.TestCase):
             aws_lib,
         )
         self.assertNotIn("txing-tbot-hardware-worker\" \"$services_dir", aws_lib)
+        self.assertFalse(
+            (
+                REPO_ROOT
+                / "devices"
+                / "common"
+                / "board"
+                / "hardware_worker"
+                / "openrc"
+                / "txing-tbot-hardware-worker"
+            ).exists()
+        )
 
         self.assertIn("#!/sbin/openrc-run", service)
         self.assertIn("supervisor=supervise-daemon", service)
@@ -2021,6 +2047,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("127.0.0.1:14550", tbot_runtime)
         self.assertNotIn("udpin:0.0.0.0:14550", tbot_runtime)
         self.assertIn("Rover.stg.pre-mavlink-cutover", tbot_runtime)
+        self.assertIn('just aws::deploy-device "$RIG_THING_ID" tbot "$THING_ID"', tbot_runtime)
+        self.assertIn("just aws::cert \"$THING_ID\"", tbot_runtime)
+        self.assertLess(
+            tbot_runtime.index('just aws::deploy-device "$RIG_THING_ID" tbot "$THING_ID"'),
+            tbot_runtime.index("root-rw"),
+        )
+        self.assertIn("Deploy the matching Office source only", tbot_runtime)
+        self.assertIn("manually remove the obsolete retained TBot MCP topics", tbot_runtime)
         self.assertIn(
             "500 ms watchdog requests neutral and Hold while leaving\n"
             "ArduPilot armed",
@@ -2034,6 +2068,17 @@ class VersionEnvironmentTests(unittest.TestCase):
             board_justfile,
         )
         self.assertNotIn("unit | tbot) build_hardware_worker", board_justfile)
+        for asset in (
+            "txing-tbot-daemon-linux-aarch64.tar.gz",
+            "txing-tbot-mavlink-linux-aarch64.tar.gz",
+            "txing-tbot-ardupilot-linux-aarch64.tar.gz",
+            "txing-board-kvs-master-linux-aarch64.tar.gz",
+            "txing-tbot-ardupilot-source.tar.gz",
+        ):
+            with self.subTest(asset=asset):
+                self.assertIn(asset, tbot_artifacts)
+        self.assertNotIn("txing-tbot-hardware-worker", tbot_artifacts)
+        self.assertIn("does not publish, install, or start a hardware worker", tbot_artifacts)
 
     def test_board_runbook_shell_blocks_are_copy_pasteable(self) -> None:
         """Every `sh` block in the board runbook must run as pasted.

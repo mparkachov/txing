@@ -15,7 +15,8 @@ env:
   RELEASE_VERSION_FILE: release/versions/tbot
   RELEASE_TAG_PREFIX: tbot-v
   TBOT_DAEMON_ASSET: txing-tbot-daemon-linux-aarch64.tar.gz
-  HARDWARE_WORKER_ASSET: txing-tbot-hardware-worker-linux-aarch64.tar.gz
+  MAVLINK_BINARY: txing-tbot-mavlink
+  MAVLINK_ASSET: txing-tbot-mavlink-linux-aarch64.tar.gz
   ARDUPILOT_BINARY: txing-tbot-ardupilot
   ARDUPILOT_DEFAULTS: txing-tbot-ardupilot.defaults.parm
   ARDUPILOT_ASSET: txing-tbot-ardupilot-linux-aarch64.tar.gz
@@ -86,11 +87,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/cache@v5
-        with:
-          path: ${{ runner.temp }}/static-toolchain
-          key: board-static-toolchain-alpine3.24.1-${{ hashFiles('release/scripts/build-board-static-toolchain.sh') }}
-
       - name: Build, test, package, and verify artifacts
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -101,16 +97,15 @@ jobs:
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$RUNNER_TEMP:$RUNNER_TEMP" \
             -w /workspace \
+            -e MAVLINK_BINARY \
+            -e MAVLINK_ASSET \
             -e VERSION \
             -e RUNNER_TEMP \
             docker.io/library/alpine:3.24.1 sh -se <<'EOF'
           set -eu
           test "$(cat /etc/alpine-release)" = "3.24.1"
           test "$(uname -m)" = "aarch64"
-          apk add --no-cache build-base cmake pkgconf git perl ca-certificates curl \
-            curl-dev openssl-dev openssl-libs-static log4cplus-dev libsrtp-dev \
-            libusrsctp-dev libwebsockets-dev zlib-dev zlib-static libcamera-dev \
-            linux-headers protobuf-dev protobuf grpc-dev grpc-plugins go binutils file tar gzip
+          apk add --no-cache git ca-certificates protobuf go binutils file tar gzip
 
           daemon_module=github.com/mparkachov/txing/devices/common/board/daemon
           plugin_dir="$RUNNER_TEMP/tbot-protoc-plugins"
@@ -137,15 +132,10 @@ jobs:
           daemon_bin="$RUNNER_TEMP/txing-tbot-daemon"
           (cd devices/common/board/daemon && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./... && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DeviceType=tbot -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DaemonVersion=$VERSION" -o "$daemon_bin" ./cmd/txing-board-daemon)
 
-          toolchain="$RUNNER_TEMP/static-toolchain"
-          sh release/scripts/build-board-static-toolchain.sh "$toolchain"
-          worker_build="$RUNNER_TEMP/build-txing-tbot-hardware-worker"
-          PATH="$toolchain/bin:$PATH" cmake -S devices/common/board/hardware_worker -B "$worker_build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DTXING_HARDWARE_WORKER_GRPC=ON -DTXING_BOARD_DEVICE_TYPE=tbot -DTXING_BOARD_HARDWARE_WORKER_VERSION="$VERSION" -DCMAKE_PREFIX_PATH="$toolchain" -DCMAKE_EXE_LINKER_FLAGS=-static -DOPENSSL_USE_STATIC_LIBS=TRUE -DZLIB_USE_STATIC_LIBS=ON
-          PATH="$toolchain/bin:$PATH" cmake --build "$worker_build" --config Release
-          ctest --test-dir "$worker_build" --output-on-failure
-          worker_bin="$worker_build/txing-tbot-hardware-worker"
+          mavlink_bin="$RUNNER_TEMP/$MAVLINK_BINARY"
+          (cd devices/common/board/daemon && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DeviceType=tbot -X github.com/mparkachov/txing/devices/common/board/daemon/internal/daemon.DaemonVersion=$VERSION" -o "$mavlink_bin" ./cmd/txing-board-mavlink)
 
-          for pair in "$daemon_bin:txing-tbot-daemon:txing-tbot-daemon-linux-aarch64.tar.gz" "$worker_bin:txing-tbot-hardware-worker:txing-tbot-hardware-worker-linux-aarch64.tar.gz"; do
+          for pair in "$daemon_bin:txing-tbot-daemon:txing-tbot-daemon-linux-aarch64.tar.gz" "$mavlink_bin:$MAVLINK_BINARY:$MAVLINK_ASSET"; do
             source="${pair%%:*}"; rest="${pair#*:}"; binary="${rest%%:*}"; asset="${rest#*:}"
             test "$("$source" --version)" = "$binary $VERSION"
             package="$RUNNER_TEMP/package-$binary"
@@ -161,7 +151,7 @@ jobs:
           name: tbot-board-assets
           path: |
             ${{ runner.temp }}/txing-tbot-daemon-linux-aarch64.tar.gz
-            ${{ runner.temp }}/txing-tbot-hardware-worker-linux-aarch64.tar.gz
+            ${{ runner.temp }}/txing-tbot-mavlink-linux-aarch64.tar.gz
           if-no-files-found: error
 
   ardupilot:
@@ -304,9 +294,9 @@ jobs:
           smoke_dir="$RUNNER_TEMP/smoke-bin"
           install -d "$smoke_dir"
           tar -C "$smoke_dir" -xzf "$RUNNER_TEMP/release-assets/$TBOT_DAEMON_ASSET"
-          tar -C "$smoke_dir" -xzf "$RUNNER_TEMP/release-assets/$HARDWARE_WORKER_ASSET"
+          tar -C "$smoke_dir" -xzf "$RUNNER_TEMP/release-assets/$MAVLINK_ASSET"
           sh release/scripts/smoke-board-cross-distro.sh "$smoke_dir/txing-tbot-daemon" static "txing-tbot-daemon $VERSION"
-          sh release/scripts/smoke-board-cross-distro.sh "$smoke_dir/txing-tbot-hardware-worker" static "txing-tbot-hardware-worker $VERSION"
+          sh release/scripts/smoke-board-cross-distro.sh "$smoke_dir/$MAVLINK_BINARY" static "$MAVLINK_BINARY $VERSION"
 
       - name: Run Alpine ArduPilot smoke
         shell: bash
@@ -374,7 +364,7 @@ jobs:
           fi
           assets=(
             "$RUNNER_TEMP/release-assets/$TBOT_DAEMON_ASSET"
-            "$RUNNER_TEMP/release-assets/$HARDWARE_WORKER_ASSET"
+            "$RUNNER_TEMP/release-assets/$MAVLINK_ASSET"
             "$RUNNER_TEMP/release-assets/$ARDUPILOT_ASSET"
             "$RUNNER_TEMP/release-assets/$ARDUPILOT_SOURCE_ASSET"
           )
@@ -391,7 +381,7 @@ jobs:
             echo "- Build image: docker.io/library/alpine:3.24.1"
             echo "- ArduPilot upstream SHA: $ARDUPILOT_UPSTREAM_SHA"
             echo "- Assets:"
-            for asset in "$TBOT_DAEMON_ASSET" "$HARDWARE_WORKER_ASSET" "$ARDUPILOT_ASSET" "$ARDUPILOT_SOURCE_ASSET"; do
+            for asset in "$TBOT_DAEMON_ASSET" "$MAVLINK_ASSET" "$ARDUPILOT_ASSET" "$ARDUPILOT_SOURCE_ASSET"; do
               echo "  - $asset"
             done
           } >"$notes_file"

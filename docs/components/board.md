@@ -1381,11 +1381,27 @@ MAVLink endpoint is loopback-only; Office reaches it only through the separate
 automatic fallback path. Keep the chassis lifted and motor power isolated
 until the physical-acceptance milestone authorizes motion.
 
+Before making the board root writable, apply the catalog and IAM changes,
+re-enlist the existing TBot against its existing rig, and create a fresh
+certificate/configuration bundle from the operator workstation. These commands
+do not start or arm the rover:
+
+```sh
+: "${RIG_THING_ID:?set the existing raspi rig Thing ID}"
+: "${THING_ID:?set the existing TBot Thing ID}"
+just aws::deploy
+just aws::deploy-device "$RIG_THING_ID" tbot "$THING_ID"
+
+# aws::cert refuses to overwrite local material. Move the old local bundle
+# aside before creating and installing the fresh one by the steps below.
+just aws::cert "$THING_ID"
+```
+
 Install a matching forward-only TBot daemon, MAVLink, ArduPilot/defaults, and
-shared KVS release together, then obtain a fresh TBot daemon bundle. Its
-`daemon.env` must declare `TXING_DAEMON_CAPABILITIES=board,mavlink,video`; do
-not reuse a pre-cutover MCP bundle. The service catalog in that bundle supplies
-the four TBot scripts below.
+shared KVS release together with that fresh TBot daemon bundle. Its `daemon.env`
+must declare `TXING_DAEMON_CAPABILITIES=board,mavlink,video`; do not reuse a
+pre-cutover MCP bundle. The service catalog in that bundle supplies the four
+TBot scripts below.
 
 On the board, install the owned scripts and remove the obsolete TBot hardware
 worker script before enabling the new default runlevel. The exact `rm` target
@@ -1473,7 +1489,10 @@ Hold, and disarm attempts.
 
 Return the root filesystem to read-only and reboot manually after the services
 remain healthy. On reconnect, repeat the status and loopback checks above
-before any physical control acceptance.
+before any physical control acceptance. Deploy the matching Office source only
+after that board validation succeeds. After the forward-only cutover is proven,
+manually remove the obsolete retained TBot MCP topics and named shadow; no
+release, installer, or AWS command performs that cleanup automatically.
 
 #### Historical TBot direct-QGroundControl proof of concept
 

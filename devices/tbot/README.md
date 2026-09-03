@@ -76,9 +76,8 @@ Its descriptor, status, named-shadow schema, defaults, and fixtures are owned
 under `devices/tbot/aws/`; the shared WebRTC and local APIs are documented in
 [Board MAVLink capability contract](../../docs/contracts/board-mavlink.md).
 
-This contract migration deliberately precedes the forward-only runtime service
-cutover. Do not deploy it independently of the coordinated TBot MAVLink runtime
-and cloud-provisioning work.
+The forward-only runtime cutover deploys this contract only with the coordinated
+TBot release, catalog/IAM application, re-enlistment, and fresh board bundle.
 
 ### Cloud catalog rollout
 
@@ -88,12 +87,14 @@ catalog, re-enlists the existing TBot using its existing rig and device name,
 and creates a fresh board bundle:
 
 ```sh
+: "${RIG_THING_ID:?set the existing raspi rig Thing ID}"
+: "${THING_ID:?set the existing TBot Thing ID}"
 just aws::deploy
-just aws::deploy-device <raspi-rig-id> tbot <existing-device-name>
+just aws::deploy-device "$RIG_THING_ID" tbot "$THING_ID"
 
 # aws::cert refuses to overwrite local material: move the old local bundle
 # aside first, then create and install the fresh bundle by the board runbook.
-just aws::cert <tbot-thing-id>
+just aws::cert "$THING_ID"
 ```
 
 Re-enlistment preserves existing named-shadow payloads and creates only a
@@ -127,14 +128,15 @@ independent `tbot-v*` release stream:
 just release::build tbot
 ```
 
-The `tbot-v0.18.0` release publishes the TBot ArduPilot runtime as
-`txing-tbot-ardupilot-linux-aarch64.tar.gz`, containing
-`txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm`. Its matching
-`txing-tbot-ardupilot-source.tar.gz` contains the patched upstream source,
+The `tbot-v0.18.7` release publishes `txing-tbot-daemon`,
+`txing-tbot-mavlink`, and `txing-tbot-ardupilot` assets. The ArduPilot archive
+contains `txing-tbot-ardupilot` and
+`txing-tbot-ardupilot.defaults.parm`; its matching
+`txing-tbot-ardupilot-source.tar.gz` contains the exact patched upstream source,
 initialized submodules, license, and upstream build instructions. The release
-notes record the upstream commit SHA. The forward-only runtime pairs it with
-the TBot MAVLink artifact and enables both services together; installation and
-ownership are documented in the [Board runbook](../../docs/components/board.md#tbot-mavlink-runtime).
+notes record the upstream commit SHA. It does not publish a TBot hardware-worker
+asset. Install all four runtime services, including the matching shared KVS
+release, together by the [Board runbook](../../docs/components/board.md#tbot-mavlink-runtime).
 
 ## ArduPilot motor implementation
 

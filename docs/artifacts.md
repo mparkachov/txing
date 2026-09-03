@@ -58,7 +58,7 @@ TBot releases publish these Linux `aarch64` assets:
 
 ```text
 txing-tbot-daemon-linux-aarch64.tar.gz
-txing-tbot-hardware-worker-linux-aarch64.tar.gz
+txing-tbot-mavlink-linux-aarch64.tar.gz
 txing-tbot-ardupilot-linux-aarch64.tar.gz
 ```
 
@@ -104,11 +104,11 @@ defaults files. Each runtime Lambda `.zip` contains one root-level Go executable
 are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
 and do not depend on host glibc.
 Unit, TBot, Cyberbrick, and shared KVS binaries are built in the same pinned Alpine
-release under one linkage contract: the Go daemons plus the Unit and TBot hardware
-worker and Cyberbrick MAVLink service are fully static musl binaries that run
-on both Debian and Alpine hosts. The one shared KVS master is dynamically linked
-against musl and stock Alpine libcamera, so it runs on Alpine hosts only. The
-three workflows verify the linkage kind of
+release under one linkage contract: the Go daemons, Unit hardware worker, and
+TBot/Cyberbrick MAVLink services are fully static musl binaries that run on both
+Debian and Alpine hosts. The one shared KVS master is dynamically linked against
+musl and stock Alpine libcamera, so it runs on Alpine hosts only. The three
+workflows verify the linkage kind of
 the exact stripped executable placed in each archive with
 `release/scripts/assert-board-musl.sh` (static: no ELF interpreter;
 musl-dynamic: musl interpreter, fully resolved libraries, expected libcamera
@@ -247,12 +247,49 @@ does not upgrade a board; the operator must log in to the board, switch to
 root, run `root-rw`, run root-owned `mise upgrade`, verify versions, sync, and
 restart only the affected OpenRC services.
 
-TBot's optional `txing-tbot-ardupilot` tool is installed separately from the
-same `tbot-v*` release stream. Its source archive is provenance only; the
-runtime uses the binary/defaults asset. The service is intentionally excluded
-from the default runlevel, so installation never changes normal hardware-worker
-boot ownership. See [TBot optional ArduPilot runtime](./components/board.md#tbot-optional-ardupilot-runtime)
-for the manual transfer and reboot checks.
+### TBot board
+
+TBot boards install three TBot release assets plus the shared KVS asset with
+root-owned `mise`:
+
+```text
+txing-tbot-daemon-linux-aarch64.tar.gz
+txing-tbot-mavlink-linux-aarch64.tar.gz
+txing-tbot-ardupilot-linux-aarch64.tar.gz
+txing-board-kvs-master-linux-aarch64.tar.gz
+```
+
+The TBot release also publishes
+`txing-tbot-ardupilot-source.tar.gz` as the exact patched-upstream provenance
+for its ArduPilot binary/defaults asset; the source archive is not installed on
+the board. Installed commands are `txing-tbot-daemon`,
+`txing-tbot-mavlink`, `txing-tbot-ardupilot`, and
+`txing-board-kvs-master`.
+
+The root-owned runtime layout is:
+
+```text
+/root/.config/txing/tbot-daemon/daemon.env
+/root/.config/mise/conf.d/txing-tbot-daemon.toml
+/root/.config/mise/conf.d/txing-tbot-ardupilot.toml
+/root/.local/share/mise/installs/txing-tbot-daemon/latest/txing-tbot-daemon
+/root/.local/share/mise/installs/txing-tbot-mavlink/latest/txing-tbot-mavlink
+/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot
+/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.defaults.parm
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
+/etc/init.d/txing-tbot-ardupilot
+/etc/init.d/txing-tbot-mavlink
+/etc/init.d/txing-tbot-daemon
+/etc/init.d/txing-tbot-kvs-master
+```
+
+OpenRC enables the four services in ArduPilot, MAVLink, daemon, and KVS-master
+dependency order. ArduPilot is the only TBot motor owner; MAVLink owns its
+loopback flight-controller socket and the daemon-owned WebRTC bridge. TBot
+does not publish, install, or start a hardware worker or MCP compatibility
+service. Publishing a TBot release never upgrades a board automatically; the
+operator completes the coordinated writable-root maintenance procedure in the
+[TBot MAVLink runtime](./components/board.md#tbot-mavlink-runtime) runbook.
 
 ### Cyberbrick board
 
