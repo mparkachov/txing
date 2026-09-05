@@ -86,7 +86,7 @@ class DeviceCatalogTests(unittest.TestCase):
             manifest.render_board_video_channel_name(device_id="tbot-a1"),
             "tbot-a1-board-video",
         )
-        self.assertEqual(manifest.redcon_metric_rules, {1: ("mavlinkArmed",)})
+        self.assertEqual(manifest.redcon_metric_rules, {})
         self.assertEqual(
             manifest.render_mavlink_channel_name(device_id="tbot-a1"),
             "tbot-a1-mavlink",
@@ -118,7 +118,7 @@ class DeviceCatalogTests(unittest.TestCase):
                 4: ("sparkplug", "ble"),
             },
         )
-        self.assertEqual(manifest.redcon_metric_rules, {1: ("mavlinkArmed",)})
+        self.assertEqual(manifest.redcon_metric_rules, {})
         self.assertEqual(
             [contract.name for contract in manifest.shadows.values()],
             ["sparkplug", "ble", "power", "board", "mavlink", "video"],

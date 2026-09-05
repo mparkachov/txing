@@ -84,6 +84,13 @@ process lifetime. This prevents periodic BLE measurement notifications from
 creating shadow writes when their reported values did not change. A changed
 payload, a new manager process, or a re-enlisted device publishes normally.
 
+For every Thread-managed power device, `txing-thread-connectivity` retains the
+last successfully published `power.batteryMv` per Thing in process memory. It
+publishes the first valid value and a later value only when it differs by more
+than 10% from that baseline; it never reads a named shadow to make this
+decision. A reported unavailable value is still published and resets the
+baseline, so the next valid measurement is published.
+
 `power-si`, `power-nrf`, and `tbot` are Thread Sleepy End Devices with a 5
 second poll period. Thread REDCON commands remain synchronous, so the Thread
 CoAP timeout is longer than the BLE command timeout to allow one sleepy poll

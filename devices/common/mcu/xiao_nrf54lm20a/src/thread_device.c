@@ -41,7 +41,17 @@ LOG_MODULE_REGISTER(txing_lm20a_thread, LOG_LEVEL_INF);
 #define SED_TRANSITION_DELAY_MS 500
 #define SED_REDCON_RESPONSE_GRACE_MS 100
 #define SED_FALLBACK_GRACE_SECONDS 20
-#define SED_RECOVERY_MAX_ATTEMPTS 3
+
+#if IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG)
+static const uint16_t sed_recovery_delays_seconds[] = {
+	20,
+	40,
+	80,
+	160,
+	320,
+	600,
+};
+#endif
 
 BUILD_ASSERT(IS_ENABLED(CONFIG_OPENTHREAD_MTD_SED),
 	     "LM20A Thread devices must build as Thread Sleepy End Devices");
@@ -116,6 +126,7 @@ static void srp_autostart_callback(const otSockAddr *server, void *context);
 static void sed_transition_work_handler(struct k_work *work);
 static void redcon_sleep_work_handler(struct k_work *work);
 static void recovery_work_handler(struct k_work *work);
+static void schedule_recovery(void);
 static K_WORK_DELAYABLE_DEFINE(sed_transition_work, sed_transition_work_handler);
 static K_WORK_DELAYABLE_DEFINE(redcon_sleep_work, redcon_sleep_work_handler);
 static K_WORK_DELAYABLE_DEFINE(recovery_work, recovery_work_handler);
@@ -433,6 +444,30 @@ static int restart_thread_mode_locked(otInstance *ot, bool receiver_on)
 	return error == OT_ERROR_NONE ? 0 : -EIO;
 }
 
+static uint32_t recovery_delay_seconds(void)
+{
+#if IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG)
+	int attempts = atomic_get(&recovery_attempts);
+	size_t index = attempts > 0 ? (size_t)attempts : 0;
+
+	if (index >= ARRAY_SIZE(sed_recovery_delays_seconds)) {
+		index = ARRAY_SIZE(sed_recovery_delays_seconds) - 1;
+	}
+	return sed_recovery_delays_seconds[index];
+#else
+	return SED_FALLBACK_GRACE_SECONDS;
+#endif
+}
+
+#if IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG)
+static void record_recovery_attempt(void)
+{
+	if (atomic_get(&recovery_attempts) < (int)ARRAY_SIZE(sed_recovery_delays_seconds) - 1) {
+		atomic_inc(&recovery_attempts);
+	}
+}
+#endif
+
 static void redcon_handler(void *context, otMessage *message, const otMessageInfo *message_info)
 {
 	struct redcon_request request = {0};
@@ -458,6 +493,8 @@ static void redcon_handler(void *context, otMessage *message, const otMessageInf
 		(void)k_work_cancel_delayable(&sed_transition_work);
 		atomic_set(&redcon_sleep_pending, 0);
 		(void)k_work_cancel_delayable(&redcon_sleep_work);
+		atomic_set(&recovery_pending, 0);
+		(void)k_work_cancel_delayable(&recovery_work);
 		ot = openthread_get_default_instance();
 		if (ot == NULL || configure_thread_mode_locked(ot, true) != 0) {
 			LOG_ERR("REDCON 3 receiver-on Thread transition failed");
@@ -562,10 +599,15 @@ static void srp_client_callback(otError error, const otSrpClientHostInfo *host_i
 	ARG_UNUSED(removed_services);
 	ARG_UNUSED(context);
 	if (error != OT_ERROR_NONE) {
+		atomic_set(&srp_registration_accepted, 0);
+		schedule_recovery();
 		LOG_WRN("SRP registration failed: %d", error);
 		return;
 	}
 	atomic_set(&srp_registration_accepted, 1);
+	atomic_set(&recovery_attempts, 0);
+	atomic_set(&recovery_pending, 0);
+	(void)k_work_cancel_delayable(&recovery_work);
 	if (redcon_level == TXING_REDCON_OFF && atomic_get(&sed_mode_active) == 0) {
 		(void)k_work_schedule(&sed_transition_work, K_MSEC(SED_TRANSITION_DELAY_MS));
 	}
@@ -596,8 +638,7 @@ static void sed_transition_work_handler(struct k_work *work)
 		return;
 	}
 	atomic_set(&sed_mode_active, 1);
-	atomic_set(&recovery_attempts, 0);
-	(void)k_work_schedule(&recovery_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+	schedule_recovery();
 	LOG_INF("SRP accepted; Thread mode n with poll period %u ms", CONFIG_OPENTHREAD_POLL_PERIOD);
 }
 
@@ -620,25 +661,19 @@ static void redcon_sleep_work_handler(struct k_work *work)
 	openthread_mutex_unlock();
 	if (rc == 0) {
 		atomic_set(&sed_mode_active, 1);
-		atomic_set(&recovery_attempts, 0);
-		(void)k_work_schedule(&recovery_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+		schedule_recovery();
 		LOG_INF("REDCON 4 disabled D1 and led0; Thread mode n");
 	}
 }
 
 static void schedule_recovery(void)
 {
-	if (atomic_get(&sed_mode_active) == 0 || atomic_get(&recovery_pending) != 0) {
+	if (atomic_get(&sed_mode_active) == 0 || redcon_level != TXING_REDCON_OFF ||
+	    atomic_get(&recovery_pending) != 0) {
 		return;
 	}
-#if IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG)
-	if (atomic_get(&receiver_on_when_idle) != 0 ||
-	    atomic_get(&recovery_attempts) >= SED_RECOVERY_MAX_ATTEMPTS) {
-		return;
-	}
-#endif
 	atomic_set(&recovery_pending, 1);
-	(void)k_work_schedule(&recovery_work, K_SECONDS(SED_FALLBACK_GRACE_SECONDS));
+	(void)k_work_schedule(&recovery_work, K_SECONDS(recovery_delay_seconds()));
 }
 
 static void recovery_work_handler(struct k_work *work)
@@ -663,18 +698,19 @@ static void recovery_work_handler(struct k_work *work)
 	role = otThreadGetDeviceRole(ot);
 	link_mode = otThreadGetLinkMode(ot);
 	expected_receiver_on = atomic_get(&receiver_on_when_idle) != 0;
-	if (role == OT_DEVICE_ROLE_CHILD && link_mode.mRxOnWhenIdle == expected_receiver_on) {
+	if (redcon_level != TXING_REDCON_OFF || expected_receiver_on) {
 		openthread_mutex_unlock();
-		atomic_set(&recovery_attempts, 0);
 		return;
 	}
+	if (role == OT_DEVICE_ROLE_CHILD && link_mode.mRxOnWhenIdle == expected_receiver_on &&
+	    atomic_get(&srp_registration_accepted) != 0) {
+		openthread_mutex_unlock();
+		return;
+	}
+	atomic_set(&srp_registration_accepted, 0);
 
 #if IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG)
-	if (expected_receiver_on || atomic_get(&recovery_attempts) >= SED_RECOVERY_MAX_ATTEMPTS) {
-		openthread_mutex_unlock();
-		return;
-	}
-	atomic_inc(&recovery_attempts);
+	record_recovery_attempt();
 	rc = restart_thread_mode_locked(ot, false);
 #elif IS_ENABLED(TXING_LM20A_RECEIVER_ON_DIAGNOSTICS_CONFIG)
 	rc = restart_thread_mode_locked(ot, true);
@@ -682,7 +718,7 @@ static void recovery_work_handler(struct k_work *work)
 	rc = -EOPNOTSUPP;
 #endif
 	openthread_mutex_unlock();
-	if (rc != 0) {
+	if (rc != 0 || IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG)) {
 		schedule_recovery();
 	}
 }
@@ -716,7 +752,6 @@ static int start_thread(otInstance *ot)
 	}
 	atomic_set(&srp_registration_accepted, 0);
 	atomic_set(&sed_mode_active, 0);
-	atomic_set(&recovery_attempts, 0);
 	return 0;
 }
 

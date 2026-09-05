@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -118,7 +119,7 @@ class Lm20aThreadSedConfigTests(unittest.TestCase):
         self.assertLess(validation, reject)
         self.assertLess(reject, output_change)
 
-    def test_release_and_sed_debug_keep_recovery_sleepy_only(self) -> None:
+    def test_release_and_sed_debug_share_exponential_sed_recovery(self) -> None:
         source = LM20A_SOURCE.read_text(encoding="ascii")
         for mcu, prefix in ((POWER_NRF_MCU, "POWER_NRF"), (TBOT_MCU, "TBOT")):
             release = read_conf(mcu / "zephyr" / "release.conf")
@@ -131,9 +132,65 @@ class Lm20aThreadSedConfigTests(unittest.TestCase):
                 debug.get(f"CONFIG_TXING_{prefix}_RECEIVER_ON_DIAGNOSTICS"), "y"
             )
             self.assertNotIn(f"CONFIG_TXING_{prefix}_SED_RECOVERY", debug)
-        self.assertIn("SED_RECOVERY_MAX_ATTEMPTS 3", source)
-        self.assertIn("restart_thread_mode_locked(ot, false)", source)
-        self.assertIn("restart_thread_mode_locked(ot, true)", source)
+
+        delays_match = re.search(
+            r"static const uint16_t sed_recovery_delays_seconds\[\] = \{(?P<delays>.*?)\};",
+            source,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(delays_match)
+        assert delays_match is not None
+        delays = [int(value) for value in re.findall(r"\d+", delays_match.group("delays"))]
+        self.assertEqual(delays, [20, 40, 80, 160, 320, 600])
+        self.assertNotIn("SED_RECOVERY_MAX_ATTEMPTS", source)
+        self.assertIn("index = ARRAY_SIZE(sed_recovery_delays_seconds) - 1", source)
+        self.assertIn(
+            "atomic_get(&recovery_attempts) < (int)ARRAY_SIZE(sed_recovery_delays_seconds) - 1",
+            source,
+        )
+        self.assertIn(
+            "k_work_schedule(&recovery_work, K_SECONDS(recovery_delay_seconds()))",
+            source,
+        )
+
+        schedule_start = source.rindex("static void schedule_recovery")
+        recovery_start = source.index("static void recovery_work_handler", schedule_start)
+        recovery_handler = source[recovery_start : source.index("static int start_thread", recovery_start)]
+        self.assertIn("if (redcon_level != TXING_REDCON_OFF || expected_receiver_on)", recovery_handler)
+        self.assertIn("record_recovery_attempt();\n\trc = restart_thread_mode_locked(ot, false);", recovery_handler)
+        self.assertIn("#elif IS_ENABLED(TXING_LM20A_RECEIVER_ON_DIAGNOSTICS_CONFIG)", recovery_handler)
+        self.assertIn("rc = restart_thread_mode_locked(ot, true);", recovery_handler)
+        self.assertIn(
+            "if (rc != 0 || IS_ENABLED(TXING_LM20A_SED_RECOVERY_CONFIG))",
+            recovery_handler,
+        )
+
+    def test_srp_acceptance_is_the_only_recovery_backoff_reset(self) -> None:
+        source = LM20A_SOURCE.read_text(encoding="ascii")
+        callback_start = source.index(
+            "static void srp_client_callback", source.index("static int start_srp")
+        )
+        callback = source[
+            callback_start : source.index("static void sed_transition_work_handler", callback_start)
+        ]
+
+        self.assertEqual(source.count("atomic_set(&recovery_attempts, 0);"), 1)
+        accepted = callback.index("atomic_set(&srp_registration_accepted, 1);")
+        reset = callback.index("atomic_set(&recovery_attempts, 0);")
+        self.assertLess(accepted, reset)
+        self.assertIn("atomic_set(&srp_registration_accepted, 0);\n\t\tschedule_recovery();", callback)
+        self.assertIn("(void)k_work_cancel_delayable(&recovery_work);", callback)
+
+    def test_recovery_work_is_coalesced_until_srp_acceptance(self) -> None:
+        source = LM20A_SOURCE.read_text(encoding="ascii")
+        schedule_start = source.rindex("static void schedule_recovery")
+        recovery_start = source.index("static void recovery_work_handler", schedule_start)
+        scheduler = source[schedule_start:recovery_start]
+        recovery_handler = source[recovery_start : source.index("static int start_thread", recovery_start)]
+
+        self.assertIn("atomic_get(&recovery_pending) != 0", scheduler)
+        self.assertIn("atomic_set(&recovery_pending, 1);", scheduler)
+        self.assertIn("atomic_set(&recovery_pending, 0);", recovery_handler)
 
     def test_npm1300_battery_reading_is_on_demand_and_null_safe(self) -> None:
         values = read_conf(POWER_NRF_MCU / "zephyr" / "prj.conf")

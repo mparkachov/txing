@@ -71,7 +71,8 @@ Thread control, board boot/recovery, video, and motion-control acceptance.
 ## Board runtime and MAVLink contract
 
 TBot's catalog contract declares `mavlink`, not `mcp`, with an independent
-`<thing>-mavlink` WebRTC data channel and the REDCON 1 `mavlinkArmed` input.
+`<thing>-mavlink` WebRTC data channel. MAVLink arm state remains independent
+of video availability and REDCON.
 Its descriptor, status, named-shadow schema, defaults, and fixtures are owned
 under `devices/tbot/aws/`; the shared WebRTC and local APIs are documented in
 [Board MAVLink capability contract](../../docs/contracts/board-mavlink.md).
@@ -89,8 +90,12 @@ and creates a fresh board bundle:
 ```sh
 : "${RIG_THING_ID:?set the existing raspi rig Thing ID}"
 : "${THING_ID:?set the existing TBot Thing ID}"
+: "${TBOT_DEVICE_NAME:?set the existing TBot registry name (attributes.name; usually tbot)}"
 just aws::deploy
-just aws::deploy-device "$RIG_THING_ID" tbot "$THING_ID"
+
+# deploy-device's third argument is the registry name, not a Thing ID.
+# Its result must keep the existing Thing ID and report "created": false.
+just aws::deploy-device "$RIG_THING_ID" tbot "$TBOT_DEVICE_NAME"
 
 # aws::cert refuses to overwrite local material: move the old local bundle
 # aside first, then create and install the fresh bundle by the board runbook.

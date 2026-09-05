@@ -16,6 +16,7 @@ ZEPHYR_VERSION = os.environ.get("TXING_ZEPHYR_VERSION", "main")
 ZEPHYR_REPO = "https://github.com/zephyrproject-rtos/zephyr"
 BUILD_VERSION = os.environ.get("TXING_BUILD_VERSION", f"zephyr-{ZEPHYR_VERSION}")
 NVE_ADDRESS = "0x000f0000"
+VENV_PYTHON_VERSION = "3.12"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 COMMON_MCU_DIR = PROJECT_ROOT / "devices" / "common" / "mcu"
@@ -27,6 +28,7 @@ VENV_PYTHON = VENV_DIR / "bin" / "python"
 WEST_BIN = VENV_DIR / "bin" / "west"
 LOCAL_HOME = COMMON_MCU_DIR / ".home"
 PIP_CACHE_DIR = COMMON_MCU_DIR / ".pip-cache"
+UV_CACHE_DIR = COMMON_MCU_DIR / ".uv-cache"
 ZEPHYR_CACHE_DIR = COMMON_MCU_DIR / ".zephyr-cache"
 CCACHE_DIR = COMMON_MCU_DIR / ".ccache"
 NVE_SCRIPT = COMMON_MCU_DIR / "xiao_nrf54l15" / "scripts" / "redcon_nve.py"
@@ -274,6 +276,7 @@ def local_env() -> dict[str, str]:
     env["HOME"] = str(LOCAL_HOME)
     env["XDG_CACHE_HOME"] = str(LOCAL_HOME / ".cache")
     env["PIP_CACHE_DIR"] = str(PIP_CACHE_DIR)
+    env["UV_CACHE_DIR"] = str(UV_CACHE_DIR)
     env["ZEPHYR_CACHE_DIR"] = str(ZEPHYR_CACHE_DIR)
     env["CCACHE_DIR"] = str(CCACHE_DIR)
     env["PATH"] = f"{VENV_DIR / 'bin'}{os.pathsep}{env.get('PATH', '')}"
@@ -283,6 +286,12 @@ def local_env() -> dict[str, str]:
     env.pop("ZEPHYR_SDK_INSTALL_DIRS", None)
     env.pop("ZEPHYR_SDK_INSTALL_DIR", None)
     env.pop("CROSS_COMPILE", None)
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    env.pop("VIRTUAL_ENV", None)
+    env.pop("PIP_PREFIX", None)
+    env.pop("PIP_TARGET", None)
+    env.pop("PIP_USER", None)
     if not env.get("ZEPHYR_TOOLCHAIN_VARIANT"):
         env["ZEPHYR_TOOLCHAIN_VARIANT"] = "gnuarmemb"
     if env["ZEPHYR_TOOLCHAIN_VARIANT"] == "gnuarmemb" and not env.get(
@@ -301,6 +310,7 @@ def ensure_dirs() -> None:
         LOCAL_HOME,
         LOCAL_HOME / ".cache",
         PIP_CACHE_DIR,
+        UV_CACHE_DIR,
         ZEPHYR_CACHE_DIR,
         CCACHE_DIR,
     ):
@@ -315,24 +325,53 @@ def require_commands(*commands: str) -> None:
 
 def ensure_venv() -> None:
     ensure_dirs()
-    if VENV_PYTHON.exists():
-        completed = subprocess.run(
-            [str(VENV_PYTHON), "-c", "import sys"],
-            cwd=COMMON_MCU_DIR,
-            env=local_env(),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        if completed.returncode != 0:
-            shutil.rmtree(VENV_DIR)
+    if VENV_DIR.exists() and not venv_is_usable():
+        if not VENV_DIR.is_dir():
+            fail(f"repo-local virtualenv path is not a directory: {VENV_DIR}")
+        log(f"recreating invalid repo-local Python virtual environment: {VENV_DIR}")
+        shutil.rmtree(VENV_DIR)
     if not VENV_PYTHON.exists():
-        run([sys.executable, "-m", "venv", VENV_DIR], cwd=COMMON_MCU_DIR, env=local_env())
+        create_venv()
+    if not venv_is_usable():
+        fail(f"failed to create an isolated repo-local Python virtual environment: {VENV_DIR}")
     run(
         [VENV_PYTHON, "-m", "pip", "install", "--upgrade", "pip", "west"],
         cwd=COMMON_MCU_DIR,
         env=local_env(),
     )
+
+
+def create_venv() -> None:
+    require_commands("uv")
+    run(
+        ["uv", "venv", "--python", VENV_PYTHON_VERSION, "--seed", VENV_DIR],
+        cwd=COMMON_MCU_DIR,
+        env=local_env(),
+    )
+
+
+def venv_is_usable() -> bool:
+    if not VENV_PYTHON.exists():
+        return False
+    expected_prefix = repr(str(VENV_DIR.resolve()))
+    check = (
+        "import importlib.util, sys; from pathlib import Path; "
+        f"expected = Path({expected_prefix}); "
+        "raise SystemExit(0 if "
+        "sys.prefix != sys.base_prefix and "
+        "Path(sys.prefix).resolve() == expected and "
+        f"sys.version_info[:2] == {tuple(map(int, VENV_PYTHON_VERSION.split('.')))!r} and "
+        "importlib.util.find_spec('pip') is not None else 1)"
+    )
+    completed = subprocess.run(
+        [str(VENV_PYTHON), "-c", check],
+        cwd=COMMON_MCU_DIR,
+        env=local_env(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    return completed.returncode == 0
 
 
 def ensure_zephyr_revision() -> None:

@@ -59,9 +59,9 @@ MAVLink capability means the local service is healthy, the flight-controller
 heartbeat is fresh, and the control KVS worker is ready; it does not require a
 connected Office peer.
 
-`mavlinkArmed` is an internal inventory metric rule for Cyberbrick REDCON1. It
-is never published as a Sparkplug capability metric. A healthy, video-ready
-Cyberbrick that becomes disarmed drops from REDCON1 to REDCON2.
+MAVLink arm state is published through Cyberbrick's MAVLink status and remains
+an independent flight-safety state. A healthy, video-ready Cyberbrick remains
+at REDCON1 whether it is armed or disarmed.
 
 Schemas and example payloads live in
 [`devices/cyberbrick/aws`](../../devices/cyberbrick/aws/). The maintained topic

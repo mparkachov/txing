@@ -87,12 +87,19 @@ func TestMAVLinkControlEnvelopeUsesStableLeaseAndErrors(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Response), &decoded); err != nil || decoded["type"] != "control.activated" {
 		t.Fatalf("takeover response = %s err=%v", result.Response, err)
 	}
+	result = state.HandleControlMessage(second.SessionID, `{"type":"control.renew_active","requestId":"renew","epoch":2}`, 13)
+	if result.SafeRequired || result.StatusChanged || !mavlinkControlResponseHasType(t, result.Response, "control.renewed") {
+		t.Fatalf("renewal response = %s safe=%t status-changed=%t", result.Response, result.SafeRequired, result.StatusChanged)
+	}
+	if active := state.Active(); active == nil || active.ExpiresAt != 5013 {
+		t.Fatalf("renewal must extend the local lease: %#v", active)
+	}
 
-	result = state.HandleControlMessage(first.SessionID, `{"type":"control.release_active","requestId":"four","epoch":1}`, 13)
+	result = state.HandleControlMessage(first.SessionID, `{"type":"control.release_active","requestId":"four","epoch":1}`, 14)
 	if result.SafeRequired || result.StatusChanged || !mavlinkControlResponseHasCode(t, result.Response, "stale_epoch") {
 		t.Fatalf("stale response = %s safe=%t", result.Response, result.SafeRequired)
 	}
-	result = state.HandleControlMessage(second.SessionID, `{"type":"control.release_active","requestId":"five","epoch":2}`, 14)
+	result = state.HandleControlMessage(second.SessionID, `{"type":"control.release_active","requestId":"five","epoch":2}`, 15)
 	if !result.SafeRequired || !result.StatusChanged || !mavlinkControlResponseHasType(t, result.Response, "control.released") {
 		t.Fatalf("release response = %s safe=%t", result.Response, result.SafeRequired)
 	}
@@ -344,6 +351,21 @@ func TestMAVLinkBridgeEventUsesSubmittedEpochAndRequestsSafeState(t *testing.T) 
 	}
 	if !mavlinkControlResponseHasType(t, <-control, "control.activated") {
 		t.Fatal("activation response was not stable")
+	}
+	publisher.Clear()
+	renew := make(chan string, 1)
+	if err := state.HandleMAVLinkBridgeEvent(context.Background(), publisher, runtimeMAVLinkBridgeControlEvent{
+		sessionID: peer.SessionID,
+		json:      `{"type":"control.renew_active","requestId":"renew","epoch":1}`,
+		response:  renew,
+	}, 21); err != nil {
+		t.Fatal(err)
+	}
+	if !mavlinkControlResponseHasType(t, <-renew, "control.renewed") {
+		t.Fatal("renewal response was not stable")
+	}
+	if messages := publisher.Messages(); len(messages) != 0 {
+		t.Fatalf("renewal must not publish retained state or named shadows: %#v", messages)
 	}
 	frame := testMAVLinkFrame(mavlinkHeartbeatMessageID, make([]byte, 9), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
 	denied := make(chan error, 1)

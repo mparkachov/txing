@@ -156,7 +156,7 @@ class TypeCatalogTests(unittest.TestCase):
                 "4": ["sparkplug", "thread"],
             },
         )
-        self.assertEqual(tbot_record["redconMetricRules"], {"1": ["mavlinkArmed"]})
+        self.assertNotIn("redconMetricRules", tbot_record)
         self.assertEqual(set(tbot_record["shadows"]), {"sparkplug", "thread", "power", "board", "mavlink", "video"})
         self.assertEqual(
             tbot_record["resources"],
@@ -175,7 +175,7 @@ class TypeCatalogTests(unittest.TestCase):
                 "4": ["sparkplug", "ble"],
             },
         )
-        self.assertEqual(cyberbrick_record["redconMetricRules"], {"1": ["mavlinkArmed"]})
+        self.assertNotIn("redconMetricRules", cyberbrick_record)
         self.assertEqual(set(cyberbrick_record["shadows"]), {"sparkplug", "ble", "power", "board", "mavlink", "video"})
         self.assertEqual(
             cyberbrick_record["resources"],
@@ -284,9 +284,9 @@ class TypeCatalogTests(unittest.TestCase):
             ssm.parameters["/txing/town/raspi/cyberbrick/resources/mavlink/channelName"],
             "{device_id}-mavlink",
         )
-        self.assertEqual(
-            ssm.parameters["/txing/town/raspi/cyberbrick/redconMetricRules/1"],
-            "mavlinkArmed",
+        self.assertNotIn(
+            "/txing/town/raspi/cyberbrick/redconMetricRules/1",
+            ssm.parameters,
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/unit/redconCommandLevels"],
@@ -344,9 +344,9 @@ class TypeCatalogTests(unittest.TestCase):
             ssm.parameters["/txing/town/raspi/tbot/resources/mavlink/channelName"],
             "{device_id}-mavlink",
         )
-        self.assertEqual(
-            ssm.parameters["/txing/town/raspi/tbot/redconMetricRules/1"],
-            "mavlinkArmed",
+        self.assertNotIn(
+            "/txing/town/raspi/tbot/redconMetricRules/1",
+            ssm.parameters,
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/weather/capabilities"],

@@ -783,7 +783,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "redconRules/3: sparkplug,thread,power",
             "redconRules/2: sparkplug,thread,power,board,mavlink",
             "redconRules/1: sparkplug,thread,power,board,mavlink,video",
-            "redconMetricRules/1: mavlinkArmed",
             "shadows/mavlink/schema: aws/mavlink-shadow.schema.json",
             'resources/mavlink/channelName: "{device_id}-mavlink"',
             "web/adapter: web/tbot-adapter.tsx",
@@ -791,6 +790,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         ):
             self.assertIn(expected, tbot_catalog)
         self.assertIn('"deviceId":"tbot-local"', tbot_catalog)
+        self.assertNotIn("redconMetricRules/1", tbot_catalog)
         self.assertNotIn("shadows/mcp/schema", tbot_catalog)
         cyberbrick_catalog = root_template.split(
             "  CyberbrickTypeCatalogV2:",
@@ -807,7 +807,6 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "redconRules/3: sparkplug,ble,power",
             "redconRules/2: sparkplug,ble,power,board,mavlink",
             "redconRules/1: sparkplug,ble,power,board,mavlink,video",
-            "redconMetricRules/1: mavlinkArmed",
             "shadows/mavlink/schema: aws/mavlink-shadow.schema.json",
             "resources/mavlink/channelName: \"{device_id}-mavlink\"",
             "web/adapter: web/cyberbrick-adapter.tsx",
@@ -815,6 +814,7 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         ):
             self.assertIn(expected, cyberbrick_catalog)
         self.assertIn('"deviceId":"cyberbrick-local"', cyberbrick_catalog)
+        self.assertNotIn("redconMetricRules/1", cyberbrick_catalog)
         self.assertNotIn("deviceType: unit", cyberbrick_catalog)
         self.assertNotIn("EnlistFunctionName:", root_template)
         self.assertNotIn("EnlistFunctionArn:", root_template)

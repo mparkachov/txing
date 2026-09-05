@@ -112,6 +112,7 @@ class CleanStackTests(unittest.TestCase):
         fake_ssm = FakeSsm(
             {
                 f"{base_path}/capabilities": "sparkplug,ble,power,board,mcp,video",
+                f"{base_path}/redconMetricRules/1": "mavlinkArmed",
                 f"{base_path}/shadows/mcp/schema": "aws/mcp-shadow.schema.json",
                 f"{base_path}/resources/boardVideo/channelName": "{device_id}-board-video",
             }
@@ -142,6 +143,7 @@ class CleanStackTests(unittest.TestCase):
         self.assertIn(
             [
                 f"{base_path}/shadows/mcp/schema",
+                f"{base_path}/redconMetricRules/1",
             ],
             fake_ssm.delete_batches,
         )

@@ -32,8 +32,9 @@ sudo apt install --yes \
 ```
 
 This provides the native C/C++ build chain, `protoc`, and the Zephyr
-MCU host toolchain. The shared MCU recipes require `python3`, `cmake`, `ninja`,
-`dtc`, `arm-none-eabi-gcc`, `git`, and Go; the board proto and native-worker
+MCU host toolchain. The shared MCU recipes require `python3`, `uv`, `cmake`, `ninja`,
+`dtc`, `arm-none-eabi-gcc`, `git`, and Go; `uv` provisions their repository-local
+Python 3.12 virtual environment. The board proto and native-worker
 paths require `protoc`. Generated Go protobuf plugins are pinned and installed
 into the repository temporary directory by
 `just common::board::proto-gen`, so they are not global prerequisites.

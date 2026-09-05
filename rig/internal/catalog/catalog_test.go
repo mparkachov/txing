@@ -9,7 +9,6 @@ func TestReconstructsRedconRulesFromSSMLeafParameters(t *testing.T) {
 		{"/txing/town/raspi/power/redconCommandLevels", "4,3"},
 		{"/txing/town/raspi/power/redconRules/4", "sparkplug,ble"},
 		{"/txing/town/raspi/power/redconRules/3", "sparkplug,ble,power"},
-		{"/txing/town/raspi/cyberbrick/redconMetricRules/1", "mavlinkArmed"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -22,17 +21,18 @@ func TestReconstructsRedconRulesFromSSMLeafParameters(t *testing.T) {
 		t.Fatalf("redcon levels = %#v", record.RedconCommandLevels)
 	}
 	assertStrings(t, record.RedconRules[3], []string{"sparkplug", "ble", "power"})
-	assertStrings(t, record.RedconMetricRules[1], []string{"mavlinkArmed"})
+	if len(record.RedconMetricRules) != 0 {
+		t.Fatalf("redcon metric rules = %#v, want none", record.RedconMetricRules)
+	}
 }
 
-func TestReconstructsTbotMavlinkArmingRule(t *testing.T) {
+func TestReconstructsTbotMavlinkVideoRule(t *testing.T) {
 	record, err := ReconstructTypeRecord([][2]string{
 		{"/txing/town/raspi/tbot/thingType", "tbot"},
 		{"/txing/town/raspi/tbot/capabilities", "sparkplug,thread,power,board,mavlink,video"},
 		{"/txing/town/raspi/tbot/redconCommandLevels", "4,3,2,1"},
 		{"/txing/town/raspi/tbot/redconRules/2", "sparkplug,thread,power,board,mavlink"},
 		{"/txing/town/raspi/tbot/redconRules/1", "sparkplug,thread,power,board,mavlink,video"},
-		{"/txing/town/raspi/tbot/redconMetricRules/1", "mavlinkArmed"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,9 @@ func TestReconstructsTbotMavlinkArmingRule(t *testing.T) {
 		t.Fatalf("thingType = %s", record.ThingType)
 	}
 	assertStrings(t, record.RedconRules[2], []string{"sparkplug", "thread", "power", "board", "mavlink"})
-	assertStrings(t, record.RedconMetricRules[1], []string{"mavlinkArmed"})
+	if len(record.RedconMetricRules) != 0 {
+		t.Fatalf("redcon metric rules = %#v, want none", record.RedconMetricRules)
+	}
 }
 
 func assertStrings(t *testing.T, got []string, want []string) {

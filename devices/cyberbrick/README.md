@@ -8,7 +8,7 @@ board, MAVLink, and video capability set. Its declared REDCON ladder is:
 | 4 | Sparkplug, BLE |
 | 3 | Sparkplug, BLE, power |
 | 2 | Sparkplug, BLE, power, board, MAVLink |
-| 1 | Sparkplug, BLE, power, board, MAVLink, video, and `mavlinkArmed` |
+| 1 | Sparkplug, BLE, power, board, MAVLink, and video |
 
 The canonical device declaration is [manifest.toml](manifest.toml). It owns the
 Cyberbrick shadow schemas and defaults under [aws/](aws/), and its Office

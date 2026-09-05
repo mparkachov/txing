@@ -31,8 +31,8 @@ ArduPilot runtime milestone.
 - `capability.mavlink=true` requires a healthy local MAVLink service, a fresh
   flight-controller heartbeat, and a ready MAVLink KVS master. An Office peer
   is not required.
-- `mavlinkArmed` is an internal inventory metric used by REDCON. It is not an
-  additional capability.
+- MAVLink arm state is separate flight-safety state. It is not a REDCON input
+  or an additional capability.
 
 ## Runtime ownership and transport rules
 
@@ -105,10 +105,10 @@ ArduPilot runtime milestone.
   watchdog requests neutral and Hold while leaving the rover armed.
 - ArduPilot additionally applies a one-second GCS Hold failsafe.
 - REDCON3 means the board is powered but MAVLink is unavailable.
-- REDCON2 includes healthy disarmed MAVLink with or without video, and healthy
-  armed MAVLink without video.
-- REDCON1 requires healthy board, MAVLink, video, and
-  `mavlinkArmed=true`. Disarming with healthy video returns to REDCON2.
+- REDCON2 includes healthy MAVLink with unavailable video, regardless of arm
+  state.
+- REDCON1 requires healthy board, MAVLink, and video. Disarming with healthy
+  video leaves Cyberbrick at REDCON1.
 - A REDCON1 request may start the stack and video but must never arm.
 - REDCON4 and shutdown attempt neutral, Hold, and disarm before halt through a
   bounded `EnterSafeState` call.

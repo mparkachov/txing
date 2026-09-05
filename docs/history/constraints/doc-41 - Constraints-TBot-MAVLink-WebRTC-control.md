@@ -86,10 +86,10 @@ The Cyberbrick rules in `doc-36` and `doc-37` remain active and unchanged.
   TBot signaling channels.
 - Office remains viewer-only and receives no master authorization.
 - REDCON3 means the board is powered but MAVLink is unavailable. REDCON2 means
-  MAVLink is healthy but the full armed-plus-video posture is absent. REDCON1
-  requires healthy MAVLink, healthy video, and `mavlinkArmed=true`.
-- A REDCON1 request must never arm the rover. Disarming with healthy video must
-  return TBot to REDCON2.
+  MAVLink is healthy but video is unavailable. REDCON1 requires healthy
+  MAVLink and healthy video, independently of MAVLink arm state.
+- A REDCON1 request must never arm the rover. Disarming with healthy video
+  leaves TBot at REDCON1.
 - Obsolete TBot MCP retained messages and named shadow are removed manually
   after cutover; do not add cleanup automation.
 

@@ -338,7 +338,10 @@ func (s *MAVLinkControlState) HandleControlMessage(sessionID, encoded string, no
 		if _, err := s.Renew(sessionID, *request.Epoch, nowMS); err != nil {
 			return MAVLinkControlResult{Response: mavlinkControlErrorFor(request.RequestID, err)}
 		}
-		return MAVLinkControlResult{Response: mavlinkControlSuccess("control.renewed", request.RequestID, s.State()), StatusChanged: true}
+		// Renewal extends only the daemon-local expiry. The externally reported
+		// control identity and lease duration remain unchanged, so publishing a
+		// named-shadow update here would create periodic no-op shadow writes.
+		return MAVLinkControlResult{Response: mavlinkControlSuccess("control.renewed", request.RequestID, s.State())}
 	case "control.release_active":
 		if request.Epoch == nil {
 			return MAVLinkControlResult{Response: mavlinkControlError(request.RequestID, "invalid_request", "release_active requires epoch")}

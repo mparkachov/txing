@@ -11,9 +11,6 @@ redcon_command_levels = [4, 3, 2, 1]
 2 = ["sparkplug", "ble", "power", "board", "mavlink"]
 1 = ["sparkplug", "ble", "power", "board", "mavlink", "video"]
 
-[redcon_metric_rules]
-1 = ["mavlinkArmed"]
-
 [shadows.sparkplug]
 schema = "aws/sparkplug-shadow.schema.json"
 default = "aws/default-sparkplug-shadow.json"

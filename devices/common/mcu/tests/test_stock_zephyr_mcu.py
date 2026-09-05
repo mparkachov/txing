@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,6 +26,54 @@ def test_power_si_debug_build_dir_is_separate_from_release() -> None:
         mcu.build_dir("power-si", profile="sed-debug").name
         == "zephyr-xiao_mg24-sed-debug"
     )
+
+
+def test_venv_validation_rejects_a_system_interpreter(monkeypatch, tmp_path: Path) -> None:
+    mcu = load_stock_zephyr_mcu()
+    venv_dir = tmp_path / ".venv"
+    python = venv_dir / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(Path(sys.executable))
+    monkeypatch.setattr(mcu, "VENV_DIR", venv_dir)
+    monkeypatch.setattr(mcu, "VENV_PYTHON", python)
+
+    assert not mcu.venv_is_usable()
+
+
+def test_venv_validation_accepts_an_isolated_project_venv(monkeypatch, tmp_path: Path) -> None:
+    mcu = load_stock_zephyr_mcu()
+    venv_dir = tmp_path / ".venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+    monkeypatch.setattr(mcu, "VENV_DIR", venv_dir)
+    monkeypatch.setattr(mcu, "VENV_PYTHON", venv_dir / "bin" / "python")
+    monkeypatch.setattr(mcu, "VENV_PYTHON_VERSION", f"{sys.version_info.major}.{sys.version_info.minor}")
+
+    assert mcu.venv_is_usable()
+
+
+def test_create_venv_uses_uv_managed_python_version(monkeypatch) -> None:
+    mcu = load_stock_zephyr_mcu()
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(mcu, "require_commands", lambda *_commands: None)
+    monkeypatch.setattr(
+        mcu,
+        "run",
+        lambda args, **_kwargs: calls.append([str(arg) for arg in args]),
+    )
+
+    mcu.create_venv()
+
+    assert calls == [
+        [
+            "uv",
+            "venv",
+            "--python",
+            "3.12",
+            "--seed",
+            str(mcu.VENV_DIR),
+        ]
+    ]
 
 
 def test_power_nrf_uses_dedicated_lm20a_build_profiles_and_stock_openocd() -> None:

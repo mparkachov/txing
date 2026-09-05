@@ -37,10 +37,9 @@ named-shadow schema and default, fixtures, and manifest entry. A MAVLink device
 must declare `resources.mavlink.channelName = "{device_id}-mavlink"` and must
 not declare `mcp`; catalog validation rejects declaring both.
 
-At REDCON 1, `mavlinkArmed` is an internal inventory input. It is not a
-Sparkplug capability metric. A device profile can use it to require both a
-ready MAVLink link and an armed flight controller before reporting full
-availability.
+MAVLink arm state is independent flight-safety state. It remains visible in the
+device's MAVLink status, but it neither gates REDCON nor changes board-video
+availability. REDCON 1 reflects ready MAVLink and video capabilities.
 
 The pinned MAVLink 2 `common` C/C++ and TypeScript generated bindings, their
 license, golden vector, and regeneration verifier are shared at

@@ -423,7 +423,6 @@ Resources:
         redconRules/3: sparkplug,thread,power
         redconRules/2: sparkplug,thread,power,board,mavlink
         redconRules/1: sparkplug,thread,power,board,mavlink,video
-        redconMetricRules/1: mavlinkArmed
         requiredAttributes: name,shortId,townId,rigId
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json
@@ -477,7 +476,6 @@ Resources:
         redconRules/3: sparkplug,ble,power
         redconRules/2: sparkplug,ble,power,board,mavlink
         redconRules/1: sparkplug,ble,power,board,mavlink,video
-        redconMetricRules/1: mavlinkArmed
         requiredAttributes: name,shortId,townId,rigId
         searchableAttributes: name,townId,rigId
         shadows/sparkplug/schema: aws/sparkplug-shadow.schema.json

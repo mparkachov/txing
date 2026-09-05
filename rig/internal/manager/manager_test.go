@@ -73,9 +73,6 @@ func tbotInventory() protocol.InventoryDevice {
 			2: {"sparkplug", "thread", PowerCapability, BoardCapability, MAVLinkCapability},
 			1: {"sparkplug", "thread", PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability},
 		},
-		RedconMetricRules: map[uint8][]string{
-			1: {protocol.MavlinkArmedMetric},
-		},
 	}
 }
 
@@ -90,9 +87,6 @@ func cyberbrickInventory() protocol.InventoryDevice {
 			3: []string{"sparkplug", "ble", PowerCapability},
 			2: []string{"sparkplug", "ble", PowerCapability, BoardCapability, MAVLinkCapability},
 			1: []string{"sparkplug", "ble", PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability},
-		},
-		RedconMetricRules: map[uint8][]string{
-			1: []string{protocol.MavlinkArmedMetric},
 		},
 	}
 }
@@ -143,7 +137,7 @@ func TestRedconSelectionIgnoresRulesOutsideCommandLevels(t *testing.T) {
 	}
 }
 
-func TestCyberbrickMavlinkArmedMetricGatesRedconOneWithoutPublishingIt(t *testing.T) {
+func TestCyberbrickMavlinkArmStateDoesNotGateRedconOne(t *testing.T) {
 	state := NewDeviceRuntimeState(cyberbrickInventory())
 	if err := state.ObserveState(capabilityState(
 		"dev.txing.rig.BleConnectivity",
@@ -166,8 +160,8 @@ func TestCyberbrickMavlinkArmedMetricGatesRedconOneWithoutPublishingIt(t *testin
 		t.Fatal(err)
 	}
 	first := state.Snapshot(1000)
-	if got := redconValue(t, first.Redcon); got != 2 {
-		t.Fatalf("disarmed Cyberbrick REDCON = %d, want 2", got)
+	if got := redconValue(t, first.Redcon); got != 1 {
+		t.Fatalf("disarmed Cyberbrick REDCON = %d, want 1", got)
 	}
 	publication, err := state.DecidePublication(1000)
 	if err != nil {
@@ -175,7 +169,7 @@ func TestCyberbrickMavlinkArmedMetricGatesRedconOneWithoutPublishingIt(t *testin
 	}
 	for _, metric := range publication.Metrics {
 		if metric.Name == protocol.MavlinkArmedMetric {
-			t.Fatal("mavlinkArmed must remain an internal REDCON input")
+			t.Fatal("mavlinkArmed must not become a Sparkplug metric")
 		}
 	}
 
@@ -217,11 +211,11 @@ func TestCyberbrickMavlinkRedconMatrix(t *testing.T) {
 			wantRedcon:       2,
 		},
 		{
-			name:             "MAVLink and video ready but disarmed",
+			name:             "MAVLink and video ready while disarmed",
 			mavlinkAvailable: true,
 			videoAvailable:   true,
 			mavlinkArmed:     false,
-			wantRedcon:       2,
+			wantRedcon:       1,
 		},
 		{
 			name:             "MAVLink armed without video",
@@ -299,11 +293,11 @@ func TestTbotMavlinkRedconMatrix(t *testing.T) {
 			wantRedcon:       2,
 		},
 		{
-			name:             "MAVLink and video ready but disarmed",
+			name:             "MAVLink and video ready while disarmed",
 			mavlinkAvailable: true,
 			videoAvailable:   true,
 			mavlinkArmed:     false,
-			wantRedcon:       2,
+			wantRedcon:       1,
 		},
 		{
 			name:             "MAVLink armed without video",

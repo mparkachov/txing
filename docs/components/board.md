@@ -161,7 +161,8 @@ For Unit:
 - `REDCON 1`: board, MCP, and video are available.
 
 For TBot and Cyberbrick, MAVLink replaces MCP. REDCON2 requires board and MAVLink;
-REDCON1 additionally requires video and the internal `mavlinkArmed` rule.
+REDCON1 additionally requires ready video. MAVLink arm state remains independent
+flight-safety state and never changes video availability or REDCON.
 
 The board publishes retained v2 capability state for `board`, the
 device-specific control capability, and `video`. `txing-sparkplug-manager`
@@ -1127,7 +1128,7 @@ apk info -e libstdc++ libcamera libcamera-raspberrypi eudev grpc protobuf iprout
 
 printf 'step 2a runlevel:\n'
 for s in udev udev-trigger udev-settle; do
-  rc-update show sysinit | grep -qxF "$s" || {
+  rc-update show sysinit | grep -qF "$s" || {
     echo "$s is not enabled in sysinit" >&2
     exit 1
   }
@@ -1389,12 +1390,51 @@ do not start or arm the rover:
 ```sh
 : "${RIG_THING_ID:?set the existing raspi rig Thing ID}"
 : "${THING_ID:?set the existing TBot Thing ID}"
+: "${TBOT_DEVICE_NAME:?set the existing TBot registry name (attributes.name; usually tbot)}"
 just aws::deploy
-just aws::deploy-device "$RIG_THING_ID" tbot "$THING_ID"
+
+# deploy-device's third argument is the registry name, not a Thing ID.
+# Its result must keep the existing Thing ID and report "created": false.
+just aws::deploy-device "$RIG_THING_ID" tbot "$TBOT_DEVICE_NAME"
 
 # aws::cert refuses to overwrite local material. Move the old local bundle
 # aside before creating and installing the fresh one by the steps below.
 just aws::cert "$THING_ID"
+```
+
+Copy the just-created bundle to the clean TBot before installing its runtime.
+On the operator workstation:
+
+```sh
+: "${BOARD_HOST:?set the TBot hostname or address}"
+scp "certs/${THING_ID}/${THING_ID}-daemon-config.tgz" \
+  "root@${BOARD_HOST}:/tmp/${THING_ID}-daemon-config.tgz"
+```
+
+On the TBot, unpack it into the TBot-specific configuration directory. A clean
+card has exactly one matching archive in `/tmp`; stop rather than selecting
+arbitrarily if that is not true:
+
+```sh
+root-rw
+set -- /tmp/*-daemon-config.tgz
+test "$#" -eq 1 && test -f "$1" || {
+  echo 'expected exactly one daemon-config archive in /tmp' >&2
+  exit 1
+}
+CONFIG_TGZ=$1
+CONFIG_DIR=/root/.config/txing/tbot-daemon
+
+install -d -m 700 "$CONFIG_DIR"
+tar --no-same-owner -xzf "$CONFIG_TGZ" -C "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+chmod 600 "$CONFIG_DIR/daemon.env" \
+  "$CONFIG_DIR/certificate.arn" \
+  "$CONFIG_DIR/certificate.pem.crt" \
+  "$CONFIG_DIR/private.pem.key" \
+  "$CONFIG_DIR/public.pem.key"
+chmod 644 "$CONFIG_DIR/AmazonRootCA1.pem" "$CONFIG_DIR/SFSRootCAG2.pem"
+rm -f "$CONFIG_TGZ"
 ```
 
 Install a matching forward-only TBot daemon, MAVLink, ArduPilot/defaults, and
@@ -1402,6 +1442,68 @@ shared KVS release together with that fresh TBot daemon bundle. Its `daemon.env`
 must declare `TXING_DAEMON_CAPABILITIES=board,mavlink,video`; do not reuse a
 pre-cutover MCP bundle. The service catalog in that bundle supplies the four
 TBot scripts below.
+
+On a clean card, the common setup has installed the `mise` executable but not
+the TBot runtime tools. In one writable-root window, configure and install the
+three matching `tbot-v*` artifacts plus the shared `kvs-master-v*` artifact:
+
+```sh
+: "${TXING_DEVICE:?run step 2 first, or export TXING_DEVICE}"
+case "$TXING_DEVICE" in
+  tbot) ;;
+  *)
+    echo 'This runtime block applies only to TBot.' >&2
+    exit 1
+    ;;
+esac
+root-rw
+install -d -m 700 /root/.config/mise/conf.d /root/.local/share/mise
+cat >/root/.config/mise/conf.d/txing-tbot-runtime.toml <<'EOF'
+[settings]
+fetch_remote_versions_cache = "0s"
+minimum_release_age = "0s"
+
+[tool_alias]
+txing-tbot-daemon = "github:mparkachov/txing"
+txing-board-kvs-master = "github:mparkachov/txing"
+txing-tbot-mavlink = "github:mparkachov/txing"
+txing-tbot-ardupilot = "github:mparkachov/txing"
+
+[tools.txing-tbot-daemon]
+version = "latest"
+version_prefix = "tbot-v"
+asset_pattern = "txing-tbot-daemon-linux-aarch64.tar.gz"
+
+[tools.txing-board-kvs-master]
+version = "latest"
+version_prefix = "kvs-master-v"
+asset_pattern = "txing-board-kvs-master-linux-aarch64.tar.gz"
+
+[tools.txing-tbot-mavlink]
+version = "latest"
+version_prefix = "tbot-v"
+asset_pattern = "txing-tbot-mavlink-linux-aarch64.tar.gz"
+
+[tools.txing-tbot-ardupilot]
+version = "latest"
+version_prefix = "tbot-v"
+asset_pattern = "txing-tbot-ardupilot-linux-aarch64.tar.gz"
+EOF
+
+MISE_TRUSTED_CONFIG_PATHS=/root/.config/mise \
+  /root/.local/bin/mise install \
+    txing-tbot-daemon@latest \
+    txing-board-kvs-master@latest \
+    txing-tbot-mavlink@latest \
+    txing-tbot-ardupilot@latest
+
+/root/.local/bin/mise list
+```
+
+The `0s` settings make a newly published matching release visible immediately;
+the default mise age and remote-version cache can otherwise leave `latest`
+unresolved or stale. The ArduPilot archive installs both its executable and
+tracked defaults file; it does not install an ArduPilot source checkout.
 
 On the board, install the owned scripts and remove the obsolete TBot hardware
 worker script before enabling the new default runlevel. The exact `rm` target

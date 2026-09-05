@@ -1,6 +1,7 @@
 build/
 .home/
 .pip-cache/
+.uv-cache/
 .zephyr-cache/
 .ccache/
 .venv/

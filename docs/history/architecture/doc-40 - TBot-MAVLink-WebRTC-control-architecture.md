@@ -111,17 +111,18 @@ TBot's capability profile becomes `sparkplug`, `thread`, `power`, `board`,
 named shadows remove MCP and add MAVLink plus
 `resources.mavlink.channelName=<thing>-mavlink`.
 
-The catalog adds `mavlinkArmed` as the internal REDCON1 metric. TBot REDCON is:
+The initial `mavlinkArmed` REDCON1 metric requirement is superseded by
+[doc-42](doc-42%20-%20MAVLink-video-readiness-independent-of-arming.md).
+TBot REDCON is:
 
 | State | REDCON |
 | --- | --- |
 | Board powered, MAVLink unavailable | 3 |
-| MAVLink ready and disarmed, with or without video | 2 |
-| MAVLink ready and armed, without video | 2 |
-| MAVLink ready, armed, and video ready | 1 |
+| MAVLink ready, with or without arming, without video | 2 |
+| MAVLink ready, with or without arming, and video ready | 1 |
 
 A REDCON1 request starts the required runtime and video but never arms the
-rover. Disarming a healthy video-connected TBot returns it to REDCON2.
+rover. Disarming a healthy video-connected TBot leaves it at REDCON1.
 
 Enlistment creates and validates `<thing>-mavlink`. The TBot board credential
 role authorizes master access to both its board-video and MAVLink channels.
@@ -136,7 +137,8 @@ and neutral behavior while retaining TBot naming and Thread connectivity
 presentation.
 
 At REDCON2, Office can open the TBot detail view and establish MAVLink control
-without video. At REDCON1 it also displays the independent board-video peer.
+without video. At REDCON1 it also displays the independent board-video peer,
+whether the flight controller is armed or disarmed.
 Camera or video signaling failure must not close, restart, or disable the
 MAVLink peer.
 

@@ -2048,10 +2048,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("127.0.0.1:14550", tbot_runtime)
         self.assertNotIn("udpin:0.0.0.0:14550", tbot_runtime)
         self.assertIn("Rover.stg.pre-mavlink-cutover", tbot_runtime)
-        self.assertIn('just aws::deploy-device "$RIG_THING_ID" tbot "$THING_ID"', tbot_runtime)
+        self.assertIn('just aws::deploy-device "$RIG_THING_ID" tbot "$TBOT_DEVICE_NAME"', tbot_runtime)
         self.assertIn("just aws::cert \"$THING_ID\"", tbot_runtime)
         self.assertLess(
-            tbot_runtime.index('just aws::deploy-device "$RIG_THING_ID" tbot "$THING_ID"'),
+            tbot_runtime.index('just aws::deploy-device "$RIG_THING_ID" tbot "$TBOT_DEVICE_NAME"'),
             tbot_runtime.index("root-rw"),
         )
         self.assertIn("Deploy the matching Office source only", tbot_runtime)

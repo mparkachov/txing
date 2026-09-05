@@ -134,6 +134,12 @@ files; no local board or radio patch is introduced.
 
 - The shared driver provides release, debug, and SED-debug profiles in separate
   `zephyr-xiao_nrf54lm20a_nrf54lm20a_cpuapp*` build directories.
+- Release and SED-debug profiles use shared receiver-off SED recovery after
+  attachment loss: retries wait 20, 40, 80, 160, 320, and then 600 seconds
+  repeatedly. The backoff resets only after a successful SRP registration.
+  Recovery preserves the 5000 ms poll period, D1/REDCON behavior, and
+  `mRxOnWhenIdle=false`; ordinary debug retains its receiver-on diagnostic
+  recovery policy.
 - `just power-nrf::mcu::build` and `just tbot::mcu::build` build the production release with serial,
   console, shell, and logging diagnostics disabled; `build-sed-debug` is the
   diagnostic hardware-acceptance profile.  The default
@@ -170,6 +176,12 @@ just power-nrf::mcu::build-sed-debug
 just tbot::mcu::build
 just tbot::mcu::build-sed-debug
 ```
+
+`mcu::install` uses `uv` to provision a repository-local Python 3.12 runtime
+and creates `devices/common/mcu/.venv` from it. The host `python3` only runs
+the bootstrap script; it is not used for Zephyr packages. The bootstrap
+recreates a stale or non-isolated `.venv` automatically and keeps both the
+Python and package caches under `devices/common/mcu/`.
 
 Or from `devices/unit/mcu/`:
 

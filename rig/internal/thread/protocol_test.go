@@ -447,6 +447,108 @@ func TestRuntimeDoesNotRepublishUnchangedShadows(t *testing.T) {
 	}
 }
 
+func TestRuntimeSuppressesMinorBatteryVoltageChanges(t *testing.T) {
+	publisher := &recordingPublisher{}
+	client := &fakeDeviceClient{state: DeviceState{
+		ThingName:       "tbot-001",
+		ProtocolVersion: "1",
+		Redcon:          3,
+		BatteryMV:       intPtr(4169),
+	}}
+	runtime := NewRuntime(
+		&fakeDiscoverer{endpoints: []Endpoint{testEndpointFor("tbot-001", DeviceTypeTBot)}},
+		client,
+		publisher,
+	)
+	runtime.NowMS = func() uint64 { return 2000 }
+	runtime.ReconcileInventory(testInventoryFor("tbot-001", DeviceTypeTBot))
+
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	client.state.BatteryMV = intPtr(4174)
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	powerTopic := powerShadowUpdateTopic("tbot-001")
+	if got := publisher.publishedTopicCount(powerTopic); got != 1 {
+		t.Fatalf("power shadow updates after 4169mV then 4174mV = %d, want 1", got)
+	}
+	if got := runtime.lastBatteryMV["tbot-001"]; got != 4169 {
+		t.Fatalf("last published battery = %d, want 4169", got)
+	}
+
+	client.state.BatteryMV = intPtr(4587)
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := publisher.publishedTopicCount(powerTopic); got != 2 {
+		t.Fatalf("power shadow updates after a >10%% change = %d, want 2", got)
+	}
+	if got := runtime.lastBatteryMV["tbot-001"]; got != 4587 {
+		t.Fatalf("last published battery = %d, want 4587", got)
+	}
+}
+
+func TestRuntimeRepublishesBatteryAfterUnavailableValue(t *testing.T) {
+	publisher := &recordingPublisher{}
+	client := &fakeDeviceClient{state: DeviceState{
+		ThingName:       "power-nrf-001",
+		ProtocolVersion: "1",
+		Redcon:          3,
+		BatteryMV:       intPtr(4000),
+	}}
+	runtime := NewRuntime(
+		&fakeDiscoverer{endpoints: []Endpoint{testEndpointFor("power-nrf-001", DeviceTypePowerNRF)}},
+		client,
+		publisher,
+	)
+	runtime.NowMS = func() uint64 { return 2000 }
+	runtime.ReconcileInventory(testInventoryFor("power-nrf-001", DeviceTypePowerNRF))
+
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	client.state.BatteryMV = nil
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	client.state.BatteryMV = intPtr(4005)
+	if err := runtime.DiscoverAndPoll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	powerTopic := powerShadowUpdateTopic("power-nrf-001")
+	if got := publisher.publishedTopicCount(powerTopic); got != 3 {
+		t.Fatalf("power shadow updates across unavailable battery = %d, want 3", got)
+	}
+	if got := runtime.lastBatteryMV["power-nrf-001"]; got != 4005 {
+		t.Fatalf("last published battery = %d, want 4005", got)
+	}
+}
+
+func TestBatteryMVChangedMoreThanTenPercent(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		previous int
+		current  int
+		want     bool
+	}{
+		{name: "exactly ten percent higher", previous: 1000, current: 1100, want: false},
+		{name: "more than ten percent higher", previous: 1000, current: 1101, want: true},
+		{name: "exactly ten percent lower", previous: 1000, current: 900, want: false},
+		{name: "more than ten percent lower", previous: 1000, current: 899, want: true},
+		{name: "previous unavailable", previous: 0, current: 4000, want: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := batteryMVChangedMoreThanTenPercent(testCase.previous, testCase.current); got != testCase.want {
+				t.Fatalf("batteryMVChangedMoreThanTenPercent(%d, %d) = %t, want %t", testCase.previous, testCase.current, got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestRuntimeUnavailableDevicePublishesOffline(t *testing.T) {
 	publisher := &recordingPublisher{}
 	runtime := NewRuntime(

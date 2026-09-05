@@ -38,6 +38,7 @@ type Runtime struct {
 	publishMu      sync.Mutex
 	shadowMu       sync.Mutex
 	shadowPayloads map[string][]byte
+	lastBatteryMV  map[string]int
 }
 
 func NewRuntime(discoverer EndpointDiscoverer, client DeviceClient, publisher Publisher) *Runtime {
@@ -48,6 +49,7 @@ func NewRuntime(discoverer EndpointDiscoverer, client DeviceClient, publisher Pu
 		specs:          map[string]DeviceSpec{},
 		endpoints:      map[string]Endpoint{},
 		shadowPayloads: map[string][]byte{},
+		lastBatteryMV:  map[string]int{},
 	}
 }
 
@@ -212,7 +214,19 @@ func (r *Runtime) publishState(_ context.Context, state DeviceState) error {
 	if err != nil {
 		return err
 	}
-	return r.publishShadowUpdates(updates)
+	updates, publishBattery := r.filterBatteryShadowUpdate(state, updates)
+	published, err := r.publishShadowUpdates(updates)
+	if err != nil {
+		return err
+	}
+	if publishBattery && published[powerShadowUpdateTopic(state.ThingName)] {
+		if state.BatteryMV == nil {
+			delete(r.lastBatteryMV, state.ThingName)
+		} else {
+			r.lastBatteryMV[state.ThingName] = *state.BatteryMV
+		}
+	}
+	return nil
 }
 
 func (r *Runtime) publishOffline(_ context.Context, thingName string) error {
@@ -235,23 +249,60 @@ func (r *Runtime) publishOffline(_ context.Context, thingName string) error {
 	if err != nil {
 		return err
 	}
-	return r.publishShadowUpdates([]ShadowUpdate{update})
+	_, err = r.publishShadowUpdates([]ShadowUpdate{update})
+	return err
 }
 
-func (r *Runtime) publishShadowUpdates(updates []ShadowUpdate) error {
+func (r *Runtime) filterBatteryShadowUpdate(state DeviceState, updates []ShadowUpdate) ([]ShadowUpdate, bool) {
+	if state.BatteryMV == nil || r.shouldPublishBatteryMV(state.ThingName, *state.BatteryMV) {
+		return updates, true
+	}
+	powerTopic := powerShadowUpdateTopic(state.ThingName)
+	filtered := make([]ShadowUpdate, 0, len(updates)-1)
+	for _, update := range updates {
+		if update.Topic != powerTopic {
+			filtered = append(filtered, update)
+		}
+	}
+	return filtered, false
+}
+
+func (r *Runtime) shouldPublishBatteryMV(thingName string, batteryMV int) bool {
+	previous, ok := r.lastBatteryMV[thingName]
+	return !ok || batteryMVChangedMoreThanTenPercent(previous, batteryMV)
+}
+
+func batteryMVChangedMoreThanTenPercent(previous int, current int) bool {
+	if previous <= 0 {
+		return current != previous
+	}
+	difference := previous - current
+	if difference < 0 {
+		difference = -difference
+	}
+	return difference*100 > previous*10
+}
+
+func powerShadowUpdateTopic(thingName string) string {
+	return "$aws/things/" + thingName + "/shadow/name/" + PowerShadowName + "/update"
+}
+
+func (r *Runtime) publishShadowUpdates(updates []ShadowUpdate) (map[string]bool, error) {
 	r.shadowMu.Lock()
 	defer r.shadowMu.Unlock()
 
+	published := map[string]bool{}
 	for _, update := range updates {
 		if bytes.Equal(r.shadowPayloads[update.Topic], update.Payload) {
 			continue
 		}
 		if err := r.Publisher.Publish(update.Topic, update.Payload); err != nil {
-			return err
+			return published, err
 		}
 		r.shadowPayloads[update.Topic] = append([]byte(nil), update.Payload...)
+		published[update.Topic] = true
 	}
-	return nil
+	return published, nil
 }
 
 func (r *Runtime) publishAllOffline(ctx context.Context) {

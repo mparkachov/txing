@@ -157,18 +157,18 @@ The MAVLink capability publishes:
 flight-controller heartbeat exists, and the control KVS master is ready. It
 does not require an Office peer.
 
-Inventory adds an internal boolean metric rule named `mavlinkArmed`. It is not
-published as a capability. Cyberbrick REDCON derives as follows:
+The initial `mavlinkArmed` REDCON1 metric requirement is superseded by
+[doc-42](doc-42%20-%20MAVLink-video-readiness-independent-of-arming.md).
+Cyberbrick REDCON derives as follows:
 
 | State | REDCON |
 | --- | --- |
 | Board powered, MAVLink unavailable | 3 |
-| MAVLink ready and disarmed, with or without video | 2 |
-| MAVLink ready and armed, without video | 2 |
-| MAVLink ready, armed, and video ready | 1 |
+| MAVLink ready, with or without arming, without video | 2 |
+| MAVLink ready, with or without arming, and video ready | 1 |
 
-Disarming a healthy video-connected device therefore changes REDCON1 to
-REDCON2. A REDCON1 command starts the stack and video but never arms the rover.
+Disarming a healthy video-connected device leaves it at REDCON1. A REDCON1
+command starts the stack and video but never arms the rover.
 REDCON4 invokes the safe-state shutdown sequence.
 
 Cloud enlistment and catalog tooling create and validate `<thing>-mavlink`, add
