@@ -5,7 +5,23 @@ description="TBot ArduPilot ArduRover"
 supervisor=supervise-daemon
 command=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot
 defaults=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.defaults.parm
-command_args="--defaults ${defaults} --serial1 udpin:127.0.0.1:14550 --storage-directory /var/tmp/txing-tbot-ardupilot/storage --terrain-directory /var/tmp/txing-tbot-ardupilot/terrain --log-directory /var/log/txing-tbot-ardupilot"
+diagnostic_defaults=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.diagnostic.parm
+log_profile=${TXING_TBOT_ARDUPILOT_LOG_PROFILE:-production}
+case "$log_profile" in
+    production)
+        defaults_arg=$defaults
+        dataflash_log_dir=/var/log/txing-tbot-ardupilot
+        ;;
+    diagnostic)
+        defaults_arg="$defaults,$diagnostic_defaults"
+        dataflash_log_dir=/var/tmp/txing-tbot-ardupilot/logs
+        ;;
+    *)
+        eerror "TXING_TBOT_ARDUPILOT_LOG_PROFILE must be production or diagnostic"
+        exit 1
+        ;;
+esac
+command_args="--defaults ${defaults_arg} --serial1 udpin:127.0.0.1:14550 --storage-directory /var/tmp/txing-tbot-ardupilot/storage --terrain-directory /var/tmp/txing-tbot-ardupilot/terrain --log-directory ${dataflash_log_dir}"
 directory=/var/tmp/txing-tbot-ardupilot
 respawn_delay=5
 respawn_max=5
@@ -19,9 +35,15 @@ depend() {
 
 start_pre() {
     test -x "$command" && test -r "$defaults" || return 1
+    if [ "$log_profile" = diagnostic ]; then
+        test -r "$diagnostic_defaults" || {
+            eerror "ArduPilot diagnostic defaults are missing: $diagnostic_defaults"
+            return 1
+        }
+    fi
     checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-tbot-ardupilot || return 1
     checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-tbot-ardupilot/storage || return 1
     checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-tbot-ardupilot/terrain || return 1
-    checkpath --directory --mode 0755 --owner root:root /var/log/txing-tbot-ardupilot || return 1
+    checkpath --directory --mode 0755 --owner root:root "$dataflash_log_dir" || return 1
     export HOME=/root
 }

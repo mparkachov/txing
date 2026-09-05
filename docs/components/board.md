@@ -62,7 +62,7 @@ this document is device-specific.
 | KVS master binary | `txing-board-kvs-master` | `txing-board-kvs-master` | `txing-board-kvs-master` |
 | Hardware worker binary | `txing-unit-hardware-worker` | none | none |
 | MAVLink binary | not applicable | `txing-tbot-mavlink` | `txing-cyberbrick-mavlink` |
-| ArduPilot binary/defaults | not applicable | `txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm` | `txing-cyberbrick-ardupilot` and `txing-cyberbrick-ardupilot.defaults.parm` |
+| ArduPilot binary/defaults | not applicable | `txing-tbot-ardupilot`, production defaults, and an opt-in diagnostic logging overlay | `txing-cyberbrick-ardupilot` and `txing-cyberbrick-ardupilot.defaults.parm` |
 | Daemon config directory | `/root/.config/txing/unit-daemon` | `/root/.config/txing/tbot-daemon` | `/root/.config/txing/cyberbrick-daemon` |
 | Hardware worker socket | `/run/txing-unit-hardware-worker/unit-hardware.sock` | not applicable | not applicable |
 | MCP adapter id | `dev.txing.unit.Daemon` | not applicable | not applicable |
@@ -545,7 +545,8 @@ txing-board-kvs-master-linux-aarch64.tar.gz
 Every daemon, KVS, MAVLink, and hardware-worker archive contains its one
 root-level executable. The TBot and Cyberbrick ArduPilot archives each contain
 their device-specific executable and tracked defaults file. For TBot, they are
-`txing-tbot-ardupilot` and `txing-tbot-ardupilot.defaults.parm`; for
+`txing-tbot-ardupilot`, `txing-tbot-ardupilot.defaults.parm`, and the opt-in
+`txing-tbot-ardupilot.diagnostic.parm` logging overlay; for
 Cyberbrick, they are `txing-cyberbrick-ardupilot` and
 `txing-cyberbrick-ardupilot.defaults.parm`. TBot and Cyberbrick OpenRC load
 their defaults on every tmpfs-backed boot. Boards use root's persistent mise
@@ -558,6 +559,8 @@ config and install tree:
 /root/.local/share/mise/installs/txing-unit-hardware-worker/latest/txing-unit-hardware-worker
 /root/.local/share/mise/installs/txing-tbot-mavlink/latest/txing-tbot-mavlink
 /root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot
+/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.defaults.parm
+/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.diagnostic.parm
 /root/.local/share/mise/installs/txing-cyberbrick-mavlink/latest/txing-cyberbrick-mavlink
 /root/.local/share/mise/installs/txing-cyberbrick-ardupilot/latest/txing-cyberbrick-ardupilot
 ```
@@ -1589,6 +1592,34 @@ loss, the existing 500 ms watchdog requests neutral and Hold while leaving
 ArduPilot armed. Shutdown and REDCON 4 additionally make bounded neutral,
 Hold, and disarm attempts.
 
+Production disables ArduPilot's DataFlash file backend: `/var/log` is a
+16 MiB tmpfs and ArduPilot reserves 8 MiB of free space before it can log.
+Console output remains at `/var/log/txing-tbot-ardupilot/ardupilot.log`.
+
+For a short diagnostic session, leave the root filesystem read-only and start
+ArduPilot with its explicit profile. It layers the packaged diagnostic defaults
+over the production defaults, enables comprehensive DataFlash file logging,
+and uses the existing 96 MiB `/var/tmp` tmpfs. The profile is inherited by
+supervision but is not persisted: any ordinary service restart or reboot
+returns to production logging automatically.
+
+```sh
+rc-service txing-tbot-ardupilot stop
+TXING_TBOT_ARDUPILOT_LOG_PROFILE=diagnostic \
+  rc-service txing-tbot-ardupilot start
+rc-service txing-tbot-ardupilot status
+df -h /var/tmp/txing-tbot-ardupilot
+ls -lh /var/tmp/txing-tbot-ardupilot/logs
+```
+
+The diagnostic log is volatile and captures only the current boot. Stop the
+service before returning to the ordinary profile:
+
+```sh
+rc-service txing-tbot-ardupilot stop
+rc-service txing-tbot-ardupilot start
+```
+
 Return the root filesystem to read-only and reboot manually after the services
 remain healthy. On reconnect, repeat the status and loopback checks above
 before any physical control acceptance. Deploy the matching Office source only
@@ -1709,10 +1740,11 @@ an arm attempt; any earlier `Compass`, `3D Accel calibration`, or steering and
 throttle pre-arm warning shows that retained parameters still override the
 TBot defaults. The GCS-link failsafe is `FS_GCS_ENABLE=1`, `FS_TIMEOUT=1`, and
 `FS_ACTION=2` (Hold); do not change it during powered acceptance. Its storage,
-terrain, and logs are recreated under
+terrain, and console output are recreated under
 `/var/tmp/txing-tbot-ardupilot/` and `/var/log/txing-tbot-ardupilot/`; they are
-ephemeral on the board's tmpfs mounts. Do not change motor, relay, or failsafe
-defaults during this proof of concept. `Failed to get GPIO memory map` in the
+ephemeral on the board's tmpfs mounts. Production disables ArduPilot's
+DataFlash file backend because `/var/log` is a 16 MiB tmpfs. Do not change
+motor, relay, or failsafe defaults during this proof of concept. `Failed to get GPIO memory map` in the
 ArduPilot log identifies an obsolete TBot artifact that still selects the
 legacy Raspberry Pi GPIO mapper; stop it and install the current release.
 
@@ -2290,7 +2322,11 @@ release first, inside the same window.
 
 TBot upgrades its device release and shared KVS release as one maintenance
 set. Do not perform a component-only TBot upgrade or reintroduce the hardware
-worker:
+worker. OpenRC scripts are configuration-bundle files, not mise assets: when a
+TBot release changes one, install the matching script from that release's
+checked-out source (or the administratively staged service catalog) before
+restarting it. Do not run `aws::cert` merely to refresh a script; that command
+creates a new device certificate.
 
 ```sh
 root-rw

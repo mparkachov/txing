@@ -1,0 +1,9 @@
+# Explicit, temporary TBot ArduPilot diagnostic profile.
+#
+# This file is layered after defaults.parm only when
+# TXING_TBOT_ARDUPILOT_LOG_PROFILE=diagnostic is supplied to OpenRC. It enables
+# comprehensive DataFlash file logging in /var/tmp, which is a 96 MiB tmpfs on
+# the sealed board. Its contents are intentionally lost at reboot.
+LOG_BACKEND_TYPE 1
+LOG_BITMASK 65535
+LOG_DISARMED 1

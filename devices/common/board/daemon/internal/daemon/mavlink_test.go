@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"math"
 	"net"
 	"testing"
@@ -462,6 +463,72 @@ func TestMAVLinkServiceBuildsUnsignedGCSHeartbeat(t *testing.T) {
 	if err != nil || parsed.messageID != mavlinkHeartbeatMessageID || frame[5] != defaultMAVLinkGCSSystemID || frame[6] != defaultMAVLinkGCSComponentID {
 		t.Fatalf("GCS heartbeat = %x err=%v", frame, err)
 	}
+}
+
+func TestMAVLinkServiceSendsGCSHeartbeatWithContinuousTelemetry(t *testing.T) {
+	service := NewMAVLinkService(MAVLinkServiceConfig{})
+	transport := &continuousMAVLinkTransport{
+		telemetry: testMAVLinkFrame(mavlinkHeartbeatMessageID, testHeartbeatPayload(mavlinkModeManual, true), 1, 1),
+	}
+	service.transport = transport
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := service.readTransport(ctx, transport)
+	if !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("read transport error = %v, want closed after the scheduled GCS heartbeat", err)
+	}
+	if len(transport.writes) != 1 {
+		t.Fatalf("GCS heartbeats written = %d, want 1", len(transport.writes))
+	}
+	frame, parseErr := parseMAVLinkV2Frame(transport.writes[0])
+	if parseErr != nil || frame.messageID != mavlinkHeartbeatMessageID {
+		t.Fatalf("scheduled frame id=%d err=%v, want GCS heartbeat", frame.messageID, parseErr)
+	}
+}
+
+func TestMAVLinkGCSHeartbeatScheduleLeavesFailsafeMargin(t *testing.T) {
+	now := time.Now()
+	if !mavlinkGCSHeartbeatDue(time.Time{}, now) {
+		t.Fatal("the first GCS heartbeat must be due immediately")
+	}
+	lastSent := now
+	if mavlinkGCSHeartbeatDue(lastSent, now.Add(mavlinkGCSHeartbeatInterval-time.Nanosecond)) {
+		t.Fatal("GCS heartbeat was due before its interval")
+	}
+	if !mavlinkGCSHeartbeatDue(lastSent, now.Add(mavlinkGCSHeartbeatInterval)) {
+		t.Fatal("GCS heartbeat was not due at its interval")
+	}
+	if mavlinkGCSHeartbeatInterval >= time.Second {
+		t.Fatalf("GCS heartbeat interval %s must leave margin below the one-second TBot failsafe", mavlinkGCSHeartbeatInterval)
+	}
+}
+
+type continuousMAVLinkTransport struct {
+	closed    bool
+	telemetry []byte
+	writes    [][]byte
+}
+
+func (t *continuousMAVLinkTransport) Read(buffer []byte) (int, error) {
+	if t.closed {
+		return 0, net.ErrClosed
+	}
+	copy(buffer, t.telemetry)
+	return len(t.telemetry), nil
+}
+
+func (t *continuousMAVLinkTransport) Write(frame []byte) (int, error) {
+	t.writes = append(t.writes, append([]byte(nil), frame...))
+	t.closed = true
+	return len(frame), nil
+}
+
+func (t *continuousMAVLinkTransport) SetReadDeadline(time.Time) error { return nil }
+
+func (t *continuousMAVLinkTransport) Close() error {
+	t.closed = true
+	return nil
 }
 
 type fakeMAVLinkFlightTransport struct {

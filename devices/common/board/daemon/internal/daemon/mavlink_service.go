@@ -29,7 +29,9 @@ const (
 	mavlinkServiceReadInterval    = 200 * time.Millisecond
 	mavlinkServiceReconnectDelay  = time.Second
 	mavlinkServicePeerBuffer      = 64
-	mavlinkGCSHeartbeatInterval   = time.Second
+	// TBot's GCS failsafe timeout is one second. This leaves a half-second
+	// margin while providing the same GCS cadence to every board MAVLink type.
+	mavlinkGCSHeartbeatInterval = 500 * time.Millisecond
 )
 
 type MAVLinkServiceConfig struct {
@@ -341,22 +343,26 @@ func (s *MAVLinkService) readTransport(ctx context.Context, connection MAVLinkTr
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		_ = connection.SetReadDeadline(time.Now().Add(mavlinkServiceReadInterval))
+		now := time.Now()
+		// The flight controller can stream telemetry continuously. GCS
+		// heartbeats must therefore be scheduled independently of read timeouts:
+		// coupling them makes an otherwise healthy busy link trip its GCS
+		// failsafe and switch to Hold.
+		if mavlinkGCSHeartbeatDue(lastGCSHeartbeat, now) {
+			if err := s.sendFrame(s.buildHeartbeatFrame()); err != nil {
+				return err
+			}
+			lastGCSHeartbeat = now
+		}
+		_ = connection.SetReadDeadline(now.Add(mavlinkServiceReadInterval))
 		count, err := connection.Read(buffer)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return err
 			}
 			if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-				now := time.Now()
-				if lastGCSHeartbeat.IsZero() || now.Sub(lastGCSHeartbeat) >= mavlinkGCSHeartbeatInterval {
-					if heartbeatErr := s.sendFrame(s.buildHeartbeatFrame()); heartbeatErr != nil {
-						return heartbeatErr
-					}
-					lastGCSHeartbeat = now
-				}
 				s.mu.Lock()
-				s.refreshHeartbeatLocked(now)
+				s.refreshHeartbeatLocked(time.Now())
 				s.mu.Unlock()
 				continue
 			}
@@ -367,6 +373,10 @@ func (s *MAVLinkService) readTransport(ctx context.Context, connection MAVLinkTr
 			s.broadcast(frame)
 		}
 	}
+}
+
+func mavlinkGCSHeartbeatDue(lastSent, now time.Time) bool {
+	return lastSent.IsZero() || now.Sub(lastSent) >= mavlinkGCSHeartbeatInterval
 }
 
 func (s *MAVLinkService) observeFrame(frame []byte) {

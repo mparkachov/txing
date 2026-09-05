@@ -136,7 +136,8 @@ just release::build tbot
 The `tbot-v0.18.7` release publishes `txing-tbot-daemon`,
 `txing-tbot-mavlink`, and `txing-tbot-ardupilot` assets. The ArduPilot archive
 contains `txing-tbot-ardupilot` and
-`txing-tbot-ardupilot.defaults.parm`; its matching
+`txing-tbot-ardupilot.defaults.parm` plus a diagnostic logging overlay
+`txing-tbot-ardupilot.diagnostic.parm`; its matching
 `txing-tbot-ardupilot-source.tar.gz` contains the exact patched upstream source,
 initialized submodules, license, and upstream build instructions. The release
 notes record the upstream commit SHA. It does not publish a TBot hardware-worker

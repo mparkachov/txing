@@ -19,6 +19,7 @@ env:
   MAVLINK_ASSET: txing-tbot-mavlink-linux-aarch64.tar.gz
   ARDUPILOT_BINARY: txing-tbot-ardupilot
   ARDUPILOT_DEFAULTS: txing-tbot-ardupilot.defaults.parm
+  ARDUPILOT_DIAGNOSTIC_DEFAULTS: txing-tbot-ardupilot.diagnostic.parm
   ARDUPILOT_ASSET: txing-tbot-ardupilot-linux-aarch64.tar.gz
   ARDUPILOT_SOURCE_ASSET: txing-tbot-ardupilot-source.tar.gz
   ARDUPILOT_SOURCE_ROOT: txing-tbot-ardupilot-source
@@ -176,6 +177,7 @@ jobs:
             -w "$GITHUB_WORKSPACE" \
             -e ARDUPILOT_BINARY \
             -e ARDUPILOT_DEFAULTS \
+            -e ARDUPILOT_DIAGNOSTIC_DEFAULTS \
             -e ARDUPILOT_ASSET \
             -e ARDUPILOT_SOURCE_ASSET \
             -e ARDUPILOT_SOURCE_ROOT \
@@ -196,6 +198,7 @@ jobs:
           binary_asset="$RUNNER_TEMP/$ARDUPILOT_ASSET"
           patch="$GITHUB_WORKSPACE/devices/tbot/ardupilot/patches/0001-linux-tbot-sysfs-pwm.patch"
           defaults_source="$GITHUB_WORKSPACE/devices/tbot/ardupilot/defaults.parm"
+          diagnostic_defaults_source="$GITHUB_WORKSPACE/devices/tbot/ardupilot/diagnostic.parm"
           hwdef_source="$GITHUB_WORKSPACE/devices/tbot/ardupilot/hwdef.dat"
 
           test ! -e "$source_dir"
@@ -238,14 +241,16 @@ jobs:
             "$binary_package_dir/$ARDUPILOT_BINARY"
           install -m 644 "$defaults_source" \
             "$binary_package_dir/$ARDUPILOT_DEFAULTS"
+          install -m 644 "$diagnostic_defaults_source" \
+            "$binary_package_dir/$ARDUPILOT_DIAGNOSTIC_DEFAULTS"
           strip "$binary_package_dir/$ARDUPILOT_BINARY"
           sh "$GITHUB_WORKSPACE/release/scripts/assert-board-musl.sh" \
             "$binary_package_dir/$ARDUPILOT_BINARY" static
           "$binary_package_dir/$ARDUPILOT_BINARY" --help >/dev/null
           tar -C "$binary_package_dir" -czf "$binary_asset" \
-            "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS"
+            "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS" "$ARDUPILOT_DIAGNOSTIC_DEFAULTS"
           archive_listing="$(tar -tzf "$binary_asset")"
-          expected_listing="$(printf '%s\n%s' "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS")"
+          expected_listing="$(printf '%s\n%s\n%s' "$ARDUPILOT_BINARY" "$ARDUPILOT_DEFAULTS" "$ARDUPILOT_DIAGNOSTIC_DEFAULTS")"
           if [ "$archive_listing" != "$expected_listing" ]; then
             echo "Expected $ARDUPILOT_ASSET to contain root-level executable and defaults, got:" >&2
             printf '%s\n' "$archive_listing" >&2
@@ -310,6 +315,7 @@ jobs:
             -w "$GITHUB_WORKSPACE" \
             -e ARDUPILOT_BINARY \
             -e ARDUPILOT_DEFAULTS \
+            -e ARDUPILOT_DIAGNOSTIC_DEFAULTS \
             -e ARDUPILOT_ASSET \
             -e ARDUPILOT_SOURCE_ASSET \
             -e ARDUPILOT_SOURCE_ROOT \
@@ -330,6 +336,8 @@ jobs:
           "$smoke_dir/$ARDUPILOT_BINARY" --help >/dev/null
           cmp "$smoke_dir/$ARDUPILOT_DEFAULTS" \
             "$GITHUB_WORKSPACE/devices/tbot/ardupilot/defaults.parm"
+          cmp "$smoke_dir/$ARDUPILOT_DIAGNOSTIC_DEFAULTS" \
+            "$GITHUB_WORKSPACE/devices/tbot/ardupilot/diagnostic.parm"
 
           source_listing="$RUNNER_TEMP/smoke-ardupilot-source-archive-listing"
           tar -tzf "$RUNNER_TEMP/release-assets/$ARDUPILOT_SOURCE_ASSET" >"$source_listing"

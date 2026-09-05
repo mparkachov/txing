@@ -1895,6 +1895,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         defaults = (
             REPO_ROOT / "devices" / "tbot" / "ardupilot" / "defaults.parm"
         ).read_text(encoding="utf-8")
+        diagnostic_defaults = (
+            REPO_ROOT / "devices" / "tbot" / "ardupilot" / "diagnostic.parm"
+        ).read_text(encoding="utf-8")
         hwdef = (
             REPO_ROOT / "devices" / "tbot" / "ardupilot" / "hwdef.dat"
         ).read_text(encoding="utf-8")
@@ -1958,6 +1961,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "FS_GCS_ENABLE 1",
             "FS_TIMEOUT 1",
             "FS_ACTION 2",
+            "LOG_BACKEND_TYPE 0",
             "MOT_PWM_TYPE 3",
             "SERVO1_FUNCTION 73",
             "SERVO2_FUNCTION 74",
@@ -1969,6 +1973,13 @@ class VersionEnvironmentTests(unittest.TestCase):
         }:
             with self.subTest(value=value):
                 self.assertIn(value, defaults)
+        for value in {
+            "LOG_BACKEND_TYPE 1",
+            "LOG_BITMASK 65535",
+            "LOG_DISARMED 1",
+        }:
+            with self.subTest(value=value):
+                self.assertIn(value, diagnostic_defaults)
         self.assertNotRegex(defaults, r"(?m)^ARMING_CHECK(?:\s|$)")
         self.assertNotRegex(defaults, r"(?m)^FS_GCS_TIMEOUT(?:\s|$)")
         self.assertNotRegex(defaults, r"(?m)^MOT_PWM_FREQ(?:\s|$)")
@@ -1984,6 +1995,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("Failed to get GPIO memory map", patch)
         self.assertIn("txing-tbot-ardupilot-linux-aarch64.tar.gz", workflow)
         self.assertIn("txing-tbot-ardupilot-source.tar.gz", workflow)
+        self.assertIn(
+            "ARDUPILOT_DIAGNOSTIC_DEFAULTS: txing-tbot-ardupilot.diagnostic.parm",
+            workflow,
+        )
         self.assertIn("MAVLINK_ASSET: txing-tbot-mavlink-linux-aarch64.tar.gz", workflow)
         self.assertNotIn("txing-tbot-hardware-worker", workflow)
         self.assertIn(
@@ -2015,6 +2030,8 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("/var/tmp/txing-tbot-ardupilot/storage", service)
         self.assertIn("/var/tmp/txing-tbot-ardupilot/terrain", service)
         self.assertIn("/var/log/txing-tbot-ardupilot", service)
+        self.assertIn("TXING_TBOT_ARDUPILOT_LOG_PROFILE", service)
+        self.assertIn("/var/tmp/txing-tbot-ardupilot/logs", service)
         self.assertIn("respawn_delay=5", service)
         self.assertIn("respawn_max=5", service)
         self.assertIn("respawn_period=600", service)
@@ -2046,6 +2063,10 @@ class VersionEnvironmentTests(unittest.TestCase):
             "test ! -e /etc/init.d/txing-tbot-hardware-worker", tbot_runtime
         )
         self.assertIn("127.0.0.1:14550", tbot_runtime)
+        self.assertIn(
+            "Production disables ArduPilot's DataFlash file backend", tbot_runtime
+        )
+        self.assertIn("TXING_TBOT_ARDUPILOT_LOG_PROFILE=diagnostic", tbot_runtime)
         self.assertNotIn("udpin:0.0.0.0:14550", tbot_runtime)
         self.assertIn("Rover.stg.pre-mavlink-cutover", tbot_runtime)
         self.assertIn('just aws::deploy-device "$RIG_THING_ID" tbot "$TBOT_DEVICE_NAME"', tbot_runtime)
@@ -2075,6 +2096,7 @@ class VersionEnvironmentTests(unittest.TestCase):
             "txing-tbot-ardupilot-linux-aarch64.tar.gz",
             "txing-board-kvs-master-linux-aarch64.tar.gz",
             "txing-tbot-ardupilot-source.tar.gz",
+            "txing-tbot-ardupilot.diagnostic.parm",
         ):
             with self.subTest(asset=asset):
                 self.assertIn(asset, tbot_artifacts)

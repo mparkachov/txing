@@ -261,8 +261,9 @@ txing-board-kvs-master-linux-aarch64.tar.gz
 
 The TBot release also publishes
 `txing-tbot-ardupilot-source.tar.gz` as the exact patched-upstream provenance
-for its ArduPilot binary/defaults asset; the source archive is not installed on
-the board. Installed commands are `txing-tbot-daemon`,
+for its ArduPilot binary, production defaults, and diagnostic logging overlay;
+the source archive is not installed on the board. Installed commands are
+`txing-tbot-daemon`,
 `txing-tbot-mavlink`, `txing-tbot-ardupilot`, and
 `txing-board-kvs-master`.
 
@@ -276,6 +277,7 @@ The root-owned runtime layout is:
 /root/.local/share/mise/installs/txing-tbot-mavlink/latest/txing-tbot-mavlink
 /root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot
 /root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.defaults.parm
+/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.diagnostic.parm
 /root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master
 /etc/init.d/txing-tbot-ardupilot
 /etc/init.d/txing-tbot-mavlink
@@ -287,7 +289,9 @@ OpenRC enables the four services in ArduPilot, MAVLink, daemon, and KVS-master
 dependency order. ArduPilot is the only TBot motor owner; MAVLink owns its
 loopback flight-controller socket and the daemon-owned WebRTC bridge. TBot
 does not publish, install, or start a hardware worker or MCP compatibility
-service. Publishing a TBot release never upgrades a board automatically; the
+service. Its ArduPilot archive contains production defaults and an opt-in,
+tmpfs-backed diagnostic logging overlay. Publishing a TBot release never
+upgrades a board automatically; the
 operator completes the coordinated writable-root maintenance procedure in the
 [TBot MAVLink runtime](./components/board.md#tbot-mavlink-runtime) runbook.
 

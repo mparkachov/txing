@@ -58,6 +58,10 @@ test:
     test "$(uname -m)" = "aarch64"
 
     apk add --no-cache ca-certificates
+    grep -Fx 'LOG_BACKEND_TYPE 0' /tbot/ardupilot/defaults.parm
+    grep -Fx 'LOG_BACKEND_TYPE 1' /tbot/ardupilot/diagnostic.parm
+    grep -Fx 'LOG_BITMASK 65535' /tbot/ardupilot/diagnostic.parm
+    grep -Fx 'LOG_DISARMED 1' /tbot/ardupilot/diagnostic.parm
     ./Tools/environment_install/install-prereqs-alpine.sh
     ./waf configure --board linux --extra-hwdef /tbot/ardupilot/hwdef.dat --define CANARD_64_BIT=1
     ./waf build --targets tests/test_rcoutput_sysfs_brushed
@@ -101,4 +105,5 @@ build:
     ./waf rover
     install -m 755 build/linux/bin/ardurover /out/txing-tbot-ardupilot
     install -m 644 /tbot/ardupilot/defaults.parm /out/txing-tbot-ardupilot.defaults.parm
+    install -m 644 /tbot/ardupilot/diagnostic.parm /out/txing-tbot-ardupilot.diagnostic.parm
     ALPINE_BUILD
