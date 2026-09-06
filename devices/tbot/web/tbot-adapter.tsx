@@ -1,6 +1,7 @@
 import type { DeviceWebAdapter } from '../../../office/src/device-adapter'
 import VideoPanel from '../../../office/src/VideoPanel'
 import CyberbrickPanel from '../../cyberbrick/web/CyberbrickPanel'
+import { MavlinkDebugPanel } from '../../cyberbrick/web/MavlinkControlPanel'
 import { buildMavlinkChannelName } from '../../cyberbrick/web/app-model'
 import {
   buildBoardVideoChannelName,
@@ -56,6 +57,7 @@ const tbotDeviceAdapter: DeviceWebAdapter = {
       watchTransport="Thread"
     />
   ),
+  renderDebug: () => <MavlinkDebugPanel vehicleName="TBot" />,
   renderVideo: ({
     debugEnabled,
     onRuntimeError,

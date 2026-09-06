@@ -1097,6 +1097,10 @@ h1 {
   margin-bottom: 1rem;
 }
 
+.debug-panel-device-diagnostics {
+  margin-bottom: 1rem;
+}
+
 .txing-panel-battery {
   display: inline-flex;
   align-items: center;
@@ -1503,37 +1507,40 @@ h1 {
   letter-spacing: 0.08em;
 }
 
-.mavlink-control-panel {
+.mavlink-debug-panel {
   width: min(100%, 42rem);
-  margin: 1rem auto 0;
+  margin: 0;
   padding: 0.9rem 1rem;
   border: 1px solid rgba(108, 238, 246, 0.32);
   border-radius: 14px;
   background: rgba(4, 9, 14, 0.52);
 }
 
-.mavlink-control-heading,
-.mavlink-control-actions {
+.mavlink-debug-heading {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
 }
 
-.mavlink-control-heading span,
-.mavlink-control-owner,
-.mavlink-control-mode,
-.mavlink-control-help {
+.mavlink-debug-heading span,
+.mavlink-debug-owner,
+.mavlink-debug-flight,
+.mavlink-debug-lease,
+.mavlink-debug-telemetry,
+.mavlink-debug-help {
   font-size: 0.78rem;
 }
 
-.mavlink-control-owner,
-.mavlink-control-mode,
-.mavlink-control-help {
+.mavlink-debug-owner,
+.mavlink-debug-flight,
+.mavlink-debug-lease,
+.mavlink-debug-telemetry,
+.mavlink-debug-help {
   margin: 0.48rem 0;
 }
 
-.mavlink-control-help {
+.mavlink-debug-help {
   color: rgba(207, 218, 232, 0.7);
 }
 

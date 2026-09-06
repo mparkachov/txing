@@ -70,6 +70,7 @@ export type DeviceWebAdapter = {
   getAutoOpenState: (input: DeviceAutoOpenInput) => DeviceAutoOpenState | null
   shouldCloseDetail: (input: DeviceDetailCloseInput) => boolean
   renderDetail: (props: DeviceDetailRenderProps) => ReactElement
+  renderDebug?: () => ReactElement
   renderVideo: (props: DeviceVideoRenderProps) => ReactElement
 }
 

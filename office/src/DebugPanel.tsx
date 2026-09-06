@@ -1,5 +1,8 @@
+import type { ReactNode } from 'react'
+
 type DebugPanelProps = {
   canLoadShadow: boolean
+  deviceDiagnostics?: ReactNode
   lastShadowUpdateLabel: string
   lastShadowUpdateTitle: string
   onLoadShadow: () => void
@@ -20,6 +23,7 @@ const getPowerNodeClass = (power: boolean | null): string => {
 
 function DebugPanel({
   canLoadShadow,
+  deviceDiagnostics,
   lastShadowUpdateLabel,
   lastShadowUpdateTitle,
   onLoadShadow,
@@ -43,6 +47,10 @@ function DebugPanel({
           <div className="status-device-label">Board</div>
         </div>
       </div>
+
+      {deviceDiagnostics ? (
+        <div className="debug-panel-device-diagnostics">{deviceDiagnostics}</div>
+      ) : null}
 
       <div className="debug-panel-meta">
         <span className="debug-panel-meta-label">Last shadow update</span>

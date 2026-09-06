@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { MavlinkControlProvider } from '../../devices/cyberbrick/web/MavlinkControlPanel'
 import tbotDeviceAdapter from '../../devices/tbot/web/tbot-adapter'
 
 describe('tbot adapter', () => {
@@ -51,7 +52,7 @@ describe('tbot adapter', () => {
     expect(markup).toContain('TBOT')
     expect(markup).toContain('aria-label="Thread online"')
     expect(markup).toContain('data-drive-mode="mavlink"')
-    expect(markup).toContain('MAVLink control')
+    expect(markup).not.toContain('ArduPilot / MAVLink')
     expect(markup).toContain('MAVLink over an independent WebRTC data channel')
     expect(markup).not.toContain('MCP')
 
@@ -62,5 +63,55 @@ describe('tbot adapter', () => {
       videoChannelName: 'tbot-a1-board-video',
     }) as { props: { channelName: string } }
     expect(renderedVideo.props.channelName).toBe('tbot-a1-board-video')
+  })
+
+  test('uses the standard device control action while keeping ArduPilot details in debug', () => {
+    const providerProps = {
+      actor: 'operator@example.test',
+      channelName: 'tbot-a1-mavlink',
+      enabled: true,
+      initialTarget: { systemId: 1, componentId: 1 },
+      onRuntimeError: () => {},
+      region: 'eu-central-1',
+      resolveIdToken: async () => 'token',
+    }
+    const normalMarkup = renderToStaticMarkup(
+      <MavlinkControlProvider {...providerProps}>
+        {tbotDeviceAdapter.renderDetail({
+          callMcpTool: async () => null,
+          isBoardVideoExpanded: false,
+          isDebugEnabled: false,
+          isShadowConnected: true,
+          isTakeControlPending: false,
+          mavlinkActor: providerProps.actor,
+          mavlinkChannelName: providerProps.channelName,
+          mavlinkRegion: providerProps.region,
+          mcpTransport: null,
+          onBoardVideoRuntimeError: () => {},
+          onTakeControl: () => {},
+          onToggleDebug: () => {},
+          reportedBatteryMv: 3960,
+          reportedBoardLeftTrackSpeed: 0,
+          reportedBoardOnline: true,
+          reportedBoardRightTrackSpeed: 0,
+          reportedMcuOnline: true,
+          reportedRedcon: 2,
+          resolveIdToken: providerProps.resolveIdToken,
+          robotControl: null,
+          shadow: {},
+          videoChannelName: 'tbot-a1-board-video',
+        })}
+      </MavlinkControlProvider>,
+    )
+    const debugMarkup = renderToStaticMarkup(
+      <MavlinkControlProvider {...providerProps}>
+        {tbotDeviceAdapter.renderDebug?.()}
+      </MavlinkControlProvider>,
+    )
+
+    expect(normalMarkup).toContain('aria-label="Take control for TBot"')
+    expect(normalMarkup).not.toContain('ArduPilot / MAVLink')
+    expect(debugMarkup).toContain('ArduPilot / MAVLink')
+    expect(debugMarkup).not.toContain('status-video-take-control-button')
   })
 })

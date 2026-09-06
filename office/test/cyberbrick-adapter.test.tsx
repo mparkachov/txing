@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import cyberbrickDeviceAdapter from '../../devices/cyberbrick/web/cyberbrick-adapter'
+import {
+  MavlinkControlProvider,
+  MavlinkDebugPanel,
+} from '../../devices/cyberbrick/web/MavlinkControlPanel'
 
 describe('cyberbrick adapter', () => {
   test('uses an independent MAVLink control path and the existing video REDCON gate', () => {
@@ -108,7 +112,7 @@ describe('cyberbrick adapter', () => {
     ).toBe(false)
   })
 
-  test('renders a two-mode Cyberbrick MAVLink panel without MCP or flight-control affordances', () => {
+  test('keeps ArduPilot details out of the normal Cyberbrick status surface', () => {
     const rendered = renderToStaticMarkup(
       cyberbrickDeviceAdapter.renderDetail({
         callMcpTool: async () => null,
@@ -146,15 +150,66 @@ describe('cyberbrick adapter', () => {
 
     expect(rendered).toContain('Cyberbrick status')
     expect(rendered).toContain('CYBERBRICK')
-    expect(rendered).toContain('MAVLink control')
-    expect(rendered).toContain('Acquire control')
-    expect(rendered).toContain('View-only mode')
-    expect(rendered).toContain('Acquiring control prepares manual drive.')
+    expect(rendered).not.toContain('ArduPilot / MAVLink')
+    expect(rendered).not.toContain('Acquire control')
+    expect(rendered).not.toContain('View-only mode')
     expect(rendered).toContain('MAVLink over an independent WebRTC data channel')
     expect(rendered).not.toContain('MCP')
     expect(rendered).not.toContain('>Arm</button>')
     expect(rendered).not.toContain('>Disarm</button>')
     expect(rendered).not.toContain('>Manual</button>')
     expect(rendered).not.toContain('>Hold</button>')
+  })
+
+  test('renders one standard MAVLink control action and debug-only ArduPilot details', () => {
+    const providerProps = {
+      actor: 'operator@example.test',
+      channelName: 'cyberbrick-a1-mavlink',
+      enabled: true,
+      initialTarget: { systemId: 1, componentId: 1 },
+      onRuntimeError: () => {},
+      region: 'eu-central-1',
+      resolveIdToken: async () => 'token',
+    }
+    const standardMarkup = renderToStaticMarkup(
+      <MavlinkControlProvider {...providerProps}>
+        {cyberbrickDeviceAdapter.renderDetail({
+          callMcpTool: async () => null,
+          isBoardVideoExpanded: false,
+          isDebugEnabled: false,
+          mavlinkActor: providerProps.actor,
+          mavlinkChannelName: providerProps.channelName,
+          mavlinkRegion: providerProps.region,
+          isShadowConnected: true,
+          isTakeControlPending: false,
+          mcpTransport: null,
+          onBoardVideoRuntimeError: () => {},
+          onTakeControl: () => {},
+          onToggleDebug: () => {},
+          reportedBatteryMv: 3980,
+          reportedBoardLeftTrackSpeed: 0,
+          reportedBoardOnline: true,
+          reportedBoardRightTrackSpeed: 0,
+          reportedMcuOnline: true,
+          reportedRedcon: 2,
+          resolveIdToken: providerProps.resolveIdToken,
+          robotControl: null,
+          shadow: {},
+          videoChannelName: 'cyberbrick-a1-board-video',
+        })}
+      </MavlinkControlProvider>,
+    )
+    const debugMarkup = renderToStaticMarkup(
+      <MavlinkControlProvider {...providerProps}>
+        <MavlinkDebugPanel vehicleName="Cyberbrick" />
+      </MavlinkControlProvider>,
+    )
+
+    expect(standardMarkup).toContain('aria-label="Take control for Cyberbrick"')
+    expect(standardMarkup).not.toContain('ArduPilot / MAVLink')
+    expect(debugMarkup).toContain('ArduPilot / MAVLink')
+    expect(debugMarkup).toContain('MAVLink control peer idle')
+    expect(debugMarkup).toContain('Use the single status control button')
+    expect(debugMarkup).not.toContain('status-video-take-control-button')
   })
 })

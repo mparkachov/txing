@@ -10,6 +10,7 @@ import {
   extractReportedMcuPower,
 } from './app-model'
 import CyberbrickPanel from './CyberbrickPanel'
+import { MavlinkDebugPanel } from './MavlinkControlPanel'
 
 const cyberbrickDeviceAdapter: DeviceWebAdapter = {
   type: 'cyberbrick',
@@ -49,6 +50,7 @@ const cyberbrickDeviceAdapter: DeviceWebAdapter = {
   shouldCloseDetail: ({ detailRedcon, reportedRedcon }) =>
     detailRedcon === null || (reportedRedcon !== 1 && reportedRedcon !== 2),
   renderDetail: (props) => <CyberbrickPanel {...props} />,
+  renderDebug: () => <MavlinkDebugPanel vehicleName="Cyberbrick" />,
   renderVideo: ({
     debugEnabled,
     onRuntimeError,

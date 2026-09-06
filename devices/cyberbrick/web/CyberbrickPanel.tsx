@@ -1,18 +1,12 @@
-import {
-  extractCyberbrickMavlinkReportedState,
-  getTrackIndicatorPresentation,
-} from './app-model'
+import { getTrackIndicatorPresentation } from './app-model'
 import VideoPanel from '../../../office/src/VideoPanel'
-import MavlinkControlPanel from './MavlinkControlPanel'
+import { MavlinkControlButton } from './MavlinkControlPanel'
 
 type CyberbrickPanelProps = {
   deviceLabel?: string
   deviceName?: string
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
-  mavlinkActor: string
-  mavlinkChannelName: string
-  mavlinkRegion: string
   reportedBatteryMv: number | null
   reportedBoardLeftTrackSpeed: number | null
   reportedBoardOnline: boolean | null
@@ -20,7 +14,6 @@ type CyberbrickPanelProps = {
   reportedRedcon: number | null
   reportedMcuOnline: boolean | null
   onToggleDebug: () => void
-  shadow: unknown
   videoChannelName: string
   watchTransport?: 'BLE' | 'Thread'
   resolveIdToken: () => Promise<string>
@@ -195,9 +188,6 @@ function CyberbrickPanel({
   deviceName = 'Cyberbrick',
   isBoardVideoExpanded,
   isDebugEnabled,
-  mavlinkActor,
-  mavlinkChannelName,
-  mavlinkRegion,
   reportedBatteryMv,
   reportedBoardLeftTrackSpeed,
   reportedBoardOnline,
@@ -205,7 +195,6 @@ function CyberbrickPanel({
   reportedRedcon,
   reportedMcuOnline,
   onToggleDebug,
-  shadow,
   videoChannelName,
   watchTransport = 'BLE',
   resolveIdToken,
@@ -214,7 +203,6 @@ function CyberbrickPanel({
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
   const shouldRenderBoardVideo = isBoardVideoExpanded && reportedRedcon === 1
-  const mavlinkReported = extractCyberbrickMavlinkReportedState(shadow)
   const videoOverlay = (
     <div className="status-video-overlay-bar">
       <div className="status-video-overlay-side status-video-overlay-side-start">
@@ -234,6 +222,7 @@ function CyberbrickPanel({
             <DebugGlyph />
           </button>
         ) : null}
+        <MavlinkControlButton vehicleName={deviceName} />
         <span
           className="status-mavlink-transport"
           role="img"
@@ -316,15 +305,6 @@ function CyberbrickPanel({
           )}
         </div>
       </div>
-      <MavlinkControlPanel
-        actor={mavlinkActor}
-        channelName={mavlinkChannelName}
-        initialTarget={mavlinkReported.target}
-        onRuntimeError={onBoardVideoRuntimeError}
-        region={mavlinkRegion}
-        resolveIdToken={resolveIdToken}
-        vehicleName={deviceName}
-      />
     </section>
   )
 }

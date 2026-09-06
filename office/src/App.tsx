@@ -8,6 +8,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
 } from 'react'
+import { extractCyberbrickMavlinkReportedState } from '../../devices/cyberbrick/web/app-model'
+import { MavlinkControlProvider } from '../../devices/cyberbrick/web/MavlinkControlPanel'
 import {
   beginSignIn,
   clearAuthState,
@@ -430,6 +432,16 @@ function App({ initialAuthError = '' }: AppProps) {
     [currentThingTypeName],
   )
   const isDeviceThingType = currentThingKind === 'deviceType'
+  const mavlinkTarget = useMemo(
+    () => extractCyberbrickMavlinkReportedState(displayShadowDocument).target,
+    [displayShadowDocument],
+  )
+  const mavlinkChannelName =
+    currentDeviceAdapter?.buildMavlinkChannelName && selectedDeviceRoute
+      ? currentDeviceAdapter.buildMavlinkChannelName(selectedDeviceRoute.device)
+      : ''
+  const isMavlinkControlEnabled = mavlinkChannelName !== ''
+  const deviceDebugDiagnostics = currentDeviceAdapter?.renderDebug?.() ?? null
   const deviceTelemetry = useMemo(
     () => currentDeviceAdapter?.extractTelemetry(displayShadowDocument) ?? null,
     [currentDeviceAdapter, displayShadowDocument],
@@ -2206,8 +2218,7 @@ function App({ initialAuthError = '' }: AppProps) {
         isBoardVideoExpanded,
         isDebugEnabled,
         mavlinkActor: mcpActor,
-        mavlinkChannelName:
-          currentDeviceAdapter.buildMavlinkChannelName?.(selectedDeviceRoute.device) ?? '',
+        mavlinkChannelName,
         mavlinkRegion: appConfig.awsRegion,
         isTakeControlPending: isTakingMcpControl,
         isShadowConnected,
@@ -2287,35 +2298,48 @@ function App({ initialAuthError = '' }: AppProps) {
     ) : null
 
   return (
-    <main className="page page-signed-in">
-      {navigationPanel}
-      {routeHeaderShadowNotice}
-      {shadowAvailabilityNotice}
-      {content}
+    <MavlinkControlProvider
+      actor={mcpActor}
+      channelName={mavlinkChannelName}
+      enabled={isMavlinkControlEnabled}
+      initialTarget={mavlinkTarget}
+      onRuntimeError={(message) => {
+        enqueueRuntimeError(message, 'mavlink-control')
+      }}
+      region={appConfig.awsRegion}
+      resolveIdToken={resolveSessionIdToken}
+    >
+      <main className="page page-signed-in">
+        {navigationPanel}
+        {routeHeaderShadowNotice}
+        {shadowAvailabilityNotice}
+        {content}
 
-      <NotificationTray
-        notifications={notifications}
-        onDismiss={(notificationId) => {
-          dismissNotification(notificationId)
-        }}
-      />
-
-      {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
-
-      {isDebugEnabled && activeShadowTarget !== null && (
-        <DebugPanel
-          canLoadShadow={canLoadShadow}
-          lastShadowUpdateLabel={lastShadowUpdateLabel}
-          lastShadowUpdateTitle={lastShadowUpdateTitle}
-          onLoadShadow={() => {
-            void loadShadow()
+        <NotificationTray
+          notifications={notifications}
+          onDismiss={(notificationId) => {
+            dismissNotification(notificationId)
           }}
-          reportedBoardPower={reportedBoardPower}
-          reportedMcuPower={reportedMcuPower}
-          shadowJson={shadowJson}
         />
-      )}
-    </main>
+
+        {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
+
+        {isDebugEnabled && activeShadowTarget !== null && (
+          <DebugPanel
+            canLoadShadow={canLoadShadow}
+            deviceDiagnostics={deviceDebugDiagnostics}
+            lastShadowUpdateLabel={lastShadowUpdateLabel}
+            lastShadowUpdateTitle={lastShadowUpdateTitle}
+            onLoadShadow={() => {
+              void loadShadow()
+            }}
+            reportedBoardPower={reportedBoardPower}
+            reportedMcuPower={reportedMcuPower}
+            shadowJson={shadowJson}
+          />
+        )}
+      </main>
+    </MavlinkControlProvider>
   )
 }
 

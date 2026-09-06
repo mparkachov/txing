@@ -1049,8 +1049,15 @@ class VersionEnvironmentTests(unittest.TestCase):
         card_dir = REPO_ROOT / "devices" / "common" / "board" / "card"
         present = {p.name for p in card_dir.iterdir()}
         self.assertEqual(
-            {"README.md", "wpa_supplicant.conf", "authorized_keys", "interfaces",
-             "opt-out", "unattended.sh"},
+            {
+                "README.md",
+                "wpa_supplicant.conf",
+                "authorized_keys",
+                "interfaces",
+                "opt-out",
+                "unattended.sh",
+                "usercfg.txt",
+            },
             present,
         )
 
@@ -1618,7 +1625,10 @@ class VersionEnvironmentTests(unittest.TestCase):
             card_script,
         )
         self.assertIn(
-            "for s in udev udev-trigger udev-settle; do rc-update add $s sysinit; done",
+            'for s in udev udev-trigger udev-settle; do\n'
+            '  rc-update add "$s" sysinit\n'
+            '  rc-service "$s" start\n'
+            "done",
             cyberbrick_board_docs,
         )
         # udev-trigger is what populates the database libcamera reads. Without
