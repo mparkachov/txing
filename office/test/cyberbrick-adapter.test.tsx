@@ -108,7 +108,7 @@ describe('cyberbrick adapter', () => {
     ).toBe(false)
   })
 
-  test('renders the Cyberbrick MAVLink control panel without an MCP affordance', () => {
+  test('renders a two-mode Cyberbrick MAVLink panel without MCP or flight-control affordances', () => {
     const rendered = renderToStaticMarkup(
       cyberbrickDeviceAdapter.renderDetail({
         callMcpTool: async () => null,
@@ -148,7 +148,13 @@ describe('cyberbrick adapter', () => {
     expect(rendered).toContain('CYBERBRICK')
     expect(rendered).toContain('MAVLink control')
     expect(rendered).toContain('Acquire control')
+    expect(rendered).toContain('View-only mode')
+    expect(rendered).toContain('Acquiring control prepares manual drive.')
     expect(rendered).toContain('MAVLink over an independent WebRTC data channel')
     expect(rendered).not.toContain('MCP')
+    expect(rendered).not.toContain('>Arm</button>')
+    expect(rendered).not.toContain('>Disarm</button>')
+    expect(rendered).not.toContain('>Manual</button>')
+    expect(rendered).not.toContain('>Hold</button>')
   })
 })

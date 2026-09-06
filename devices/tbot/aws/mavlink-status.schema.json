@@ -29,7 +29,7 @@
         "state": { "enum": ["starting", "ready", "degraded", "unavailable"] },
         "heartbeatFresh": { "type": "boolean" },
         "mavlinkWireProtocolVersion": { "const": "2.0" },
-        "dialect": { "const": "common" }
+        "dialect": { "const": "unfiltered" }
       }
     },
     "target": {

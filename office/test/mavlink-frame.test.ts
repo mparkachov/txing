@@ -10,7 +10,7 @@ const heartbeatFrame = Uint8Array.from(
   Buffer.from('fd0900002affbe000000000000000a03000403d131', 'hex'),
 )
 
-describe('Board MAVLink common frame contract', () => {
+describe('Office MAVLink common-frame codec', () => {
   test('accepts the golden unsigned MAVLink 2 HEARTBEAT frame and preserves it byte-for-byte', () => {
     const frame = parseUnsignedMavlinkV2CommonFrame(heartbeatFrame)
 
@@ -21,7 +21,7 @@ describe('Board MAVLink common frame contract', () => {
     expect(frame.bytes).toEqual(heartbeatFrame)
   })
 
-  test('rejects signed, malformed, invalid-CRC, and non-common frames', () => {
+  test('keeps the Office sender limited to its unsigned common-frame subset', () => {
     const signed = Uint8Array.from([...heartbeatFrame, ...new Uint8Array(13)])
     signed[2] = 1
     expect(() => parseUnsignedMavlinkV2CommonFrame(signed)).toThrow(

@@ -5,7 +5,6 @@ import {
   mavlinkDriveRefreshMs,
   mavlinkWebRtcDataChannelLabel,
   type MavlinkControlState,
-  type MavlinkFlightState,
   type MavlinkTelemetry,
   type MavlinkTarget,
 } from '../../../office/src/mavlink-control'
@@ -14,8 +13,6 @@ import { startMavlinkDataChannel } from '../../../office/src/mavlink-session'
 type MavlinkControlPanelProps = {
   actor: string
   channelName: string
-  initialArmed: boolean | null
-  initialMode: string | null
   initialTarget: MavlinkTarget | null
   onRuntimeError: (message: string) => void
   region: string
@@ -30,11 +27,6 @@ const emptyControlState: MavlinkControlState = {
   epoch: 0,
   leaseTtlMs: 5_000,
 }
-
-const initialFlightState = (
-  armed: boolean | null,
-  mode: string | null,
-): MavlinkFlightState => ({ armed, mode })
 
 const describeConnectionState = (state: ConnectionState): string => {
   switch (state) {
@@ -67,8 +59,6 @@ const describeOwner = (
 function MavlinkControlPanel({
   actor,
   channelName,
-  initialArmed,
-  initialMode,
   initialTarget,
   onRuntimeError,
   region,
@@ -78,18 +68,12 @@ function MavlinkControlPanel({
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const [controlState, setControlState] = useState<MavlinkControlState>(emptyControlState)
   const [activeHeldByCaller, setActiveHeldByCaller] = useState(false)
-  const [flightState, setFlightState] = useState<MavlinkFlightState>(() =>
-    initialFlightState(initialArmed, initialMode),
-  )
   const [telemetry, setTelemetry] = useState<MavlinkTelemetry | null>(null)
   const [telemetryFrameCount, setTelemetryFrameCount] = useState(0)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [driveReady, setDriveReady] = useState(false)
   const sessionRef = useRef<MavlinkControlSession | null>(null)
   const reportRuntimeError = useEffectEvent(onRuntimeError)
-
-  useEffect(() => {
-    setFlightState(initialFlightState(initialArmed, initialMode))
-  }, [initialArmed, initialMode])
 
   useEffect(() => {
     let disposed = false
@@ -119,13 +103,12 @@ function MavlinkControlPanel({
           if (!disposed) {
             setControlState(nextState)
             setActiveHeldByCaller(nextActiveHeldByCaller)
+            if (!nextActiveHeldByCaller) {
+              setDriveReady(false)
+            }
           }
         },
-        onFlightState: (nextState) => {
-          if (!disposed) {
-            setFlightState(nextState)
-          }
-        },
+        onFlightState: () => {},
         onProtocolError: (message) => {
           if (!disposed) {
             reportRuntimeError(message)
@@ -142,6 +125,7 @@ function MavlinkControlPanel({
             return
           }
           setActiveHeldByCaller(false)
+          setDriveReady(false)
           scheduleReconnect()
         },
       })
@@ -204,11 +188,17 @@ function MavlinkControlPanel({
 
   const target = initialTarget
   const canControl = connectionState === 'open' && activeHeldByCaller && target !== null
+  const canDrive = canControl && driveReady && pendingAction === null
   const controlLabel = describeOwner(controlState, activeHeldByCaller)
   const actionLabel = controlState.activeControl ? 'Take over control' : 'Acquire control'
+  const operatorMode = canDrive
+    ? 'Control mode active'
+    : activeHeldByCaller
+      ? 'Preparing control mode'
+      : 'View-only mode'
 
   useEffect(() => {
-    if (!canControl || !target) {
+    if (!canDrive || !target) {
       return
     }
     const teleop = new MavlinkDriveTeleopController({
@@ -250,7 +240,32 @@ function MavlinkControlPanel({
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       teleop.deactivate()
     }
-  }, [canControl, target])
+  }, [canDrive, target])
+
+  const acquireDriveControl = async (): Promise<void> => {
+    const session = sessionRef.current
+    if (!session || !target) {
+      throw new Error('MAVLink control is not ready')
+    }
+    setDriveReady(false)
+    await session.activate(controlState.activeControl !== null)
+    try {
+      // ArduPilot details stay beneath the operator-level control boundary:
+      // an acquired control lease is always ready for manual keyboard driving.
+      await session.selectMode(target, 'manual')
+      await session.armDisarm(target, true)
+      setDriveReady(true)
+    } catch (error) {
+      // If setup is incomplete, relinquish authority so the daemon's full
+      // safe-state path returns the vehicle to view-only operation.
+      try {
+        await session.release()
+      } catch {
+        session.close()
+      }
+      throw error
+    }
+  }
 
   const runAction = async (action: string, callback: () => Promise<void>): Promise<void> => {
     setPendingAction(action)
@@ -272,13 +287,11 @@ function MavlinkControlPanel({
       <p className="mavlink-control-owner" data-mavlink-owner={activeHeldByCaller ? 'current' : controlState.activeControl ? 'other' : 'none'}>
         {controlLabel}
       </p>
+      <p className="mavlink-control-mode" data-mavlink-mode={canDrive ? 'control' : 'view'}>
+        {operatorMode}
+      </p>
       <p className="mavlink-control-lease" data-mavlink-lease-ms={controlState.leaseTtlMs}>
         {controlState.leaseTtlMs / 1_000}-second renewable lease
-      </p>
-      <p className="mavlink-control-flight-state">
-        {flightState.armed === null ? 'Arm state pending' : flightState.armed ? 'Armed' : 'Disarmed'}
-        {' · '}
-        {flightState.mode ?? 'Mode pending'}
       </p>
       <p className="mavlink-control-telemetry" data-mavlink-telemetry-count={telemetryFrameCount}>
         {telemetry
@@ -292,11 +305,7 @@ function MavlinkControlPanel({
             disabled={connectionState !== 'open' || pendingAction !== null}
             onClick={() => {
               void runAction('activate', async () => {
-                const session = sessionRef.current
-                if (!session) {
-                  throw new Error('MAVLink data channel is not connected')
-                }
-                await session.activate(controlState.activeControl !== null)
+                await acquireDriveControl()
               })
             }}
           >
@@ -312,9 +321,7 @@ function MavlinkControlPanel({
                 if (!session) {
                   throw new Error('MAVLink data channel is not connected')
                 }
-                if (target) {
-                  await session.sendNeutral(target)
-                }
+                setDriveReady(false)
                 await session.release()
               })
             }}
@@ -322,53 +329,9 @@ function MavlinkControlPanel({
             Release control
           </button>
         )}
-        <button
-          type="button"
-          disabled={!canControl || pendingAction !== null || flightState.armed === true}
-          onClick={() => {
-            if (target) {
-              void runAction('arm', () => sessionRef.current!.armDisarm(target, true))
-            }
-          }}
-        >
-          Arm
-        </button>
-        <button
-          type="button"
-          disabled={!canControl || pendingAction !== null || flightState.armed !== true}
-          onClick={() => {
-            if (target) {
-              void runAction('disarm', () => sessionRef.current!.armDisarm(target, false))
-            }
-          }}
-        >
-          Disarm
-        </button>
-        <button
-          type="button"
-          disabled={!canControl || pendingAction !== null || flightState.mode === 'manual'}
-          onClick={() => {
-            if (target) {
-              void runAction('manual mode', () => sessionRef.current!.selectMode(target, 'manual'))
-            }
-          }}
-        >
-          Manual
-        </button>
-        <button
-          type="button"
-          disabled={!canControl || pendingAction !== null || flightState.mode === 'hold'}
-          onClick={() => {
-            if (target) {
-              void runAction('hold mode', () => sessionRef.current!.selectMode(target, 'hold'))
-            }
-          }}
-        >
-          Hold
-        </button>
       </div>
       <p className="mavlink-control-help">
-        Arrow keys drive at 10 Hz while held. S, blur, and leaving the page send neutral control.
+        Acquiring control prepares manual drive. Arrow keys drive at 10 Hz while held; releasing them sends neutral control.
       </p>
     </section>
   )

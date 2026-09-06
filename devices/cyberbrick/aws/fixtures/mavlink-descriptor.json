@@ -2,7 +2,7 @@
   "serviceId": "mavlink",
   "protocolVersion": "1",
   "mavlinkWireProtocolVersion": "2.0",
-  "dialect": "common",
+  "dialect": "unfiltered",
   "topicRoot": "txings/cyberbrick-a1/mavlink",
   "descriptorTopic": "txings/cyberbrick-a1/mavlink/descriptor",
   "statusTopic": "txings/cyberbrick-a1/mavlink/status",
@@ -13,7 +13,7 @@
     "label": "txing.mavlink.v1",
     "ordered": true,
     "reliable": true,
-    "binaryMessage": "mavlink2-unsigned-common-frame",
+    "binaryMessage": "mavlink2-frame-tunnel",
     "textMessage": "cyberbrick-mavlink-control-json-v1"
   },
   "control": {

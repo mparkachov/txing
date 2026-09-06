@@ -1,6 +1,7 @@
 export const mavlinkV2Magic = 0xfd
 const headerLength = 10
 const checksumLength = 2
+const signatureLength = 13
 
 export type MavlinkFrame = {
   bytes: Uint8Array
@@ -43,12 +44,11 @@ export const parseMavlinkFrame = (bytes: Uint8Array): MavlinkFrame => {
   if (bytes.byteLength < headerLength + checksumLength || bytes[0] !== mavlinkV2Magic) {
     throw new Error('invalid MAVLink 2 frame header')
   }
-  if ((bytes[2] & 0x01) !== 0) {
-    throw new Error('signed MAVLink frame')
-  }
   const payloadLength = bytes[1]
   const checksumOffset = headerLength + payloadLength
-  if (bytes.byteLength !== checksumOffset + checksumLength) {
+  const signed = (bytes[2] & 0x01) !== 0
+  const expectedLength = checksumOffset + checksumLength + (signed ? signatureLength : 0)
+  if (bytes.byteLength !== expectedLength) {
     throw new Error('invalid MAVLink 2 frame length')
   }
   const messageId = bytes[7] | (bytes[8] << 8) | (bytes[9] << 16)

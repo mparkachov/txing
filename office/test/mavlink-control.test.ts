@@ -47,6 +47,20 @@ const heartbeatFrame = ({ armed, mode = 0 }: { armed: boolean; mode?: number }):
   })
 }
 
+const accumulateX25 = (crc: number, byte: number): number => {
+  let temporary = byte ^ (crc & 0xff)
+  temporary ^= (temporary << 4) & 0xff
+  return ((crc >>> 8) ^ (temporary << 8) ^ (temporary << 3) ^ (temporary >>> 4)) & 0xffff
+}
+
+const mavlinkCrc = (bytes: Uint8Array, crcExtra: number): number => {
+  let crc = 0xffff
+  for (const byte of bytes) {
+    crc = accumulateX25(crc, byte)
+  }
+  return accumulateX25(crc, crcExtra)
+}
+
 const commandAckFrame = (command: number, result = 0): Uint8Array => {
   const payload = new Uint8Array(3)
   new DataView(payload.buffer).setUint16(0, command, true)
@@ -127,6 +141,27 @@ describe('shared MAVLink Office control', () => {
       systemId: 1,
     }])
     expect(binaryFrames).toEqual([])
+  })
+
+  test('observes a signed MAVLink 2 frame without treating it as an Office protocol error', () => {
+    const { session, telemetry } = createSession()
+    const unsigned = heartbeatFrame({ armed: false })
+    const signed = new Uint8Array(unsigned.byteLength + 13)
+    signed.set(unsigned)
+    signed[2] |= 0x01
+    const checksumOffset = 10 + signed[1]
+    const checksum = mavlinkCrc(signed.slice(1, checksumOffset), 50)
+    signed[checksumOffset] = checksum & 0xff
+    signed[checksumOffset + 1] = checksum >>> 8
+
+    session.handleMessage(signed)
+
+    expect(telemetry).toEqual([{
+      componentId: 1,
+      messageId: 0,
+      sequence: 1,
+      systemId: 1,
+    }])
   })
 
   test('uses stable acquire, busy, takeover, stale-epoch, and release envelopes', async () => {
@@ -257,12 +292,13 @@ describe('shared MAVLink Office control', () => {
     expect(frame.payload[10]).toBe(1)
   })
 
-  test('refreshes held drive input at 10 Hz and sends neutral on stop, blur, and deactivation', () => {
+  test('refreshes drive input at 10 Hz, including neutral while control remains active', () => {
     const controls: Array<{ steering: number; throttle: number }> = []
     const teleop = new MavlinkDriveTeleopController({
       sendControl: (steering, throttle) => controls.push({ steering, throttle }),
     })
     teleop.activate()
+    teleop.tick()
     teleop.handleKeyDown('ArrowUp')
     teleop.tick()
     teleop.handleKeyUp('ArrowUp')
@@ -271,6 +307,7 @@ describe('shared MAVLink Office control', () => {
 
     expect(mavlinkDriveRefreshMs).toBe(100)
     expect(controls).toEqual([
+      { steering: 0, throttle: 0 },
       { steering: 0, throttle: 1000 },
       { steering: 0, throttle: 1000 },
       { steering: 0, throttle: 0 },

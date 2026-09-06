@@ -319,8 +319,6 @@ function CyberbrickPanel({
       <MavlinkControlPanel
         actor={mavlinkActor}
         channelName={mavlinkChannelName}
-        initialArmed={mavlinkReported.armed}
-        initialMode={mavlinkReported.mode}
         initialTarget={mavlinkReported.target}
         onRuntimeError={onBoardVideoRuntimeError}
         region={mavlinkRegion}

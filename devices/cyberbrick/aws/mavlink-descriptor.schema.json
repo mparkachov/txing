@@ -10,7 +10,7 @@
     "serviceId": { "const": "mavlink" },
     "protocolVersion": { "const": "1" },
     "mavlinkWireProtocolVersion": { "const": "2.0" },
-    "dialect": { "const": "common" },
+    "dialect": { "const": "unfiltered" },
     "topicRoot": { "type": "string", "pattern": "^txings/[^/]+/mavlink$" },
     "descriptorTopic": { "type": "string", "pattern": "^txings/[^/]+/mavlink/descriptor$" },
     "statusTopic": { "type": "string", "pattern": "^txings/[^/]+/mavlink/status$" },
@@ -25,7 +25,7 @@
         "label": { "const": "txing.mavlink.v1" },
         "ordered": { "const": true },
         "reliable": { "const": true },
-        "binaryMessage": { "const": "mavlink2-unsigned-common-frame" },
+        "binaryMessage": { "const": "mavlink2-frame-tunnel" },
         "textMessage": { "const": "cyberbrick-mavlink-control-json-v1" }
       }
     },

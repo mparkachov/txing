@@ -1522,13 +1522,13 @@ h1 {
 
 .mavlink-control-heading span,
 .mavlink-control-owner,
-.mavlink-control-flight-state,
+.mavlink-control-mode,
 .mavlink-control-help {
   font-size: 0.78rem;
 }
 
 .mavlink-control-owner,
-.mavlink-control-flight-state,
+.mavlink-control-mode,
 .mavlink-control-help {
   margin: 0.48rem 0;
 }

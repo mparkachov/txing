@@ -757,7 +757,7 @@ export class MavlinkDriveTeleopController {
   }
 
   public tick(): void {
-    if (!this.active || this.heldKeys.size === 0) {
+    if (!this.active) {
       return
     }
     this.sendCurrentControl()

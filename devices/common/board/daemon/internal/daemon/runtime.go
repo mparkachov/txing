@@ -896,13 +896,13 @@ func (s *RuntimeState) TickWatchdogs(ctx context.Context, publisher Publisher, o
 	}
 	if s.mavlinkEnabled() {
 		changed := s.mavlink.ClearExpired(observedAtMS)
-		safeRequired := changed || s.mavlink.WatchdogExpired(observedAtMS)
-		if safeRequired {
-			reason := "MAVLink control watchdog expired"
-			if changed {
-				reason = "MAVLink active-control lease expired"
-			}
-			s.requestMAVLinkSafeState(reason, false)
+		if changed {
+			s.requestMAVLinkSafeState("MAVLink active-control lease expired", true)
+		} else if s.mavlink.WatchdogExpired(observedAtMS) {
+			// A drive-input gap is equivalent to releasing the keys, not releasing
+			// active control. Keep the controller ready for the next input while
+			// commanding neutral immediately.
+			s.requestMAVLinkNeutral("MAVLink drive-input watchdog expired")
 		}
 		if changed {
 			return s.publishMAVLinkStatus(ctx, publisher)
@@ -1064,6 +1064,13 @@ func (s *RuntimeState) requestMAVLinkSafeState(reason string, requestDisarm bool
 		return
 	}
 	s.mavlinkFlight.RequestSafeState(reason, requestDisarm)
+}
+
+func (s *RuntimeState) requestMAVLinkNeutral(reason string) {
+	if s.mavlinkFlight == nil {
+		return
+	}
+	s.mavlinkFlight.RequestNeutral(reason)
 }
 
 func (s *RuntimeState) enterMAVLinkSafeState(ctx context.Context, reason string, requestDisarm bool) error {

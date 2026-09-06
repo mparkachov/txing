@@ -212,7 +212,7 @@ class BoardMavlinkContractTests(unittest.TestCase):
                     "label": "txing.mavlink.v1",
                     "ordered": True,
                     "reliable": True,
-                    "binaryMessage": "mavlink2-unsigned-common-frame",
+                    "binaryMessage": "mavlink2-frame-tunnel",
                     "textMessage": "cyberbrick-mavlink-control-json-v1",
                 })
 

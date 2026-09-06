@@ -14,8 +14,8 @@ service BoardMavlink {
 
 message GetStatusRequest {}
 
-// Exactly one complete, unsigned MAVLink 2 common-dialect frame. A frame
-// includes the MAVLink 2 header and checksum and contains no RTC framing.
+// Exactly one complete MAVLink 2 frame, signed or unsigned. The local service
+// preserves the frame byte-for-byte and adds no RTC framing.
 message MavlinkFrame {
   bytes frame = 1;
 }
@@ -49,10 +49,12 @@ message MavlinkStatus {
 }
 
 // Safe state is best effort and bounded by the service implementation. It
-// requests neutral control and Hold, and may also request ordinary disarm.
+// always requests neutral control and can additionally request Hold and
+// ordinary disarm when active control is no longer held.
 message EnterSafeStateRequest {
   string reason = 1;
   bool request_disarm = 2;
+  bool request_hold = 3;
 }
 
 message EnterSafeStateResponse {

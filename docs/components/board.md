@@ -1588,35 +1588,42 @@ The MAVLink service reconnects to ArduPilot and reports link/heartbeat status
 to the daemon. The daemon advertises MAVLink only after that local status is
 ready and the independent KVS control peer is ready; it does not require an
 Office peer or working camera/video session. On active WebRTC control-channel
-loss, the existing 500 ms watchdog requests neutral and Hold while leaving
-ArduPilot armed. Shutdown and REDCON 4 additionally make bounded neutral,
-Hold, and disarm attempts.
+loss, release, or active-control lease expiry, it requests neutral, Hold, and
+ordinary disarm. While the active lease remains held, a 500 ms gap in
+`MANUAL_CONTROL` is only a drive-input watchdog: it requests neutral without
+changing mode or disarming, so an idle controller remains ready for its next
+arrow-key input. Shutdown and REDCON 4 also make bounded neutral, Hold, and
+disarm attempts.
 
 Production disables ArduPilot's DataFlash file backend: `/var/log` is a
 16 MiB tmpfs and ArduPilot reserves 8 MiB of free space before it can log.
 Console output remains at `/var/log/txing-tbot-ardupilot/ardupilot.log`.
 
-For a short diagnostic session, leave the root filesystem read-only and start
-ArduPilot with its explicit profile. It layers the packaged diagnostic defaults
-over the production defaults, enables comprehensive DataFlash file logging,
-and uses the existing 96 MiB `/var/tmp` tmpfs. The profile is inherited by
-supervision but is not persisted: any ordinary service restart or reboot
-returns to production logging automatically.
+For a short diagnostic session, leave the root filesystem read-only and create
+the explicit, volatile diagnostic marker before starting ArduPilot. It layers
+the packaged diagnostic defaults over the production defaults, enables
+comprehensive DataFlash file logging, and uses the existing 96 MiB `/var/tmp`
+tmpfs. The profile is inherited by supervision but is not persisted: stopping
+the service consumes the marker, and a reboot also returns to production
+logging automatically.
 
 ```sh
 rc-service txing-tbot-ardupilot stop
-TXING_TBOT_ARDUPILOT_LOG_PROFILE=diagnostic \
-  rc-service txing-tbot-ardupilot start
+install -d -m 0755 /var/tmp/txing-tbot-ardupilot
+: >/var/tmp/txing-tbot-ardupilot/diagnostic-logging.enabled
+rc-service txing-tbot-ardupilot start
 rc-service txing-tbot-ardupilot status
 df -h /var/tmp/txing-tbot-ardupilot
 ls -lh /var/tmp/txing-tbot-ardupilot/logs
 ```
 
 The diagnostic log is volatile and captures only the current boot. Stop the
-service before returning to the ordinary profile:
+service before returning to the ordinary profile; `stop_post` removes the
+marker:
 
 ```sh
 rc-service txing-tbot-ardupilot stop
+test ! -e /var/tmp/txing-tbot-ardupilot/diagnostic-logging.enabled
 rc-service txing-tbot-ardupilot start
 ```
 

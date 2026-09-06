@@ -5,7 +5,7 @@
         "state": "unavailable",
         "heartbeatFresh": false,
         "mavlinkWireProtocolVersion": "2.0",
-        "dialect": "common"
+        "dialect": "unfiltered"
       },
       "target": {
         "systemId": null,

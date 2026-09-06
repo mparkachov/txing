@@ -151,7 +151,7 @@ func MAVLinkDescriptor(config RuntimeConfig) map[string]interface{} {
 			"label":         MAVLinkWebRTCDataChannelLabel,
 			"ordered":       true,
 			"reliable":      true,
-			"binaryMessage": "mavlink2-unsigned-common-frame",
+			"binaryMessage": "mavlink2-frame-tunnel",
 			"textMessage":   "cyberbrick-mavlink-control-json-v1",
 		},
 		"control": map[string]interface{}{

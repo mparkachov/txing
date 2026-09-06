@@ -6,7 +6,11 @@ supervisor=supervise-daemon
 command=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot
 defaults=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.defaults.parm
 diagnostic_defaults=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.diagnostic.parm
-log_profile=${TXING_TBOT_ARDUPILOT_LOG_PROFILE:-production}
+diagnostic_marker=/var/tmp/txing-tbot-ardupilot/diagnostic-logging.enabled
+log_profile=production
+if [ -e "$diagnostic_marker" ]; then
+    log_profile=diagnostic
+fi
 case "$log_profile" in
     production)
         defaults_arg=$defaults
@@ -46,4 +50,11 @@ start_pre() {
     checkpath --directory --mode 0755 --owner root:root /var/tmp/txing-tbot-ardupilot/terrain || return 1
     checkpath --directory --mode 0755 --owner root:root "$dataflash_log_dir" || return 1
     export HOME=/root
+}
+
+stop_post() {
+    # A diagnostic request lives on the volatile runtime filesystem and is
+    # consumed when the service stops. This keeps ordinary restarts and every
+    # boot on the production profile without writing the root filesystem.
+    rm -f "$diagnostic_marker"
 }

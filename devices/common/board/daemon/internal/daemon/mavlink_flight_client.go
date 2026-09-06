@@ -37,6 +37,7 @@ type MAVLinkFlightClient struct {
 type mavlinkSafeStateRequest struct {
 	reason        string
 	requestDisarm bool
+	requestHold   bool
 	done          chan error
 }
 
@@ -68,7 +69,19 @@ func (c *MAVLinkFlightClient) SendFrame(frame []byte) error {
 }
 
 func (c *MAVLinkFlightClient) RequestSafeState(reason string, requestDisarm bool) {
-	request := mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm}
+	request := mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm, requestHold: true}
+	select {
+	case c.safe <- request:
+	default:
+		// A prior safe-state request is already queued. Coalescing preserves the
+		// bounded non-blocking watchdog path without weakening its outcome.
+	}
+}
+
+// RequestNeutral stops motion without changing the active-control mode. It is
+// used for a short drive-input gap while the operator still owns the lease.
+func (c *MAVLinkFlightClient) RequestNeutral(reason string) {
+	request := mavlinkSafeStateRequest{reason: reason}
 	select {
 	case c.safe <- request:
 	default:
@@ -78,7 +91,7 @@ func (c *MAVLinkFlightClient) RequestSafeState(reason string, requestDisarm bool
 }
 
 func (c *MAVLinkFlightClient) EnterSafeState(ctx context.Context, reason string, requestDisarm bool) error {
-	request := mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm, done: make(chan error, 1)}
+	request := mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm, requestHold: true, done: make(chan error, 1)}
 	select {
 	case c.safe <- request:
 	case <-ctx.Done():
@@ -203,7 +216,11 @@ func (c *MAVLinkFlightClient) publishStatus(parent context.Context, client mavli
 func (c *MAVLinkFlightClient) enterSafeState(parent context.Context, client mavlinkv1.BoardMavlinkClient, request mavlinkSafeStateRequest) error {
 	ctx, cancel := context.WithTimeout(parent, mavlinkFlightCallTimeout)
 	defer cancel()
-	_, err := client.EnterSafeState(ctx, &mavlinkv1.EnterSafeStateRequest{Reason: request.reason, RequestDisarm: request.requestDisarm})
+	_, err := client.EnterSafeState(ctx, &mavlinkv1.EnterSafeStateRequest{
+		Reason:        request.reason,
+		RequestDisarm: request.requestDisarm,
+		RequestHold:   request.requestHold,
+	})
 	if err != nil {
 		return fmt.Errorf("enter MAVLink safe state: %w", err)
 	}

@@ -26,7 +26,7 @@ const (
 	MCPProtocolVersion            = "2026-05-19"
 	MAVLinkProtocolVersion        = "1"
 	MAVLinkWireProtocolVersion    = "2.0"
-	MAVLinkDialect                = "common"
+	MAVLinkDialect                = "unfiltered"
 	MAVLinkWebRTCDataChannelLabel = "txing.mavlink.v1"
 	DefaultEnvFileName            = "daemon.env"
 	DefaultIoTCertFileName        = "certificate.pem.crt"

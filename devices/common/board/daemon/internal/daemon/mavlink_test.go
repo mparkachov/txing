@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -33,9 +34,16 @@ func TestMAVLinkControlLeaseTakeoverAndWatchdog(t *testing.T) {
 		t.Fatalf("old epoch error = %v, want stale epoch", err)
 	}
 
-	frame := testMAVLinkFrame(mavlinkHeartbeatMessageID, make([]byte, 9), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
-	if err := state.AcceptControlFrame(second.SessionID, taken.Epoch, frame, DefaultMAVLinkUplinkPolicy(MAVLinkTarget{SystemID: 1, ComponentID: 1}), 400); err != nil {
+	heartbeat := testMAVLinkFrame(mavlinkHeartbeatMessageID, make([]byte, 9), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
+	if err := state.AcceptControlFrame(second.SessionID, taken.Epoch, heartbeat, 400); err != nil {
 		t.Fatalf("accept heartbeat: %v", err)
+	}
+	if state.WatchdogExpired(900) {
+		t.Fatal("heartbeat must not arm the drive-input watchdog")
+	}
+	frame := testMAVLinkFrame(mavlinkManualControlMessageID, testManualControlPayload(1), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
+	if err := state.AcceptControlFrame(second.SessionID, taken.Epoch, frame, 400); err != nil {
+		t.Fatalf("accept manual control: %v", err)
 	}
 	if state.WatchdogExpired(899) {
 		t.Fatal("watchdog fired before 500 ms elapsed")
@@ -118,48 +126,24 @@ func TestMAVLinkControlEnvelopeUsesStableLeaseAndErrors(t *testing.T) {
 	}
 }
 
-func TestMAVLinkUplinkAllowlistAndIntegrity(t *testing.T) {
-	policy := DefaultMAVLinkUplinkPolicy(MAVLinkTarget{SystemID: 1, ComponentID: 1})
-	valid := [][]byte{
-		testMAVLinkFrame(mavlinkHeartbeatMessageID, make([]byte, 9), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID),
-		testMAVLinkFrame(mavlinkManualControlMessageID, testManualControlPayload(1), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID),
-		testMAVLinkFrame(mavlinkCommandLongMessageID, testCommandLongPayload(mavlinkCommandComponentArmDisarm, 1, 0, 1, 1), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID),
-		testMAVLinkFrame(mavlinkCommandLongMessageID, testCommandLongPayload(mavlinkCommandComponentArmDisarm, 0, 0, 1, 1), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID),
-		testMAVLinkFrame(mavlinkCommandLongMessageID, testCommandLongPayload(mavlinkCommandDoSetMode, 1, float32(mavlinkModeHold), 1, 1), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID),
-		testMAVLinkFrame(mavlinkSetModeMessageID, testSetModePayload(mavlinkModeManual, 1, 1), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID),
-	}
-	for _, frame := range valid {
-		if err := ValidateMAVLinkUplink(frame, policy); err != nil {
-			t.Fatalf("valid frame rejected: %v", err)
+func TestMAVLinkTunnelAcceptsFullSignedOrUnsignedMAVLink2Frames(t *testing.T) {
+	unknownDialectFrame := testMAVLinkFrame(42000, []byte{1, 2, 3, 4}, 42, 199)
+	signedFrame := testMAVLinkSignedFrame(unknownDialectFrame)
+	for _, frame := range [][]byte{unknownDialectFrame, signedFrame} {
+		if err := validateMAVLinkV2TunnelFrame(frame); err != nil {
+			t.Fatalf("full MAVLink frame rejected: %v", err)
 		}
 	}
-
-	wrongSource := append([]byte(nil), valid[0]...)
-	wrongSource[5] = 1
-	if err := ValidateMAVLinkUplink(wrongSource, policy); err == nil {
-		t.Fatal("wrong source heartbeat was accepted")
+	if err := validateMAVLinkV2TunnelFrame(unknownDialectFrame[:len(unknownDialectFrame)-1]); err == nil {
+		t.Fatal("truncated MAVLink frame was accepted")
 	}
-	forcedArm := testMAVLinkFrame(mavlinkCommandLongMessageID, testCommandLongPayload(mavlinkCommandComponentArmDisarm, 1, 21196, 1, 1), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
-	if err := ValidateMAVLinkUplink(forcedArm, policy); err == nil {
-		t.Fatal("forced arm was accepted")
+	if err := validateMAVLinkV2TunnelFrame(signedFrame[:len(signedFrame)-1]); err == nil {
+		t.Fatal("truncated signed MAVLink frame was accepted")
 	}
-	wrongTarget := testMAVLinkFrame(mavlinkManualControlMessageID, testManualControlPayload(2), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
-	if err := ValidateMAVLinkUplink(wrongTarget, policy); err == nil {
-		t.Fatal("wrong-target manual control was accepted")
-	}
-	unsupported := testMAVLinkFrame(77, make([]byte, 3), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
-	if err := ValidateMAVLinkUplink(unsupported, policy); err == nil {
-		t.Fatal("unsupported message was accepted")
-	}
-	corrupt := append([]byte(nil), valid[1]...)
-	corrupt[len(corrupt)-1] ^= 0xff
-	if err := ValidateMAVLinkUplink(corrupt, policy); err == nil {
-		t.Fatal("corrupt frame was accepted")
-	}
-	signed := append([]byte(nil), valid[0]...)
-	signed[2] = mavlinkV2SignedIncompatibilityFlag
-	if err := ValidateMAVLinkUplink(signed, policy); err == nil {
-		t.Fatal("signed frame was accepted")
+	invalidHeader := append([]byte(nil), unknownDialectFrame...)
+	invalidHeader[0] = 0xfe
+	if err := validateMAVLinkV2TunnelFrame(invalidHeader); err == nil {
+		t.Fatal("non-MAVLink-2 frame was accepted")
 	}
 }
 
@@ -332,7 +316,7 @@ func TestMAVLinkBridgeEventUsesSubmittedEpochAndRequestsSafeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.mavlinkStatus = MAVLinkRuntimeStatus{LinkState: "ready", HeartbeatFresh: true, Target: &MAVLinkTarget{SystemID: 1, ComponentID: 1}}
+	state.mavlinkStatus = MAVLinkRuntimeStatus{LinkState: "ready", HeartbeatFresh: true}
 	transport := &fakeMAVLinkFlightTransport{}
 	state.mavlinkFlight = transport
 	publisher := &fakePublisher{}
@@ -368,7 +352,7 @@ func TestMAVLinkBridgeEventUsesSubmittedEpochAndRequestsSafeState(t *testing.T) 
 	if messages := publisher.Messages(); len(messages) != 0 {
 		t.Fatalf("renewal must not publish retained state or named shadows: %#v", messages)
 	}
-	frame := testMAVLinkFrame(mavlinkHeartbeatMessageID, make([]byte, 9), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
+	frame := testMAVLinkSignedFrame(testMAVLinkFrame(42000, []byte{1, 2, 3, 4}, 42, 199))
 	denied := make(chan error, 1)
 	if err := state.HandleMAVLinkBridgeEvent(context.Background(), publisher, runtimeMAVLinkBridgeFrameEvent{sessionID: peer.SessionID, epoch: 99, frame: frame, response: denied}, 30); err != nil {
 		t.Fatal(err)
@@ -390,8 +374,41 @@ func TestMAVLinkBridgeEventUsesSubmittedEpochAndRequestsSafeState(t *testing.T) 
 	if err := <-closed; err != nil {
 		t.Fatal(err)
 	}
-	if len(transport.frames) != 1 || len(transport.safeRequests) != 1 {
+	if len(transport.frames) != 1 || !bytes.Equal(transport.frames[0], frame) || len(transport.safeRequests) != 1 || !transport.safeRequests[0].requestHold || !transport.safeRequests[0].requestDisarm {
 		t.Fatalf("transport frames=%d safe=%#v", len(transport.frames), transport.safeRequests)
+	}
+}
+
+func TestMAVLinkDriveInputWatchdogNeutralizesWithoutReleasingControl(t *testing.T) {
+	config := testRuntimeConfig()
+	config.Capabilities = []string{BoardCapability, MAVLinkCapability}
+	state, err := NewRuntimeState(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &fakeMAVLinkFlightTransport{}
+	state.mavlinkFlight = transport
+	peer := state.mavlink.OpenPeer()
+	active, err := state.mavlink.Activate(peer.SessionID, "operator", false, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := testMAVLinkFrame(mavlinkManualControlMessageID, testManualControlPayload(1), defaultMAVLinkGCSSystemID, defaultMAVLinkGCSComponentID)
+	if err := state.mavlink.AcceptControlFrame(peer.SessionID, active.Epoch, frame, 200); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.TickWatchdogs(context.Background(), &fakePublisher{}, 700); err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.safeRequests) != 1 {
+		t.Fatalf("watchdog requests = %#v", transport.safeRequests)
+	}
+	request := transport.safeRequests[0]
+	if request.requestHold || request.requestDisarm || request.reason != "MAVLink drive-input watchdog expired" {
+		t.Fatalf("drive-input watchdog request = %#v", request)
+	}
+	if state.mavlink.Active() == nil {
+		t.Fatal("drive-input watchdog must retain active control")
 	}
 }
 
@@ -435,7 +452,7 @@ func TestMAVLinkServiceTracksHeartbeatAndBuildsSafeFrames(t *testing.T) {
 	}
 	defer connection.Close()
 	service.transport = connection
-	response, err := service.EnterSafeState(context.Background(), &mavlinkv1.EnterSafeStateRequest{Reason: "test"})
+	response, err := service.EnterSafeState(context.Background(), &mavlinkv1.EnterSafeStateRequest{Reason: "test", RequestHold: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,12 +473,54 @@ func TestMAVLinkServiceTracksHeartbeatAndBuildsSafeFrames(t *testing.T) {
 	}
 }
 
+func TestMAVLinkServiceNeutralOnlyDoesNotChangeControlMode(t *testing.T) {
+	service := NewMAVLinkService(MAVLinkServiceConfig{HeartbeatWindow: time.Second})
+	service.observeFrame(testMAVLinkFrame(mavlinkHeartbeatMessageID, testHeartbeatPayload(mavlinkModeManual, true), 1, 1))
+	receiver, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	connection, err := net.DialUDP("udp", nil, receiver.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	service.transport = connection
+	response, err := service.EnterSafeState(context.Background(), &mavlinkv1.EnterSafeStateRequest{Reason: "drive-input gap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.GetNeutralRequested() || response.GetHoldRequested() || response.GetDisarmRequested() || len(response.GetErrors()) != 0 {
+		t.Fatalf("neutral-only response = %#v", response)
+	}
+	buffer := make([]byte, 300)
+	_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
+	count, _, err := receiver.ReadFromUDP(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := parseMAVLinkV2Frame(buffer[:count])
+	if err != nil || frame.messageID != mavlinkManualControlMessageID {
+		t.Fatalf("neutral frame id=%d err=%v", frame.messageID, err)
+	}
+}
+
 func TestMAVLinkServiceBuildsUnsignedGCSHeartbeat(t *testing.T) {
 	service := NewMAVLinkService(MAVLinkServiceConfig{})
 	frame := service.buildHeartbeatFrame()
 	parsed, err := parseMAVLinkV2Frame(frame)
 	if err != nil || parsed.messageID != mavlinkHeartbeatMessageID || frame[5] != defaultMAVLinkGCSSystemID || frame[6] != defaultMAVLinkGCSComponentID {
 		t.Fatalf("GCS heartbeat = %x err=%v", frame, err)
+	}
+}
+
+func TestMAVLinkServiceSplitsSignedFramesWithoutMutation(t *testing.T) {
+	unsigned := testMAVLinkFrame(42000, []byte{1, 2, 3, 4}, 42, 199)
+	signed := testMAVLinkSignedFrame(unsigned)
+	frames := splitMAVLinkV2Datagram(append(append([]byte(nil), unsigned...), signed...))
+	if len(frames) != 2 || !bytes.Equal(frames[0], unsigned) || !bytes.Equal(frames[1], signed) {
+		t.Fatalf("split MAVLink frames = %x", frames)
 	}
 }
 
@@ -542,11 +601,15 @@ func (f *fakeMAVLinkFlightTransport) SendFrame(frame []byte) error {
 }
 
 func (f *fakeMAVLinkFlightTransport) RequestSafeState(reason string, requestDisarm bool) {
-	f.safeRequests = append(f.safeRequests, mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm})
+	f.safeRequests = append(f.safeRequests, mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm, requestHold: true})
+}
+
+func (f *fakeMAVLinkFlightTransport) RequestNeutral(reason string) {
+	f.safeRequests = append(f.safeRequests, mavlinkSafeStateRequest{reason: reason})
 }
 
 func (f *fakeMAVLinkFlightTransport) EnterSafeState(_ context.Context, reason string, requestDisarm bool) error {
-	f.safeRequests = append(f.safeRequests, mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm})
+	f.safeRequests = append(f.safeRequests, mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm, requestHold: true})
 	return nil
 }
 
@@ -589,6 +652,12 @@ func testMAVLinkFrame(messageID uint32, payload []byte, systemID, componentID by
 	frame[10+len(payload)] = byte(checksum)
 	frame[11+len(payload)] = byte(checksum >> 8)
 	return frame
+}
+
+func testMAVLinkSignedFrame(frame []byte) []byte {
+	signed := append(append([]byte(nil), frame...), make([]byte, 13)...)
+	signed[2] |= mavlinkV2SignedIncompatibilityFlag
+	return signed
 }
 
 func testManualControlPayload(target byte) []byte {

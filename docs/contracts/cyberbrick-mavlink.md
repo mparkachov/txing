@@ -14,11 +14,12 @@ transport. It serves `txing.board.mavlink.v1.BoardMavlink` at
 - `GetStatus` reports link availability, heartbeat freshness, target system and
   component IDs, armed state, mode, MAVLink wire version, and structured
   errors.
-- `Exchange` is a bidirectional exchange of complete, unsigned MAVLink 2
-  common-dialect frames. It does not add RTC framing or rewrite any frame
-  field.
-- `EnterSafeState` requests neutral control and Hold, with optional ordinary
-  disarm as a bounded best-effort action.
+- `Exchange` is a bidirectional exchange of complete MAVLink 2 frames, signed
+  or unsigned. It does not add RTC framing, select a dialect, or rewrite any
+  frame field.
+- `EnterSafeState` always requests neutral control. Its caller can additionally
+  request Hold and ordinary disarm as bounded best-effort actions when active
+  control ends.
 
 The board daemon is the sole authority for peer identity, active control,
 takeover, epochs, lease expiry, REDCON, and cloud state. The KVS worker uses
@@ -31,13 +32,24 @@ The shared local APIs are defined by
 and
 [`mavlink_bridge.proto`](../../devices/common/board/proto/txing/board/mavlink_bridge/v1/mavlink_bridge.proto).
 
+Office retains the common two-mode model: observers are view-only until they
+acquire the active-control lease; an acquired lease readies the vehicle for
+manual driving. It does not expose arm state or Manual/Hold as separate
+operator modes. While the lease is active, neutral `MANUAL_CONTROL` is sent at
+the same cadence as drive input. A short input gap requests neutral only;
+release, active-peer loss, and lease expiry request neutral, Hold, and ordinary
+disarm.
+
 ## WebRTC data channel
 
 MAVLink uses a data-only KVS/WebRTC peer connection independent of video. Its
 single data channel is ordered and reliable with label `txing.mavlink.v1`.
 
-- Each binary message is exactly one unsigned MAVLink 2 `common` frame.
-  Invalid framing or CRC, signed frames, and unsupported messages are rejected.
+- Each binary message is exactly one complete MAVLink 2 frame. The active peer
+  may send any message type, source/target identity, and signed or unsigned
+  frame; the bridge preserves it byte-for-byte. It validates only MAVLink 2
+  framing and frame length, leaving dialect-specific CRC and command validation
+  to ArduPilot.
 - Text messages validate against
   [`mavlink-webrtc.schema.json`](../../devices/common/board/protocol/mavlink-webrtc.schema.json).
   The only operations are `control.get_state`, `control.activate`,

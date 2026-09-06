@@ -2030,8 +2030,10 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("/var/tmp/txing-tbot-ardupilot/storage", service)
         self.assertIn("/var/tmp/txing-tbot-ardupilot/terrain", service)
         self.assertIn("/var/log/txing-tbot-ardupilot", service)
-        self.assertIn("TXING_TBOT_ARDUPILOT_LOG_PROFILE", service)
+        self.assertIn("diagnostic-logging.enabled", service)
         self.assertIn("/var/tmp/txing-tbot-ardupilot/logs", service)
+        self.assertIn("stop_post()", service)
+        self.assertIn('rm -f "$diagnostic_marker"', service)
         self.assertIn("respawn_delay=5", service)
         self.assertIn("respawn_max=5", service)
         self.assertIn("respawn_period=600", service)
@@ -2066,7 +2068,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn(
             "Production disables ArduPilot's DataFlash file backend", tbot_runtime
         )
-        self.assertIn("TXING_TBOT_ARDUPILOT_LOG_PROFILE=diagnostic", tbot_runtime)
+        self.assertIn("diagnostic-logging.enabled", tbot_runtime)
         self.assertNotIn("udpin:0.0.0.0:14550", tbot_runtime)
         self.assertIn("Rover.stg.pre-mavlink-cutover", tbot_runtime)
         self.assertIn('just aws::deploy-device "$RIG_THING_ID" tbot "$TBOT_DEVICE_NAME"', tbot_runtime)
@@ -2078,8 +2080,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("Deploy the matching Office source only", tbot_runtime)
         self.assertIn("manually remove the obsolete retained TBot MCP topics", tbot_runtime)
         self.assertIn(
-            "500 ms watchdog requests neutral and Hold while leaving\n"
-            "ArduPilot armed",
+            "500 ms gap in\n"
+            "`MANUAL_CONTROL` is only a drive-input watchdog: it requests neutral without\n"
+            "changing mode or disarming",
             tbot_runtime,
         )
         self.assertIn("after txing-tbot-ardupilot", mavlink_service)

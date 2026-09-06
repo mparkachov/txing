@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/cyberbrick-mavlink-webrtc-control-v1.schema.json",
   "title": "Board MAVLink WebRTC control envelopes v1",
-  "description": "JSON text messages for the ordered, reliable txing.mavlink.v1 RTCDataChannel. Binary messages contain exactly one complete unsigned MAVLink 2 common-dialect frame. The historical schema identifier is retained for existing consumers.",
+  "description": "JSON text messages for the ordered, reliable txing.mavlink.v1 RTCDataChannel. Binary messages contain exactly one complete MAVLink 2 frame, signed or unsigned, and are forwarded without dialect filtering. The historical schema identifier is retained for existing consumers.",
   "oneOf": [
     { "$ref": "#/$defs/getStateRequest" },
     { "$ref": "#/$defs/activateRequest" },

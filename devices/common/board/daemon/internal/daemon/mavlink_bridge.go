@@ -30,6 +30,7 @@ const (
 type MAVLinkFlightTransport interface {
 	SendFrame([]byte) error
 	RequestSafeState(reason string, requestDisarm bool)
+	RequestNeutral(reason string)
 	EnterSafeState(context.Context, string, bool) error
 	Close()
 }
@@ -93,14 +94,12 @@ func (s *RuntimeState) HandleMAVLinkBridgeEvent(ctx context.Context, publisher P
 		result := s.mavlink.HandleControlMessage(typed.sessionID, typed.json, observedAtMS)
 		if result.SafeRequired {
 			safeReason = "MAVLink active control released"
+			safeDisarm = true
 		}
 		typed.response <- result.Response
 		publishStatus = result.StatusChanged
 	case runtimeMAVLinkBridgeFrameEvent:
-		policy, err := s.mavlinkUplinkPolicy()
-		if err == nil {
-			err = s.mavlink.AuthorizeControlFrame(typed.sessionID, typed.epoch, typed.frame, policy, observedAtMS)
-		}
+		err := s.mavlink.AuthorizeControlFrame(typed.sessionID, typed.epoch, typed.frame, observedAtMS)
 		if err == nil && s.mavlinkFlight == nil {
 			err = errors.New("MAVLink local transport is unavailable")
 		}
@@ -108,12 +107,13 @@ func (s *RuntimeState) HandleMAVLinkBridgeEvent(ctx context.Context, publisher P
 			err = s.mavlinkFlight.SendFrame(typed.frame)
 		}
 		if err == nil {
-			s.mavlink.RecordAcceptedControlFrame(observedAtMS)
+			s.mavlink.RecordAcceptedControlFrame(typed.frame, observedAtMS)
 		}
 		typed.response <- err
 	case runtimeMAVLinkBridgeCloseEvent:
 		if s.mavlink.ClosePeer(typed.sessionID) {
 			safeReason = "MAVLink active peer closed"
+			safeDisarm = true
 		}
 		typed.response <- nil
 		publishStatus = true
@@ -147,13 +147,6 @@ func (s *RuntimeState) HandleMAVLinkBridgeEvent(ctx context.Context, publisher P
 		return s.publishCapabilities(ctx, publisher, s.onlineCapabilities(), observedAtMS)
 	}
 	return nil
-}
-
-func (s *RuntimeState) mavlinkUplinkPolicy() (MAVLinkUplinkPolicy, error) {
-	if s.mavlinkStatus.Target == nil {
-		return MAVLinkUplinkPolicy{}, errors.New("MAVLink flight-controller target is unavailable")
-	}
-	return DefaultMAVLinkUplinkPolicy(*s.mavlinkStatus.Target), nil
 }
 
 type MAVLinkBridgeServerHandle struct {

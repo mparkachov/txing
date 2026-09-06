@@ -2,12 +2,10 @@ package daemon
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -248,32 +246,42 @@ func (s *MAVLinkControlState) EnsureActive(sessionID string, epoch, nowMS uint64
 	return s.Active(), nil
 }
 
-func (s *MAVLinkControlState) AcceptControlFrame(sessionID string, epoch uint64, frame []byte, policy MAVLinkUplinkPolicy, nowMS uint64) error {
-	if err := s.AuthorizeControlFrame(sessionID, epoch, frame, policy, nowMS); err != nil {
+func (s *MAVLinkControlState) AcceptControlFrame(sessionID string, epoch uint64, frame []byte, nowMS uint64) error {
+	if err := s.AuthorizeControlFrame(sessionID, epoch, frame, nowMS); err != nil {
 		return err
 	}
-	s.RecordAcceptedControlFrame(nowMS)
+	s.RecordAcceptedControlFrame(frame, nowMS)
 	return nil
 }
 
-// AuthorizeControlFrame verifies ownership and wire policy without changing
-// the watchdog state. Callers use it before handing the frame to the local
-// transport, then record the accepted frame only after that handoff succeeds.
-func (s *MAVLinkControlState) AuthorizeControlFrame(sessionID string, epoch uint64, frame []byte, policy MAVLinkUplinkPolicy, nowMS uint64) error {
+// AuthorizeControlFrame verifies active ownership and complete MAVLink 2 frame
+// boundaries without interpreting the MAVLink message. The WebRTC channel is
+// an opaque MAVLink tunnel: its active client may use the flight controller's
+// full dialect and source identity. Callers record accepted input only after
+// the local transport handoff succeeds.
+func (s *MAVLinkControlState) AuthorizeControlFrame(sessionID string, epoch uint64, frame []byte, nowMS uint64) error {
 	if _, err := s.EnsureActive(sessionID, epoch, nowMS); err != nil {
 		return err
 	}
-	return ValidateMAVLinkUplink(frame, policy)
+	return validateMAVLinkV2TunnelFrame(frame)
 }
 
-func (s *MAVLinkControlState) RecordAcceptedControlFrame(nowMS uint64) {
+// RecordAcceptedControlFrame advances the drive-input watchdog only for a
+// MANUAL_CONTROL frame. Arm, mode, and heartbeat commands establish or retain
+// the active-control session but must not turn a ready-to-drive session back
+// into view-only mode merely because the operator is momentarily idle.
+func (s *MAVLinkControlState) RecordAcceptedControlFrame(frame []byte, nowMS uint64) {
+	parsed, err := parseMAVLinkV2Frame(frame)
+	if err != nil || parsed.messageID != mavlinkManualControlMessageID {
+		return
+	}
 	s.lastAcceptedAtMS = nowMS
 	s.watchdogTripped = false
 }
 
-// WatchdogExpired returns true once per accepted-control gap. It does not
-// clear active ownership and does not request disarm; only neutral/Hold is
-// required while the flight controller remains armed.
+// WatchdogExpired returns true once per accepted drive-input gap. It does not
+// clear active ownership or change flight mode; the runtime requests neutral
+// control while the flight controller remains ready for the next input.
 func (s *MAVLinkControlState) WatchdogExpired(nowMS uint64) bool {
 	if s.active == nil || s.lastAcceptedAtMS == 0 || s.watchdogTripped {
 		return false
@@ -440,61 +448,34 @@ func mavlinkControlErrorFor(requestID string, err error) string {
 	return mavlinkControlError(requestID, "invalid_request", err.Error())
 }
 
-type MAVLinkUplinkPolicy struct {
-	SourceSystemID    byte
-	SourceComponentID byte
-	Target            MAVLinkTarget
-}
-
-func DefaultMAVLinkUplinkPolicy(target MAVLinkTarget) MAVLinkUplinkPolicy {
-	return MAVLinkUplinkPolicy{
-		SourceSystemID:    defaultMAVLinkGCSSystemID,
-		SourceComponentID: defaultMAVLinkGCSComponentID,
-		Target:            target,
-	}
-}
-
 type parsedMAVLinkFrame struct {
 	messageID uint32
 	payload   []byte
 }
 
-func ValidateMAVLinkUplink(frame []byte, policy MAVLinkUplinkPolicy) error {
-	parsed, err := parseMAVLinkV2Frame(frame)
-	if err != nil {
-		return err
+// validateMAVLinkV2TunnelFrame intentionally validates only boundaries. The
+// tunnel cannot validate a generic MAVLink checksum without selecting a
+// dialect, and selecting a dialect would reintroduce message filtering. The
+// flight controller remains the protocol authority and discards invalid frames.
+func validateMAVLinkV2TunnelFrame(frame []byte) error {
+	if len(frame) < 12 || frame[0] != mavlinkV2Magic {
+		return errors.New("MAVLink tunnel requires a complete MAVLink 2 frame")
 	}
-	if frame[5] != policy.SourceSystemID || frame[6] != policy.SourceComponentID {
-		return errors.New("MAVLink uplink has an unauthorized source")
+	expectedLength := int(frame[1]) + 12
+	if frame[2]&mavlinkV2SignedIncompatibilityFlag != 0 {
+		expectedLength += 13
 	}
-	switch parsed.messageID {
-	case mavlinkHeartbeatMessageID:
-		if len(parsed.payload) != 9 {
-			return errors.New("MAVLink heartbeat has an invalid payload length")
-		}
-		return nil
-	case mavlinkManualControlMessageID:
-		return validateMAVLinkManualControl(parsed.payload, policy.Target)
-	case mavlinkCommandLongMessageID:
-		return validateMAVLinkCommandLong(parsed.payload, policy.Target)
-	case mavlinkSetModeMessageID:
-		return validateMAVLinkSetMode(parsed.payload, policy.Target)
-	default:
-		return fmt.Errorf("MAVLink message %d is not permitted for control uplink", parsed.messageID)
+	if len(frame) != expectedLength {
+		return errors.New("MAVLink 2 frame length is invalid")
 	}
+	return nil
 }
 
 func parseMAVLinkV2Frame(frame []byte) (parsedMAVLinkFrame, error) {
-	if len(frame) < 12 || frame[0] != mavlinkV2Magic {
-		return parsedMAVLinkFrame{}, errors.New("invalid MAVLink 2 frame header")
+	if err := validateMAVLinkV2TunnelFrame(frame); err != nil {
+		return parsedMAVLinkFrame{}, err
 	}
 	payloadLength := int(frame[1])
-	if len(frame) != payloadLength+12 {
-		return parsedMAVLinkFrame{}, errors.New("MAVLink 2 frame length is invalid or frame is signed")
-	}
-	if frame[2]&mavlinkV2SignedIncompatibilityFlag != 0 {
-		return parsedMAVLinkFrame{}, errors.New("signed MAVLink frames are not supported")
-	}
 	messageID := uint32(frame[7]) | uint32(frame[8])<<8 | uint32(frame[9])<<16
 	extra, ok := mavlinkCRCExtra(messageID)
 	if !ok {
@@ -535,78 +516,4 @@ func mavlinkCRCAccumulate(value byte, checksum uint16) uint16 {
 	temp := uint8(value) ^ uint8(checksum&0xff)
 	temp ^= temp << 4
 	return (checksum >> 8) ^ (uint16(temp) << 8) ^ (uint16(temp) << 3) ^ (uint16(temp) >> 4)
-}
-
-func validateMAVLinkTarget(systemID, componentID byte, target MAVLinkTarget) error {
-	if target.SystemID == 0 || target.ComponentID == 0 || systemID != byte(target.SystemID) || componentID != byte(target.ComponentID) {
-		return errors.New("MAVLink uplink targets the wrong flight controller")
-	}
-	return nil
-}
-
-func validateMAVLinkManualControl(payload []byte, target MAVLinkTarget) error {
-	if len(payload) != 11 {
-		return errors.New("MANUAL_CONTROL has an invalid payload length")
-	}
-	if err := validateMAVLinkTarget(payload[10], byte(target.ComponentID), target); err != nil {
-		return err
-	}
-	for _, offset := range []int{0, 2, 4, 6} {
-		axis := int16(binary.LittleEndian.Uint16(payload[offset : offset+2]))
-		if axis == math.MaxInt16 && (offset == 0 || offset == 6) {
-			// Office marks unused x and r axes invalid. Steering (.y) and
-			// throttle (.z) remain concrete control values for ArduRover.
-			continue
-		}
-		if axis < -1000 || axis > 1000 {
-			return errors.New("MANUAL_CONTROL axis is outside the allowed range")
-		}
-	}
-	return nil
-}
-
-func validateMAVLinkCommandLong(payload []byte, target MAVLinkTarget) error {
-	if len(payload) != 33 {
-		return errors.New("COMMAND_LONG has an invalid payload length")
-	}
-	if err := validateMAVLinkTarget(payload[30], payload[31], target); err != nil {
-		return err
-	}
-	command := binary.LittleEndian.Uint16(payload[28:30])
-	param1 := math.Float32frombits(binary.LittleEndian.Uint32(payload[0:4]))
-	param2 := math.Float32frombits(binary.LittleEndian.Uint32(payload[4:8]))
-	if math.IsNaN(float64(param1)) || math.IsNaN(float64(param2)) {
-		return errors.New("COMMAND_LONG parameters must be finite")
-	}
-	switch command {
-	case mavlinkCommandComponentArmDisarm:
-		if param1 != 0 && param1 != 1 {
-			return errors.New("arm/disarm command must be ordinary arm or disarm")
-		}
-		if param2 != 0 {
-			return errors.New("forced arm/disarm is not permitted")
-		}
-		return nil
-	case mavlinkCommandDoSetMode:
-		if param1 != float32(mavlinkCustomModeEnabledBaseMode) || (param2 != float32(mavlinkModeManual) && param2 != float32(mavlinkModeHold)) {
-			return errors.New("only Manual or Hold mode selection is permitted")
-		}
-		return nil
-	default:
-		return fmt.Errorf("MAVLink command %d is not permitted", command)
-	}
-}
-
-func validateMAVLinkSetMode(payload []byte, target MAVLinkTarget) error {
-	if len(payload) != 6 {
-		return errors.New("SET_MODE has an invalid payload length")
-	}
-	if err := validateMAVLinkTarget(payload[4], byte(target.ComponentID), target); err != nil {
-		return err
-	}
-	mode := binary.LittleEndian.Uint32(payload[0:4])
-	if payload[5] != mavlinkCustomModeEnabledBaseMode || (mode != mavlinkModeManual && mode != mavlinkModeHold) {
-		return errors.New("only Manual or Hold mode selection is permitted")
-	}
-	return nil
 }

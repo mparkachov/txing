@@ -76,9 +76,9 @@ message ControlMessageResponse {
   string json = 1;
 }
 
-// Each non-empty value contains one complete, unsigned MAVLink 2 common-
-// dialect frame. The first client-to-server value may have an empty frame only
-// to bind the stream to an OpenPeer session so an observer can receive
+// Each non-empty value contains one complete MAVLink 2 frame, signed or
+// unsigned. The first client-to-server value may have an empty frame only to
+// bind the stream to an OpenPeer session so an observer can receive
 // telemetry before it sends an uplink. All later client-to-server values are
 // candidate uplink frames. Server-to-client values are daemon-authorized
 // telemetry broadcasts for the addressed peer.

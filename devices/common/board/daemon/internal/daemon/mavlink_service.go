@@ -214,7 +214,7 @@ func (s *MAVLinkService) Exchange(stream grpc.BidiStreamingServer[mavlinkv1.Mavl
 				}
 				return
 			}
-			if err := validateMAVLinkServiceFrame(message.GetFrame()); err != nil {
+			if err := validateMAVLinkV2TunnelFrame(message.GetFrame()); err != nil {
 				select {
 				case receiveDone <- status.Error(codes.InvalidArgument, err.Error()):
 				case <-stream.Context().Done():
@@ -266,10 +266,12 @@ func (s *MAVLinkService) EnterSafeState(_ context.Context, request *mavlinkv1.En
 	} else {
 		appendError("neutral_failed", err)
 	}
-	if err := s.sendFrame(s.buildModeFrame(*target, mavlinkModeHold)); err == nil {
-		response.HoldRequested = true
-	} else {
-		appendError("hold_failed", err)
+	if request.GetRequestHold() || request.GetRequestDisarm() {
+		if err := s.sendFrame(s.buildModeFrame(*target, mavlinkModeHold)); err == nil {
+			response.HoldRequested = true
+		} else {
+			appendError("hold_failed", err)
+		}
 	}
 	if request.GetRequestDisarm() {
 		if err := s.sendFrame(s.buildArmDisarmFrame(*target, false)); err == nil {
@@ -543,23 +545,16 @@ func parseMAVLinkUDPEndpoint(value string) (*net.UDPAddr, error) {
 	return net.ResolveUDPAddr("udp", parsed.Host)
 }
 
-func validateMAVLinkServiceFrame(frame []byte) error {
-	if len(frame) < 12 || frame[0] != mavlinkV2Magic || frame[2]&mavlinkV2SignedIncompatibilityFlag != 0 {
-		return errors.New("MAVLink service accepts complete unsigned MAVLink 2 frames only")
-	}
-	if len(frame) != int(frame[1])+12 {
-		return errors.New("MAVLink service frame length is invalid")
-	}
-	return nil
-}
-
 func splitMAVLinkV2Datagram(datagram []byte) [][]byte {
 	frames := make([][]byte, 0, 1)
 	for len(datagram) >= 12 {
-		if datagram[0] != mavlinkV2Magic || datagram[2]&mavlinkV2SignedIncompatibilityFlag != 0 {
+		if datagram[0] != mavlinkV2Magic {
 			return frames
 		}
 		length := int(datagram[1]) + 12
+		if datagram[2]&mavlinkV2SignedIncompatibilityFlag != 0 {
+			length += 13
+		}
 		if len(datagram) < length {
 			return frames
 		}
