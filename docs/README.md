@@ -21,6 +21,8 @@ design notes have been folded into the owning component guides.
 ## Approved Designs Pending Implementation
 
 - [TBot Thread device architecture](./history/architecture/tbot-thread-device-architecture.md)
+- [TBot prototype motor output envelope](./history/architecture/doc-43%20-%20TBot-prototype-motor-output-envelope-architecture.md)
+  ([constraints](./history/constraints/doc-44%20-%20Constraints-TBot-prototype-motor-output-envelope.md))
 
 ## Component Guides
 
