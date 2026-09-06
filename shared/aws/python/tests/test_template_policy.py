@@ -544,6 +544,70 @@ class AwsTemplatePolicyTests(unittest.TestCase):
                 runtime_only_names = {member.name.rstrip("/") for member in archive}
             self.assertEqual(runtime_only_names, base_files)
 
+    def test_tbot_ardupilot_service_exports_only_the_motor_envelope(self) -> None:
+        service = (
+            REPO_ROOT
+            / "devices"
+            / "tbot"
+            / "ardupilot"
+            / "openrc"
+            / "txing-tbot-ardupilot"
+        )
+        service_text = service.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "daemon_env=/root/.config/txing/tbot-daemon/daemon.env",
+            service_text,
+        )
+        self.assertIn('. "$daemon_env"', service_text)
+        self.assertNotIn("set -a", service_text)
+        for name in (
+            "TXING_MOTOR_RAW_MAX_SPEED",
+            "TXING_MOTOR_CMD_RAW_MIN_SPEED",
+            "TXING_MOTOR_CMD_RAW_MAX_SPEED",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(f"unset {name}", service_text)
+                self.assertIn(f'${{{name}-}}', service_text)
+                self.assertIn(f"export {name}", service_text)
+
+        subprocess.run(["sh", "-n", str(service)], check=True)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            daemon_env = Path(temp_dir) / "daemon.env"
+            daemon_env.write_text(
+                "TXING_MOTOR_RAW_MAX_SPEED=480\n"
+                "TXING_MOTOR_CMD_RAW_MIN_SPEED=100\n"
+                "TXING_MOTOR_CMD_RAW_MAX_SPEED=200\n"
+                "TXING_UNRELATED_VALUE=must-not-be-exported\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "sh",
+                    "-eu",
+                    "-c",
+                    'eerror() { :; }\n'
+                    'checkpath() { :; }\n'
+                    'unset TXING_UNRELATED_VALUE\n'
+                    '. "$1"\n'
+                    'command=/bin/true\n'
+                    'defaults=/dev/null\n'
+                    'daemon_env="$2"\n'
+                    'log_profile=production\n'
+                    'start_pre\n'
+                    'test "$(printenv TXING_MOTOR_RAW_MAX_SPEED)" = 480\n'
+                    'test "$(printenv TXING_MOTOR_CMD_RAW_MIN_SPEED)" = 100\n'
+                    'test "$(printenv TXING_MOTOR_CMD_RAW_MAX_SPEED)" = 200\n'
+                    '! printenv TXING_UNRELATED_VALUE >/dev/null 2>&1\n',
+                    "test-tbot-ardupilot-service",
+                    str(service),
+                    str(daemon_env),
+                ],
+                check=True,
+            )
+            self.assertEqual(result.returncode, 0)
+
     def test_aws_cert_recipe_uses_shared_device_daemon_bundle_and_video_policy(self) -> None:
         aws_justfile = (AWS_DIR / "justfile").read_text(encoding="utf-8")
         aws_lib = (AWS_DIR / "scripts" / "aws_lib.sh").read_text(encoding="utf-8")

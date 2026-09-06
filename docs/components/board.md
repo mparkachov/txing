@@ -411,10 +411,12 @@ Deployed boards use root-owned config:
 ```
 
 `daemon.env` is an environment file rendered from
-`devices/common/daemon.env.template`. It uses plain `KEY=value` lines so
-both the OpenRC hardware-worker script and the daemon can consume the same
-root-owned file. The `services/` directory contains the complete board OpenRC
-catalog; installation copies only the services for the selected device type.
+`devices/common/daemon.env.template`. It uses plain `KEY=value` lines so the
+daemon and device-owned OpenRC services can consume the same root-owned file.
+Unit's hardware worker consumes its motor settings; TBot ArduPilot consumes
+only its three raw motor-envelope settings. The `services/` directory contains
+the complete board OpenRC catalog; installation copies only the services for
+the selected device type.
 Certificate paths are omitted by default; the daemon derives colocated paths
 from the loaded `daemon.env` directory. For manual shell export, use
 `set -a; . /root/.config/txing/<device>-daemon/daemon.env; set +a`.
@@ -440,7 +442,7 @@ generated for one device type from breaking another device's binaries, which
 matters while boards run mixed combinations during the Debian-to-Alpine
 transition.
 
-Motor calibration supports per-track output trim through the shared
+Unit motor calibration supports per-track output trim through the shared
 `daemon.env` file. Values are numeric percentages in `(0, 100]`; omit the `%`
 sign. For example, if straight driving drifts left because the right track is
 stronger, reduce the right side:
@@ -450,11 +452,16 @@ TXING_MOTOR_LEFT_TRACK_POWER_PERCENT=100
 TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=98
 ```
 
-Track power trim is board-local physical calibration. User-facing
+Unit track power trim is board-local physical calibration. User-facing
 `motion.leftSpeed` and `motion.rightSpeed` report the untrimmed logical
 command. The worker maps that logical command into the configured raw motor
 range, applies per-track trim, and keeps every nonzero physical output within
 `TXING_MOTOR_CMD_RAW_MIN_SPEED` and `TXING_MOTOR_CMD_RAW_MAX_SPEED`.
+
+TBot instead treats `TXING_MOTOR_RAW_MAX_SPEED`,
+`TXING_MOTOR_CMD_RAW_MIN_SPEED`, and `TXING_MOTOR_CMD_RAW_MAX_SPEED` as a
+temporary per-track battery-current envelope in its final ArduPilot sysfs PWM
+path. It does not use Unit track trim or other hardware-worker motor settings.
 
 The default video channel is `<thing_id>-board-video`. The default bridge
 socket path is `/run/txing-<device>-daemon/board-video-bridge.sock` and the
@@ -467,10 +474,10 @@ files are not overwritten by binary upgrades. Older files that still carry
 `TXING_BOARD_VIDEO_BRIDGE_SOCKET_PATH` or `TXING_HARDWARE_WORKER_SOCKET_PATH`
 should have those lines deleted so the compiled defaults apply. Existing boards must also add
 `TXING_MOTOR_LEFT_TRACK_POWER_PERCENT=100` and
-`TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=100` if their `daemon.env` predates
-track power trim. The daemon ignores `TXING_MOTOR_*`; those values are consumed
-by `txing-<device>-hardware-worker` when its OpenRC service loads the same root-owned
-env file.
+`TXING_MOTOR_RIGHT_TRACK_POWER_PERCENT=100` if their Unit `daemon.env` predates
+track power trim. The daemon ignores `TXING_MOTOR_*`; Unit values are consumed
+by `txing-unit-hardware-worker`, while TBot's three raw envelope values are
+exported only to `txing-tbot-ardupilot`.
 ## OS And ABI Contract
 
 - Alpine Linux aarch64 on a supported Raspberry Pi board, **sys install**
@@ -1563,6 +1570,42 @@ rc-service txing-tbot-mavlink restart
 rc-service txing-tbot-daemon restart
 rc-service txing-tbot-kvs-master restart
 ```
+
+##### Temporary TBot motor envelope
+
+The current TBot battery is a prototype limitation. ArduPilot reads only these
+three existing values from `/root/.config/txing/tbot-daemon/daemon.env` at
+startup:
+
+```text
+TXING_MOTOR_RAW_MAX_SPEED=480
+TXING_MOTOR_CMD_RAW_MIN_SPEED=100
+TXING_MOTOR_CMD_RAW_MAX_SPEED=200
+```
+
+With these values, neutral is zero duty and every nonneutral track output is
+limited to approximately 20.833%-41.667% duty. To make a temporary manual
+override, disarm the rover, isolate motor power, make the board root writable,
+and edit only those three plain `KEY=value` lines. They must be nonnegative
+integers with `raw maximum > 0`, `command minimum < command maximum`, and
+`command maximum <= raw maximum`. The service refuses a missing file or missing
+key; ArduPilot then rejects malformed or out-of-range values without enabling
+motor output.
+
+Record the existing values before editing, then restart only ArduPilot while
+the tracks remain unpowered:
+
+```sh
+grep -E '^TXING_MOTOR_(RAW_MAX_SPEED|CMD_RAW_MIN_SPEED|CMD_RAW_MAX_SPEED)=' \
+  /root/.config/txing/tbot-daemon/daemon.env
+rc-service txing-tbot-ardupilot restart
+rc-service txing-tbot-ardupilot status
+```
+
+The operator must restore the tracked values after a temporary experiment and
+must not use Unit track-power trim to tune TBot. This workaround is removed in
+a separate approved change when the battery/power design supports the intended
+full motor range.
 
 Verify that no unsigned MAVLink listener is exposed beyond loopback and that
 the former motor owner cannot return:

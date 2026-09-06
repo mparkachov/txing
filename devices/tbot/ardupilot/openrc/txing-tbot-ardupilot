@@ -7,6 +7,7 @@ command=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-
 defaults=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.defaults.parm
 diagnostic_defaults=/root/.local/share/mise/installs/txing-tbot-ardupilot/latest/txing-tbot-ardupilot.diagnostic.parm
 diagnostic_marker=/var/tmp/txing-tbot-ardupilot/diagnostic-logging.enabled
+daemon_env=/root/.config/txing/tbot-daemon/daemon.env
 log_profile=production
 if [ -e "$diagnostic_marker" ]; then
     log_profile=diagnostic
@@ -39,6 +40,29 @@ depend() {
 
 start_pre() {
     test -x "$command" && test -r "$defaults" || return 1
+    test -r "$daemon_env" || {
+        eerror "ArduPilot daemon environment is missing: $daemon_env"
+        return 1
+    }
+    unset TXING_MOTOR_RAW_MAX_SPEED
+    unset TXING_MOTOR_CMD_RAW_MIN_SPEED
+    unset TXING_MOTOR_CMD_RAW_MAX_SPEED
+    . "$daemon_env"
+    test -n "${TXING_MOTOR_RAW_MAX_SPEED-}" || {
+        eerror "ArduPilot motor envelope is missing TXING_MOTOR_RAW_MAX_SPEED"
+        return 1
+    }
+    test -n "${TXING_MOTOR_CMD_RAW_MIN_SPEED-}" || {
+        eerror "ArduPilot motor envelope is missing TXING_MOTOR_CMD_RAW_MIN_SPEED"
+        return 1
+    }
+    test -n "${TXING_MOTOR_CMD_RAW_MAX_SPEED-}" || {
+        eerror "ArduPilot motor envelope is missing TXING_MOTOR_CMD_RAW_MAX_SPEED"
+        return 1
+    }
+    export TXING_MOTOR_RAW_MAX_SPEED
+    export TXING_MOTOR_CMD_RAW_MIN_SPEED
+    export TXING_MOTOR_CMD_RAW_MAX_SPEED
     if [ "$log_profile" = diagnostic ]; then
         test -r "$diagnostic_defaults" || {
             eerror "ArduPilot diagnostic defaults are missing: $diagnostic_defaults"
