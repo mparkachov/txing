@@ -29,8 +29,9 @@ type Scheduler struct {
 	activePollCancel  map[string]context.CancelFunc
 	maintenanceActive bool
 
-	OnMaintenanceError func(error)
-	OnCommandError     func(protocol.CapabilityCommand, error)
+	OnMaintenanceError   func(error)
+	OnMaintenanceSuccess func()
+	OnCommandError       func(protocol.CapabilityCommand, error)
 }
 
 type scheduledWork struct {
@@ -128,11 +129,19 @@ func (s *Scheduler) Close() {
 
 func (s *Scheduler) maintain() {
 	defer s.wg.Done()
-	if err := s.runtime.Discover(s.context()); err != nil {
+	ctx := s.context()
+	if err := s.runtime.Discover(ctx); err != nil {
 		s.finishMaintenanceCycle()
-		s.reportMaintenanceError(err)
+		if ctx.Err() == nil {
+			s.reportMaintenanceError(err)
+		}
 		return
 	}
+	if ctx.Err() != nil {
+		s.finishMaintenanceCycle()
+		return
+	}
+	s.reportMaintenanceSuccess()
 
 	thingNames := s.runtime.EndpointThingNames()
 	s.mu.Lock()
@@ -256,6 +265,12 @@ func (s *Scheduler) context() context.Context {
 func (s *Scheduler) reportMaintenanceError(err error) {
 	if s.OnMaintenanceError != nil {
 		s.OnMaintenanceError(err)
+	}
+}
+
+func (s *Scheduler) reportMaintenanceSuccess() {
+	if s.OnMaintenanceSuccess != nil {
+		s.OnMaintenanceSuccess()
 	}
 }
 

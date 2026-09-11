@@ -1,0 +1,20 @@
+[Unit]
+Description=OpenThread Border Router Agent
+Documentation=https://openthread.io/guides/border-router
+ConditionPathExists=/usr/sbin/otbr-agent
+Requires=dbus.socket
+Wants=network-online.target
+After=dbus.socket network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/otbr-agent
+ExecStart=/usr/sbin/otbr-agent $OTBR_AGENT_OPTS
+KillMode=mixed
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

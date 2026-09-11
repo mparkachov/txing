@@ -2,6 +2,7 @@ package thread
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -125,6 +126,70 @@ func TestSchedulerCloseCancelsMaintenanceAndWaitsForWorkers(t *testing.T) {
 	}()
 	waitForSignal(t, client.getCanceled, "maintenance GET cancellation on shutdown")
 	waitForSignal(t, closed, "scheduler shutdown")
+}
+
+func TestSchedulerReportsSuccessfulDiscovery(t *testing.T) {
+	runtime := NewRuntime(&fakeDiscoverer{}, &fakeDeviceClient{}, &recordingPublisher{})
+	scheduler := NewScheduler(runtime, 2)
+	succeeded := make(chan struct{}, 1)
+	scheduler.OnMaintenanceSuccess = func() { succeeded <- struct{}{} }
+	scheduler.Start(context.Background())
+	defer scheduler.Close()
+
+	scheduler.RequestMaintenance()
+	waitForSignal(t, succeeded, "successful maintenance discovery")
+}
+
+func TestSchedulerReportsDiscoveryFailureWithoutSuccess(t *testing.T) {
+	discoveryError := errors.New("connection refused")
+	runtime := NewRuntime(&fakeDiscoverer{err: discoveryError}, &fakeDeviceClient{}, &recordingPublisher{})
+	scheduler := NewScheduler(runtime, 2)
+	failures := make(chan error, 1)
+	successes := make(chan struct{}, 1)
+	scheduler.OnMaintenanceError = func(err error) { failures <- err }
+	scheduler.OnMaintenanceSuccess = func() { successes <- struct{}{} }
+	scheduler.Start(context.Background())
+	defer scheduler.Close()
+
+	scheduler.RequestMaintenance()
+	select {
+	case err := <-failures:
+		if !errors.Is(err, discoveryError) {
+			t.Fatalf("maintenance error = %v, want %v", err, discoveryError)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for maintenance error")
+	}
+	select {
+	case <-successes:
+		t.Fatal("failed discovery reported maintenance success")
+	default:
+	}
+}
+
+func TestSchedulerDoesNotReportCanceledDiscovery(t *testing.T) {
+	discoverer := &cancelingDiscoverer{started: make(chan struct{})}
+	runtime := NewRuntime(discoverer, &fakeDeviceClient{}, &recordingPublisher{})
+	scheduler := NewScheduler(runtime, 2)
+	failures := make(chan error, 1)
+	successes := make(chan struct{}, 1)
+	scheduler.OnMaintenanceError = func(err error) { failures <- err }
+	scheduler.OnMaintenanceSuccess = func() { successes <- struct{}{} }
+	scheduler.Start(context.Background())
+	scheduler.RequestMaintenance()
+	waitForSignal(t, discoverer.started, "maintenance discovery")
+
+	scheduler.Close()
+	select {
+	case err := <-failures:
+		t.Fatalf("canceled discovery reported maintenance error: %v", err)
+	default:
+	}
+	select {
+	case <-successes:
+		t.Fatal("canceled discovery reported maintenance success")
+	default:
+	}
 }
 
 func schedulerRuntime(t *testing.T, client DeviceClient) *Runtime {
@@ -253,6 +318,16 @@ type countingDiscoverer struct {
 
 	endpoints []Endpoint
 	calls     int
+}
+
+type cancelingDiscoverer struct {
+	started chan struct{}
+}
+
+func (d *cancelingDiscoverer) Discover(ctx context.Context) ([]Endpoint, error) {
+	close(d.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (d *countingDiscoverer) Discover(context.Context) ([]Endpoint, error) {

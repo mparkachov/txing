@@ -91,8 +91,16 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 			endpoint.ThingName, redcon, rigthread.SEDDebugLinkModeForRedcon(redcon)))
 	}
 	scheduler := rigthread.NewScheduler(runtime, 4)
+	maintenanceWarnings := newMaintenanceWarningThrottle(maintenanceWarningRepeatInterval, time.Now)
 	scheduler.OnMaintenanceError = func(err error) {
-		logger.Print(ctx, "warning", fmt.Sprintf("Thread maintenance failed error=%q", err))
+		if decision := maintenanceWarnings.failure(err); decision.emit {
+			logger.Print(ctx, "warning", decision.message)
+		}
+	}
+	scheduler.OnMaintenanceSuccess = func() {
+		if decision := maintenanceWarnings.success(); decision.emit {
+			logger.Print(ctx, "info", decision.message)
+		}
 	}
 	scheduler.OnCommandError = func(command protocol.CapabilityCommand, err error) {
 		logger.Print(ctx, "warning", fmt.Sprintf("Thread command handling failed thing=%s command=%s error=%q", command.ThingName, command.CommandID, err))

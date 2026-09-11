@@ -71,10 +71,12 @@ Canonical `raspi` rig installation, Bluetooth setup, root-owned `mise`,
 systemd units, health-check, and update instructions live in
 [components/rig.md](./components/rig.md).
 
-`power-si` Thread devices also require an already configured external OTBR on
-the rig network. OTBR installation is intentionally not automated by txing; the
+Thread devices also require an already configured external OTBR on the rig
+network. OTBR installation and configuration are intentionally not automated
+by txing; production rigs use the manual native-systemd supervision procedure
+in [components/rig.md](./components/rig.md#otbr-process-supervision). The
 operator must prepare OTBR, provision the device factory dataset, and flash the
-XIAO MG24 manually as documented in
+MCU manually as documented in
 [Power SI Device](../devices/power-si/README.md).
 
 The short production flow is:

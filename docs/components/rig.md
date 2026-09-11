@@ -13,7 +13,8 @@ ships three standalone Go daemons:
   communication for `power-si`, `power-nrf`, and `tbot` devices, and publishes
   local capability state, command results, and Thread/power shadow updates. It
   reads SRP records from a colocated, already-configured OTBR through `ot-ctl`;
-  it does not install or configure OTBR.
+  it does not install or configure OTBR. On production raspi rigs, systemd
+  separately supervises the operator-installed OTBR process.
 
 The daemons communicate only through local IPC. The default Linux IPC socket is
 `/run/txing-rig/rig-ipc.sock`; the macOS development default is under
@@ -109,6 +110,15 @@ The Thread daemon reads the active SRP registry through the configured
 `TXING_THREAD_OT_CTL` command (`ot-ctl` by default). It does not require mDNS
 publication or DNS records in `/etc/resolv.conf`; a rig using `power-si` must
 run OTBR on the same host as the Thread daemon.
+
+Thread maintenance failures remain visible without producing a warning every
+poll. The first failure is logged immediately. Identical error text is then
+logged at most once per ten minutes, with each reminder reporting the number
+of duplicates suppressed since the previous warning. A different error is
+reported immediately. The first later successful discovery emits one recovery
+summary containing the outage duration and total suppressed count. Command
+failures are never throttled, and this logging policy does not change Thread
+discovery or polling intervals.
 
 ## Cost Posture
 
@@ -310,6 +320,139 @@ Check installed versions:
 /root/.local/share/mise/installs/txing-thread-connectivity/latest/txing-thread-connectivity --version
 ```
 
+## OTBR Process Supervision
+
+OTBR remains separately installed and configured by the operator. The
+upstream SysV script starts `otbr-agent` in the background, which causes
+`systemd-sysv-generator` to create a false-active unit with
+`RemainAfterExit=yes` and no process restart. A production rig that uses Thread
+must replace that generated wrapper with the repository's native unit. The
+native unit runs `/usr/sbin/otbr-agent` directly, loads the existing
+`OTBR_AGENT_OPTS` from `/etc/default/otbr-agent`, and makes the real process the
+systemd `MainPID`.
+
+Perform this as a manual writable-root maintenance operation. On the rig,
+verify and preserve the existing package configuration before copying any
+unit:
+
+```bash
+test -x /usr/sbin/otbr-agent
+test -r /etc/default/otbr-agent
+grep '^OTBR_AGENT_OPTS=' /etc/default/otbr-agent
+systemctl cat otbr-agent.service
+cp -a /etc/default/otbr-agent /root/otbr-agent.default.before-txing
+systemctl cat otbr-agent.service >/root/otbr-agent.service.before-txing.txt
+```
+
+From the operator checkout, copy the two repository-owned files to the rig:
+
+```bash
+scp rig/systemd/otbr-agent.service <rig-host>:/tmp/otbr-agent.service
+scp rig/systemd/txing-thread-connectivity.service.d/10-otbr-ordering.conf \
+  <rig-host>:/tmp/10-otbr-ordering.conf
+```
+
+Then, from a writable-root shell on the rig, install and activate them. The
+Thread drop-in uses only `Wants=` and `After=`: the Thread adapter continues
+running and reporting devices offline if OTBR exhausts its restart limit.
+
+```bash
+systemctl stop otbr-agent.service
+install -m 0644 /tmp/otbr-agent.service \
+  /etc/systemd/system/otbr-agent.service
+install -d -m 0755 \
+  /etc/systemd/system/txing-thread-connectivity.service.d
+install -m 0644 /tmp/10-otbr-ordering.conf \
+  /etc/systemd/system/txing-thread-connectivity.service.d/10-otbr-ordering.conf
+systemctl daemon-reload
+systemctl enable --now otbr-agent.service
+systemctl restart txing-thread-connectivity.service
+```
+
+Confirm that systemd tracks a running process rather than an exited start
+wrapper, then verify Thread and SRP readiness:
+
+```bash
+systemctl show otbr-agent.service \
+  -p FragmentPath -p ActiveState -p SubState -p MainPID -p NRestarts
+main_pid="$(systemctl show otbr-agent.service -p MainPID --value)"
+test "$main_pid" -gt 0
+ps -p "$main_pid" -o pid=,comm=,args=
+ot-ctl state
+ot-ctl srp server service
+```
+
+The unit retries unexpected failures after 10 seconds and permits at most five
+starts in five minutes. Verify automatic recovery during a maintenance window
+by killing only the tracked process; do not use `systemctl stop`, because an
+operator stop intentionally stays stopped:
+
+```bash
+before="$(systemctl show otbr-agent.service -p NRestarts --value)"
+systemctl kill --kill-whom=main --signal=SIGKILL otbr-agent.service
+sleep 15
+systemctl show otbr-agent.service \
+  -p ActiveState -p SubState -p MainPID -p NRestarts
+after="$(systemctl show otbr-agent.service -p NRestarts --value)"
+test "$after" -gt "$before"
+ot-ctl state
+ot-ctl srp server service
+```
+
+Confirm manual-stop behavior separately. The restart counter must not change
+while the unit is deliberately stopped:
+
+```bash
+before="$(systemctl show otbr-agent.service -p NRestarts --value)"
+systemctl stop otbr-agent.service
+sleep 15
+! systemctl is-active --quiet otbr-agent.service
+after="$(systemctl show otbr-agent.service -p NRestarts --value)"
+test "$after" -eq "$before"
+systemctl start otbr-agent.service
+ot-ctl state
+```
+
+To validate the persistent-failure bound, use a temporary systemd override in
+a maintenance window. This intentionally takes Thread offline for about one
+minute; remove the override before resetting and starting the service:
+
+```bash
+install -d -m 0755 /etc/systemd/system/otbr-agent.service.d
+printf '%s\n' '[Service]' 'ExecStart=' 'ExecStart=/bin/false' \
+  >/etc/systemd/system/otbr-agent.service.d/failure-test.conf
+systemctl daemon-reload
+systemctl reset-failed otbr-agent.service
+systemctl restart otbr-agent.service || true
+sleep 55
+systemctl is-failed otbr-agent.service
+systemctl show otbr-agent.service -p ActiveState -p SubState -p NRestarts
+rm /etc/systemd/system/otbr-agent.service.d/failure-test.conf
+systemctl daemon-reload
+systemctl reset-failed otbr-agent.service
+systemctl start otbr-agent.service
+ot-ctl state
+```
+
+### Rollback
+
+Rollback restores the package's generated SysV unit and removes only the two
+repository-owned service files. The original `/etc/init.d/otbr-agent` and
+`/etc/default/otbr-agent` remain unchanged throughout rollout.
+
+```bash
+systemctl disable --now otbr-agent.service
+rm /etc/systemd/system/otbr-agent.service
+rm /etc/systemd/system/txing-thread-connectivity.service.d/10-otbr-ordering.conf
+systemctl daemon-reload
+systemctl reset-failed otbr-agent.service
+systemctl start otbr-agent.service
+systemctl restart txing-thread-connectivity.service
+systemctl status --no-pager -l otbr-agent.service \
+  txing-thread-connectivity.service
+ot-ctl state
+```
+
 Write the systemd units manually:
 
 ```ini
@@ -345,8 +488,8 @@ WantedBy=rig-daemon.target
 Description=Txing Thread connectivity
 PartOf=rig-daemon.target
 Requires=txing-sparkplug-manager.service
-Wants=network-online.target systemd-time-wait-sync.service
-After=txing-sparkplug-manager.service network-online.target systemd-time-wait-sync.service time-sync.target
+Wants=network-online.target systemd-time-wait-sync.service otbr-agent.service
+After=txing-sparkplug-manager.service network-online.target systemd-time-wait-sync.service time-sync.target otbr-agent.service
 
 [Service]
 Type=simple
