@@ -355,6 +355,29 @@ scp rig/systemd/txing-thread-connectivity.service.d/10-otbr-ordering.conf \
 Then, from a writable-root shell on the rig, install and activate them. The
 Thread drop-in uses only `Wants=` and `After=`: the Thread adapter continues
 running and reporting devices offline if OTBR exhausts its restart limit.
+Define this bounded readiness helper in the maintenance shell first. A
+successful `systemctl start` confirms only that the foreground process was
+launched; the control socket and attached Thread role can take longer.
+
+```bash
+wait_for_otbr() {
+  attempt=0
+  while [ "$attempt" -lt 24 ]; do
+    otbr_state="$(ot-ctl state 2>&1 || true)"
+    otbr_role="$(printf '%s\n' "$otbr_state" | sed -n '1p')"
+    case "$otbr_role" in
+      leader|router|child)
+        printf 'OTBR ready: %s\n' "$otbr_role"
+        return 0
+        ;;
+    esac
+    attempt=$((attempt + 1))
+    sleep 5
+  done
+  printf 'OTBR did not become ready: %s\n' "$otbr_state" >&2
+  return 1
+}
+```
 
 ```bash
 systemctl stop otbr-agent.service
@@ -367,6 +390,7 @@ install -m 0644 /tmp/10-otbr-ordering.conf \
 systemctl daemon-reload
 systemctl enable --now otbr-agent.service
 systemctl restart txing-thread-connectivity.service
+wait_for_otbr
 ```
 
 Confirm that systemd tracks a running process rather than an exited start
@@ -395,6 +419,7 @@ systemctl show otbr-agent.service \
   -p ActiveState -p SubState -p MainPID -p NRestarts
 after="$(systemctl show otbr-agent.service -p NRestarts --value)"
 test "$after" -gt "$before"
+wait_for_otbr
 ot-ctl state
 ot-ctl srp server service
 ```
@@ -410,6 +435,7 @@ sleep 15
 after="$(systemctl show otbr-agent.service -p NRestarts --value)"
 test "$after" -eq "$before"
 systemctl start otbr-agent.service
+wait_for_otbr
 ot-ctl state
 ```
 
@@ -431,23 +457,29 @@ rm /etc/systemd/system/otbr-agent.service.d/failure-test.conf
 systemctl daemon-reload
 systemctl reset-failed otbr-agent.service
 systemctl start otbr-agent.service
+wait_for_otbr
 ot-ctl state
 ```
 
 ### Rollback
 
 Rollback restores the package's generated SysV unit and removes only the two
-repository-owned service files. The original `/etc/init.d/otbr-agent` and
+repository-owned service files. Remove the native unit's enablement symlink
+directly instead of calling `systemctl disable`: systemd synchronizes that
+operation to the SysV script and would also disable its legacy boot
+registration. The original `/etc/init.d/otbr-agent`, its runlevel links, and
 `/etc/default/otbr-agent` remain unchanged throughout rollout.
 
 ```bash
-systemctl disable --now otbr-agent.service
+systemctl stop otbr-agent.service
+rm -f /etc/systemd/system/multi-user.target.wants/otbr-agent.service
 rm /etc/systemd/system/otbr-agent.service
 rm /etc/systemd/system/txing-thread-connectivity.service.d/10-otbr-ordering.conf
 systemctl daemon-reload
 systemctl reset-failed otbr-agent.service
 systemctl start otbr-agent.service
 systemctl restart txing-thread-connectivity.service
+wait_for_otbr
 systemctl status --no-pager -l otbr-agent.service \
   txing-thread-connectivity.service
 ot-ctl state

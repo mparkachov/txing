@@ -70,17 +70,22 @@ func TestRigDocumentationCoversManualOTBRRolloutAndRollback(t *testing.T) {
 		"/etc/default/otbr-agent",
 		"rig/systemd/otbr-agent.service",
 		"10-otbr-ordering.conf",
+		"wait_for_otbr()",
+		"leader|router|child",
 		"systemctl show otbr-agent.service",
 		"systemctl kill --kill-whom=main --signal=SIGKILL otbr-agent.service",
 		"! systemctl is-active --quiet otbr-agent.service",
 		"systemctl reset-failed otbr-agent.service",
-		"systemctl disable --now otbr-agent.service",
+		"rm -f /etc/systemd/system/multi-user.target.wants/otbr-agent.service",
 		"### Rollback",
 		"ot-ctl srp server service",
 	} {
 		if !strings.Contains(docs, required) {
 			t.Fatalf("rig documentation is missing %q", required)
 		}
+	}
+	if strings.Contains(docs, "systemctl disable --now otbr-agent.service") {
+		t.Fatal("rollback must not disable the SysV otbr-agent boot registration")
 	}
 }
 
