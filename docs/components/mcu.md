@@ -85,10 +85,13 @@ over Thread, and no Matter/CHIP stack.
   identify a causal or safe corrective change; its isolated patches and profile
   were removed on 2026-07-20.
   All power figures recorded before 2026-07-20 are invalid because the meter
-  was in AC-current mode. Use only DC-current measurements with USB
-  disconnected, and record the OTBR child `R` flag and `QMsgCnt` alongside each
-  result. Latest DC observations were approximately `16-20 mA` in both SED
-  `n` and receiver-on `rn` states, so no low-current conclusion is accepted.
+  was in AC-current mode. A 2026-09-20 final-release measurement used an
+  external DC fixture at a displayed 3.288 V with the device USB connector
+  unplugged. REDCON `4` with the board LED off drew 21.60 mA / 71.02 mW;
+  REDCON `3` with the LED on drew 23.20 mA / 76.28 mW. The 1.60 mA / 5.26 mW
+  difference is approximately 7.4%. The REDCON `4` result is rejected as too
+  high for the intended low-current behavior. No `power-nrf` comparison or
+  further current-consumption investigation is planned from this result.
 - REDCON: only levels `3` and `4`, with D1 as the active-high controlled output
   and the board LED following the same state. The final release and `sed-debug`
   use a live Thread link-mode policy: REDCON `3` requests receiver-on MTD

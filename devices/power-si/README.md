@@ -7,6 +7,15 @@ and power-shadow behavior as `power`, but uses Thread instead of BLE.
 This device type is Thread-only. Matter commissioning, clusters, and fabrics are
 out of scope for this milestone.
 
+## Status: Functional, Rejected for Low-Current Use
+
+Thread SED, SRP, indirect delivery, REDCON `4` to `3` to `4`, outputs, and
+Office control are functionally validated. The final release nevertheless drew
+`21.60 mA` at REDCON `4` on the 2026-09-20 DC measurement, which the operator
+rejects as too high for the intended low-current behavior. No `power-nrf`
+comparison or further current-consumption investigation is planned. The exact
+measurement record is preserved below.
+
 ## Contract
 
 - Capabilities: `sparkplug`, `thread`, `power`
@@ -285,15 +294,34 @@ design evidence. Those observations are retained in TASK-21.5 history for
 traceability only. No conclusion about UART pins, queued Thread traffic, or
 idle SED current may be drawn from them.
 
-The subsequent DC-current investigation remains inconclusive. The functional
-SED profile registered SRP, remained an OTBR child with `R=0`, and delivered
-queued traffic at the expected bounded latency. The temporary PM/RAIL/ACK
-diagnostics confirmed multi-second EM2 residency, but also observed transient
-HF-clock-preservation requests and radio activity without identifying a causal
-or safe corrective change. Those isolated diagnostic patches and the
-`sed-pm-debug` profile were removed on 2026-07-20. The latest DC multimeter
-observations were approximately `16-20 mA` in both SED `n` and receiver-on
-`rn` states, so no low-current acceptance claim is made.
+The subsequent DC-current investigation did not identify a causal or safe
+corrective change. The functional SED profile registered SRP, remained an OTBR
+child with `R=0`, and delivered queued traffic at the expected bounded latency.
+Temporary PM/RAIL/ACK diagnostics confirmed multi-second EM2 residency, but
+also observed transient HF-clock-preservation requests and radio activity
+without identifying their owner. Those isolated diagnostic patches and the
+`sed-pm-debug` profile were removed on 2026-07-20. The approximately `16-20 mA`
+DC observations from that investigation are retained as history but are
+superseded by the final-release measurement below.
+
+### Final Release Current Result (2026-09-20)
+
+The operator measured the stock-upstream final release through an external DC
+measurement fixture at a displayed `3.288 V`, with the device USB connector
+unplugged:
+
+| State | Current | Power |
+| --- | ---: | ---: |
+| REDCON `4`, board LED off | `21.60 mA` | `71.02 mW` |
+| REDCON `3`, board LED on | `23.20 mA` | `76.28 mW` |
+
+REDCON `3` therefore drew `1.60 mA` (`5.26 mW`, approximately `7.4%`) more
+than REDCON `4` at the displayed operating point. These photographs capture
+individual displayed readings rather than a time-resolved or long-window
+average, but the REDCON `4` result is already too high for the intended
+low-current behavior. It is rejected as a low-current result. No comparative
+`power-nrf` measurement or further current-consumption investigation is
+planned from this result.
 
 ## Manual Flashing
 
@@ -590,6 +618,10 @@ regressed. The OTBR counters and indirect-delivery result are the acceptance
 signal.
 
 ## Release Current and Battery Measurement
+
+The final current result and stop decision are recorded above. The following
+procedure is retained only to make the measurement conditions reproducible; it
+does not represent pending `power-nrf` comparison work.
 
 Use current measurement only after the final release image proves the device can
 attach, register SRP, and settle as `ot mode=n`. Build the release image if the
