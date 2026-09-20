@@ -70,21 +70,15 @@ over Thread, and no Matter/CHIP stack.
   release and `sed-debug` profiles enable a bounded SED-only recovery policy:
   each makes at most three SED retries after loss and never restores receiver-on
   mode. Ordinary debug retains the one-time receiver-on fallback for diagnosis.
-  The final release and `sed-debug` profiles temporarily apply one isolated downstream
-  candidate to the owning Silabs HAL checkout for the build only: an encrypted
-  empty CCM message with a MIC derives its tag from B0 and formatted AAD with the
-  existing RadioAES ECB primitive instead of the empty-payload CCM DMA
-  descriptor. The candidate leaves the stock `IEEE802154_HW_TX_SEC` path,
-  normal driver behavior, post-processing of emitted MICs, and retry behavior
-  unchanged. It contains no logging and remains a downstream candidate until
-  upstream accepts an equivalent fix.
-  Hardware validation of the candidate shows accepted 5000 ms SED Data Polls,
-  `RxErrSec: 0` after a fresh OTBR counter reset, active SRP, and successful
-  queued indirect ICMPv6 delivery. The final release is the production SED
-  path; it applies the candidate only during the build and leaves upstream
-  sources unchanged afterward. Ordinary debug remains an unmodified Zephyr
-  diagnostic image. `sed-debug` retains the same candidate and functional
-  overlay with UART, shell, and PM diagnostics. The silent release overlay
+  The shared Zephyr `main` workspace includes the upstream Silabs EFR32 SED fix
+  from Zephyr PR #118866 (`a9f12d7490351c3ff45733e5a94fe6c7e63ac808`). All
+  profiles build stock Zephyr and `hal_silabs` sources with no downstream radio
+  patch. XIAO MG24 validation with the stock debug profile shows accepted
+  5000 ms SED Data Polls, `RxErrSec: 0` after a fresh OTBR counter reset, active
+  SRP, successful queued indirect ICMPv6 delivery with no packet loss, and
+  successful Office REDCON `4` to `3` to `4` control. Ordinary debug remains a
+  Zephyr diagnostic image. `sed-debug` retains the functional overlay with UART,
+  shell, and PM diagnostics. The silent release overlay
   disables console, shell, logging, and application diagnostics while retaining
   the validated SED behavior. A temporary PM,
   RAIL, and ACK diagnostic experiment confirmed EM2 residency but did not

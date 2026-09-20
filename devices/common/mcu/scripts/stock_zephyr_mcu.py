@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 import shutil
@@ -67,7 +66,6 @@ POWER_SI_REQUIRED_BLOBS = (
     / "build"
     / "gcc"
     / "cortex-m33"
-    / "cmake"
     / "sl-openthread-library"
     / "Release"
     / "libsl_openthread.a",
@@ -80,10 +78,6 @@ POWER_SI_REQUIRED_BLOBS = (
     / "librail_release"
     / "librail_efr32xg24_gcc_release.a",
 )
-@dataclass(frozen=True)
-class IsolatedPatch:
-    checkout: Path
-    patch: Path
 
 
 @dataclass(frozen=True)
@@ -93,17 +87,9 @@ class BuildProfile:
     debug_conf: bool = False
     sed_debug_conf: bool = False
     release_conf: bool = False
-    use_silabs_ccm_candidate: bool = False
     force_pristine: bool = False
 
 
-POWER_SI_SILABS_CCM_PATCH_ENV = "TXING_POWER_SI_SILABS_CCM_PATCH"
-POWER_SI_SILABS_CCM_PATCHES = (
-    IsolatedPatch(
-        HAL_SILABS_DIR,
-        COMMON_MCU_DIR / "patches" / "silabs-radioaes-zero-length-ccm.patch",
-    ),
-)
 BUILD_PROFILES = {
     profile.name: profile
     for profile in (
@@ -114,7 +100,6 @@ BUILD_PROFILES = {
             build_suffix="-sed-debug",
             debug_conf=True,
             sed_debug_conf=True,
-            use_silabs_ccm_candidate=True,
             force_pristine=True,
         ),
     )
@@ -125,7 +110,6 @@ POWER_SI_RELEASE_PROFILE = BuildProfile(
     "release",
     sed_debug_conf=True,
     release_conf=True,
-    use_silabs_ccm_candidate=True,
     force_pristine=True,
 )
 
@@ -484,10 +468,6 @@ def ensure_power_si_blobs() -> None:
         )
 
 
-def env_flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def build_profile(device: str, *, profile: str = "release", debug: bool = False) -> BuildProfile:
     if debug:
         if profile != "release":
@@ -506,89 +486,7 @@ def build_profile(device: str, *, profile: str = "release", debug: bool = False)
         selected = POWER_NRF_RELEASE_PROFILE
     if device in ("power-nrf", "tbot") and selected.name == "sed-debug":
         selected = POWER_NRF_SED_DEBUG_PROFILE
-    if selected.use_silabs_ccm_candidate and device != "power-si":
-        fail(f"{selected.name} is only supported for power-si")
     return selected
-
-
-def checkout_status(checkout: Path) -> str:
-    return run(
-        ["git", "status", "--porcelain"],
-        cwd=checkout,
-        env=local_env(),
-        capture=True,
-    ).stdout.strip()
-
-
-def isolated_patches_for_device(
-    device: str, *, profile: str = "release", debug: bool = False
-) -> tuple[IsolatedPatch, ...]:
-    selected = build_profile(device, profile=profile, debug=debug)
-    patches: list[IsolatedPatch] = []
-    if device == "power-si" and (
-        selected.use_silabs_ccm_candidate
-        or env_flag(POWER_SI_SILABS_CCM_PATCH_ENV)
-    ):
-        patches.extend(POWER_SI_SILABS_CCM_PATCHES)
-    return tuple(patches)
-
-
-@contextmanager
-def applied_isolated_patches(patches: tuple[IsolatedPatch, ...]):
-    if not patches:
-        yield
-        return
-
-    for patch in patches:
-        if not patch.checkout.is_dir():
-            fail(f"missing isolated patch checkout: {patch.checkout}")
-        if not patch.patch.exists():
-            fail(f"missing isolated patch: {patch.patch}")
-
-    checked_roots: set[Path] = set()
-    for patch in patches:
-        if patch.checkout in checked_roots:
-            continue
-        checked_roots.add(patch.checkout)
-        status = checkout_status(patch.checkout)
-        if status:
-            fail(
-                "refusing to apply isolated patch to dirty checkout: "
-                f"{patch.checkout}. Clean the checkout or reverse any interrupted patch first."
-            )
-
-    log("applying isolated build patch(es); stock sources remain unchanged after the build")
-    applied: list[IsolatedPatch] = []
-    try:
-        for patch in patches:
-            run(
-                ["git", "apply", "--check", patch.patch],
-                cwd=patch.checkout,
-                env=local_env(),
-            )
-            run(["git", "apply", patch.patch], cwd=patch.checkout, env=local_env())
-            applied.append(patch)
-        yield
-    finally:
-        log("reversing isolated build patch(es)")
-        for patch in reversed(applied):
-            reverse_check = subprocess.run(
-                ["git", "apply", "--reverse", "--check", str(patch.patch)],
-                cwd=patch.checkout,
-                env=local_env(),
-                text=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if reverse_check.returncode == 0:
-                run(["git", "apply", "--reverse", patch.patch], cwd=patch.checkout, env=local_env())
-            else:
-                fail(f"could not reverse isolated patch automatically: {patch.patch}")
-
-        for checkout in checked_roots:
-            status = checkout_status(checkout)
-            if status:
-                fail(f"checkout is dirty after reversing isolated patch: {checkout}")
 
 
 def verify_workspace() -> None:
@@ -805,32 +703,29 @@ def build(device: str, *, debug: bool = False, profile: str = "release") -> None
         cmake_args.append(
             "-DEXTRA_CONF_FILE=" + ";".join(str(path) for path in extra_conf_files)
         )
-    with applied_isolated_patches(
-        isolated_patches_for_device(device, profile=selected.name)
-    ):
-        run(
-            west_command()
-            + [
-                "-z",
-                ZEPHYR_BASE,
-                "build",
-                "-p",
-                (
-                    "always"
-                    if selected.force_pristine
-                    else pristine_mode(device, profile=selected.name)
-                ),
-                "-b",
-                config.board,
-                app_dir(device),
-                "-d",
-                build_dir(device, profile=selected.name),
-                "--",
-            ]
-            + cmake_args,
-            cwd=WORKSPACE_DIR,
-            env=local_env(),
-        )
+    run(
+        west_command()
+        + [
+            "-z",
+            ZEPHYR_BASE,
+            "build",
+            "-p",
+            (
+                "always"
+                if selected.force_pristine
+                else pristine_mode(device, profile=selected.name)
+            ),
+            "-b",
+            config.board,
+            app_dir(device),
+            "-d",
+            build_dir(device, profile=selected.name),
+            "--",
+        ]
+        + cmake_args,
+        cwd=WORKSPACE_DIR,
+        env=local_env(),
+    )
     hex_file = firmware_hex(device, profile=selected.name)
     if not hex_file.exists():
         fail(f"build completed, but no expected firmware HEX was created: {hex_file}")

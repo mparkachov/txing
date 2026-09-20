@@ -239,40 +239,25 @@ S2 default currently sets it to `0`, which can break rx-off data-poll responses.
 Rig Thread REDCON commands remain synchronous; the default rig CoAP timeout is
 `12000 ms` so a command can wait for one sleepy poll window plus network jitter.
 
-Current XIAO MG24 SED hardware evidence shows stock Zephyr/Silabs hardware MAC
-TX security fails the secured zero-payload sleepy MAC Data Request path, so the
-child does not receive the indirect response it needs to remain attached. A
-hardware ACK with the frame-pending bit is not proof that the parent accepted
-the Thread MAC security: the radio can send that ACK before the parent evaluates
-the packet. The final release and `sed-debug` apply one isolated patch to the
-owning Silabs HAL checkout only while building, then reverse it before the build
-exits. The candidate bypasses the
-RadioAES CCM dummy-payload descriptor only for encrypted empty messages with a
-MIC. It builds the empty-message CCM tag from B0 and formatted AAD with the
-existing RadioAES ECB primitive. It preserves hardware TX security and makes no
-change to the IEEE 802.15.4 driver, post-processing of emitted MICs, retry state,
-frame counters, decryption, CCM-star messages without a tag, or nonempty
-payloads. It is a focused downstream candidate for upstream review.
+The shared Zephyr `main` workspace includes the upstream Silabs EFR32 SED fix
+from [Zephyr PR #118866](https://github.com/zephyrproject-rtos/zephyr/pull/118866)
+(`a9f12d7490351c3ff45733e5a94fe6c7e63ac808`). All firmware profiles now build
+the stock Zephyr and `hal_silabs` sources; no downstream radio patch is applied.
 
-Hardware validation of the candidate completed on XIAO MG24: after the SED
-transition, fresh OTBR counters recorded accepted five-second Data Polls with
-`RxErrSec: 0`; three queued ICMPv6 requests were delivered and replied to
-within the 10-second test timeout; and the device remained `child` in `ot mode
-n` with a `5000 ms` poll period. The same validated SED path is now the final
-release image. The candidate remains a focused downstream change until upstream
-accepts an equivalent fix.
+Hardware validation of the upstream fix completed on XIAO MG24 with the stock
+debug profile. After the SED transition, fresh OTBR counters recorded 13
+accepted five-second Data Polls with `RxErrSec: 0`; three queued ICMPv6 requests
+were delivered and replied to with no packet loss; the device remained `child`
+in `ot mode n` with a `5000 ms` poll period and an active SRP service; and Office
+successfully drove REDCON `4` to `3` to `4`.
 
 ### Firmware Profiles
 
 | Profile | Command | Source and runtime policy | Intended use |
 | --- | --- | --- | --- |
-| Release | `just power-si::mcu::build` | Validated SED overlay and isolated RadioAES candidate, applied only during the build; REDCON `3` requests receiver-on `rn` and REDCON `4` returns to sleepy `n`; console, shell, logging, and application diagnostics disabled; on-demand PD3/PD4 battery sampling enabled. | Final product firmware and Office/LED REDCON acceptance. |
-| Debug | `just power-si::mcu::build-debug` | Unmodified stock Zephyr with UART, shell, and OpenThread diagnostics; ordinary receiver-on recovery remains available. | General firmware and Thread diagnosis. |
-| SED debug | `just power-si::mcu::build-sed-debug` | Isolated RadioAES candidate applied only for the build; UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, bounded requested-link recovery, and REDCON 3/4 `rn`/`n` link-policy testing. | SED functional, recovery, indirect-delivery, and active-power link-policy diagnosis. |
-
-The release and `sed-debug` profiles reverse the candidate patch before the
-build helper exits, so the shared Zephyr and Silabs HAL checkouts remain stock
-after every build.
+| Release | `just power-si::mcu::build` | Stock Zephyr with the validated SED overlay; REDCON `3` requests receiver-on `rn` and REDCON `4` returns to sleepy `n`; console, shell, logging, and application diagnostics disabled; on-demand PD3/PD4 battery sampling enabled. | Final product firmware and Office/LED REDCON acceptance. |
+| Debug | `just power-si::mcu::build-debug` | Stock Zephyr with UART, shell, and OpenThread diagnostics; ordinary receiver-on recovery remains available. | General firmware and Thread diagnosis. |
+| SED debug | `just power-si::mcu::build-sed-debug` | Stock Zephyr with UART/shell, Zephyr PM, tickless idle, PM transition diagnostics, bounded requested-link recovery, and REDCON 3/4 `rn`/`n` link-policy testing. | SED functional, recovery, indirect-delivery, and active-power link-policy diagnosis. |
 
 Build a serial/shell functional SED test image:
 
@@ -428,23 +413,11 @@ The SED debug HEX is:
 devices/power-si/mcu/build/zephyr-xiao_mg24-sed-debug/zephyr/zephyr.hex
 ```
 
-The `sed-debug` profile enables the UART shell and OpenThread logs, and applies
-the isolated RadioAES CCM candidate for this one build. It keeps
-`IEEE802154_HW_TX_SEC` enabled and uses RadioAES ECB only to create the tag for
-an empty encrypted CCM message. The candidate contains no logging, does not
-rewrite emitted frames, and does not change radio TX power. It additionally
-enables the debug-only SED recovery experiment. After the post-SRP transition,
-it retries a persistent lost attachment in the requested link posture: REDCON
-4 retries as SED, while the test-only receiver-on REDCON 3 posture retries as
-receiver-on MTD.
-
-If a candidate build is interrupted before cleanup and the Silabs HAL checkout
-is left dirty, reverse the patch before running normal stock builds:
-
-```bash
-git -C devices/common/mcu/zephyr/modules/hal/silabs apply --reverse \
-  ../../../../patches/silabs-radioaes-zero-length-ccm.patch
-```
+The `sed-debug` profile enables the UART shell and OpenThread logs while using
+the stock upstream Silabs driver. It additionally enables the debug-only SED
+recovery experiment. After the post-SRP transition, it retries a persistent lost
+attachment in the requested link posture: REDCON 4 retries as SED, while the
+test-only receiver-on REDCON 3 posture retries as receiver-on MTD.
 
 To test that image on hardware, flash the SED debug build through the device-owned
 flash target. The flash recipe uses the already-built HEX and does not rebuild,
@@ -571,16 +544,8 @@ The `child table` row for the XIAO MG24 extended MAC must show `R=0`, and the
 `power-si._txing-coap._udp.default.service.arpa.` service must show
 `deleted: false`, port `5683`, and TXT values for `type=power-si` and `pv=1`.
 
-`sed-debug` temporarily applies one isolated downstream HAL candidate while
-building, then reverses it before the build exits. It changes only the Silabs
-RadioAES CCM encryption implementation in `hal_silabs`: an empty message with a
-MIC derives its CCM tag from B0 and formatted AAD with the existing RadioAES ECB
-primitive instead of using the empty-payload CCM DMA descriptor. The candidate
-has no logging and neither rewrites a MIC, alters retries, nor disables hardware
-TX security. Normal `build` and `build-debug` images use unmodified stock
-sources.
-
-Use the candidate image to copy the device address from the SRP service output,
+All profiles use the upstream Silabs EFR32 driver fix. Use the SED debug image to
+copy the device address from the SRP service output,
 reset the parent MAC counters, and send traffic from the OTBR to the sleeping
 child. The `10` second ping timeout covers two 5000 ms poll periods:
 
@@ -620,22 +585,21 @@ device `ot state` and `ot mode` commands and the OTBR child/SRP checks. The
 device must remain `child` in mode `n`, the parent row must remain `R=0`, and
 the SRP service must remain `deleted: false`. An unexpected switch to requested
 mode `rn`, a SED-recovery exhaustion log in `sed-debug`, a missing child, an
-increasing `RxErrSec`, or failed indirect pings means this candidate does not
-fix the SED path. The OTBR counters and indirect-delivery result are the
-acceptance signal. A successful run remains a downstream candidate until the
-owning upstream accepts an equivalent fix.
+increasing `RxErrSec`, or failed indirect pings means the SED path has
+regressed. The OTBR counters and indirect-delivery result are the acceptance
+signal.
 
 ## Release Current and Battery Measurement
 
 Use current measurement only after the final release image proves the device can
 attach, register SRP, and settle as `ot mode=n`. Build the release image if the
-firmware, Zephyr workspace, or candidate patch changes:
+firmware or Zephyr workspace changes:
 
 ```bash
 just power-si::mcu::build
 ```
 
-Flash the already-built candidate image manually:
+Flash the already-built release image manually:
 
 ```bash
 just power-si::mcu::flash
@@ -643,7 +607,7 @@ just power-si::mcu::flash
 
 The final release loads `sed-debug.conf` before its silent release overlay, so
 it shares the same receiver-on SRP bootstrap, SED recovery, REDCON 3/4
-link-mode policy, and RadioAES candidate as `sed-debug`. It keeps the serial
+link-mode policy, and upstream radio driver as `sed-debug`. It keeps the serial
 driver baseline but does not enable a console, shell, UART logging, OpenThread
 diagnostics, or PM transition logging. Its additional functional path is
 on-demand battery sampling. PD3 is inactive between requests; a CoAP state or
