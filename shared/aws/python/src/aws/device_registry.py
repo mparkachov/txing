@@ -463,7 +463,7 @@ class AwsDeviceRegistry:
         rig_name: str,
     ) -> bool:
         initialized = False
-        for shadow_name in capabilities:
+        for shadow_name in dict.fromkeys((*capabilities, *manifest.shadows)):
             if shadow_name == "sparkplug":
                 payload = json.dumps(
                     build_offline_device_shadow_payload(

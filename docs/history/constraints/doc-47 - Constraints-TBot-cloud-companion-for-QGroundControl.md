@@ -19,9 +19,9 @@ These rules govern the TBot cloud companion described in
 
 - Scope is TBot only. REDCON 2 and 1 are active; REDCON 3, REDCON 4, and
   `DDEATH` require no companion task and no published usable endpoint.
-- The projected `sparkplug` named shadow is lifecycle evidence. The companion
+- The projected `sparkplug` named shadow is lifecycle evidence. The `agent`
   shadow is operational status and must not affect REDCON derivation. Keep rig,
-  witness, board, and companion shadow ownership separate.
+  witness, board, and agent shadow ownership separate.
 - Reuse the existing MAVLink WebRTC channel, `txing.mavlink.v1` data-channel
   label, one-frame-per-message representation, and JSON lease protocol. Do not
   change the board's five-second lease or enable implicit takeover.

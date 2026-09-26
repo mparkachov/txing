@@ -35,6 +35,10 @@ default = "aws/default-mavlink-shadow.json"
 schema = "aws/video-shadow.schema.json"
 default = "aws/default-video-shadow.json"
 
+[shadows.agent]
+schema = "aws/agent-shadow.schema.json"
+default = "aws/default-agent-shadow.json"
+
 [web]
 adapter = "web/tbot-adapter.tsx"
 

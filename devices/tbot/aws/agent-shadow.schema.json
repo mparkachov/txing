@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/tbot-agent-shadow-v1.schema.json",
+  "title": "TBot agent named shadow v1",
+  "description": "Operational status of the TBot cloud companion. This shadow is not a REDCON capability.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task", "endpoint", "mavlink", "video", "lastError"],
+          "properties": {
+            "task": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "id"],
+              "properties": {
+                "status": {"enum": ["stopped", "starting", "ready", "error"]},
+                "id": {"type": ["string", "null"], "minLength": 1}
+              }
+            },
+            "endpoint": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ipv4", "ipv6", "udpPort"],
+              "properties": {
+                "ipv4": {"type": ["string", "null"], "format": "ipv4"},
+                "ipv6": {"type": ["string", "null"], "format": "ipv6"},
+                "udpPort": {"enum": [14550, null]}
+              }
+            },
+            "mavlink": {"enum": ["disconnected", "connecting", "connected", "error"]},
+            "video": {"enum": ["disconnected", "connecting", "connected", "error"]},
+            "lastError": {"type": ["string", "null"], "minLength": 1}
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"task": {"properties": {"status": {"const": "ready"}}}}},
+              "then": {
+                "properties": {
+                  "task": {"properties": {"id": {"type": "string", "minLength": 1}}},
+                  "endpoint": {
+                    "properties": {
+                      "ipv4": {"type": "string", "format": "ipv4"},
+                      "ipv6": {"type": "string", "format": "ipv6"},
+                      "udpPort": {"const": 14550}
+                    }
+                  },
+                  "mavlink": {"const": "connected"}
+                }
+              },
+              "else": {
+                "properties": {
+                  "endpoint": {
+                    "properties": {
+                      "ipv4": {"type": "null"},
+                      "ipv6": {"type": "null"},
+                      "udpPort": {"type": "null"}
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {"properties": {"task": {"properties": {"status": {"const": "stopped"}}}}},
+              "then": {
+                "properties": {
+                  "task": {"properties": {"id": {"type": "null"}}},
+                  "mavlink": {"const": "disconnected"},
+                  "video": {"const": "disconnected"}
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "clientToken": {"type": "string"},
+    "version": {"type": "integer", "minimum": 0},
+    "timestamp": {"type": "integer", "minimum": 0}
+  }
+}

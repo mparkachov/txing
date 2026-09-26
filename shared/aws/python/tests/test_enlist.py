@@ -375,7 +375,7 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertEqual(result["attributes"]["redconCommandLevels"], "4,3,2,1")
         self.assertEqual(
             result["initializedShadows"],
-            ["sparkplug", "thread", "power", "board", "mavlink", "video"],
+            ["sparkplug", "thread", "power", "board", "mavlink", "video", "agent"],
         )
         board_video = result["auxiliaryResources"]["boardVideo"]
         mavlink = result["auxiliaryResources"]["mavlink"]
@@ -390,7 +390,9 @@ class EnlistServiceTests(unittest.TestCase):
 
         thing_name = result["thingName"]
         board_shadow = b'{"state":{"reported":{"preserve":true}}}'
+        agent_shadow = b'{"state":{"reported":{"preserve":true}}}'
         self.runtime.iot_data.shadows[(thing_name, "board")] = board_shadow
+        self.runtime.iot_data.shadows[(thing_name, "agent")] = agent_shadow
         del self.runtime.iot_data.shadows[(thing_name, "mavlink")]
         update_count = len(self.runtime.iot_data.update_calls)
 
@@ -399,7 +401,13 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertFalse(repaired["created"])
         self.assertEqual(repaired["initializedShadows"], ["mavlink"])
         self.assertEqual(self.runtime.iot_data.shadows[(thing_name, "board")], board_shadow)
+        self.assertEqual(self.runtime.iot_data.shadows[(thing_name, "agent")], agent_shadow)
         self.assertEqual(len(self.runtime.iot_data.update_calls), update_count + 1)
+
+        del self.runtime.iot_data.shadows[(thing_name, "agent")]
+        repaired_agent = self._enlist_device(raspi["thingName"], "tbot", "tbot")
+        self.assertEqual(repaired_agent["initializedShadows"], ["agent"])
+        self.assertEqual(self.runtime.iot_data.shadows[(thing_name, "board")], board_shadow)
 
     def test_enlist_cyberbrick_creates_mavlink_shadow_and_independent_signaling_channels(self) -> None:
         town = self._enlist_town()
@@ -543,6 +551,17 @@ class EnlistServiceTests(unittest.TestCase):
         )
         self.assertNotIn(thing_name, self.runtime.iot.things)
         self.assertEqual(result["auxiliaryResources"], {})
+
+    def test_discharge_tbot_deletes_optional_agent_shadow(self) -> None:
+        town = self._enlist_town()
+        raspi = self._enlist_rig(town["thingName"], "raspi", "server")
+        device = self._enlist_device(raspi["thingName"], "tbot", "tbot")
+
+        result = self.service.handle({"action": "dischargeThing", "thingId": device["thingName"]})
+
+        self.assertTrue(result["deleted"])
+        self.assertIn("agent", result["deletedShadows"])
+        self.assertNotIn((device["thingName"], "agent"), self.runtime.iot_data.shadows)
 
     def test_discharge_all_deletes_devices_then_rigs_then_towns_with_paginated_search(self) -> None:
         self.runtime.iot.search_page_size = 1

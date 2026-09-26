@@ -102,13 +102,21 @@ just aws::deploy-device "$RIG_THING_ID" tbot "$TBOT_DEVICE_NAME"
 just aws::cert "$THING_ID"
 ```
 
-Re-enlistment preserves existing named-shadow payloads and creates only a
-missing `mavlink` shadow. The fresh daemon certificate policy grants master
+Re-enlistment preserves existing named-shadow payloads and creates missing
+`mavlink` and `agent` shadows. The fresh daemon certificate policy grants master
 access to exactly `<thing>-board-video` and `<thing>-mavlink`; Office retains
 viewer-only Kinesis Video permissions. After the runtime is proven in service,
 an operator must manually delete the legacy named `mcp` shadow. Do not remove
 it before the MAVLink runtime cutover is verified, and no deploy or enlistment
 operation deletes it automatically.
+
+The cloud companion adds an optional `agent` named shadow outside the REDCON
+capability list. After publishing the updated shared AWS catalog and enlistment
+Lambda, re-enlist the existing TBot with the `aws::deploy-device` command above.
+This creates a missing `agent` shadow without replacing an existing one. Publish
+the Office update through its normal Git-driven site release to inspect this
+shadow in TBot Debug; its absence does not block normal device use. The cloud
+companion task and lifecycle automation are deployed in later milestone steps.
 
 TBot uses the shared board daemon and KVS master with TBot-derived MAVLink
 identities. ArduPilot exclusively owns the DRV8835; `txing-tbot-mavlink` owns

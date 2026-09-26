@@ -107,6 +107,12 @@ type ShadowSnapshotView = {
   json: string
   updatedAtMs: number
 }
+type AgentShadowView = {
+  thingName: string
+  status: 'loading' | 'ready' | 'missing' | 'error'
+  json: string
+  error: string
+}
 type RigCatalogState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
   rigs: RigCatalogItem[]
@@ -293,6 +299,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
+  const [agentShadowView, setAgentShadowView] = useState<AgentShadowView | null>(null)
   const [isTakingMcpControl, setIsTakingMcpControl] = useState(false)
   const [isTownPanelOpen, setIsTownPanelOpen] = useState(false)
   const [isRigPanelOpen, setIsRigPanelOpen] = useState(false)
@@ -639,6 +646,48 @@ function App({ initialAuthError = '' }: AppProps) {
     setAuthUser(getAuthUser(refreshedTokens))
     return refreshedTokens.idToken
   }, [])
+
+  useEffect(() => {
+    const thingName = activeShadowTarget?.thingName
+    if (!isDebugEnabled || currentThingTypeName !== 'tbot' || !thingName) {
+      return
+    }
+    let cancelled = false
+    let running = false
+    setAgentShadowView({ thingName, status: 'loading', json: '', error: '' })
+    const refresh = async (): Promise<void> => {
+      if (running) return
+      running = true
+      try {
+        const shadow = await getThingNamedShadow(resolveSessionIdToken, thingName, 'agent')
+        if (!cancelled) {
+          setAgentShadowView({
+            thingName,
+            status: 'ready',
+            json: JSON.stringify(shadow, null, 2),
+            error: '',
+          })
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAgentShadowView({
+            thingName,
+            status: isResourceNotFoundError(error) ? 'missing' : 'error',
+            json: '',
+            error: formatThingShadowReadError(error, thingName, 'agent'),
+          })
+        }
+      } finally {
+        running = false
+      }
+    }
+    void refresh()
+    const intervalId = window.setInterval(() => { void refresh() }, 5_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [activeShadowTarget?.thingName, currentThingTypeName, isDebugEnabled, resolveSessionIdToken])
 
   const refreshRouteSparkplugShadow = useCallback(
     async (thingName: string): Promise<unknown | null> => {
@@ -2326,6 +2375,11 @@ function App({ initialAuthError = '' }: AppProps) {
 
         {isDebugEnabled && activeShadowTarget !== null && (
           <DebugPanel
+            agentShadow={currentThingTypeName === 'tbot' && agentShadowView?.thingName === activeShadowTarget.thingName
+              ? agentShadowView
+              : currentThingTypeName === 'tbot'
+                ? { status: 'loading', json: '', error: '' }
+                : undefined}
             canLoadShadow={canLoadShadow}
             deviceDiagnostics={deviceDebugDiagnostics}
             lastShadowUpdateLabel={lastShadowUpdateLabel}

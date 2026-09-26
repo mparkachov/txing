@@ -397,7 +397,7 @@ class DeviceRegistryTests(unittest.TestCase):
         self.assertEqual(registration.thing_name, "tbot-tbot01")
         self.assertEqual(
             sorted(shadow_name for _thing_name, shadow_name in runtime.iot_data.shadows),
-            ["board", "mavlink", "power", "sparkplug", "thread", "video"],
+            ["agent", "board", "mavlink", "power", "sparkplug", "thread", "video"],
         )
         self.assertEqual(
             runtime.kinesisvideo.channels,

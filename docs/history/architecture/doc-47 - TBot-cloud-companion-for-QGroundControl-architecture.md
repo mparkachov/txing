@@ -79,12 +79,13 @@ new arm request is required to regain control after release.
 
 ## Shadow and Office contract
 
-The controller and companion own a separate TBot `companion` named shadow. Its
+The controller and companion own a separate TBot `agent` named shadow. Its
 reported state distinguishes `stopped`, `starting`, `ready`, and `error` task
 states; has nullable IPv4 and IPv6 addresses plus UDP port 14550; carries
 MAVLink and video connection states and a nullable last error. The controller
 owns lifecycle and endpoint fields; the task owns connection fields. Updates
-are fenced by task identity so an old task cannot restore an endpoint after
+are fenced by task identity and version-conditional shadow writes, with a fresh
+identity check after a version conflict, so an old task cannot restore an endpoint after
 replacement. `ready` requires a running task, bound UDP listener, and open
 MAVLink data channel. Stopping, task failure, or lost readiness clears the
 published endpoint. The controller reconciles stale shadow state on every
@@ -92,7 +93,7 @@ event and minute tick.
 
 Office loads this named shadow only for TBot's Debug panel and displays the
 document as diagnostic JSON. It does not expose the endpoint in normal device
-controls, add `companion` to REDCON capability rules, or infer device readiness
+controls, add `agent` to REDCON capability rules, or infer device readiness
 from companion state. Absence of the optional shadow before first deployment
 must not block the normal Office shadow session.
 
@@ -100,7 +101,7 @@ must not block the normal Office shadow session.
 
 Create the ECR repository and companion infrastructure through forward-only
 CloudFormation. Publish a versioned image, set the task definition to its
-digest, provision the optional companion shadow, and only then enable the
+digest, provision the optional `agent` shadow, and only then enable the
 shadow-update trigger. Deploy the Go controller as a release-built runtime
 Lambda. Do not issue AWS mutation commands as part of agent validation; the
 operator performs the documented deployment. No board or firmware flash is

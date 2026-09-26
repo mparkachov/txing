@@ -157,7 +157,7 @@ class TypeCatalogTests(unittest.TestCase):
             },
         )
         self.assertNotIn("redconMetricRules", tbot_record)
-        self.assertEqual(set(tbot_record["shadows"]), {"sparkplug", "thread", "power", "board", "mavlink", "video"})
+        self.assertEqual(set(tbot_record["shadows"]), {"sparkplug", "thread", "power", "board", "mavlink", "video", "agent"})
         self.assertEqual(
             tbot_record["resources"],
             {

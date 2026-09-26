@@ -324,10 +324,14 @@ def _load_shadow_contracts(
     raw_shadows = _require_table(raw, "shadows", manifest_file=manifest_file)
     shadows: dict[str, DeviceShadowContract] = {}
     for shadow_name in capabilities:
-        raw_shadow = raw_shadows.get(shadow_name)
-        if not isinstance(raw_shadow, dict):
+        if shadow_name not in raw_shadows:
             raise DeviceManifestError(
                 f"{manifest_file} is missing required table 'shadows.{shadow_name}'"
+            )
+    for shadow_name, raw_shadow in raw_shadows.items():
+        if not isinstance(raw_shadow, dict):
+            raise DeviceManifestError(
+                f"{manifest_file} table 'shadows.{shadow_name}' must be a table"
             )
         shadows[shadow_name] = DeviceShadowContract(
             name=shadow_name,

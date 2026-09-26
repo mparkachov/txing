@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
 type DebugPanelProps = {
+  agentShadow?: { status: 'loading' | 'ready' | 'missing' | 'error'; json: string; error: string }
   canLoadShadow: boolean
   deviceDiagnostics?: ReactNode
   lastShadowUpdateLabel: string
@@ -22,6 +23,7 @@ const getPowerNodeClass = (power: boolean | null): string => {
 }
 
 function DebugPanel({
+  agentShadow,
   canLoadShadow,
   deviceDiagnostics,
   lastShadowUpdateLabel,
@@ -79,6 +81,24 @@ function DebugPanel({
         readOnly
         spellCheck={false}
       />
+
+      {agentShadow && (
+        <section className="debug-panel-agent-shadow" aria-label="TBot agent shadow">
+          <h2>Agent shadow</h2>
+          {agentShadow.status === 'loading' && <p>Loading agent status…</p>}
+          {agentShadow.status === 'missing' && <p>Agent status has not been initialized.</p>}
+          {agentShadow.status === 'error' && <p>Agent status unavailable: {agentShadow.error}</p>}
+          {agentShadow.status === 'ready' && (
+            <textarea
+              aria-label="Agent shadow JSON"
+              className="editor"
+              value={agentShadow.json}
+              readOnly
+              spellCheck={false}
+            />
+          )}
+        </section>
+      )}
     </section>
   )
 }

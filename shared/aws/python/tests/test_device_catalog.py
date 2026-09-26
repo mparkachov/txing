@@ -80,8 +80,11 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             [contract.name for contract in manifest.shadows.values()],
-            ["sparkplug", "thread", "power", "board", "mavlink", "video"],
+            ["sparkplug", "thread", "power", "board", "mavlink", "video", "agent"],
         )
+        self.assertNotIn("agent", manifest.capabilities)
+        agent_default = json.loads(manifest.load_default_shadow_bytes("agent"))
+        self.assertEqual(agent_default["state"]["reported"]["task"], {"status": "stopped", "id": None})
         self.assertEqual(
             manifest.render_board_video_channel_name(device_id="tbot-a1"),
             "tbot-a1-board-video",
@@ -92,7 +95,7 @@ class DeviceCatalogTests(unittest.TestCase):
             "tbot-a1-mavlink",
         )
         self.assertEqual(manifest.web_adapter, "web/tbot-adapter.tsx")
-        for shadow_name in manifest.capabilities:
+        for shadow_name in manifest.shadows:
             contract = manifest.shadow_contract(shadow_name)
             self.assertIsInstance(json.loads(contract.schema.read_text(encoding="utf-8")), dict)
             self.assertIsInstance(json.loads(contract.default.read_text(encoding="utf-8")), dict)
