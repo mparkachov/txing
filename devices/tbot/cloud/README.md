@@ -166,6 +166,7 @@ From `devices/tbot/cloud`:
 ```sh
 go test -race ./...
 go vet ./...
+go test ./companion -run '^$' -fuzz FuzzMAVLinkBoundaries -fuzztime 5s
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
   -trimpath -o ../../../tmp/tbot-companion-bootstrap \
   ./cmd/txing-tbot-companion-lambda
@@ -200,12 +201,63 @@ At REDCON 2 or 1, a native `txing-tbot-kvs-viewer` process joins
 `<thing>-mavlink` as a KVS **viewer**, opens ordered/reliable
 `txing.mavlink.v1`, and delivers complete binary messages plus JSON lease
 messages to the Go runtime without modifying their bytes. Opening the viewer
-sends no activation, renewal, or MAVLink uplink. The current #156 entry point
-receives/discards these messages as an observer. #157 supplies UDP forwarding
-and the strict arm-triggered lease consumer through the runtime's message/send
-hooks. Until that listener exists, readiness always carries
-`udpListening=false`, and the public endpoint remains unavailable. Keep
-lifecycle activation disabled until #157 and #158 are complete.
+sends no activation, renewal, or MAVLink uplink. The Go bridge binds IPv4 and
+IPv6 UDP 14550 and reports actual listener readiness; both families must bind
+successfully. A task becomes publishable only when that listener and the
+MAVLink data channel are ready. Keep lifecycle activation disabled until #158
+provides the versioned artifacts.
+
+### QGroundControl UDP and lease behavior
+
+The first complete MAVLink 2 datagram selects one source address and port.
+Telemetry reaches that source before control. Other senders cannot transmit,
+renew control, or extend its five-second inactivity deadline. A malformed or
+incomplete datagram selects no source and forwards no partial result. Uplink
+splits valid datagrams into complete frames; downlink requires one frame per
+WebRTC message and sends one frame per UDP datagram. Signed and unfamiliar
+frames retain their original bytes. Unknown incompatibility flags are rejected;
+ordinary forwarding does not impose a MAVLink dialect or validate signatures.
+The flight controller remains the protocol authority.
+
+All pre-arm uplink, including parameter requests, is held back. Only a CRC-valid
+`COMMAND_LONG` or `COMMAND_INT` with `MAV_CMD_COMPONENT_ARM_DISARM` and parameter
+1 equal to 1 requests `control.activate` with `takeover=false`. The original arm
+frame is sent only after the matching successful grant. A busy Office lease
+leaves QGroundControl observing telemetry; only a fresh arm request retries
+acquisition. Pre-arm frames are discarded, never buffered for later replay.
+
+Active control forwards complete frames only from the selected sender and
+renews every two seconds while it remains live. Lease responses must match
+request identity, actor, session and epoch. A one-second acquisition/renewal
+response timeout closes that WebRTC peer using the existing bounded reconnect
+budget; closing also clears a possible unacknowledged board grant. Queued arm
+traffic from before a connection opened cannot acquire its lease.
+
+A CRC-valid disarm frame is forwarded first, then uplink is held until its
+CRC-valid terminal `COMMAND_ACK` or a one-second bound, followed by release.
+An acknowledgment must match the command's target and sender when those IDs
+are present; in-progress or unrelated acknowledgments do not release early.
+Five seconds of selected-sender inactivity releases control and frees the
+source. WebRTC loss and task shutdown also release control; graceful shutdown
+sends release before destroying the worker. A new arm is required after every
+release. If release cannot be delivered over a lost transport, the board's peer
+closure/five-second lease expiry and safe-state policy remain the final boundary.
+
+UDP receive queues are bounded to 64 datagrams, with arrival timestamps so a
+backlog cannot extend inactivity. UDP losses are not retransmitted. Each
+transport send has a 250 ms bound; lease/source deadlines are checked every
+50 ms and before processing messages. Connection/readiness reporting and video
+supervision run independently of this control loop. Large datagrams yield
+between frames so they cannot monopolize lease responses or shutdown.
+
+For manual acceptance, add a QGroundControl UDP link to the live IPv4 address
+in TBot's Office Debug `agent` shadow on port 14550. On a secured lifted TBot,
+verify observer telemetry, arm, motion, disarm, five-second sender loss, WebRTC
+loss, and contention while Office owns control. If QGroundControl cannot send
+arm without pre-arm parameter traffic, stop and revisit the strict arm rule;
+do not acquire control earlier. #159 owns this physical acceptance.
+
+### Independent video and runtime bounds
 
 At REDCON 1, a separate native process joins `<thing>-board-video`. It
 negotiates receive-only H.264 and discards frames in the SDK callback without
@@ -298,8 +350,8 @@ The container build compiles the real viewer and runs the real peer tests on
 Linux. Its final Alpine image runs as UID/GID 10001 and contains only the
 Go runtime, native worker, runtime libraries, and trust anchors. The `local`
 tag is for validation only; #158 owns versioned ECR publication and the
-CloudFormation image digest. Do not enable the AWS lifecycle rules for this
-observer-only build.
+CloudFormation image digest. Keep AWS lifecycle rules disabled until #158
+provides versioned artifacts.
 
 After #157/#158, the operator deploys the immutable image digest and versioned
 controller artifact using the manual stack sequence above, then enables the

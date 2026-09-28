@@ -78,18 +78,22 @@ func (c *fakeCloud) level(level int, death bool) {
 }
 
 type fakeSession struct {
-	mu     sync.Mutex
-	events chan Event
-	closed bool
-	sends  int
+	mu                 sync.Mutex
+	events             chan Event
+	closed             bool
+	sends              int
+	sent               []Event
+	ctx                context.Context
+	closedContextError error
 }
 
 func (s *fakeSession) Events() <-chan Event { return s.events }
-func (s *fakeSession) Send(context.Context, byte, []byte) error {
+func (s *fakeSession) Send(ctx context.Context, kind byte, payload []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sends++
-	return nil
+	s.sent = append(s.sent, Event{kind, append([]byte(nil), payload...)})
+	return ctx.Err()
 }
 func (s *fakeSession) emit(e Event) {
 	s.mu.Lock()
@@ -104,6 +108,9 @@ func (s *fakeSession) Close() error {
 	if !s.closed {
 		close(s.events)
 		s.closed = true
+		if s.ctx != nil {
+			s.closedContextError = s.ctx.Err()
+		}
 	}
 	return nil
 }
@@ -120,7 +127,7 @@ func (f *fakeFactory) Start(ctx context.Context, channel string) (Session, error
 	if f.fail {
 		return nil, errors.New("worker failed")
 	}
-	s := &fakeSession{events: make(chan Event, 256)}
+	s := &fakeSession{events: make(chan Event, 256), ctx: ctx}
 	f.sessions[channel] = append(f.sessions[channel], s)
 	s.events <- Event{'S', []byte("connected")}
 	return s, nil

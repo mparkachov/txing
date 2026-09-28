@@ -1,4 +1,4 @@
-// Package companion manages independent, receive-only KVS viewer sessions.
+// Package companion manages independent KVS viewers and the QGroundControl UDP bridge.
 package companion
 
 import (
@@ -17,7 +17,7 @@ type Event struct {
 	Payload []byte
 }
 
-// Session supports the future UDP/control bridge. The observer runtime never calls Send.
+// Session preserves WebRTC binary/text message boundaries. Opening it grants no control.
 type Session interface {
 	Events() <-chan Event
 	Send(context.Context, byte, []byte) error
@@ -31,7 +31,10 @@ type Cloud interface {
 	Store() agentstatus.Store
 	Readiness(context.Context, controller.Readiness) error
 }
-type Snapshot struct{ MAVLink, Video, LastError string }
+type Snapshot struct {
+	MAVLink, Video, LastError string
+	UDPListening              bool
+}
 type Limits struct{ Poll, Unverified, Negotiate, Report, Shutdown, Backoff, Cooldown, Stable time.Duration }
 
 func DefaultLimits() Limits {
@@ -43,6 +46,7 @@ type Runtime struct {
 	Cloud          Cloud
 	Factory        Factory
 	Limits         Limits
+	Bridge         *UDPBridge
 	// Messages receives binary MAVLink frames and JSON lease envelopes unchanged.
 	// Consumers must drain it; saturation fails only the MAVLink session.
 	Messages chan Event
@@ -67,7 +71,7 @@ func (r *Runtime) Snapshot() Snapshot {
 	if err == "" {
 		err = r.errs["lifecycle"]
 	}
-	return Snapshot{r.states["mavlink"], r.states["video"], err}
+	return Snapshot{MAVLink: r.states["mavlink"], Video: r.states["video"], LastError: err, UDPListening: r.Bridge != nil && r.Bridge.Listening()}
 }
 func (r *Runtime) state(channel, state, message string) {
 	r.mu.Lock()
@@ -92,16 +96,6 @@ func (r *Runtime) Send(ctx context.Context, kind byte, payload []byte) error {
 	}
 	return s.Send(ctx, kind, payload)
 }
-func wait(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
 
 // retryDelay bounds connection churn independently for each viewer.
 func retryDelay(failures int, l Limits) time.Duration {
@@ -112,8 +106,27 @@ func retryDelay(failures int, l Limits) time.Duration {
 }
 func (r *Runtime) supervise(ctx context.Context, channel string) {
 	failures := 0
+	var bridge *UDPBridge
+	var packets <-chan udpPacket
+	var ticks <-chan time.Time
+	var bridgeStop <-chan struct{}
+	ready := make(chan struct{})
+	close(ready)
+	if channel == "mavlink" && r.Bridge != nil {
+		bridge = r.Bridge
+		packets, bridgeStop = bridge.packets, bridge.stop
+		timer := time.NewTicker(bridge.Limits.Tick)
+		defer timer.Stop()
+		ticks = timer.C
+		defer close(bridge.stopped)
+	}
 	defer r.state(channel, "disconnected", "")
 	for ctx.Err() == nil {
+		select {
+		case <-bridgeStop:
+			return
+		default:
+		}
 		r.state(channel, "connecting", "")
 		session, err := r.Factory.Start(ctx, channel)
 		connectedAt := time.Time{}
@@ -125,8 +138,33 @@ func (r *Runtime) supervise(ctx context.Context, channel string) {
 		loop:
 			for {
 				select {
+				case <-bridgeStop:
+					break loop
+				default:
+				}
+				var forwarding <-chan struct{}
+				incoming := packets
+				if bridge != nil && len(bridge.frames) > 0 {
+					forwarding = ready
+					incoming = nil
+				}
+				select {
 				case <-ctx.Done():
 					break loop
+				case <-bridgeStop:
+					break loop
+				case <-forwarding:
+					if err = bridge.forward(time.Now()); err != nil {
+						break loop
+					}
+				case packet := <-incoming:
+					if err = bridge.uplink(packet, time.Now()); err != nil {
+						break loop
+					}
+				case <-ticks:
+					if err = bridge.tick(time.Now()); err != nil {
+						break loop
+					}
 				case <-deadline.C:
 					err = errors.New("viewer negotiation timed out")
 					break loop
@@ -140,6 +178,9 @@ func (r *Runtime) supervise(ctx context.Context, channel string) {
 						if string(e.Payload) == "connected" {
 							if connectedAt.IsZero() {
 								connectedAt = time.Now()
+								if bridge != nil {
+									bridge.attach(session, connectedAt)
+								}
 							}
 							deadline.Stop()
 							r.state(channel, "connected", "")
@@ -155,6 +196,12 @@ func (r *Runtime) supervise(ctx context.Context, channel string) {
 							err = errors.New("unexpected video data channel")
 							break loop
 						}
+						if bridge != nil {
+							if err = bridge.downlink(e, time.Now()); err != nil {
+								break loop
+							}
+							continue
+						}
 						select {
 						case r.Messages <- e:
 						default:
@@ -165,6 +212,9 @@ func (r *Runtime) supervise(ctx context.Context, channel string) {
 				}
 			}
 			deadline.Stop()
+			if bridge != nil {
+				bridge.detach()
+			}
 			// Fence sends before releasing the native resources.
 			r.mu.Lock()
 			delete(r.sessions, channel)
@@ -175,6 +225,11 @@ func (r *Runtime) supervise(ctx context.Context, channel string) {
 		if ctx.Err() != nil {
 			return
 		}
+		select {
+		case <-bridgeStop:
+			return
+		default:
+		}
 		if !connectedAt.IsZero() && time.Since(connectedAt) >= r.Limits.Stable {
 			failures = 0
 		}
@@ -184,8 +239,15 @@ func (r *Runtime) supervise(ctx context.Context, channel string) {
 			message = channel + ": " + err.Error()
 		}
 		r.state(channel, "error", message)
-		if !wait(ctx, retryDelay(failures, r.Limits)) {
+		timer := time.NewTimer(retryDelay(failures, r.Limits))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
 			return
+		case <-bridgeStop:
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 		if failures >= 3 {
 			failures = 0
@@ -242,7 +304,7 @@ func (r *Runtime) report(ctx context.Context) error {
 			return agentstatus.ErrStaleTask
 		}
 		s := r.Snapshot() // Fresh snapshot AFTER reading its version, including on every retry.
-		err = r.Cloud.Readiness(ctx, controller.Readiness{ID: r.ID, TaskARN: r.ARN, ShadowVersion: version, UDPListening: false, MAVLink: s.MAVLink, Video: s.Video})
+		err = r.Cloud.Readiness(ctx, controller.Readiness{ID: r.ID, TaskARN: r.ARN, ShadowVersion: version, UDPListening: s.UDPListening, MAVLink: s.MAVLink, Video: s.Video})
 		if err == nil || errors.Is(err, agentstatus.ErrStaleTask) {
 			return err
 		}
@@ -250,9 +312,9 @@ func (r *Runtime) report(ctx context.Context) error {
 	return errors.New("readiness reporting failed after three fresh attempts")
 }
 func (r *Runtime) Run(parent context.Context) error {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	defer cancel()
-	verifyCtx, stop := context.WithTimeout(ctx, 4*time.Second)
+	verifyCtx, stop := context.WithTimeout(parent, 4*time.Second)
 	level, err := r.verify(verifyCtx)
 	stop()
 	if err != nil {
@@ -282,7 +344,18 @@ func (r *Runtime) Run(parent context.Context) error {
 		startVideo()
 	}
 	levels := make(chan int, 1)
-	fatal := make(chan error, 2)
+	fatal := make(chan error, 3)
+	if r.Bridge != nil {
+		launch(func() {
+			e := r.Bridge.read(ctx)
+			if ctx.Err() == nil {
+				select {
+				case fatal <- e:
+				default:
+				}
+			}
+		})
+	}
 	lastGood := time.Now()
 	var verifiedMu sync.Mutex
 	launch(func() {
@@ -385,6 +458,15 @@ run:
 	}
 	shutdown, shutdownCancel := context.WithTimeout(context.Background(), r.Limits.Shutdown)
 	defer shutdownCancel()
+	if r.Bridge != nil {
+		// Keep the worker context live until the bridge has sent its release.
+		close(r.Bridge.stop)
+		select {
+		case <-r.Bridge.stopped:
+		case <-shutdown.Done():
+		}
+		r.Bridge.Close()
+	}
 	cancel()
 	stopVideo()
 	done := make(chan struct{})
@@ -404,5 +486,8 @@ run:
 		}
 		return agentstatus.Connection(current, r.ID, "video", "disconnected")
 	})
+	if r.Bridge != nil {
+		_ = r.report(final)
+	}
 	return err
 }

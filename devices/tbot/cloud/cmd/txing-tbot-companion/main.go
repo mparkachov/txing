@@ -61,16 +61,12 @@ func run(ctx context.Context) error {
 	// The SDK cache subtracts its early-refresh window from Expires. Native
 	// viewers need the actual task-role expiry to survive transient refresh errors.
 	runtime := companion.New(thing, id, arn, cloud, &companion.ProcessFactory{Path: path, Thing: thing, ID: id, Region: cfg.Region, CA: ca, Credentials: provider})
-	// #156 observes/discards telemetry; #157 supplies the UDP/control consumer.
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-runtime.Messages:
-			}
-		}
-	}()
+	bridge, err := companion.ListenUDPBridge(14550)
+	if err != nil {
+		return err
+	}
+	defer bridge.Close()
+	runtime.Bridge = bridge
 	return runtime.Run(ctx)
 }
 func main() {
