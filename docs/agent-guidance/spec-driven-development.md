@@ -22,9 +22,12 @@ code changes begin.
    and implementation-step GitHub Issues assigned to it. After the Issues
    exist, add their explicit dependency-ordered implementation sequence to the
    Milestone description, then stop.
-6. `/goal <one milestone>`: execute exactly one milestone at a time. Stay within
+6. `/goal <one milestone>`: execute exactly one milestone unattended. Complete
+   its Issues in the recorded dependency order, with one active Issue at a time,
+   without further plan approval or approval at Issue boundaries. Stay within
    the selected milestone and do not continue into later milestones without the
-   user's explicit instruction.
+   user's explicit instruction. Selecting a specific Issue authorizes only that
+   Issue's implementation.
 7. Review the completed milestone with the user. Summarize changes, risks,
    unresolved questions, validation, deployment implications, and manual rollout
    steps.
@@ -82,11 +85,17 @@ Mode Implement action. The chat plan is not a substitute for the GitHub
 Milestone and Issues, and
 Implement is treated as a planning closeout signal in this repository.
 
+Selecting a goal is the implementation authorization. Issue implementation plans
+are recorded for traceability and shared as progress updates; they do not require
+another approval. Follow `POLICY.md` for material scope changes, unresolved
+ambiguity, and explicit operational prohibitions.
+
 Before the first code, firmware, infrastructure, or configuration change for a
 planned feature:
 
-1. Confirm the user invoked `/goal <milestone>` or explicitly asked to implement
-   a specific GitHub Issue.
+1. Check the conversation for the user's selection of `/goal <milestone>` or a
+   specific GitHub Issue for implementation. Do not ask for confirmation of an
+   existing selection.
 2. If the user named a GitHub Issue number, run
    `gh issue view <number> --comments` before any repository-wide search. Treat
    the Issue description and comments as the starting context.
@@ -150,10 +159,14 @@ When implementing an existing Issue:
 3. Review its references, description, and comments.
 4. Add the implementation plan with
    `gh issue comment <number> --body "Implementation plan: ..."`.
-5. Share the plan with the user and wait for approval unless the user has
-   explicitly asked to skip plan review.
-6. Add progress comments as decisions, blockers, or
+5. Share a concise plan update with the user and continue implementation
+   unattended within the selected goal. Do not wait for approval of the Issue's
+   implementation plan.
+6. Implement and validate the Issue's acceptance criteria.
+7. Add progress comments as decisions, blockers, or
    meaningful implementation steps occur.
-7. Update acceptance criteria in the Issue description as they are satisfied.
-8. Add a PR-quality final summary as an Issue comment.
-9. Close the Issue only after validation is complete.
+8. Update acceptance criteria in the Issue description as they are satisfied.
+9. Add a PR-quality final summary as an Issue comment.
+10. Close the Issue only after validation is complete. For a milestone goal,
+    select the next Issue in dependency order and continue without asking for
+    approval. For an Issue goal, stop after that Issue is complete.

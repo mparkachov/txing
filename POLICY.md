@@ -23,6 +23,38 @@ The agent must not continue into future milestones automatically unless explicit
 
 ---
 
+# Goal Execution Authorization
+
+Selecting `/goal <milestone>` authorizes unattended implementation of that
+milestone's approved scope. Selecting a specific GitHub Issue as a goal, or
+explicitly asking to implement it, authorizes unattended implementation of that
+Issue's acceptance criteria.
+
+Record implementation plans in Issue comments and provide progress updates,
+then continue implementation without waiting for another approval. During a
+milestone goal, complete Issues in the recorded dependency order, with exactly
+one active Issue at a time. Do not request approval of each implementation plan
+or pause for approval between Issues in the selected milestone.
+
+This authorization covers the code, dependencies, contracts, configuration,
+infrastructure preparation, tests, and documentation required by the selected
+goal and approved design. The confirmation rules below apply to material
+departures from that scope or design, not to implementing decisions already
+approved. Resolve routine implementation choices autonomously within those
+boundaries.
+
+Plan approval occurs during planning. Goal execution must continue through
+implementation and validation until the selected scope is complete or a genuine
+blocker prevents progress. Ask for missing information when necessary; do not
+ask the user to repeat authorization already given.
+
+Goal selection does not override explicit operational prohibitions in
+`AGENTS.md` or `docs/agent-guidance/editing-boundaries.md`, including automatic
+commits, AWS resource mutations, and firmware flashing. Prepare the artifacts
+and manual operator steps required by those boundaries.
+
+---
+
 # Plan Closeout Gate
 
 When work starts from a completed Plan Mode discussion, an approved architecture
@@ -44,7 +76,8 @@ signal. It means:
 Implementation may begin only after the user invokes `/goal <milestone>` or
 explicitly asks to implement a specific GitHub Issue. Before implementation,
 the agent must select exactly one Issue, assign it to itself, and record an
-implementation plan in an Issue comment.
+implementation plan in an Issue comment. Recording that plan does not introduce
+another approval gate; continue under Goal Execution Authorization.
 
 If `gh` is unavailable or unauthorized, Issue or Milestone creation fails, or
 the selected milestone is ambiguous, the agent must stop and ask for
@@ -57,7 +90,9 @@ immediately.
 
 Do not silently resolve meaningful ambiguity.
 
-If multiple interpretations are plausible:
+If materially different interpretations of scope, product behavior, or design
+remain plausible and cannot be resolved from the approved goal, repository
+contracts, or available evidence:
 1. stop implementation
 2. explain the ambiguity
 3. provide at most 3 options
@@ -68,12 +103,16 @@ If multiple interpretations are plausible:
 Do not optimize for forward progress over correctness of intent.
 
 Lack of explicit rejection is not approval for architectural or behavioral changes.
+The selected goal and approved design provide explicit authorization for their
+intended changes. Routine implementation choices do not require confirmation.
 
 ---
 
 # Escalation Requirements
 
-The agent must ask for confirmation before:
+The agent must ask for confirmation before an unapproved change to any of the
+following areas. Changes required by the selected goal and approved design are
+already authorized and must proceed without repeated approval:
 
 - changing public APIs
 - changing persistence or shadow schemas
@@ -90,7 +129,9 @@ The agent must ask for confirmation before:
 - introducing background daemons or supervisors
 - changing ownership boundaries between rig, board, daemon, MCU, or cloud
 
-The agent must escalate whenever confidence in a decision is below approximately 80%.
+Investigate uncertainty using repository references and validation before
+escalating. Ask for clarification when a material decision remains unresolved;
+do not turn routine implementation uncertainty into an approval gate.
 
 ---
 
@@ -266,8 +307,9 @@ over:
 - automated cleanup tooling
 
 The agent should prefer direct replacement once the user has explicitly
-approved removing the compatibility it replaces. Before removing or ignoring
-existing backward compatibility, ask the user whether that is acceptable.
+approved removing the compatibility it replaces, including approval through the
+selected goal and design. If that removal is outside the approved scope, ask
+the user before removing or ignoring existing backward compatibility.
 
 When replacing an existing pattern or contract:
 - update the repository to the new model directly

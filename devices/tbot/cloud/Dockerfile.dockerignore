@@ -1,0 +1,10 @@
+**
+!devices/
+!devices/common/
+!devices/common/kvs/
+!devices/common/kvs/**
+!devices/tbot/
+!devices/tbot/cloud/
+!devices/tbot/cloud/**
+devices/tbot/cloud/target/
+devices/tbot/cloud/tmp/

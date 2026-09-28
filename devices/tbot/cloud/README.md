@@ -187,3 +187,122 @@ and inspect `agent` in Office Debug for identity replacement and endpoint
 cleanup. To deactivate, set `EnableLifecycle=false`; this stops triggers but
 does not drain already running tasks. Manually stop those tasks, clear their
 `agent` status to the stopped default, and verify the cluster is empty.
+
+## Companion viewer runtime
+
+`cmd/txing-tbot-companion` is the Fargate task entry point. It validates its
+assigned `tbot-*` Thing and 32-hex launch token, obtains its ECS task ARN from
+the injected v4 metadata endpoint, and uses only the assigned Thing's shadows
+and signaling channels. AWS credentials come from the Fargate task role;
+static credentials and local AWS profiles are not used by this entry point.
+
+At REDCON 2 or 1, a native `txing-tbot-kvs-viewer` process joins
+`<thing>-mavlink` as a KVS **viewer**, opens ordered/reliable
+`txing.mavlink.v1`, and delivers complete binary messages plus JSON lease
+messages to the Go runtime without modifying their bytes. Opening the viewer
+sends no activation, renewal, or MAVLink uplink. The current #156 entry point
+receives/discards these messages as an observer. #157 supplies UDP forwarding
+and the strict arm-triggered lease consumer through the runtime's message/send
+hooks. Until that listener exists, readiness always carries
+`udpListening=false`, and the public endpoint remains unavailable. Keep
+lifecycle activation disabled until #157 and #158 are complete.
+
+At REDCON 1, a separate native process joins `<thing>-board-video`. It
+negotiates receive-only H.264 and discards frames in the SDK callback without
+decoding, forwarding, or storing them. Its connected state requires actual
+frame reception. REDCON 2 closes only video. Video failures and reconnection
+have their own supervisor and cannot reset the MAVLink process. The pinned SDK
+advertises an SCTP media section in viewer offers even for video; the video
+worker creates no data channel and sends no data-channel messages.
+
+Runtime bounds:
+
+- Authoritative `sparkplug` and `agent` checks every two seconds, with a
+  four-second deadline per check. REDCON 3/4, death, or a fenced task identity
+  stops both workers. Fifteen seconds without a successful authority check
+  also stops the task.
+- A viewer attempt has 45 seconds to establish its MAVLink channel or receive
+  its first video frame. SDK signaling retries/reconnect are disabled; the Go
+  supervisor owns attempts. Failed attempts wait one second, then two seconds,
+  then a one-minute cooldown after the third failure. Thirty seconds of a
+  healthy connection resets the failure budget.
+- Worker IPC messages have a 64 KiB limit, receive queues hold 64 messages,
+  and send queues hold 16. Overflow fails the affected session. Frames never
+  become partial messages or silently truncated data. A stalled IPC writer is
+  stopped within two seconds; native worker cleanup has a five-second bound.
+- Total task shutdown has a ten-second deadline, including final fenced
+  connection-state cleanup. Controller reconciliation independently clears
+  endpoints and stops stale tasks.
+- Connection changes and 30-second heartbeats update the assigned `agent`
+  shadow and invoke the readiness handler. Each conflict/retry rereads the
+  version and resamples the connection state; at most three fresh invocations
+  are attempted. These operations run independently of message handling.
+
+Native viewers retrieve temporary credentials directly from the task-role
+provider every 30 seconds, preserving their actual expiry. AWS API clients
+separately use an SDK cache with a five-minute early-refresh window. Viewer
+credentials travel only in anonymous parent/child
+pipes and remain in memory. Refresh updates the native credential provider
+without replacing its peer. A transient credential endpoint failure retains
+still-valid credentials; failure to obtain credentials valid for another
+minute closes that worker. Native diagnostics expose only operation names and
+status codes, suppressing credential-bearing SDK request logging.
+
+The runtime's single TLS trust anchor defaults to
+`/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem` and can
+be changed with `TXING_KVS_SYSTEM_CA_CERT_PATH`. Use a single trusted root
+certificate, not a full OS CA bundle. The task image contains the required
+anchor. `TXING_KVS_VIEWER_PATH` can select a locally built native worker;
+production uses `/usr/local/bin/txing-tbot-kvs-viewer`.
+
+### Build and validate the viewers
+
+Both the board master and companion consume
+`devices/common/kvs/cmake/AwsKvsWebRtc.cmake` and the SDK pin in
+`devices/common/kvs/sdk.commit`. Builds fetch the SDK and its own pinned
+producer/PIC dependencies into their build directory; source is not vendored
+into the product tree. The existing board system-dependency staging behavior
+is shared without changing its runtime protocol.
+
+From the repository root, build a native development worker using installed
+OpenSSL, libwebsockets, libsrtp2, libusrsctp, log4cplus, curl, zlib, CMake,
+and a C++17 compiler:
+
+```sh
+cmake -S devices/tbot/cloud/viewer -B tmp/tbot-viewer-build \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build tmp/tbot-viewer-build --parallel 4
+ctest --test-dir tmp/tbot-viewer-build --output-on-failure
+```
+
+CTest connects real pinned-SDK master/viewer peers over kernel UDP with
+ICE/DTLS/SCTP/SRTP. Its test-only interface enumeration exposes localhost to
+avoid dependence on LAN/VPN routing; this fixture is never linked into the
+production worker. Checks cover ordered binary/JSON delivery, signed-frame
+byte preservation, observer startup without uplink, temporary credential
+replacement, and actual H.264 receive/discard callbacks. No AWS service or
+physical device is contacted.
+
+For the production `linux/arm64` image, use a local container engine (the
+repository's usual `nerdctl`, or equivalent). Build context is the repository
+root; the Dockerfile-specific ignore file excludes unrelated source and local
+credentials:
+
+```sh
+nerdctl build --platform linux/arm64 \
+  -f devices/tbot/cloud/Dockerfile \
+  -t txing-tbot-companion:local .
+```
+
+The container build compiles the real viewer and runs the real peer tests on
+Linux. Its final Alpine image runs as UID/GID 10001 and contains only the
+Go runtime, native worker, runtime libraries, and trust anchors. The `local`
+tag is for validation only; #158 owns versioned ECR publication and the
+CloudFormation image digest. Do not enable the AWS lifecycle rules for this
+observer-only build.
+
+After #157/#158, the operator deploys the immutable image digest and versioned
+controller artifact using the manual stack sequence above, then enables the
+lifecycle rules. Verify the published `agent` shadow in Office Debug and run
+#159's lifted-device acceptance. This change does not require board firmware
+flashing or automatic AWS deployment.

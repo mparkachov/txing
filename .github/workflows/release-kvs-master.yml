@@ -162,9 +162,9 @@ jobs:
       - name: Build and test shared KVS master
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
-          AWS_KVS_SDK_COMMIT: bb106510cf74edd2c24881c1ae94ceaa0083d15c
         shell: bash
         run: |
+          AWS_KVS_SDK_COMMIT="$(cat "$GITHUB_WORKSPACE/devices/common/kvs/sdk.commit")"
           docker exec -i \
             -e VERSION="$VERSION" \
             -e AWS_KVS_SDK_COMMIT="$AWS_KVS_SDK_COMMIT" \

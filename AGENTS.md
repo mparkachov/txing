@@ -70,6 +70,12 @@ unless a shared contract or consistency issue requires coordinated updates.
   explicitly asks to implement a specific GitHub Issue. During `/goal`, execute
   exactly one milestone at a time. Stop after milestone completion and wait for
   the user to choose or approve the next milestone.
+- Selecting a goal authorizes unattended implementation within its scope.
+  Record Issue implementation plans as comments and continue without asking for
+  plan approval again. For a milestone goal, complete its Issues in dependency
+  order, with one active Issue at a time, without approval at Issue boundaries.
+  Ask only for missing information or a material departure from the approved
+  scope; preserve the explicit operational gates below.
 - If a goal or prompt names a GitHub Issue number, load it first with
   `gh issue view <number> --comments`. Do not search the repository to discover
   what the Issue means.

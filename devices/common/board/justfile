@@ -17,7 +17,7 @@ daemon_module := "github.com/mparkachov/txing/devices/common/board/daemon"
 native_kvs_master_dir := board_dir + "/kvs_master"
 native_hardware_worker_dir := board_dir + "/hardware_worker"
 board_proto_dir := board_dir + "/proto"
-aws_kvs_sdk_commit := "bb106510cf74edd2c24881c1ae94ceaa0083d15c"
+aws_kvs_sdk_commit := trim(read(project_root + "/devices/common/kvs/sdk.commit"))
 default_kvs_system_ca_cert_path := env_var_or_default("TXING_BOARD_KVS_SYSTEM_CA_CERT_PATH", "/etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem")
 
 mod mavlink 'mavlink.just'
