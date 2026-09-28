@@ -28,6 +28,7 @@ environment stack name and omit the redundant `-lambda` suffix, for example
 - `txing-witness-lambda`
 - `txing-cloud-rig-lambda`
 - `txing-cloud-mcu-lambda`
+- `txing-tbot-companion-lambda`
 
 These functions stay as static `linux/arm64` `bootstrap` executables for
 `provided.al2023`. They are published as release artifacts and updated by

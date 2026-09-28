@@ -117,6 +117,8 @@ This creates a missing `agent` shadow without replacing an existing one. Publish
 the Office update through its normal Git-driven site release to inspect this
 shadow in TBot Debug; its absence does not block normal device use. The cloud
 companion task and lifecycle automation are deployed in later milestone steps.
+The [cloud companion runbook](cloud/README.md) describes the dedicated stack,
+controller readiness interface, activation gates, and local validation.
 
 TBot uses the shared board daemon and KVS master with TBot-derived MAVLink
 identities. ArduPilot exclusively owns the DRV8835; `txing-tbot-mavlink` owns

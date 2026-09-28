@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/tbot-agent-shadow-v1.schema.json",
   "title": "TBot agent named shadow v1",
-  "description": "Operational status of the TBot cloud companion. This shadow is not a REDCON capability.",
+  "description": "Operational status of the TBot cloud agent. This shadow is not a REDCON capability.",
   "type": "object",
   "additionalProperties": false,
   "required": ["state"],

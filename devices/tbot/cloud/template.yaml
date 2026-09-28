@@ -1,0 +1,539 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: On-demand public dual-stack TBot cloud companion infrastructure.
+
+Parameters:
+  EnvironmentStackName:
+    Type: String
+    Description: txing environment stack prefix, for example town.
+  CompanionImageDigest:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^sha256:[0-9a-f]{64}$'
+    Description: Immutable digest of a versioned TBot companion image already published to this stack's ECR repository. Leave empty for the network-only first deploy.
+  LambdaArtifactsBucketName:
+    Type: String
+    Description: Existing txing release Lambda artifact bucket.
+  ControllerLambdaS3Key:
+    Type: String
+    Default: ""
+    Description: Versioned txing-tbot-companion-lambda Go bootstrap zip key. Leave empty until the controller artifact is published.
+  EnableLifecycle:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: Enable task starts and minute reconciliation only after the complete runtime is published and agent shadows are provisioned.
+
+Rules:
+  LifecycleRequiresArtifacts:
+    RuleCondition: !Equals [!Ref EnableLifecycle, "true"]
+    Assertions:
+      - Assert: !And
+          - !Not [!Equals [!Ref CompanionImageDigest, ""]]
+          - !Not [!Equals [!Ref ControllerLambdaS3Key, ""]]
+        AssertDescription: Publish both versioned artifacts before enabling lifecycle automation.
+
+Conditions:
+  HasCompanionImage: !Not [!Equals [!Ref CompanionImageDigest, ""]]
+  HasControllerArtifact: !Not [!Equals [!Ref ControllerLambdaS3Key, ""]]
+  HasRunnableController: !And
+    - !Condition HasCompanionImage
+    - !Condition HasControllerArtifact
+  LifecycleEnabled: !And
+    - !Condition HasRunnableController
+    - !Equals [!Ref EnableLifecycle, "true"]
+
+Resources:
+  CompanionVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.84.0.0/23
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentStackName}-tbot-companion-vpc
+
+  CompanionVpcIpv6:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      AmazonProvidedIpv6CidrBlock: true
+      VpcId: !Ref CompanionVpc
+
+  CompanionInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentStackName}-tbot-companion-igw
+
+  CompanionInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref CompanionVpc
+      InternetGatewayId: !Ref CompanionInternetGateway
+
+  CompanionPublicSubnetA:
+    Type: AWS::EC2::Subnet
+    DependsOn: CompanionVpcIpv6
+    Properties:
+      VpcId: !Ref CompanionVpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.84.0.0/24
+      Ipv6CidrBlock: !Select [0, !Cidr [!Select [0, !GetAtt CompanionVpc.Ipv6CidrBlocks], 2, 64]]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentStackName}-tbot-companion-public-a
+
+  CompanionPublicSubnetB:
+    Type: AWS::EC2::Subnet
+    DependsOn: CompanionVpcIpv6
+    Properties:
+      VpcId: !Ref CompanionVpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.84.1.0/24
+      Ipv6CidrBlock: !Select [1, !Cidr [!Select [0, !GetAtt CompanionVpc.Ipv6CidrBlocks], 2, 64]]
+      AssignIpv6AddressOnCreation: true
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentStackName}-tbot-companion-public-b
+
+  CompanionPublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CompanionVpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentStackName}-tbot-companion-public-routes
+
+  CompanionIpv4DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: CompanionInternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref CompanionPublicRoutes
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CompanionInternetGateway
+
+  CompanionIpv6DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: CompanionInternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref CompanionPublicRoutes
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId: !Ref CompanionInternetGateway
+
+  CompanionPublicSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CompanionPublicSubnetA
+      RouteTableId: !Ref CompanionPublicRoutes
+
+  CompanionPublicSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CompanionPublicSubnetB
+      RouteTableId: !Ref CompanionPublicRoutes
+
+  CompanionTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public UDP 14550 for the on-demand TBot companion.
+      VpcId: !Ref CompanionVpc
+      SecurityGroupIngress:
+        - IpProtocol: udp
+          FromPort: 14550
+          ToPort: 14550
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 14550
+          ToPort: 14550
+          CidrIpv6: ::/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          CidrIpv6: ::/0
+
+  CompanionCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentStackName}-tbot-companion
+
+  CompanionRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Sub ${EnvironmentStackName}-tbot-companion
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  CompanionTaskLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/ecs/${EnvironmentStackName}-tbot-companion
+      RetentionInDays: 14
+
+  CompanionControllerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-tbot-companion
+      RetentionInDays: 14
+
+  CompanionTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Pulls the versioned TBot companion image and writes task logs.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: companion-execution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrAuthorization
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: PullCompanionImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !GetAtt CompanionRepository.Arn
+              - Sid: WriteTaskLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${CompanionTaskLogGroup.Arn}:*
+
+  CompanionTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: TBot-only WebRTC viewer and TBot shadow access for the companion task.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: companion-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: TBotSignalingViewer
+                Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsViewer
+                Resource:
+                  - !Sub arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/tbot-*-mavlink/*
+                  - !Sub arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/tbot-*-board-video/*
+              - Sid: ReadTBotLifecycleAndAgentShadows
+                Effect: Allow
+                Action: iot:GetThingShadow
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/tbot-*/sparkplug
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/tbot-*/agent
+              - Sid: UpdateTBotAgentShadow
+                Effect: Allow
+                Action: iot:UpdateThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/tbot-*/agent
+              - Sid: FindIotDataEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: ReportReadinessToController
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-tbot-companion
+
+  CompanionTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasCompanionImage
+    Properties:
+      Family: !Sub ${EnvironmentStackName}-tbot-companion
+      Cpu: "1024"
+      Memory: "2048"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt CompanionTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt CompanionTaskRole.Arn
+      ContainerDefinitions:
+        - Name: tbot-companion
+          Image: !Sub ${CompanionRepository.RepositoryUri}@${CompanionImageDigest}
+          Essential: true
+          PortMappings:
+            - ContainerPort: 14550
+              Protocol: udp
+          Environment:
+            - Name: TXING_DEVICE_TYPE
+              Value: tbot
+            - Name: TXING_AGENT_SHADOW
+              Value: agent
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CompanionTaskLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: companion
+
+  CompanionControllerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Reconciles TBot companion tasks and their operational shadow.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: companion-controller
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteControllerLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${CompanionControllerLogGroup.Arn}:*
+              - Sid: FindTBotThings
+                Effect: Allow
+                Action: iot:SearchIndex
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:index/AWS_Things
+              - Sid: DiscoverShadowEndpoint
+                Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: "*"
+              - Sid: DescribeTBotThings
+                Effect: Allow
+                Action: iot:DescribeThing
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/tbot-*
+              - Sid: ReadTBotLifecycleAndAgentShadows
+                Effect: Allow
+                Action: iot:GetThingShadow
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/tbot-*/sparkplug
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/tbot-*/agent
+              - Sid: UpdateTBotAgentShadow
+                Effect: Allow
+                Action: iot:UpdateThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/tbot-*/agent
+              - Sid: ListCompanionTasks
+                Effect: Allow
+                Action: ecs:ListTasks
+                Resource: "*"
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !GetAtt CompanionCluster.Arn
+              - Sid: DescribeAndStopCompanionTasks
+                Effect: Allow
+                Action:
+                  - ecs:DescribeTasks
+                  - ecs:StopTask
+                  - ecs:ListTagsForResource
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${CompanionCluster}/*
+              - Sid: RunCompanionTasks
+                Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${EnvironmentStackName}-tbot-companion:*
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !GetAtt CompanionCluster.Arn
+              - Sid: TagNewCompanionTasks
+                Effect: Allow
+                Action: ecs:TagResource
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${CompanionCluster}/*
+                Condition:
+                  StringEquals:
+                    ecs:CreateAction: RunTask
+              - Sid: PassCompanionTaskRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt CompanionTaskExecutionRole.Arn
+                  - !GetAtt CompanionTaskRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+              - Sid: ReadCompanionNetworkInterface
+                Effect: Allow
+                Action: ec2:DescribeNetworkInterfaces
+                Resource: "*"
+
+  CompanionControllerFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasRunnableController
+    DependsOn: CompanionControllerLogGroup
+    Properties:
+      FunctionName: !Sub ${EnvironmentStackName}-tbot-companion
+      Description: Reconciles on-demand TBot companion tasks from completed Sparkplug updates and minute sweeps.
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - arm64
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: !Ref ControllerLambdaS3Key
+      Role: !GetAtt CompanionControllerRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          TBOT_COMPANION_CLUSTER: !Ref CompanionCluster
+          TBOT_COMPANION_TASK_DEFINITION: !Ref CompanionTaskDefinition
+          TBOT_COMPANION_SUBNETS: !Join [",", [!Ref CompanionPublicSubnetA, !Ref CompanionPublicSubnetB]]
+          TBOT_COMPANION_SECURITY_GROUP: !Ref CompanionTaskSecurityGroup
+          TBOT_COMPANION_ASSIGN_PUBLIC_IP: ENABLED
+          TBOT_COMPANION_PLATFORM_VERSION: 1.4.0
+
+  CompanionControllerAsyncConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Condition: HasRunnableController
+    Properties:
+      FunctionName: !Ref CompanionControllerFunction
+      Qualifier: $LATEST
+      MaximumEventAgeInSeconds: 60
+      MaximumRetryAttempts: 0
+
+  CompanionSparkplugInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasRunnableController
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CompanionControllerFunction
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub
+        - arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/${RuleName}
+        - RuleName: !Join ["_", [!Join ["_", !Split ["-", !Ref EnvironmentStackName]], tbot_companion_sparkplug]]
+
+  CompanionSparkplugRule:
+    Type: AWS::IoT::TopicRule
+    Condition: HasRunnableController
+    DependsOn: CompanionSparkplugInvokePermission
+    Properties:
+      RuleName: !Join ["_", [!Join ["_", !Split ["-", !Ref EnvironmentStackName]], tbot_companion_sparkplug]]
+      TopicRulePayload:
+        RuleDisabled: !If [LifecycleEnabled, false, true]
+        AwsIotSqlVersion: "2016-03-23"
+        Sql: >-
+          SELECT 'sparkplug' AS kind, topic(3) AS thingName
+          FROM '$aws/things/+/shadow/name/sparkplug/update/documents'
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt CompanionControllerFunction.Arn
+
+  CompanionMinuteRule:
+    Type: AWS::Events::Rule
+    Condition: HasRunnableController
+    Properties:
+      Name: !Sub ${EnvironmentStackName}-tbot-companion-minute
+      Description: Repair missed TBot lifecycle events, failed tasks, duplicates, and stale endpoints.
+      ScheduleExpression: rate(1 minute)
+      State: !If [LifecycleEnabled, ENABLED, DISABLED]
+      Targets:
+        - Id: CompanionReconciliation
+          Arn: !GetAtt CompanionControllerFunction.Arn
+          Input: '{"kind":"sweep"}'
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 60
+            MaximumRetryAttempts: 0
+
+  CompanionMinuteInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasRunnableController
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CompanionControllerFunction
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt CompanionMinuteRule.Arn
+
+  StackParameterCompanionCluster:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/TBotCompanionClusterName
+      Type: String
+      Value: !Ref CompanionCluster
+
+  StackParameterCompanionTaskDefinition:
+    Type: AWS::SSM::Parameter
+    Condition: HasCompanionImage
+    Properties:
+      Name: /txing/stack/TBotCompanionTaskDefinitionArn
+      Type: String
+      Value: !Ref CompanionTaskDefinition
+
+  StackParameterCompanionSubnets:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/TBotCompanionSubnetIds
+      Type: String
+      Value: !Join [",", [!Ref CompanionPublicSubnetA, !Ref CompanionPublicSubnetB]]
+
+  StackParameterCompanionSecurityGroup:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /txing/stack/TBotCompanionSecurityGroupId
+      Type: String
+      Value: !Ref CompanionTaskSecurityGroup
+
+  StackParameterCompanionControllerFunction:
+    Type: AWS::SSM::Parameter
+    Condition: HasRunnableController
+    Properties:
+      Name: /txing/stack/TBotCompanionControllerFunctionName
+      Type: String
+      Value: !Ref CompanionControllerFunction
+
+  StackParameterCompanionControllerFunctionArn:
+    Type: AWS::SSM::Parameter
+    Condition: HasRunnableController
+    Properties:
+      Name: /txing/stack/TBotCompanionControllerFunctionArn
+      Type: String
+      Value: !GetAtt CompanionControllerFunction.Arn
+
+Outputs:
+  RepositoryUri:
+    Value: !GetAtt CompanionRepository.RepositoryUri
+  ClusterName:
+    Value: !Ref CompanionCluster
+  TaskDefinitionArn:
+    Condition: HasCompanionImage
+    Value: !Ref CompanionTaskDefinition
+  PublicSubnetIds:
+    Value: !Join [",", [!Ref CompanionPublicSubnetA, !Ref CompanionPublicSubnetB]]
+  TaskSecurityGroupId:
+    Value: !Ref CompanionTaskSecurityGroup
+  ControllerRoleArn:
+    Value: !GetAtt CompanionControllerRole.Arn
+  ControllerFunctionName:
+    Condition: HasRunnableController
+    Value: !Ref CompanionControllerFunction
+  ControllerFunctionArn:
+    Condition: HasRunnableController
+    Value: !GetAtt CompanionControllerFunction.Arn
