@@ -44,6 +44,14 @@ Office presents two operator modes for every MAVLink-capable board:
   is held. Arm state and Manual/Hold selection are flight-controller details,
   not separate Office control modes.
 
+Office starts its observer peer only when the Sparkplug projection reports
+`capability.mavlink=true`. A negotiation that does not open the data channel
+within 20 seconds closes its peer and signaling resources and uses the existing
+reconnect backoff (1 second, doubling up to 10 seconds). Capability loss or route
+changes cancel pending negotiations and close established peers. A reconnect
+returns to View only; acquiring or taking over control remains an explicit
+operator action.
+
 This Office behavior is a client policy only. It limits what Office sends but
 does not constrain other active MAVLink clients using the same data channel.
 Such a client may use the full MAVLink 2 protocol and any dialect supported by

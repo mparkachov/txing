@@ -7,6 +7,7 @@ export type StartMavlinkDataChannelOptions = {
   onStateChange: (state: 'connecting' | 'open' | 'closed' | 'error', message?: string) => void
   region: string
   resolveIdToken: () => Promise<string>
+  signal?: AbortSignal
 }
 
 let runtimePromise: Promise<typeof import('./mavlink-session-runtime')> | null = null

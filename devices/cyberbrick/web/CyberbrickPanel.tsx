@@ -223,15 +223,6 @@ function CyberbrickPanel({
           </button>
         ) : null}
         <MavlinkControlButton vehicleName={deviceName} />
-        <span
-          className="status-mavlink-transport"
-          role="img"
-          aria-label="MAVLink over an independent WebRTC data channel"
-          title="MAVLink over an independent WebRTC data channel"
-          data-mavlink-transport="webrtc-datachannel"
-        >
-          MAVLINK
-        </span>
       </div>
       <div className="status-video-overlay-lockup">
         <div className="status-txing-title-group" role="group" aria-label={`${deviceName} drive indicators`}>

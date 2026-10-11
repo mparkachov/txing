@@ -1493,20 +1493,6 @@ h1 {
   flex: 0 0 auto;
 }
 
-.status-mavlink-transport {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.9rem;
-  padding: 0 0.55rem;
-  border: 1px solid rgba(108, 238, 246, 0.46);
-  border-radius: 999px;
-  color: rgba(108, 238, 246, 0.96);
-  background: rgba(4, 9, 14, 0.42);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
 .mavlink-debug-panel {
   width: min(100%, 42rem);
   margin: 0;

@@ -53,7 +53,7 @@ describe('tbot adapter', () => {
     expect(markup).toContain('aria-label="Thread online"')
     expect(markup).toContain('data-drive-mode="mavlink"')
     expect(markup).not.toContain('ArduPilot / MAVLink')
-    expect(markup).toContain('MAVLink over an independent WebRTC data channel')
+    expect(markup).not.toContain('status-mavlink-transport')
     expect(markup).not.toContain('MCP')
 
     const renderedVideo = tbotDeviceAdapter.renderVideo({

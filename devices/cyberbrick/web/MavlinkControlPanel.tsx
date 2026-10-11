@@ -124,6 +124,7 @@ export function MavlinkControlProvider({
     let disposed = false
     let retryTimerId: number | null = null
     let retryDelayMs = 1_000
+    let connectionAbortController: AbortController | null = null
 
     const scheduleReconnect = (): void => {
       if (disposed || retryTimerId !== null) {
@@ -142,6 +143,8 @@ export function MavlinkControlProvider({
         return
       }
       setConnectionState('connecting')
+      const abortController = new AbortController()
+      connectionAbortController = abortController
       const session = new MavlinkControlSession({
         actor,
         onControlState: (nextState, nextActiveHeldByCaller) => {
@@ -185,6 +188,7 @@ export function MavlinkControlProvider({
           label: mavlinkWebRtcDataChannelLabel,
           region,
           resolveIdToken,
+          signal: abortController.signal,
           onMessage: (message) => session.handleMessage(message),
           onStateChange: (state, message) => {
             if (disposed) {
@@ -212,6 +216,7 @@ export function MavlinkControlProvider({
         session.attach(handle)
         await session.getState()
       } catch (error) {
+        abortController.abort()
         if (disposed) {
           return
         }
@@ -231,6 +236,7 @@ export function MavlinkControlProvider({
         window.clearTimeout(retryTimerId)
       }
       sessionRef.current?.close()
+      connectionAbortController?.abort()
       sessionRef.current = null
     }
   }, [actor, channelName, enabled, region, resolveIdToken])

@@ -153,7 +153,7 @@ describe('cyberbrick adapter', () => {
     expect(rendered).not.toContain('ArduPilot / MAVLink')
     expect(rendered).not.toContain('Acquire control')
     expect(rendered).not.toContain('View-only mode')
-    expect(rendered).toContain('MAVLink over an independent WebRTC data channel')
+    expect(rendered).not.toContain('status-mavlink-transport')
     expect(rendered).not.toContain('MCP')
     expect(rendered).not.toContain('>Arm</button>')
     expect(rendered).not.toContain('>Disarm</button>')

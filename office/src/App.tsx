@@ -92,6 +92,7 @@ import {
   describeRedcon,
   extractIsSparkplugUnavailable,
   extractReportedRedcon,
+  extractSparkplugCapabilityAvailability,
   extractSparkplugRedconCommandStatus,
   getTxingRedconToneClass,
   hasReachedTargetRedcon,
@@ -447,7 +448,9 @@ function App({ initialAuthError = '' }: AppProps) {
     currentDeviceAdapter?.buildMavlinkChannelName && selectedDeviceRoute
       ? currentDeviceAdapter.buildMavlinkChannelName(selectedDeviceRoute.device)
       : ''
-  const isMavlinkControlEnabled = mavlinkChannelName !== ''
+  const isMavlinkControlEnabled =
+    mavlinkChannelName !== '' &&
+    extractSparkplugCapabilityAvailability(displayShadowDocument, 'mavlink') === true
   const deviceDebugDiagnostics = currentDeviceAdapter?.renderDebug?.() ?? null
   const deviceTelemetry = useMemo(
     () => currentDeviceAdapter?.extractTelemetry(displayShadowDocument) ?? null,

@@ -19,6 +19,7 @@ export type StartMavlinkDataChannelOptions = {
   onStateChange: (state: 'connecting' | 'open' | 'closed' | 'error', message?: string) => void
   region: string
   resolveIdToken: () => Promise<string>
+  signal?: AbortSignal
 }
 
 export type MavlinkDataChannelRuntimeHandle = {
@@ -58,11 +59,15 @@ const toMessageBytes = (data: unknown): Uint8Array | null => {
 export const startMavlinkDataChannelRuntime = async (
   options: StartMavlinkDataChannelOptions,
 ): Promise<MavlinkDataChannelRuntimeHandle> => {
+  options.signal?.throwIfAborted()
   options.onStateChange('connecting')
   const sdkPromise = loadKvsWebRtcBrowserSdk()
+  void sdkPromise.catch(() => undefined)
   const idToken = await options.resolveIdToken()
+  options.signal?.throwIfAborted()
   const credentialProvider = createCredentialProvider(idToken)
   const credentials = await credentialProvider()
+  options.signal?.throwIfAborted()
   const kinesisVideoClient = new KinesisVideoClient(buildKinesisVideoClientConfig({
     region: options.region,
     credentials: credentialProvider,
@@ -72,6 +77,7 @@ export const startMavlinkDataChannelRuntime = async (
     region: options.region,
     kinesisVideoClient,
   })
+  options.signal?.throwIfAborted()
   const signalingApiClient = new KinesisVideoSignalingClient(buildKinesisVideoSignalingClientConfig({
     region: options.region,
     endpoint: endpoints.HTTPS,
@@ -81,16 +87,35 @@ export const startMavlinkDataChannelRuntime = async (
   const iceConfig = await signalingApiClient.send(new GetIceServerConfigCommand({
     ChannelARN: channelArn,
     ClientId: clientId,
-  }))
+  }), { abortSignal: options.signal })
+  const { Role, SignalingClient } = await sdkPromise
+  options.signal?.throwIfAborted()
+  const signalingClient = new SignalingClient({
+    channelARN: channelArn,
+    channelEndpoint: endpoints.WSS,
+    role: Role.VIEWER,
+    region: options.region,
+    clientId,
+    credentials: toSignalingCredentials(credentials),
+  })
   const peerConnection = new RTCPeerConnection({
     iceServers: buildRtcIceServers(options.region, iceConfig.IceServerList),
   })
+  return connectMavlinkPeer(options, peerConnection, signalingClient)
+}
+
+export const connectMavlinkPeer = async (
+  options: Pick<StartMavlinkDataChannelOptions, 'label' | 'onMessage' | 'onStateChange' | 'signal'>,
+  peerConnection: RTCPeerConnection,
+  signalingClient: KvsWebRtcSignalingClient,
+  openTimeoutMs = 20_000,
+): Promise<MavlinkDataChannelRuntimeHandle> => {
   const dataChannel = peerConnection.createDataChannel(options.label, {
     ordered: true,
   })
   dataChannel.binaryType = 'arraybuffer'
   let closed = false
-  let signalingClient: KvsWebRtcSignalingClient | null = null
+  let openTimerId: ReturnType<typeof setTimeout> | undefined
   let openSettled = false
   let resolveOpen: () => void = () => undefined
   let rejectOpen: (error: Error) => void = () => undefined
@@ -105,8 +130,10 @@ export const startMavlinkDataChannelRuntime = async (
       return
     }
     closed = true
-    signalingClient?.removeAllListeners()
-    signalingClient?.close()
+    clearTimeout(openTimerId)
+    options.signal?.removeEventListener('abort', abort)
+    signalingClient.removeAllListeners()
+    signalingClient.close()
     dataChannel.close()
     peerConnection.close()
     options.onStateChange(state, message)
@@ -115,17 +142,22 @@ export const startMavlinkDataChannelRuntime = async (
       rejectOpen(new Error(message ?? 'MAVLink data channel closed before opening'))
     }
   }
+  const abort = (): void => close('closed', 'MAVLink connection cancelled')
 
   dataChannel.addEventListener('open', () => {
     if (!closed) {
       options.onStateChange('open')
       if (!openSettled) {
         openSettled = true
+        clearTimeout(openTimerId)
         resolveOpen()
       }
     }
   })
   dataChannel.addEventListener('message', (event) => {
+    if (closed) {
+      return
+    }
     if (typeof event.data === 'string') {
       options.onMessage(event.data)
       return
@@ -142,7 +174,7 @@ export const startMavlinkDataChannelRuntime = async (
     close('error', 'MAVLink data channel error')
   })
   peerConnection.addEventListener('icecandidate', ({ candidate }) => {
-    if (candidate && signalingClient) {
+    if (!closed && candidate) {
       signalingClient.sendIceCandidate(candidate)
     }
   })
@@ -156,19 +188,16 @@ export const startMavlinkDataChannelRuntime = async (
     }
   })
 
-  const { Role, SignalingClient } = await sdkPromise
-  signalingClient = new SignalingClient({
-    channelARN: channelArn,
-    channelEndpoint: endpoints.WSS,
-    role: Role.VIEWER,
-    region: options.region,
-    clientId,
-    credentials: toSignalingCredentials(credentials),
-  })
   signalingClient.on('open', () => {
     void (async () => {
       const offer = await peerConnection.createOffer()
+      if (closed) {
+        return
+      }
       await peerConnection.setLocalDescription(offer)
+      if (closed) {
+        return
+      }
       if (!peerConnection.localDescription) {
         throw new Error('MAVLink local description was not created')
       }
@@ -178,11 +207,17 @@ export const startMavlinkDataChannelRuntime = async (
     })
   })
   signalingClient.on('sdpAnswer', (answer: RTCSessionDescriptionInit) => {
+    if (closed) {
+      return
+    }
     void peerConnection.setRemoteDescription(answer).catch((error) => {
       close('error', getErrorMessage(error, 'Unable to apply MAVLink KVS answer'))
     })
   })
   signalingClient.on('iceCandidate', (candidate: RTCIceCandidateInit) => {
+    if (closed) {
+      return
+    }
     void peerConnection.addIceCandidate(candidate).catch(() => undefined)
   })
   signalingClient.on('error', (error) => {
@@ -193,7 +228,19 @@ export const startMavlinkDataChannelRuntime = async (
       close('closed', 'MAVLink KVS signaling closed')
     }
   })
-  signalingClient.open()
+  options.signal?.addEventListener('abort', abort, { once: true })
+  if (options.signal?.aborted) {
+    abort()
+  } else {
+    openTimerId = setTimeout(() => {
+      close('error', 'MAVLink data channel opening timed out')
+    }, openTimeoutMs)
+    try {
+      signalingClient.open()
+    } catch (error) {
+      close('error', getErrorMessage(error, 'Unable to open MAVLink KVS signaling'))
+    }
+  }
 
   await openPromise
 
