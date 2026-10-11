@@ -28,6 +28,20 @@ constexpr auto kCredentialRefreshMinDelay = std::chrono::seconds(30);
 constexpr auto kBridgeRetryInitialDelay = std::chrono::seconds(1);
 constexpr auto kBridgeRetryMaxDelay = std::chrono::seconds(30);
 
+class ControlThreadCleanup {
+  public:
+    explicit ControlThreadCleanup(std::thread& thread) : thread_(thread) {}
+    ~ControlThreadCleanup() {
+        g_stop_requested.store(true);
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+  private:
+    std::thread& thread_;
+};
+
 extern "C" void OnSignal(int) {
     g_stop_requested.store(true);
 }
@@ -251,6 +265,9 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
     // setup. A missing camera or unavailable video bridge must not prevent
     // MAVLink signaling from retrying independently.
     std::thread mavlink_control_thread;
+    // Cover every exception path, including session/capturer construction
+    // before the streaming loop's error handler becomes active.
+    ControlThreadCleanup control_thread_cleanup(mavlink_control_thread);
     if (config.mavlink_bridge_socket_path.has_value()) {
         mavlink_control_thread = std::thread(RunMavlinkControlLoop, config);
     }

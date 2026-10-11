@@ -2219,6 +2219,31 @@ media controllers. Their device numbers and count vary by board and kernel. If
 the fault is in libcamera's enumeration (`udev` or `libcamera-raspberrypi`),
 not in the kernel or the sensor.
 
+### KVS Worker Stops During Initialization
+
+On MAVLink-capable boards, video and control initialize independently but
+share the SDK's process-wide SRTP, SCTP, and thread-pool runtime. Shared KVS
+master releases before `0.18.2` can race those initializations and report
+`initKvsWebRtc(): ... 0x5b000005` (`STATUS_SRTP_INIT_FAILED`). A video-session
+construction failure can then abort with `terminate called without an active
+exception` because its control thread was not joined. After OpenRC exhausts
+its respawn limit, the service is stopped while the last video and MAVLink
+shadows still say `starting`.
+
+Check the worker itself; `video.descriptor.serverVersion` identifies the daemon
+and does not identify the shared KVS binary:
+
+```sh
+rc-service txing-${TXING_DEVICE}-kvs-master status
+tail -n 100 /var/log/txing-${TXING_DEVICE}-kvs-master.log
+/root/.local/share/mise/installs/txing-board-kvs-master/latest/txing-board-kvs-master --version
+```
+
+Publish `kvs-master-v0.18.2` or later and follow the device's complete
+[maintenance procedure](#maintenance). The worker now initializes the SDK
+once, holds it until process exit, and joins its control thread on every
+startup exception. Restarting the old binary alone does not remove the race.
+
 ### Video Never Reaches READY
 
 If the KVS master logs repeated `GetWorkerConfig failed: ... connect failed`

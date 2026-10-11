@@ -7,15 +7,19 @@
 #include "kvs_master/video_capturer.hpp"
 
 #include <chrono>
+#include <array>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <cstdlib>
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -640,6 +644,83 @@ void TestRuntimePropagatesCapturerErrors() {
     Expect(kvs_state.stopped, "runtime should stop KVS after a capturer failure");
 }
 
+void TestRuntimeJoinsControlThreadWhenVideoConstructionFails() {
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    auto config = TestRuntimeConfig();
+    config.mavlink_bridge_socket_path = "/unused-mavlink-bridge.sock";
+    auto hooks = HooksFrom(&kvs_state, &capturer_state);
+    hooks.create_kvs_session = [](const RuntimeConfig&, const AwsCredentials&) -> std::unique_ptr<KvsSession> {
+        throw std::runtime_error("video SDK initialization failed");
+    };
+    bool threw = false;
+    try {
+        Run(config, hooks);
+    } catch (const std::exception& error) {
+        threw = true;
+        Expect(std::string(error.what()) == "video SDK initialization failed", "construction failure should reach the caller without terminating");
+    }
+    Expect(threw, "runtime should report video construction failure");
+    Expect(!capturer_state.started, "construction failure should not start the camera");
+
+    // A new supervised attempt must still run after the failed one joined.
+    Run(TestRuntimeConfig(), HooksFrom(&kvs_state, &capturer_state));
+    Expect(kvs_state.started && kvs_state.stopped, "the next worker attempt should recover normally");
+}
+
+#if TXING_KVS_REAL_SDK
+void TestConcurrentSdkSessionConstruction() {
+    ScopedUnsetEnv ca_override("TXING_KVS_SYSTEM_CA_CERT_PATH");
+    // Construction only checks readability; no signaling or TLS connection is
+    // opened by this test, so an existing source file is sufficient.
+    setenv("TXING_KVS_SYSTEM_CA_CERT_PATH", __FILE__, 1);
+    constexpr std::size_t count = 8;
+    std::array<std::unique_ptr<KvsSession>, count> sessions;
+    std::array<std::string, count> failures;
+    std::array<std::thread, count> threads;
+    std::mutex lock;
+    std::condition_variable ready;
+    std::size_t waiting = 0;
+    bool released = false;
+    AwsCredentials credentials;
+    credentials.access_key_id = "test-access";
+    credentials.secret_access_key = "test-secret";
+    for (std::size_t i = 0; i < count; ++i) {
+        threads[i] = std::thread([&, i] {
+            {
+                std::unique_lock<std::mutex> guard(lock);
+                ++waiting;
+                ready.notify_all();
+                ready.wait(guard, [&] { return released; });
+            }
+            try {
+                auto config = TestRuntimeConfig();
+                config.channel_name = "test-channel-" + std::to_string(i);
+                sessions[i] = txing::board::kvs_master::CreateKvsSession(config, credentials);
+            } catch (const std::exception& error) {
+                failures[i] = error.what();
+            }
+        });
+    }
+    {
+        std::unique_lock<std::mutex> guard(lock);
+        ready.wait(guard, [&] { return waiting == count; });
+        released = true;
+    }
+    ready.notify_all();
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        Expect(sessions[i] != nullptr, "concurrent SDK session construction should succeed: " + failures[i]);
+    }
+    // Replacing one peer must preserve the SDK needed by all the others.
+    sessions[0].reset();
+    auto replacement = txing::board::kvs_master::CreateKvsSession(TestRuntimeConfig(), credentials);
+    Expect(replacement != nullptr, "a peer should be replaceable while other sessions stay alive");
+}
+#endif
+
 void TestRuntimeDoesNotExportTlsCaEnvironment() {
     ScopedUnsetEnv unset_ssl_cert_file("SSL_CERT_FILE");
     ScopedUnsetEnv unset_kvs_ca_cert_path("AWS_KVS_CACERT_PATH");
@@ -853,6 +934,9 @@ void TestRuntimeReportsStoppedToBridgeOnCleanExit() {
 }  // namespace
 
 int main() {
+#if TXING_KVS_REAL_SDK
+    TestConcurrentSdkSessionConstruction();
+#endif
     TestCliParsing();
     TestMavlinkCapabilityRequiresRuntimeBridgeSocket();
     TestRuntimeWorkerNameMustNotBeEmpty();
@@ -864,6 +948,7 @@ int main() {
     TestRuntimeReadyAndTimestamps();
     TestRuntimeAdvancesWhenEncoderTimestampsStayZero();
     TestRuntimePropagatesCapturerErrors();
+    TestRuntimeJoinsControlThreadWhenVideoConstructionFails();
     TestRuntimeDoesNotExportTlsCaEnvironment();
     TestMarkerFormatting();
     TestMasterAnswerPreparationOrder();

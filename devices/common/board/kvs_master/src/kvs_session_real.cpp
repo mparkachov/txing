@@ -437,6 +437,21 @@ std::string ResolveSignalingCaCertPath() {
     return path;
 }
 
+void EnsureKvsWebRtcInitialized() {
+    struct SdkLifetime {
+        SdkLifetime() {
+            ThrowIfFailed(initKvsWebRtc(), "initKvsWebRtc");
+        }
+        ~SdkLifetime() {
+            deinitKvsWebRtc();
+        }
+    };
+    // The SDK owns process-wide SRTP, SCTP, and thread-pool state. Function
+    // static initialization serializes the video and control constructors,
+    // and cleanup runs only after all runtime sessions have stopped.
+    static const SdkLifetime lifetime;
+}
+
 class RealKvsSession;
 
 struct PendingIceMessage {
@@ -500,8 +515,7 @@ class RealKvsSession final : public KvsSession {
             }
             CreateCredentialProvider();
             InitializeStaticConfiguration();
-            ThrowIfFailed(initKvsWebRtc(), "initKvsWebRtc");
-            sdk_initialized_ = true;
+            EnsureKvsWebRtcInitialized();
         } catch (...) {
             CleanupConstruction();
             throw;
@@ -645,10 +659,6 @@ class RealKvsSession final : public KvsSession {
         if (credential_provider_ != nullptr) {
             freeStaticCredentialProvider(&credential_provider_);
             credential_provider_ = nullptr;
-        }
-        if (sdk_initialized_) {
-            deinitKvsWebRtc();
-            sdk_initialized_ = false;
         }
     }
 
@@ -1929,7 +1939,6 @@ class RealKvsSession final : public KvsSession {
     SignalingClientInfo client_info_{};
     SignalingClientCallbacks signaling_client_callbacks_{};
 
-    bool sdk_initialized_ = false;
     bool started_ = false;
     bool stopping_ = true;
     bool recreate_signaling_client_ = false;

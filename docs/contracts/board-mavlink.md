@@ -32,6 +32,12 @@ write gate. The small JSON control envelopes are solely the authority and
 lease protocol, not a replacement for MAVLink. They remain defined in
 [`mavlink-webrtc.schema.json`](../../devices/common/board/protocol/mavlink-webrtc.schema.json).
 
+The native worker initializes the WebRTC SDK once for its process lifetime.
+Video and MAVLink keep independent signaling sessions, but share the SDK's
+SRTP, SCTP, and thread-pool runtime. Replacing or stopping one session must not
+deinitialize the runtime used by the other. Startup failures stop and join the
+control thread before the worker exits.
+
 ## Office operation and safety semantics
 
 Office presents two operator modes for every MAVLink-capable board:
