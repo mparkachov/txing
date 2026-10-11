@@ -32,6 +32,12 @@ write gate. The small JSON control envelopes are solely the authority and
 lease protocol, not a replacement for MAVLink. They remain defined in
 [`mavlink-webrtc.schema.json`](../../devices/common/board/protocol/mavlink-webrtc.schema.json).
 
+Control RPCs and uplink frame exchange are independent local gRPC calls. A
+queued frame may reach authorization after release, lease expiry, or takeover.
+The daemon drops frames carrying an inactive or stale epoch without closing
+the observer stream or deleting the peer. The same connected peer can acquire
+control again explicitly; stale frames remain blocked after that acquisition.
+
 The native worker initializes the WebRTC SDK once for its process lifetime.
 Video and MAVLink keep independent signaling sessions, but share the SDK's
 SRTP, SCTP, and thread-pool runtime. Replacing or stopping one session must not

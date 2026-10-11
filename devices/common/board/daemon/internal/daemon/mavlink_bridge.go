@@ -355,6 +355,13 @@ func (s *MAVLinkBridgeService) forwardUplink(ctx context.Context, sessionID stri
 	}
 	select {
 	case err := <-response:
+		if errors.Is(err, errMAVLinkStaleEpoch) {
+			// Control RPCs and frame exchange are independent gRPC calls. A
+			// queued frame can arrive after release, expiry, or takeover. Drop
+			// that frame without closing the peer's observer stream; its next
+			// explicit activation must still use the existing peer identity.
+			return nil
+		}
 		if err != nil {
 			return status.Error(codes.PermissionDenied, err.Error())
 		}
