@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +22,8 @@ type fakeNodeMQTTClient struct {
 	unsubscribes  []string
 	publishes     []fakePublish
 	disconnects   int
+	publishErr    error
+	publishOrder  *[]string
 }
 
 type fakePublish struct {
@@ -39,6 +43,12 @@ func (f *fakeNodeMQTTClient) Unsubscribe(filter string) error {
 }
 
 func (f *fakeNodeMQTTClient) Publish(topic string, payload []byte, retained bool) error {
+	if f.publishErr != nil {
+		return f.publishErr
+	}
+	if f.publishOrder != nil {
+		*f.publishOrder = append(*f.publishOrder, topic)
+	}
 	f.publishes = append(f.publishes, fakePublish{
 		topic:    topic,
 		payload:  append([]byte(nil), payload...),
@@ -487,6 +497,292 @@ func TestDeviceSessionLifecycleFollowsValidatedBLEAndThreadEvidence(t *testing.T
 			}
 		})
 	}
+}
+
+func TestDeviceMQTTReconnectRepublishesUnchangedState(t *testing.T) {
+	for _, adapter := range []struct {
+		name      string
+		inventory protocol.InventoryDevice
+		adapterID string
+		transport string
+	}{
+		{"BLE", powerBLEInventory("power-ble-1"), "dev.txing.rig.BleConnectivity", "ble"},
+		{"Thread", powerThreadInventory("power-si-1"), "dev.txing.rig.ThreadConnectivity", "thread"},
+		{"TBot", protocol.InventoryDevice{
+			ThingName: "tbot-8yzfgj", ThingType: "tbot",
+			Capabilities:        []string{"sparkplug", "thread", "power", "board", "mavlink", "video"},
+			RedconCommandLevels: []uint8{4, 3, 2, 1},
+			RedconRules: map[uint8][]string{
+				4: {"sparkplug", "thread"}, 3: {"sparkplug", "thread", "power"},
+				2: {"sparkplug", "thread", "power", "board", "mavlink"},
+				1: {"sparkplug", "thread", "power", "board", "mavlink", "video"},
+			},
+		}, "dev.txing.rig.ThreadConnectivity", "thread"},
+	} {
+		t.Run(adapter.name, func(t *testing.T) {
+			managed := &managedDevice{state: manager.NewDeviceRuntimeState(adapter.inventory)}
+			state := &runtimeState{
+				cfg:     rigconfig.Config{TownID: "town-1", RigID: "rig-1"},
+				devices: map[string]*managedDevice{adapter.inventory.ThingName: managed},
+			}
+			client := &fakeNodeMQTTClient{}
+			var options mqttx.Options
+			connections := 0
+			state.newDeviceMQTT = func(created mqttx.Options) (managedMQTTClient, error) {
+				options = created
+				connections++
+				if options.OnConnection != nil {
+					options.OnConnection()
+				}
+				return client, nil
+			}
+			if err := managed.state.ObserveState(protocol.CapabilityState{
+				SchemaVersion: protocol.SchemaVersion,
+				AdapterID:     adapter.adapterID,
+				ThingName:     adapter.inventory.ThingName,
+				Capabilities:  map[string]bool{"sparkplug": true, adapter.transport: true, "power": false},
+				Metrics:       map[string]protocol.MetricValue{},
+				ObservedAtMS:  uint64(time.Now().UnixMilli()),
+				Seq:           1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			birthTopic := sparkplug.BuildDeviceTopic("town-1", "DBIRTH", "rig-1", adapter.inventory.ThingName)
+			state.publishDeviceState(context.Background())
+			state.publishDeviceState(context.Background())
+			assertPublishedDeviceTopic(t, client, birthTopic, 1)
+			if options.OnConnection == nil {
+				t.Fatal("device MQTT session has no reconnect handler")
+			}
+
+			// The broker publishes the configured DDEATH will during an outage.
+			// Reconnecting must replace that projection even with identical evidence.
+			options.OnConnection()
+			state.publishDeviceState(context.Background())
+			state.publishDeviceState(context.Background())
+			assertPublishedDeviceTopic(t, client, birthTopic, 2)
+			if connections != 1 || client.disconnects != 0 {
+				t.Fatalf("reconnect churned the session: created=%d disconnected=%d", connections, client.disconnects)
+			}
+			recovered, err := sparkplug.DecodePayload(client.publishes[1].payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertMetric(t, recovered.Metrics, sparkplug.NewBooleanMetric("capability."+adapter.transport, true))
+			assertMetric(t, recovered.Metrics, sparkplug.NewInt32Metric("redcon", 4))
+		})
+	}
+}
+
+func TestNodeMQTTReconnectRepublishesDeviceBirths(t *testing.T) {
+	inventory := powerThreadInventory("power-si-1")
+	managed := &managedDevice{state: manager.NewDeviceRuntimeState(inventory)}
+	var publishOrder []string
+	client := &fakeNodeMQTTClient{publishOrder: &publishOrder}
+	state := &runtimeState{
+		cfg:     rigconfig.Config{TownID: "town-1", RigID: "rig-1"},
+		devices: map[string]*managedDevice{inventory.ThingName: managed},
+		newDeviceMQTT: func(mqttx.Options) (managedMQTTClient, error) {
+			return client, nil
+		},
+	}
+	if err := managed.state.ObserveState(protocol.CapabilityState{
+		SchemaVersion: protocol.SchemaVersion, AdapterID: "dev.txing.rig.ThreadConnectivity", ThingName: inventory.ThingName,
+		Capabilities: map[string]bool{"sparkplug": true, "thread": true, "power": false},
+		Metrics:      map[string]protocol.MetricValue{}, ObservedAtMS: uint64(time.Now().UnixMilli()), Seq: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	node := &fakeNodeMQTTClient{publishOrder: &publishOrder}
+	var options mqttx.Options
+	state.newNodeMQTT = func(created mqttx.Options) (nodeMQTTClient, error) {
+		options = created
+		options.OnConnection()
+		return node, nil
+	}
+	if err := state.connectNodeMQTT(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state.publishDeviceState(context.Background())
+	state.publishDeviceState(context.Background())
+	birthTopic := sparkplug.BuildDeviceTopic("town-1", "DBIRTH", "rig-1", inventory.ThingName)
+	assertPublishedDeviceTopic(t, client, birthTopic, 1)
+
+	options.OnConnection()
+	state.publishDeviceState(context.Background())
+	state.publishDeviceState(context.Background())
+	assertPublishedDeviceTopic(t, client, birthTopic, 2)
+	if client.disconnects != 0 {
+		t.Fatal("node reconnect must reuse the live device MQTT session")
+	}
+	nodeBirthTopic := sparkplug.BuildNodeTopic("town-1", "NBIRTH", "rig-1")
+	if !reflect.DeepEqual(publishOrder, []string{nodeBirthTopic, birthTopic, nodeBirthTopic, birthTopic}) {
+		t.Fatalf("reconnect publication order = %v", publishOrder)
+	}
+}
+
+func TestNodeMQTTReconnectRetriesBirthBeforeDeviceRecovery(t *testing.T) {
+	state, managed, device := newThreadPublicationState(t)
+	node := &fakeNodeMQTTClient{}
+	var options mqttx.Options
+	state.newNodeMQTT = func(created mqttx.Options) (nodeMQTTClient, error) {
+		options = created
+		options.OnConnection()
+		return node, nil
+	}
+	if err := state.connectNodeMQTT(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state.publishDeviceState(context.Background())
+	options.OnConnection()
+	node.publishErr = errors.New("connection unavailable")
+	state.publishDeviceState(context.Background())
+	if len(device.publishes) != 1 || managed.mqtt != device {
+		t.Fatal("device publications must wait for the node birth to recover")
+	}
+	node.publishErr = nil
+	state.publishDeviceState(context.Background())
+	state.publishDeviceState(context.Background())
+	assertPublishedDeviceTopic(t, device, sparkplug.BuildDeviceTopic("town-1", "DBIRTH", "rig-1", "power-si-1"), 2)
+	assertPublishedDeviceTopic(t, node, sparkplug.BuildNodeTopic("town-1", "NBIRTH", "rig-1"), 2)
+}
+
+func TestNodeMQTTReconnectInRedconFourKeepsDevicesDisconnected(t *testing.T) {
+	state := &runtimeState{cfg: rigconfig.Config{TownID: "town-1", RigID: "rig-1"}}
+	state.setNodeRedcon(nodeRedconCommandable)
+	node := &fakeNodeMQTTClient{}
+	var options mqttx.Options
+	state.newNodeMQTT = func(created mqttx.Options) (nodeMQTTClient, error) {
+		options = created
+		options.OnConnection()
+		return node, nil
+	}
+	state.newDeviceMQTT = func(mqttx.Options) (managedMQTTClient, error) {
+		t.Fatal("REDCON 4 must not create device MQTT sessions")
+		return nil, nil
+	}
+	if err := state.connectNodeMQTT(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	options.OnConnection()
+	state.publishDeviceState(context.Background())
+	state.publishDeviceState(context.Background())
+	assertPublishedDeviceTopic(t, node, sparkplug.BuildNodeTopic("town-1", "NBIRTH", "rig-1"), 2)
+	for _, subscription := range node.subscriptions {
+		if subscription != sparkplug.BuildNodeCommandTopic("town-1", "rig-1") {
+			t.Fatalf("REDCON 4 restored active subscription %s", subscription)
+		}
+	}
+}
+
+func TestDevicePublishFailuresRetryWithoutSessionChurn(t *testing.T) {
+	for _, messageType := range []string{"DBIRTH", "DDATA", "DDEATH"} {
+		t.Run(messageType, func(t *testing.T) {
+			state, managed, client := newThreadPublicationState(t)
+			if messageType != "DBIRTH" {
+				state.publishDeviceState(context.Background())
+				capabilities := map[string]bool{"sparkplug": true, "thread": true, "power": true}
+				if messageType == "DDEATH" {
+					capabilities = map[string]bool{"sparkplug": false, "thread": false, "power": false}
+				}
+				if err := managed.state.ObserveState(protocol.CapabilityState{
+					SchemaVersion: protocol.SchemaVersion, AdapterID: "dev.txing.rig.ThreadConnectivity", ThingName: "power-si-1",
+					Capabilities: capabilities, Metrics: map[string]protocol.MetricValue{}, ObservedAtMS: uint64(time.Now().UnixMilli()), Seq: 2,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			client.publishErr = errors.New("connection unavailable")
+			state.publishDeviceState(context.Background())
+			if managed.mqtt != client || client.disconnects != 0 {
+				t.Fatal("failed publication must retain the existing MQTT client for retry")
+			}
+			client.publishErr = nil
+			state.publishDeviceState(context.Background())
+			state.publishDeviceState(context.Background())
+			switch messageType {
+			case "DBIRTH":
+				assertPublishedDeviceTopic(t, client, sparkplug.BuildDeviceTopic("town-1", "DBIRTH", "rig-1", "power-si-1"), 1)
+			case "DDATA":
+				assertPublishedDeviceTopic(t, client, sparkplug.BuildDeviceTopic("town-1", "DBIRTH", "rig-1", "power-si-1"), 2)
+				recovered, err := sparkplug.DecodePayload(client.publishes[1].payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertMetric(t, recovered.Metrics, sparkplug.NewBooleanMetric("capability.power", true))
+			case "DDEATH":
+				assertPublishedDeviceTopic(t, client, sparkplug.BuildDeviceTopic("town-1", "DDEATH", "rig-1", "power-si-1"), 1)
+				if managed.mqtt != nil || client.disconnects != 1 {
+					t.Fatal("successful death retry must disconnect the device exactly once")
+				}
+			}
+		})
+	}
+}
+
+func TestDeviceMQTTReconnectDoesNotReviveExpiredEvidence(t *testing.T) {
+	state, managed, client := newThreadPublicationState(t)
+	state.publishDeviceState(context.Background())
+	if err := managed.state.ObserveState(protocol.CapabilityState{
+		SchemaVersion: protocol.SchemaVersion, AdapterID: "dev.txing.rig.ThreadConnectivity", ThingName: "power-si-1",
+		Capabilities: map[string]bool{"sparkplug": true, "thread": true, "power": false},
+		Metrics:      map[string]protocol.MetricValue{}, ObservedAtMS: uint64(time.Now().UnixMilli()) - manager.StateTTLMS - 1000, Seq: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldSession := managed.mqttReconnect
+	oldSession.onConnection()
+	state.publishDeviceState(context.Background())
+	oldSession.onConnection() // A delayed callback from the closed session is ignored.
+	state.publishDeviceState(context.Background())
+	assertPublishedDeviceTopic(t, client, sparkplug.BuildDeviceTopic("town-1", "DBIRTH", "rig-1", "power-si-1"), 1)
+	assertPublishedDeviceTopic(t, client, sparkplug.BuildDeviceTopic("town-1", "DDEATH", "rig-1", "power-si-1"), 1)
+	if managed.mqtt != nil || client.disconnects != 1 {
+		t.Fatal("expired evidence must close the session despite a reconnect")
+	}
+}
+
+func TestReconnectCallbacksCanRunDuringPublication(t *testing.T) {
+	state, managed, client := newThreadPublicationState(t)
+	state.publishDeviceState(context.Background())
+	var callbacks sync.WaitGroup
+	callbacks.Add(1)
+	go func() {
+		defer callbacks.Done()
+		for range 100 {
+			managed.mqttReconnect.onConnection()
+		}
+	}()
+	for range 100 {
+		state.publishDeviceState(context.Background())
+	}
+	callbacks.Wait()
+	state.publishDeviceState(context.Background())
+	if len(client.publishes) < 2 {
+		t.Fatal("concurrent reconnects must cause a device rebirth")
+	}
+}
+
+func newThreadPublicationState(t *testing.T) (*runtimeState, *managedDevice, *fakeNodeMQTTClient) {
+	t.Helper()
+	managed := &managedDevice{state: manager.NewDeviceRuntimeState(powerThreadInventory("power-si-1"))}
+	client := &fakeNodeMQTTClient{}
+	state := &runtimeState{
+		cfg:     rigconfig.Config{TownID: "town-1", RigID: "rig-1"},
+		devices: map[string]*managedDevice{"power-si-1": managed},
+		newDeviceMQTT: func(options mqttx.Options) (managedMQTTClient, error) {
+			options.OnConnection()
+			return client, nil
+		},
+	}
+	if err := managed.state.ObserveState(protocol.CapabilityState{
+		SchemaVersion: protocol.SchemaVersion, AdapterID: "dev.txing.rig.ThreadConnectivity", ThingName: "power-si-1",
+		Capabilities: map[string]bool{"sparkplug": true, "thread": true, "power": false},
+		Metrics:      map[string]protocol.MetricValue{}, ObservedAtMS: uint64(time.Now().UnixMilli()), Seq: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return state, managed, client
 }
 
 func TestOfflineDeviceSessionDoesNotInterruptOtherDeviceSession(t *testing.T) {

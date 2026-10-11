@@ -45,6 +45,9 @@ type runtimeState struct {
 	ipcClient               *ipc.Client
 	registry                inventoryLoader
 	nodeMQTT                nodeMQTTClient
+	newNodeMQTT             func(mqttx.Options) (nodeMQTTClient, error)
+	nodeReconnect           mqttReconnectState
+	deviceRebirthPending    atomic.Bool
 	newDeviceMQTT           func(mqttx.Options) (managedMQTTClient, error)
 	devices                 map[string]*managedDevice
 	deviceMu                sync.RWMutex
@@ -61,9 +64,23 @@ type runtimeState struct {
 }
 
 type managedDevice struct {
-	state *manager.DeviceRuntimeState
-	mqtt  managedMQTTClient
-	seq   uint64
+	state         *manager.DeviceRuntimeState
+	mqtt          managedMQTTClient
+	mqttReconnect *mqttReconnectState
+	seq           uint64
+}
+
+// MQTT callbacks only signal the publication loop. They must not mutate
+// device evidence or publication state concurrently with IPC processing.
+type mqttReconnectState struct {
+	connected atomic.Bool
+	pending   atomic.Bool
+}
+
+func (r *mqttReconnectState) onConnection() {
+	if r.connected.Swap(true) {
+		r.pending.Store(true)
+	}
 }
 
 type inventoryLoader interface {
@@ -206,9 +223,7 @@ func run(ctx context.Context, cfg rigconfig.Config) error {
 				logger.Print(ctx, "warning", fmt.Sprintf("inventory refresh failed error=%q", err))
 			}
 		case <-publishTicker.C:
-			if state.currentNodeRedcon() != nodeRedconCommandable {
-				state.publishDeviceState(ctx)
-			}
+			state.publishDeviceState(ctx)
 		case message := <-messages:
 			state.handleIPCMessage(ctx, message)
 		}
@@ -220,10 +235,7 @@ func (s *runtimeState) connectNodeMQTT(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	initialOnline := make(chan error, 1)
-	var initialOnlineDone atomic.Bool
-	var client *mqttx.Client
-	client, err = mqttx.New(mqttx.Options{
+	options := mqttx.Options{
 		Config:      s.cfg,
 		ClientID:    manager.NodeClientID(s.cfg.RigID),
 		WillTopic:   sparkplug.BuildNodeTopic(s.cfg.TownID, "NDEATH", s.cfg.RigID),
@@ -232,40 +244,24 @@ func (s *runtimeState) connectNodeMQTT(ctx context.Context) error {
 			s.handleMQTTMessage(context.Background(), message)
 		},
 		OnConnectionLost: func(err error) {
-			s.logger.Print(context.Background(), "warning", fmt.Sprintf("node MQTT disconnected error=%q", err))
+			s.warningPrint(context.Background(), fmt.Sprintf("node MQTT disconnected error=%q", err))
 		},
-		OnConnection: func() {
-			err := s.publishNodeOnline(client)
-			if !initialOnlineDone.Load() {
-				select {
-				case initialOnline <- err:
-				default:
-				}
-			}
-			if err != nil {
-				s.logger.Print(context.Background(), "warning", fmt.Sprintf("node MQTT online publish failed error=%q", err))
-				return
-			}
-			s.logger.Print(context.Background(), "info", "sparkplug node MQTT connected")
-		},
-	})
+		OnConnection: s.nodeReconnect.onConnection,
+	}
+	newClient := s.newNodeMQTT
+	if newClient == nil {
+		newClient = newConnectedNodeMQTT
+	}
+	client, err := newClient(options)
 	if err != nil {
 		return err
 	}
-	if err := client.Connect(); err != nil {
+	if err := s.publishNodeOnline(client); err != nil {
+		client.Disconnect(250)
 		return err
 	}
-	select {
-	case err := <-initialOnline:
-		initialOnlineDone.Store(true)
-		if err != nil {
-			return err
-		}
-	case <-time.After(30 * time.Second):
-		initialOnlineDone.Store(true)
-		return fmt.Errorf("node MQTT online publish timed out")
-	}
 	s.nodeMQTT = client
+	s.infoPrint(ctx, "sparkplug node MQTT connected")
 	return nil
 }
 
@@ -280,7 +276,11 @@ func (s *runtimeState) publishNodeOnline(client nodeMQTTClient) error {
 			return err
 		}
 	}
-	return s.publishNodeBirth(client, redcon, nil)
+	if err := s.publishNodeBirth(client, redcon, nil); err != nil {
+		return err
+	}
+	s.deviceRebirthPending.Store(true)
+	return nil
 }
 
 func (s *runtimeState) refreshInventory(ctx context.Context) error {
@@ -356,14 +356,16 @@ func (s *runtimeState) ensureDeviceMQTT(thingName string, managed *managedDevice
 	if err != nil {
 		return err
 	}
+	reconnect := &mqttReconnectState{}
 	options := mqttx.Options{
 		Config:      s.cfg,
 		ClientID:    thingName,
 		WillTopic:   sparkplug.BuildDeviceTopic(s.cfg.TownID, "DDEATH", s.cfg.RigID, thingName),
 		WillPayload: willPayload,
 		OnConnectionLost: func(err error) {
-			s.logger.Print(context.Background(), "warning", fmt.Sprintf("device MQTT disconnected thing=%s error=%q", thingName, err))
+			s.warningPrint(context.Background(), fmt.Sprintf("device MQTT disconnected thing=%s error=%q", thingName, err))
 		},
+		OnConnection: reconnect.onConnection,
 	}
 	newClient := s.newDeviceMQTT
 	if newClient == nil {
@@ -374,10 +376,19 @@ func (s *runtimeState) ensureDeviceMQTT(thingName string, managed *managedDevice
 		return err
 	}
 	managed.mqtt = client
+	managed.mqttReconnect = reconnect
 	return nil
 }
 
 func newConnectedDeviceMQTT(options mqttx.Options) (managedMQTTClient, error) {
+	return newConnectedMQTT(options)
+}
+
+func newConnectedNodeMQTT(options mqttx.Options) (nodeMQTTClient, error) {
+	return newConnectedMQTT(options)
+}
+
+func newConnectedMQTT(options mqttx.Options) (*mqttx.Client, error) {
 	client, err := mqttx.New(options)
 	if err != nil {
 		return nil, err
@@ -550,10 +561,26 @@ func (s *runtimeState) clearShadowPayloads(thingName string) {
 }
 
 func (s *runtimeState) publishDeviceState(ctx context.Context) {
+	if s.nodeReconnect.pending.Swap(false) {
+		if err := s.publishNodeOnline(s.nodeMQTT); err != nil {
+			s.nodeReconnect.pending.Store(true)
+			s.warningPrint(ctx, fmt.Sprintf("node MQTT online publish failed error=%q", err))
+			return
+		}
+		s.infoPrint(ctx, "sparkplug node MQTT reconnected")
+	}
 	if s.currentNodeRedcon() == nodeRedconCommandable {
 		return
 	}
+	rebirthAll := s.deviceRebirthPending.Swap(false)
 	for thingName, managed := range s.devices {
+		reconnected := managed.mqttReconnect != nil && managed.mqttReconnect.pending.Swap(false)
+		if managed.mqtt != nil && (rebirthAll || reconnected) {
+			managed.state.ResetPublication()
+			if reconnected {
+				s.infoPrint(ctx, fmt.Sprintf("device MQTT reconnected thing=%s; refreshing Sparkplug state", thingName))
+			}
+		}
 		publication, err := managed.state.DecidePublication(uint64(time.Now().UnixMilli()))
 		if err != nil {
 			s.logger.Print(ctx, "warning", fmt.Sprintf("device publication decision failed thing=%s error=%q", thingName, err))
@@ -562,24 +589,32 @@ func (s *runtimeState) publishDeviceState(ctx context.Context) {
 		switch publication.Kind {
 		case manager.PublicationBirth:
 			if err := s.ensureDeviceMQTT(thingName, managed); err != nil {
-				s.logger.Print(ctx, "warning", fmt.Sprintf("device MQTT connect for DBIRTH failed thing=%s error=%q", thingName, err))
+				s.warningPrint(ctx, fmt.Sprintf("device MQTT connect for DBIRTH failed thing=%s error=%q", thingName, err))
 				managed.state.ResetPublication()
 				continue
 			}
-			s.publishDeviceReport(ctx, managed, thingName, "DBIRTH", publication.Redcon, publication.Metrics)
+			if err := s.publishDeviceReport(ctx, managed, thingName, "DBIRTH", publication.Redcon, publication.Metrics); err != nil {
+				managed.state.ResetPublication()
+			}
 		case manager.PublicationData:
 			if managed.mqtt == nil {
-				s.logger.Print(ctx, "warning", fmt.Sprintf("device MQTT session missing for DDATA thing=%s", thingName))
+				s.warningPrint(ctx, fmt.Sprintf("device MQTT session missing for DDATA thing=%s", thingName))
 				managed.state.ResetPublication()
 				continue
 			}
-			s.publishDeviceReport(ctx, managed, thingName, "DDATA", publication.Redcon, publication.Metrics)
+			if err := s.publishDeviceReport(ctx, managed, thingName, "DDATA", publication.Redcon, publication.Metrics); err != nil {
+				managed.state.ResetPublication()
+			}
 		case manager.PublicationDeath:
 			if err := s.ensureDeviceMQTT(thingName, managed); err != nil {
-				s.logger.Print(ctx, "warning", fmt.Sprintf("device MQTT connect for DDEATH failed thing=%s error=%q", thingName, err))
+				s.warningPrint(ctx, fmt.Sprintf("device MQTT connect for DDEATH failed thing=%s error=%q", thingName, err))
+				managed.state.ResetPublication()
 				continue
 			}
-			s.publishDeviceDeath(ctx, managed, thingName)
+			if err := s.publishDeviceDeath(ctx, managed, thingName); err != nil {
+				managed.state.ResetPublication()
+				continue
+			}
 			s.disconnectDeviceMQTT(managed)
 		}
 	}
@@ -591,32 +626,35 @@ func (s *runtimeState) disconnectDeviceMQTT(managed *managedDevice) {
 	}
 	managed.mqtt.Disconnect(250)
 	managed.mqtt = nil
+	managed.mqttReconnect = nil
 }
 
-func (s *runtimeState) publishDeviceReport(ctx context.Context, managed *managedDevice, thingName, messageType string, redcon uint8, metrics []sparkplug.Metric) {
+func (s *runtimeState) publishDeviceReport(ctx context.Context, managed *managedDevice, thingName, messageType string, redcon uint8, metrics []sparkplug.Metric) error {
 	seq := managed.nextSeq()
 	payload, err := sparkplug.BuildDeviceReportPayload(redcon, seq, uint64(time.Now().UnixMilli()), metrics)
 	if err != nil {
-		s.logger.Print(ctx, "warning", fmt.Sprintf("build %s failed thing=%s error=%q", messageType, thingName, err))
-		return
+		s.warningPrint(ctx, fmt.Sprintf("build %s failed thing=%s error=%q", messageType, thingName, err))
+		return err
 	}
 	if err := managed.mqtt.Publish(sparkplug.BuildDeviceTopic(s.cfg.TownID, messageType, s.cfg.RigID, thingName), payload, false); err != nil {
-		s.logger.Print(ctx, "warning", fmt.Sprintf("publish %s failed thing=%s error=%q", messageType, thingName, err))
+		s.warningPrint(ctx, fmt.Sprintf("publish %s failed thing=%s error=%q", messageType, thingName, err))
+		return err
 	}
+	return nil
 }
 
-func (s *runtimeState) publishDeviceDeath(ctx context.Context, managed *managedDevice, thingName string) {
+func (s *runtimeState) publishDeviceDeath(ctx context.Context, managed *managedDevice, thingName string) error {
 	seq := managed.nextSeq()
 	payload, err := sparkplug.BuildDeviceDeathPayload(seq, uint64(time.Now().UnixMilli()))
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Print(ctx, "warning", fmt.Sprintf("build DDEATH failed thing=%s error=%q", thingName, err))
-		}
-		return
+		s.warningPrint(ctx, fmt.Sprintf("build DDEATH failed thing=%s error=%q", thingName, err))
+		return err
 	}
-	if err := managed.mqtt.Publish(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DDEATH", s.cfg.RigID, thingName), payload, false); err != nil && s.logger != nil {
-		s.logger.Print(ctx, "warning", fmt.Sprintf("publish DDEATH failed thing=%s error=%q", thingName, err))
+	if err := managed.mqtt.Publish(sparkplug.BuildDeviceTopic(s.cfg.TownID, "DDEATH", s.cfg.RigID, thingName), payload, false); err != nil {
+		s.warningPrint(ctx, fmt.Sprintf("publish DDEATH failed thing=%s error=%q", thingName, err))
+		return err
 	}
+	return nil
 }
 
 func (s *runtimeState) gracefulShutdown(ctx context.Context) {
@@ -864,6 +902,12 @@ func (s *runtimeState) infoPrint(ctx context.Context, message string) {
 		return
 	}
 	s.logger.Print(ctx, "info", message)
+}
+
+func (s *runtimeState) warningPrint(ctx context.Context, message string) {
+	if s.logger != nil {
+		s.logger.Print(ctx, "warning", message)
+	}
 }
 
 func (s *runtimeState) debugPrint(ctx context.Context, message string) {

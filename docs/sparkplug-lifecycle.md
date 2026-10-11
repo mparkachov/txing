@@ -71,6 +71,15 @@ manually on a development Mac.
   with the same rig Thing/client id concurrently. The cloud runtime publishes the
   same Sparkplug topic model from AWS-hosted infrastructure.
 - Managed device Sparkplug MQTT sessions use the managed thing name as their MQTT client id so AWS IoT thing connectivity tracks device session state. The manager creates a device session only for an impending `DBIRTH`; on a device `DDEATH` it disconnects that client and does not recreate it until fresh validated BLE GATT or Thread CoAP evidence requires a new `DBIRTH`. The rig node MQTT session and other device sessions remain independent.
+- Standalone rig MQTT reconnection restores lifecycle publication as well as the
+  connection. A device reconnect republishes `DBIRTH` from current validated
+  evidence even when its metrics did not change. A node reconnect restores its
+  subscriptions and `NBIRTH`, then refreshes existing device sessions with
+  `DBIRTH`. Expired evidence still produces `DDEATH`, and deliberately
+  unavailable devices stay disconnected. Failed lifecycle publications are
+  retried by the publication loop; unchanged-state suppression applies only
+  after a successful publication. Reconnect callbacks signal this loop rather
+  than changing device evidence or publication state concurrently.
 
 ## Authority and Ownership
 

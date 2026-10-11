@@ -57,6 +57,15 @@ adapter state creates a fresh session before the recovery `DBIRTH`. This lets
 AWS IoT Thing connection status agree with the transport availability shown in
 Office; the rig node MQTT session and other device sessions are unaffected.
 
+After a device MQTT reconnect, the manager republishes `DBIRTH` with the full
+current capability state even when the device's state is unchanged. A rig node
+MQTT reconnect restores subscriptions and publishes `NBIRTH` before refreshing
+the births of its existing device sessions. Recovery reuses MQTT clients and
+still requires fresh adapter evidence; it does not wake devices or reconnect
+devices already declared unavailable. Failed lifecycle publications remain
+pending for the next publication tick rather than being suppressed as unchanged.
+Node reconnect recovery also preserves a deliberately commanded rig REDCON 4.
+
 Inventory refreshes are cost-aware so an idle-awake rig stays cheap at
 REDCON 1. Each refresh performs one fleet-indexing `SearchIndex` query and
 builds device registrations from the returned documents; there are no
