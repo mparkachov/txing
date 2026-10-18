@@ -19,6 +19,8 @@ Keep it short: durable technical details live in focused docs and subproject
 - `devices/unit/mcu/`: stock Zephyr C firmware for the current `unit` device type
   MCU.
 - `rig/`: Raspberry Pi 5 rig runtime for AWS IoT MQTT and BLE communication.
+- `agent/`: planned shared C++ AI operator skeleton for macOS and AWS
+  MicroVMs; see `docs/components/agent.md` for the replacement boundary.
 - `devices/common/board/`: the single board-side implementation (Go daemon, KVS
   worker, hardware worker) shared by every board device type; the device type is
   a build input.
@@ -46,6 +48,8 @@ unless a shared contract or consistency issue requires coordinated updates.
   reliability: `docs/contracts/unit-device-contracts.md`
 - MCU shared stack invariant and firmware reference: `docs/components/mcu.md`
 - AWS Lambda language boundary: `docs/aws-lambda-boundary.md`
+- Agent architecture and operational constraints: `docs/components/agent.md`
+  and `docs/constraints/agent.md`
 - Sparkplug lifecycle design: `docs/sparkplug-lifecycle.md`
 - Current rig-era shadow plus BLE compatibility contract:
   `devices/unit/docs/device-rig-shadow-spec.md`

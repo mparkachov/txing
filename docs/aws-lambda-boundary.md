@@ -20,23 +20,41 @@ migration, or legacy service-token bridge modes.
 Admin Lambda code is packaged as current content-addressed stack code, not as a
 semver-managed release artifact.
 
-Runtime Lambdas are Go. GitHub release assets and S3 object keys keep these
-stable artifact ids, while deployed function names are prefixed with the
+Existing shared runtime Lambdas are Go. GitHub release assets and S3 object keys
+keep these stable artifact ids, while deployed function names are prefixed with the
 environment stack name and omit the redundant `-lambda` suffix, for example
 `town-cloud-rig`:
 
 - `txing-witness-lambda`
 - `txing-cloud-rig-lambda`
 - `txing-cloud-mcu-lambda`
-- `txing-tbot-companion-lambda`
 
 These functions stay as static `linux/arm64` `bootstrap` executables for
 `provided.al2023`. They are published as release artifacts and updated by
 `release::publish lambda`.
 
-Firmware uses the stock Zephyr C stack. Standalone rig daemons and runtime
-Lambdas are Go. This boundary is intentionally language based so Lambda build
-and release behavior stays predictable.
+Milestone 10 introduces one explicit C++ exception: the agent controller,
+`txing-agent-lambda`, under the top-level agent component. It uses the AWS SDK
+for C++ and a C++ custom Lambda runtime packaged for Linux ARM64 on
+`provided.al2023`. It does not inherit the Go-only/static-bootstrap build
+assumption above. Package and validate its native dependencies with its
+release artifact.
+
+The agent application itself is a native C++ executable on macOS and Linux
+ARM64, hosted in Lambda MicroVMs in cloud operation. It is not a fifteen-minute
+Lambda function. Its controller remains a short-lived event function. Agent
+runtime/controller publication follows the approved `agent` release and
+`just agent::publish <version>` interface rather than adding a Go controller
+to the shared `lambda` release stream.
+
+This is approved replacement guidance, not completed implementation. The old
+`txing-tbot-companion-lambda` Go controller and Fargate paths are superseded
+and remain pending removal in milestone 10. See
+[Agent](components/agent.md) and [Agent constraints](constraints/agent.md).
+
+Firmware uses the stock Zephyr C stack; standalone rig daemons and the existing
+shared runtime Lambdas remain Go. Existing admin Python functions are unchanged.
+No new agent Go or Python production/publication code is introduced.
 
 Within this repository, deploy actions are CloudFormation-backed AWS stack
 updates. Publish actions promote already-built release artifacts to existing

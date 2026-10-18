@@ -14,6 +14,13 @@ tags:
 
 # TBot cloud companion for QGroundControl
 
+> Superseded on 2026-10-18 by [Agent](../../components/agent.md) and
+> [Agent constraints](../../constraints/agent.md), approved in
+> [milestone 10](https://github.com/mparkachov/txing/milestone/10).
+> This document records the historical Go/Fargate design. Its arm-triggered
+> lease, public UDP endpoint, and split shadow ownership are not requirements
+> for the C++ AI operator replacement.
+
 ## Outcome
 
 Run one cloud companion task for each TBot whose projected Sparkplug state is
