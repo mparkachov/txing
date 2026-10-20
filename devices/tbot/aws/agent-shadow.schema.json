@@ -1,80 +1,297 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://txing.local/schemas/tbot-agent-shadow-v1.schema.json",
-  "title": "TBot agent named shadow v1",
-  "description": "Operational status of the TBot cloud agent. This shadow is not a REDCON capability.",
+  "$id": "https://txing.local/schemas/tbot-agent-shadow-v2.schema.json",
+  "title": "TBot cloud agent named shadow v2",
+  "description": "Controller-owned cloud diagnostics, optional and outside REDCON. See docs/contracts/agent-shadow.md for freshness, authorization, and run fencing.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["state"],
+  "required": [
+    "state"
+  ],
   "properties": {
     "state": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["reported"],
+      "required": [
+        "reported"
+      ],
       "properties": {
         "reported": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["task", "endpoint", "mavlink", "video", "lastError"],
+          "required": [
+            "lifecycle"
+          ],
           "properties": {
-            "task": {
+            "run": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "release"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "release": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+                },
+                "microvmId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1
+                }
+              }
+            },
+            "activation": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "startedAt",
+                "deadline"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "startedAt": {
+                  "$ref": "#/$defs/time"
+                },
+                "deadline": {
+                  "$ref": "#/$defs/time"
+                }
+              },
+              "description": "Persisted across replacement runs and expiry until a new inactive-to-active transition."
+            },
+            "lifecycle": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["status", "id"],
+              "required": [
+                "state"
+              ],
               "properties": {
-                "status": {"enum": ["stopped", "starting", "ready", "error"]},
-                "id": {"type": ["string", "null"], "minLength": 1}
+                "state": {
+                  "enum": [
+                    "stopped",
+                    "starting",
+                    "running",
+                    "stopping",
+                    "expired",
+                    "error"
+                  ]
+                },
+                "verifiedAt": {
+                  "$ref": "#/$defs/time"
+                }
               }
             },
             "endpoint": {
-              "type": "object",
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uri",
+              "pattern": "^https://[^/?#@\\s]+(?:/[^?#\\s]*)?$",
+              "description": "Authenticated HTTPS base URL. Never public UDP or an authentication token."
+            },
+            "runtime": {
+              "type": [
+                "object",
+                "null"
+              ],
               "additionalProperties": false,
-              "required": ["ipv4", "ipv6", "udpPort"],
+              "required": [
+                "runId",
+                "sampledAt",
+                "mavlink",
+                "video",
+                "control"
+              ],
               "properties": {
-                "ipv4": {"type": ["string", "null"], "format": "ipv4"},
-                "ipv6": {"type": ["string", "null"], "format": "ipv6"},
-                "udpPort": {"enum": [14550, null]}
+                "runId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sampledAt": {
+                  "$ref": "#/$defs/time"
+                },
+                "mavlink": {
+                  "$ref": "#/$defs/connection"
+                },
+                "video": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "state",
+                    "framesReceived"
+                  ],
+                  "properties": {
+                    "state": {
+                      "$ref": "#/$defs/connectionState"
+                    },
+                    "framesReceived": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "lastFrameAt": {
+                      "$ref": "#/$defs/nullableTime"
+                    },
+                    "lastError": {
+                      "$ref": "#/$defs/error"
+                    }
+                  }
+                },
+                "control": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "state"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "observing",
+                        "acquiring",
+                        "held",
+                        "lost"
+                      ]
+                    },
+                    "lastError": {
+                      "$ref": "#/$defs/error"
+                    }
+                  }
+                }
               }
             },
-            "mavlink": {"enum": ["disconnected", "connecting", "connected", "error"]},
-            "video": {"enum": ["disconnected", "connecting", "connected", "error"]},
-            "lastError": {"type": ["string", "null"], "minLength": 1}
+            "lastError": {
+              "$ref": "#/$defs/error",
+              "description": "Controller/lifecycle error. Independent runtime errors stay in their own fields."
+            }
           },
           "allOf": [
             {
-              "if": {"properties": {"task": {"properties": {"status": {"const": "ready"}}}}},
-              "then": {
+              "if": {
                 "properties": {
-                  "task": {"properties": {"id": {"type": "string", "minLength": 1}}},
-                  "endpoint": {
+                  "lifecycle": {
                     "properties": {
-                      "ipv4": {"type": "string", "format": "ipv4"},
-                      "ipv6": {"type": "string", "format": "ipv6"},
-                      "udpPort": {"const": 14550}
+                      "state": {
+                        "enum": [
+                          "starting",
+                          "running"
+                        ]
+                      }
                     }
-                  },
-                  "mavlink": {"const": "connected"}
+                  }
                 }
               },
-              "else": {
+              "then": {
+                "required": [
+                  "run",
+                  "activation"
+                ],
+                "properties": {
+                  "run": {
+                    "type": "object"
+                  },
+                  "activation": {
+                    "type": "object"
+                  },
+                  "lifecycle": {
+                    "required": [
+                      "verifiedAt"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "endpoint"
+                ],
                 "properties": {
                   "endpoint": {
+                    "type": "string"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "lifecycle": {
                     "properties": {
-                      "ipv4": {"type": "null"},
-                      "ipv6": {"type": "null"},
-                      "udpPort": {"type": "null"}
+                      "state": {
+                        "const": "running"
+                      }
+                    }
+                  },
+                  "run": {
+                    "required": [
+                      "microvmId"
+                    ],
+                    "properties": {
+                      "microvmId": {
+                        "type": "string"
+                      }
                     }
                   }
                 }
               }
             },
             {
-              "if": {"properties": {"task": {"properties": {"status": {"const": "stopped"}}}}},
-              "then": {
+              "if": {
+                "required": [
+                  "runtime"
+                ],
                 "properties": {
-                  "task": {"properties": {"id": {"type": "null"}}},
-                  "mavlink": {"const": "disconnected"},
-                  "video": {"const": "disconnected"}
+                  "runtime": {
+                    "type": "object"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "run"
+                ],
+                "properties": {
+                  "run": {
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "lifecycle": {
+                    "properties": {
+                      "state": {
+                        "const": "expired"
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "activation"
+                ],
+                "properties": {
+                  "activation": {
+                    "type": "object"
+                  }
                 }
               }
             }
@@ -82,8 +299,62 @@
         }
       }
     },
-    "clientToken": {"type": "string"},
-    "version": {"type": "integer", "minimum": 0},
-    "timestamp": {"type": "integer", "minimum": 0}
+    "metadata": {
+      "type": "object"
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "$ref": "#/$defs/time"
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix epoch seconds, UTC."
+    },
+    "nullableTime": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "connectionState": {
+      "enum": [
+        "disconnected",
+        "connecting",
+        "connected",
+        "error"
+      ]
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/connectionState"
+        },
+        "lastError": {
+          "$ref": "#/$defs/error"
+        }
+      }
+    }
   }
 }

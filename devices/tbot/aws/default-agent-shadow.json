@@ -1,10 +1,11 @@
 {
   "state": {
     "reported": {
-      "task": {"status": "stopped", "id": null},
-      "endpoint": {"ipv4": null, "ipv6": null, "udpPort": null},
-      "mavlink": "disconnected",
-      "video": "disconnected",
+      "run": null,
+      "activation": null,
+      "lifecycle": {"state": "stopped"},
+      "endpoint": null,
+      "runtime": null,
       "lastError": null
     }
   }

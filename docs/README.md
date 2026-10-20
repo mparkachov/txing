@@ -20,6 +20,8 @@ design notes have been folded into the owning component guides.
 
 ## Approved Designs Pending Implementation
 
+- [C++ AI operator on macOS and AWS](./components/agent.md)
+  ([constraints](./constraints/agent.md), [manual replacement rollout](./constraints/agent-rollout.md))
 - [TBot Thread device architecture](./history/architecture/tbot-thread-device-architecture.md)
 - [TBot prototype motor output envelope](./history/architecture/doc-43%20-%20TBot-prototype-motor-output-envelope-architecture.md)
   ([constraints](./history/constraints/doc-44%20-%20Constraints-TBot-prototype-motor-output-envelope.md))
@@ -36,6 +38,7 @@ design notes have been folded into the owning component guides.
 
 ## Contracts
 
+- [Cloud agent shadow](./contracts/agent-shadow.md)
 - [Unit device contracts](./contracts/unit-device-contracts.md)
 - [Board MAVLink capability contract](./contracts/board-mavlink.md)
 - [Cyberbrick MAVLink capability profile](./contracts/cyberbrick-mavlink.md)

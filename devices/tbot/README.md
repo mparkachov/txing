@@ -110,15 +110,21 @@ an operator must manually delete the legacy named `mcp` shadow. Do not remove
 it before the MAVLink runtime cutover is verified, and no deploy or enlistment
 operation deletes it automatically.
 
-The cloud companion adds an optional `agent` named shadow outside the REDCON
-capability list. After publishing the updated shared AWS catalog and enlistment
-Lambda, re-enlist the existing TBot with the `aws::deploy-device` command above.
-This creates a missing `agent` shadow without replacing an existing one. Publish
-the Office update through its normal Git-driven site release to inspect this
-shadow in TBot Debug; its absence does not block normal device use. The cloud
-companion task and lifecycle automation are deployed in later milestone steps.
-The [cloud companion runbook](cloud/README.md) describes the dedicated stack,
-controller readiness interface, activation gates, and local validation.
+The planned [C++ agent](../../agent/README.md) uses an optional `agent` named
+shadow outside the REDCON capability list. Its
+[replacement contract](../../docs/contracts/agent-shadow.md) records cloud run
+identity, release, activation deadline, HTTPS attachment, and sampled runtime
+diagnostics; the controller alone writes operational status. The old Go/Fargate
+runtime and stack have been removed from the repository. The new runtime and
+lifecycle automation are still pending.
+
+After deploying the updated shared AWS catalog/enlistment code, re-enlist an
+existing TBot with the `aws::deploy-device` command above to create a missing
+`agent` shadow. Re-enlistment preserves an existing shadow, including the old
+format; follow the [manual replacement runbook](../../docs/constraints/agent-rollout.md)
+to retire old writers and reset only this optional shadow. Office Debug reads
+the JSON without interpreting the old task/UDP shape. Its absence or errors do
+not block normal device use. Office publication remains Git-driven.
 
 TBot uses the shared board daemon and KVS master with TBot-derived MAVLink
 identities. ArduPilot exclusively owns the DRV8835; `txing-tbot-mavlink` owns

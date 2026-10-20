@@ -1,0 +1,24 @@
+{
+  "state": {
+    "reported": {
+      "run": {"id": "run-example", "microvmId": "microvm-example", "release": "0.1.0"},
+      "activation": {"id": "activation-example", "startedAt": 1792281600, "deadline": 1792310400},
+      "lifecycle": {"state": "running", "verifiedAt": 1792281660},
+      "endpoint": "https://example.invalid/agent",
+      "runtime": {
+        "runId": "run-example",
+        "sampledAt": 1792281660,
+        "mavlink": {"state": "connected"},
+        "video": {
+          "state": "error",
+          "framesReceived": 120,
+          "lastFrameAt": 1792281650,
+          "lastError": "video receive: peer connection timed out"
+        },
+        "control": {"state": "observing"}
+      }
+    }
+  },
+  "version": 42,
+  "timestamp": 1792281660
+}

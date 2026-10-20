@@ -1,12 +1,31 @@
 import { describe, expect, test } from 'bun:test'
 import {
   extractIsSparkplugUnavailable,
+  extractReportedRedcon,
   extractSparkplugCapabilityAvailability,
   extractSparkplugRedconCommandStatus,
   shouldClearPendingTargetRedcon,
 } from '../src/sparkplug-model'
+import agentShadowExample from '../../devices/tbot/aws/fixtures/agent-shadow.json'
 
 describe('sparkplug model helpers', () => {
+  test('optional agent status cannot alter device REDCON or capability availability', () => {
+    const sparkplug = {
+      state: { reported: {
+        topic: { messageType: 'DDATA', deviceId: 'tbot-example' },
+        payload: { metrics: { redcon: 2, capability: { mavlink: true, video: false } } },
+      } },
+    }
+    for (const agent of [undefined, agentShadowExample, { state: { reported: { lifecycle: { state: 'error' } } } }]) {
+      const shadow = { namedShadows: { sparkplug, agent } }
+      expect(extractReportedRedcon(shadow)).toBe(2)
+      expect(extractSparkplugCapabilityAvailability(shadow, 'mavlink')).toBe(true)
+      expect(extractSparkplugCapabilityAvailability(shadow, 'video')).toBe(false)
+      expect(extractSparkplugCapabilityAvailability(shadow, 'agent')).toBeNull()
+    }
+    expect(extractReportedRedcon({ namedShadows: { agent: agentShadowExample } })).toBeNull()
+  })
+
   test('extracts redcon command failure status from sparkplug metrics', () => {
     expect(
       extractSparkplugRedconCommandStatus({

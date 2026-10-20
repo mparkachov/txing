@@ -258,6 +258,7 @@ aws-device *args:
     command aws "$@"
 
 mod rig 'rig/justfile'
+mod agent 'agent/justfile'
 mod aws 'shared/aws/justfile'
 mod witness 'witness/justfile'
 mod unit 'devices/unit/justfile'

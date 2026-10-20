@@ -389,6 +389,10 @@ class EnlistServiceTests(unittest.TestCase):
         )
 
         thing_name = result["thingName"]
+        initialized_agent = json.loads(self.runtime.iot_data.shadows[(thing_name, "agent")])
+        self.assertEqual(initialized_agent["state"]["reported"]["lifecycle"], {"state": "stopped"})
+        self.assertIsNone(initialized_agent["state"]["reported"].get("endpoint"))
+        self.assertNotIn("task", initialized_agent["state"]["reported"])
         board_shadow = b'{"state":{"reported":{"preserve":true}}}'
         agent_shadow = b'{"state":{"reported":{"preserve":true}}}'
         self.runtime.iot_data.shadows[(thing_name, "board")] = board_shadow

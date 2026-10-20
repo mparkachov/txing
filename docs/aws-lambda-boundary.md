@@ -48,8 +48,9 @@ runtime/controller publication follows the approved `agent` release and
 to the shared `lambda` release stream.
 
 This is approved replacement guidance, not completed implementation. The old
-`txing-tbot-companion-lambda` Go controller and Fargate paths are superseded
-and remain pending removal in milestone 10. See
+`txing-tbot-companion-lambda` Go controller and Fargate paths have been removed
+from the repository; deployed-resource retirement remains a manual operator
+action. The replacement C++ runtime/controller is still planned. See
 [Agent](components/agent.md) and [Agent constraints](constraints/agent.md).
 
 Firmware uses the stock Zephyr C stack; standalone rig daemons and the existing

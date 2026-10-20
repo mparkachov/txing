@@ -1,0 +1,15 @@
+set shell := ["sh", "-eu", "-c"]
+set quiet := true
+
+agent_dir := source_directory()
+project_root := canonicalize(agent_dir + "/..")
+export TMPDIR := project_root + "/tmp"
+export UV_CACHE_DIR := project_root + "/tmp/uv-cache"
+
+# Contract checks only until the C++ runtime is introduced.
+test:
+    mkdir -p "{{project_root}}/tmp"
+    uv run --no-project --with 'jsonschema>=4.18,<5' python -m unittest discover -s "{{agent_dir}}/tests" -v
+
+@default:
+    @just --list

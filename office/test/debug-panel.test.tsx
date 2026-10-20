@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import agentShadowExample from '../../devices/tbot/aws/fixtures/agent-shadow.json'
 import DebugPanel from '../src/DebugPanel'
 
 describe('debug panel', () => {
@@ -52,7 +53,7 @@ describe('debug panel', () => {
     }
     const otherDevice = renderToStaticMarkup(<DebugPanel {...common} />)
     const ready = renderToStaticMarkup(
-      <DebugPanel {...common} agentShadow={{ status: 'ready', json: '{"task":"ready"}', error: '' }} />,
+      <DebugPanel {...common} agentShadow={{ status: 'ready', json: JSON.stringify(agentShadowExample), error: '' }} />,
     )
     const missing = renderToStaticMarkup(
       <DebugPanel {...common} agentShadow={{ status: 'missing', json: '', error: '' }} />,
@@ -63,7 +64,10 @@ describe('debug panel', () => {
 
     expect(otherDevice).not.toContain('Agent shadow')
     expect(ready).toContain('Agent shadow JSON')
-    expect(ready).toContain('task')
+    expect(ready).toContain('run-example')
+    expect(ready).toContain('https://example.invalid/agent')
+    expect(ready).toContain('video receive: peer connection timed out')
+    expect(ready).not.toContain('udpPort')
     expect(missing).toContain('Agent status has not been initialized.')
     expect(unavailable).toContain('Agent status unavailable: Read failed')
     expect(unavailable).toContain('Current shadow JSON')

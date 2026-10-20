@@ -3,8 +3,9 @@
 Status: approved replacement design, 2026-10-18. Implementation and acceptance
 are tracked in [milestone 10](https://github.com/mparkachov/txing/milestone/10).
 This document describes the target architecture, not completed functionality.
-The committed Go/Fargate implementation is superseded and remains pending
-removal through the milestone.
+The superseded Go/Fargate implementation has been removed. The replacement
+runtime, controller, and live acceptance remain pending; `agent/` currently
+contains contract checks and its documentation entry point.
 
 ## Purpose
 
@@ -193,6 +194,8 @@ video receipt, control state, and actionable errors for controller sampling.
 Separate cloud lifecycle from connection readiness and retain freshness and run
 identity when interpreting sampled status. Old generations cannot restore a
 usable endpoint. Local runs never participate in this ownership.
+The field definitions, default, examples, and writer/fencing rules are in the
+[agent shadow contract](../contracts/agent-shadow.md).
 
 Office continues to show the optional shadow in Debug. It remains outside
 REDCON capability derivation and must not block ordinary device use when absent.
@@ -271,6 +274,8 @@ needed before enabling the new deployment. Do not modify cloud MCU networking.
 Ordinary publication leaves existing runs on their current release; immediate
 adoption requires explicit disarm-and-drain replacement. No automatic commits,
 AWS mutations, firmware flashing, or legacy-resource cleanup are authorized.
+Use the [manual replacement runbook](../constraints/agent-rollout.md) to identify
+old triggers, tasks, retained artifacts, and resources before initial rollout.
 
 ## References
 
@@ -281,4 +286,3 @@ AWS mutations, firmware flashing, or legacy-resource cleanup are authorized.
 - [TBot manifest](../../devices/tbot/manifest.toml)
 - [Lambda language boundary](../aws-lambda-boundary.md)
 - [Execution and release boundaries](../agent-guidance/editing-boundaries.md)
-

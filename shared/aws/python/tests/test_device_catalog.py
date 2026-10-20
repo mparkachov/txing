@@ -84,7 +84,9 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertNotIn("agent", manifest.capabilities)
         agent_default = json.loads(manifest.load_default_shadow_bytes("agent"))
-        self.assertEqual(agent_default["state"]["reported"]["task"], {"status": "stopped", "id": None})
+        self.assertEqual(agent_default["state"]["reported"]["lifecycle"], {"state": "stopped"})
+        self.assertIsNone(agent_default["state"]["reported"]["run"])
+        self.assertIsNone(agent_default["state"]["reported"]["endpoint"])
         self.assertEqual(
             manifest.render_board_video_channel_name(device_id="tbot-a1"),
             "tbot-a1-board-video",
