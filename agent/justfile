@@ -6,8 +6,68 @@ project_root := canonicalize(agent_dir + "/..")
 export TMPDIR := project_root + "/tmp"
 export UV_CACHE_DIR := project_root + "/tmp/uv-cache"
 
-# Contract checks only until the C++ runtime is introduced.
-test:
+# Build/cache the same C++ application used on macOS and Linux ARM64.
+[positional-arguments]
+build *cmake_args:
+    #!/bin/sh
+    set -eu
+    mkdir -p "$TMPDIR"
+    if [ "$(uname -s)" = Darwin ]; then
+        txing_brew_prefix=$(brew --prefix)
+        export CMAKE_PREFIX_PATH="$txing_brew_prefix/opt/openssl@3:$txing_brew_prefix${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+    fi
+    if [ ! -f "$TMPDIR/agent-build/CMakeCache.txt" ] || [ "$#" -gt 0 ]; then
+        cmake -S "{{agent_dir}}" -B "$TMPDIR/agent-build" -DCMAKE_BUILD_TYPE=RelWithDebInfo "$@"
+    fi
+    # Avoid forced regeneration: the SDK unity generator would rebuild cached objects.
+    cmake --build "$TMPDIR/agent-build" --parallel "${TXING_AGENT_BUILD_JOBS:-4}"
+
+# Prepare and print the verified repository-local AWS trust bundle.
+trust:
+    #!/bin/sh
+    set -eu
+    trust_dir="$TMPDIR/agent-trust"
+    mkdir -p "$trust_dir"
+    # Verify downloaded roots against ATS's published DER hashes and expiry.
+    fetch_root() {
+        name="$1"
+        expected="$2"
+        pem="$trust_dir/$name.pem"
+        if [ ! -f "$pem" ]; then
+            curl --fail --silent --show-error --location \
+                "https://www.amazontrust.com/repository/$name.pem" -o "$pem.download"
+            mv "$pem.download" "$pem"
+        fi
+        actual=$(openssl x509 -in "$pem" -noout -fingerprint -sha256 | sed 's/.*=//' | tr -d ':' | tr 'A-F' 'a-f')
+        if [ "$actual" != "$expected" ]; then
+            echo "Unexpected trust-anchor hash: $pem; remove it and investigate ATS root changes." >&2
+            exit 1
+        fi
+        openssl x509 -in "$pem" -checkend 0 -noout >/dev/null
+    }
+    fetch_root AmazonRootCA1 8ecde6884f3d87b1125ba31ac3fcb13d7016de7f57cc904fe1cb97c6ae98196e
+    fetch_root AmazonRootCA2 1ba5b2aa8c65401a82960118f80bec4f62304d83cec4713a19c39c011ea46db4
+    fetch_root AmazonRootCA3 18ce6cfe7bf14e60b2e347b8dfe868cb31d02ebb3ada271569f50343b46db3a4
+    fetch_root AmazonRootCA4 e35d28419ed02025cfa69038cd623962458da5c695fbdea3c22b0bfb25897092
+    fetch_root SFSRootCAG2 568d6905a2c88708a4b3025190edcfedb1974a606a13c6e5290fcb2ae63edab5
+    cat "$trust_dir/AmazonRootCA1.pem" "$trust_dir/AmazonRootCA2.pem" \
+        "$trust_dir/AmazonRootCA3.pem" "$trust_dir/AmazonRootCA4.pem" \
+        "$trust_dir/SFSRootCAG2.pem" > "$trust_dir/aws-roots.pem.new"
+    mv "$trust_dir/aws-roots.pem.new" "$trust_dir/aws-roots.pem"
+    printf '%s\n' "$trust_dir/aws-roots.pem"
+
+# Foreground observation; explicit-control QGC operation is tracked in #166.
+[positional-arguments]
+run thing_id *args: build
+    #!/bin/sh
+    set -eu
+    thing_id=$1
+    shift
+    ca_path=$(just --justfile "{{project_root}}/justfile" agent::trust)
+    exec "{{project_root}}/tmp/agent-build/txing-agent" "$thing_id" --ca "$ca_path" "$@"
+
+test: build
+    ctest --test-dir "{{project_root}}/tmp/agent-build" --output-on-failure
     mkdir -p "{{project_root}}/tmp"
     uv run --no-project --with 'jsonschema>=4.18,<5' python -m unittest discover -s "{{agent_dir}}/tests" -v
 

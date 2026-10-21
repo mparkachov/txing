@@ -28,6 +28,10 @@ tooling, shell, infrastructure, or future-work implementation.
   `just unit::board::role-policy thing_id=unit-bl95f2`.
 - Repository shell code and Just recipes must be POSIX `sh`: use `#!/bin/sh`,
   `set -eu`, and `.` for sourcing. Do not use Bash/Zsh-only syntax.
+- Put build and development shell orchestration directly in Just recipes,
+  using shebang recipes for multiline code. Do not add standalone shell scripts
+  merely for Just to invoke. Keep compilation and dependency configuration in
+  the project's native build system, such as CMake.
 - Justfiles export `TMPDIR` to the repository-local `./tmp` directory. Other
   repository scripts create and use `./tmp`; do not use host temporary
   directories as their default scratch location.

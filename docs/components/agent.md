@@ -3,9 +3,12 @@
 Status: approved replacement design, 2026-10-18. Implementation and acceptance
 are tracked in [milestone 10](https://github.com/mparkachov/txing/milestone/10).
 This document describes the target architecture, not completed functionality.
-The superseded Go/Fargate implementation has been removed. The replacement
-runtime, controller, and live acceptance remain pending; `agent/` currently
-contains contract checks and its documentation entry point.
+The superseded Go/Fargate implementation has been removed. The C++ foreground
+observer and automated runtime checks are implemented under #164 in
+`agent/`; native macOS build/automated checks, active TBot observation,
+independent peer recovery and verification-timeout acceptance passed. The
+controller, QGroundControl integration, and cloud/live physical acceptance
+remain later work. See the [native acceptance record](../agent-native-acceptance.md).
 
 ## Purpose
 
@@ -125,7 +128,9 @@ generated bindings where message interpretation is needed.
 
 ## Native operation
 
-The public commands are target interfaces to implement:
+The table describes the complete target interface. Build/test and foreground
+observation are being introduced in #164; the UDP/manual-control run arguments,
+attachment, deployment and publication remain pending their later issues.
 
 | Command | Behavior |
 | --- | --- |
