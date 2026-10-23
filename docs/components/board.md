@@ -1359,12 +1359,12 @@ done
 Expected:
 
 - all three services are `started` and stay up under `supervise-daemon`
-- the daemon's local OpenRC log
-  (`/var/log/txing-<device>-daemon.log`) is empty by design: the Go daemon
-  ships logs to CloudWatch (`txing/<town>/<rig>/<thing>`), not stdout. Confirm
-  it locally by a stable single daemon PID that is not respawning and by the
-  bound bridge socket; version, MQTT connect, and state publishes appear in
-  CloudWatch
+- the daemon's local OpenRC log (`/var/log/txing-<device>-daemon.log`)
+  captures stdout/stderr, including startup/fatal errors, but can otherwise be
+  quiet. Confirm a stable single daemon PID, the bound bridge socket and fresh
+  retained capability state. The current Go runtime has CloudWatch helper
+  code/configuration but does not wire a log writer into `RunRuntime`; an empty
+  local file is not proof of CloudWatch delivery
 - the daemon binds `/run/txing-<device>-daemon/board-video-bridge.sock`
 - the hardware worker binds
   `/run/txing-<device>-hardware-worker/<device>-hardware.sock`
@@ -2122,9 +2122,10 @@ Expected:
   checkout and without network access to GitHub; the KVS master also autostarts
   and completes signaling but stays up only with a camera attached
 - the selected device's hardware worker is enabled and owns its motor hardware
-- the daemon reports version, MQTT connect, and retained board/MCP/video state
-  to CloudWatch (its local OpenRC log is empty by design); confirm locally by a
-  stable daemon PID and the bound bridge socket
+- the daemon has a stable PID, the bound bridge socket and fresh retained
+  board/video and profile-specific control state. Its local stdout/stderr can
+  be quiet; verify actual log delivery instead of assuming CloudWatch receives
+  operational events
 - `udev`, `udev-trigger`, and `udev-settle` are each enabled in `sysinit`,
   report `started`, and have a populated database after the reboot; this is
   required for libcamera to enumerate the camera on a cold boot rather than
@@ -2278,9 +2279,17 @@ The `/proc/<pid>/environ` read is the authoritative check: it shows what the
 running daemon resolved, including anything an init script exported, rather
 than what a config file claims.
 
-Both failure modes are quiet by construction — the daemon logs to CloudWatch
-rather than locally, so an empty `/var/log/txing-<device>-daemon.log` is
-expected and is not evidence of either problem.
+Both failure modes can be quiet. The daemon's local file captures process
+stdout/stderr, but the current Go runtime does not wire its CloudWatch helpers
+into startup. An empty `/var/log/txing-<device>-daemon.log` proves neither
+successful cloud logging nor absence of a runtime problem. Check actual PIDs,
+sockets, retained state and worker output.
+
+For an unreachable TBot that loses its tmpfs logs on power cycling, use the
+[persistent outage-capture procedure](../tbot-outage-capture.md). It covers
+normal wake/SSH recovery, a writable-root diagnostic window, existing system
+and service logs on storage, a Mac-side copy, startup order and evidence
+retrieval after reboot.
 
 ### Restart Order
 

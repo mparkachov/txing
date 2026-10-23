@@ -169,9 +169,20 @@ void Session::update(Link& link, Stream stream, bool wanted, Time now) {
         link.transport->stop(); link.retiring = std::move(link.transport); link.backoff = 1;
     }
     auto state = link.transport ? link.transport->state() : Connection::stopped;
+    bool telemetry_silent = false;
+    if (stream == Stream::telemetry && state == Connection::connected) {
+        const auto received = link.received->load();
+        if (link.previous != Connection::connected || received != link.received_count) {
+            link.last_received = now;
+            link.received_count = received;
+        }
+        // ICE/SCTP can remain nominally connected after telemetry stops. Use
+        // valid MAVLink receipt, independently of lifecycle API/control traffic.
+        telemetry_silent = now - link.last_received >= 15s;
+    }
     if (link.transport && (state == Connection::failed ||
-        (state == Connection::connecting && now - link.attempted >= 20s))) {
-        link.last_error = link.transport->error();
+        telemetry_silent || (state == Connection::connecting && now - link.attempted >= 20s))) {
+        link.last_error = telemetry_silent ? "no MAVLink telemetry for 15 seconds" : link.transport->error();
         if (state == Connection::connecting) {
             link.last_error = "peer negotiation exceeded 20 seconds" +
                 (link.last_error.empty() ? std::string{} : ": " + link.last_error);
@@ -185,12 +196,17 @@ void Session::update(Link& link, Stream stream, bool wanted, Time now) {
     if (wanted && !link.transport && !link.retiring && now >= link.retry_at) {
         link.transport = factory_(); link.attempted = now;
         link.accepting = std::make_shared<std::atomic<bool>>(true);
+        link.received = std::make_shared<std::atomic<std::uint64_t>>(0);
+        link.received_count = 0;
+        link.last_received = now;
         auto accepting = link.accepting;
+        auto received = link.received;
         TransportEvents events;
-        events.data = [this, accepting](Bytes bytes, bool binary) {
+        events.data = [this, accepting, received](Bytes bytes, bool binary) {
             if (!*accepting) return;
             if (binary) {
                 if (!valid_mavlink2(bytes)) return;
+                ++*received;
                 const auto size = bytes.size();
                 Observation e{}; e.kind = Observation::telemetry; e.bytes = std::move(bytes);
                 observations_.push(std::move(e), size + 64);

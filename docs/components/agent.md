@@ -104,6 +104,11 @@ Poll lifecycle every two seconds and stop after fifteen seconds without
 authoritative verification. Video and MAVLink recover independently; returning
 from REDCON 1 to 2 closes only video. A transient connection problem must not
 replace the entire cloud process or erase another connection's error.
+For MAVLink, fifteen seconds without a valid received telemetry frame also
+retires a nominally connected peer through the bounded recovery path. Count
+receipt per peer generation, independently of lifecycle verification and control
+replies. Release authority and fence queued sends before retirement; recovery
+must preserve healthy video and must not reacquire control automatically.
 
 ### Control authority
 
@@ -172,6 +177,21 @@ snapshot restoration through the run hook. Never snapshot live device sessions.
 Disable automatic idle suspension and resumption: an active device can require
 an operator even when nobody is attached through the HTTPS endpoint.
 
+### Current-stage duration limit
+
+The operator approved a **fifty-minute (3000-second) maximum** on 2026-10-23,
+replacing the earlier eight-hour project budget for this stage. The current
+board recreates KVS sessions during credential renewal about every fifty-five
+minutes, temporarily removing MAVLink capability and potentially causing
+lifecycle shutdown. A new agent can encounter that renewal earlier if the board
+is already running; fifty minutes is a ceiling, not a guaranteed uninterrupted
+window. Preserve the existing lifecycle and authority rules.
+
+New disposable MicroVM requests use a 3000-second maximum. Native sessions are
+operationally limited to fifty minutes and are ended by the operator; this
+decision does not add a native timer. The board renewal repair is deferred.
+See the [finding, evidence and acceptance limits](../constraints/agent-session-limit.md).
+
 ### Controller and authorization
 
 A small C++ controller Lambda responds to completed projected lifecycle changes
@@ -181,7 +201,7 @@ inactive, failed, or superseded runs. Launches are idempotent and retries are
 bounded. Repair handles missed events, interrupted launches, and orphaned runs.
 
 Persist launch identity and the device activation deadline. An activation
-allows at most eight hours of cloud operation, including replacement processes.
+allows at most fifty minutes of cloud operation at this project stage, including replacement processes.
 Retries, new image versions, process replacements, and delayed events cannot
 reset that allowance. At expiry, release control and stop; permit another
 activation only after a subsequent inactive-to-active lifecycle transition.
@@ -269,7 +289,7 @@ contention, client/WebRTC loss, and REDCON transitions on a secured, lifted TBot
 
 Final cloud acceptance repeats the physical flow through `attach`, proves
 automatic observation without a human attachment, and verifies zero running
-MicroVMs after inactivity. Exercise the eight-hour boundary with an accelerated
+MicroVMs after inactivity. Exercise the fifty-minute boundary with an accelerated
 test configuration. Prepared commands, mocks, and cross-compilation do not
 substitute for recorded native, cloud, or physical acceptance.
 

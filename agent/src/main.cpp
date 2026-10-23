@@ -1,5 +1,6 @@
 #include "agent/aws.hpp"
 #include "agent/kvs.hpp"
+#include "agent/microvm.hpp"
 #include <aws/core/Aws.h>
 #include <aws/core/auth/AWSCredentialsProviderChain.h>
 #include <aws/core/client/DefaultRetryStrategy.h>
@@ -33,13 +34,16 @@ public:
 };
 }
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--microvm")
+        return txing::agent::microvm_main(argc - 1, argv + 1);
     std::string thing, region, ca;
     if (const auto* value = std::getenv("TXING_AGENT_CA_PATH")) ca = value;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
         if (argument == "--help") {
             std::cout << "txing-agent <thing-id> [--region <region>] [--ca <verified-pem>]\n"
-                         "Foreground observation; Ctrl-C releases and closes both sessions.\n";
+                         "Foreground observation; Ctrl-C releases and closes both sessions.\n"
+                         "txing-agent --microvm --ca <verified-pem> [--hook-port 8080] [--attachment-port 8081]\n";
             return 0;
         }
         if ((argument == "--region" || argument == "--ca") && i + 1 < argc) {

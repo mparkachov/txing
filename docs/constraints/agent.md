@@ -2,6 +2,8 @@
 
 Status: approved 2026-10-18 for
 [milestone 10](https://github.com/mparkachov/txing/milestone/10).
+Duration amended 2026-10-23: the current-stage maximum is fifty minutes;
+see the [finding and limitation decision](agent-session-limit.md).
 These constraints govern the replacement described in
 [Agent](../components/agent.md). They supersede the earlier Go/Fargate and
 arm-triggered QGroundControl designs; they are not a claim of implementation.
@@ -70,9 +72,13 @@ arm-triggered QGroundControl designs; they are not a claim of implementation.
 - One authorized agent per active supported device; current lifecycle events
   plus a one-minute repair pass handle duplicates, missed events, interrupted
   starts, orphaned runs, and stale assignments with bounded retries.
-- Persist an eight-hour budget per device activation across replacements.
+- Persist a fifty-minute (3000-second) budget per device activation across replacements.
   Expiry releases control and stops cloud operation until a subsequent
   inactive-to-active transition; no automatic rollover.
+- New disposable requests also cap hosting at 3000 seconds. This is an upper
+  bound, not an uninterrupted-session guarantee: the board's existing
+  fifty-five-minute credential renewal can interrupt an older board session
+  earlier. The board renewal repair and the former eight-hour target are deferred.
 - The C++ controller alone writes the cloud `agent` shadow. Keep run identity,
   release, lifecycle/deadline, HTTPS endpoint, and sampled runtime status.
   Separate lifecycle and connection state; superseded runs cannot restore a

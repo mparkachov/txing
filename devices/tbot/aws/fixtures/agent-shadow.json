@@ -2,7 +2,7 @@
   "state": {
     "reported": {
       "run": {"id": "run-example", "microvmId": "microvm-example", "release": "0.1.0"},
-      "activation": {"id": "activation-example", "startedAt": 1792281600, "deadline": 1792310400},
+      "activation": {"id": "activation-example", "startedAt": 1792281600, "deadline": 1792284600},
       "lifecycle": {"state": "running", "verifiedAt": 1792281660},
       "endpoint": "https://example.invalid/agent",
       "runtime": {

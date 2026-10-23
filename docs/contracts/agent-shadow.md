@@ -63,7 +63,8 @@ replacement. The fixture deliberately shows video failure with MAVLink intact.
 run/sample may remain for diagnosis, explicitly tied to its original identity
 and timestamp; it cannot establish present control or connectivity. Expiry
 retains the activation record and deadline so a repair pass cannot restart the
-same activation. Total cloud execution is at most eight hours from activation,
+same activation. Total cloud execution is at most fifty minutes from activation
+at the current project stage (the [2026-10-23 duration decision](../constraints/agent-session-limit.md)),
 including retries, replacements, and publication. Only a subsequent verified
 inactive-to-active transition permits a fresh activation budget.
 

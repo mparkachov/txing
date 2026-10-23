@@ -133,8 +133,10 @@ private:
         std::unique_ptr<Transport> transport;
         std::unique_ptr<Transport> retiring;
         std::shared_ptr<std::atomic<bool>> accepting;
+        std::shared_ptr<std::atomic<std::uint64_t>> received;
+        std::uint64_t received_count = 0;
         Connection previous = Connection::stopped;
-        Time attempted{}, retry_at{};
+        Time attempted{}, retry_at{}, last_received{};
         int backoff = 1;
         std::string last_error;
     };

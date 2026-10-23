@@ -82,7 +82,11 @@ The later replacement deployment uses managed public networking, S3, IAM, logs,
 the C++ controller, and lifecycle triggers. Enable it only after its preceding
 native/probe/physical gates and initial retirement are recorded. At most one
 current authorized run may exist per device, with a persisted activation deadline
-of at most eight hours shared across its replacements.
+of at most fifty minutes shared across its replacements, under the
+[current-stage duration decision](agent-session-limit.md). New disposable
+requests use a 3000-second hosting cap; planned controller replacements use only
+the remaining activation budget. Acceptance must exercise that boundary before
+released-cloud operation. Board credential-renewal repair remains deferred.
 Ordinary immutable publication affects later launches; it leaves existing runs
 on their current version. Immediate adoption requires manual disarm, release,
 and drain. Bump the new `agent` component version before producing a new release

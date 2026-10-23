@@ -122,6 +122,7 @@ void lifecycle_and_recovery() {
         REQUIRE(!stopped.session.tick(stopped.now)); REQUIRE(stopped.links.empty());
     }
     Fixture late; late.active(2); const auto hours = late.now + std::chrono::hours(24);
+    late.links[0]->events.data(frame(), true);
     late.session.verified({true, 2}, hours); late.session.tick(hours);
     late.links[0]->state = Connection::failed; late.session.tick(hours + 1s);
     REQUIRE(late.links[0]->stops == 1); late.session.tick(hours + 2s); REQUIRE(late.links.size() == 2);
@@ -133,6 +134,58 @@ void lifecycle_and_recovery() {
     REQUIRE(slow.links[0]->binary.size() == 2);
     slow.links[1]->cleanup_complete = true; slow.session.tick(slow.now + 3s);
     REQUIRE(slow.links.size() == 3);
+}
+void silent_telemetry_recovery() {
+    Fixture f; f.active(); f.acquire();
+    auto telemetry = f.links[0], video = f.links[1];
+    telemetry->cleanup_complete = false;
+    for (int second = 1; second <= 18; ++second) {
+        if (second == 4) telemetry->events.data(frame(), true);
+        // Control replies and lifecycle success must not hide missing MAVLink.
+        f.session.client_activity();
+        f.session.verified({true, 1}, f.now + std::chrono::seconds(second));
+        REQUIRE(f.session.tick(f.now + std::chrono::seconds(second)));
+        REQUIRE(telemetry->stops == 0 && video->stops == 0);
+    }
+    eventually([&] { return f.op.telemetry_count == 1; });
+    telemetry->events.data({0}, true); // Invalid frames do not refresh receipt.
+    const auto sent = telemetry->binary.size();
+    REQUIRE(f.session.send(frame(true)));
+    f.session.verified({true, 1}, f.now + 19s);
+    REQUIRE(f.session.tick(f.now + 19s));
+    eventually([&] { return f.op.lost == 1; });
+    REQUIRE(telemetry->stops == 1 && video->stops == 0);
+    REQUIRE(telemetry->binary.size() == sent); // Queued authority is fenced.
+    REQUIRE(!f.session.send(frame(true)));
+    telemetry->events.data(frame(), true); // Retired generation is ignored.
+    f.session.verified({true, 1}, f.now + 20s); f.session.tick(f.now + 20s);
+    REQUIRE(f.links.size() == 2); // Teardown never blocks or overlaps peers.
+    telemetry->cleanup_complete = true;
+    f.session.tick(f.now + 21s);
+    REQUIRE(f.links.size() == 3 && video->stops == 0);
+    auto replacement = f.links[2];
+    replacement->events.data(frame(), true); f.session.tick(f.now + 22s);
+    eventually([&] { return f.op.telemetry_count == 2; });
+    REQUIRE(f.op.granted == 1 && replacement->binary.empty());
+    telemetry->events.data(frame(), true);
+    f.session.verified({true, 1}, f.now + 36s); f.session.tick(f.now + 36s);
+    REQUIRE(replacement->stops == 0);
+    f.session.verified({true, 1}, f.now + 37s); f.session.tick(f.now + 37s);
+    REQUIRE(replacement->stops == 1 && video->stops == 0);
+
+    Fixture negotiation; negotiation.active(2);
+    negotiation.links[0]->state = Connection::connecting;
+    negotiation.session.verified({true, 2}, negotiation.now + 14s);
+    negotiation.session.tick(negotiation.now + 14s);
+    negotiation.links[0]->state = Connection::connected;
+    negotiation.session.verified({true, 2}, negotiation.now + 19s);
+    negotiation.session.tick(negotiation.now + 19s);
+    negotiation.session.verified({true, 2}, negotiation.now + 33s);
+    negotiation.session.tick(negotiation.now + 33s);
+    REQUIRE(negotiation.links[0]->stops == 0);
+    negotiation.session.verified({true, 2}, negotiation.now + 34s);
+    negotiation.session.tick(negotiation.now + 34s);
+    REQUIRE(negotiation.links[0]->stops == 1);
 }
 void operator_and_authority() {
     Fixture f; f.active(); f.links[0]->events.data(frame(), true);
@@ -276,6 +329,7 @@ int main() {
         KvsRuntime runtime;
         for (const auto& test : std::vector<std::pair<const char*, void(*)()>>{
             {"profile and framing", profile_and_framing}, {"lifecycle and recovery", lifecycle_and_recovery},
+            {"silent telemetry recovery", silent_telemetry_recovery},
             {"operator and authority", operator_and_authority}, {"loss and shutdown", loss_and_shutdown},
             {"queued authority", queued_authority},
             {"bounded video", bounded_video}, {"credentials and errors", credentials_and_errors},

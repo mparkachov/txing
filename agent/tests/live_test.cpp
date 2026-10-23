@@ -18,6 +18,7 @@ struct Faults {
     std::array<std::atomic<unsigned>, 2> generation{};
     std::atomic<int> redcon{0};
     std::atomic<bool> verification_failure{false};
+    std::atomic<bool> silence_telemetry{false};
 };
 // The wrapped transport is the production KVS engine. Changing a generation
 // makes Session retire that real connection, without touching device state.
@@ -28,9 +29,19 @@ public:
     void start(const TransportConfig& config, TransportEvents events) override {
         index_ = config.media == Media::h264 ? 1 : 0;
         generation_ = faults_.generation[index_].load();
+        if (index_ == 0) {
+            auto receive = std::move(events.data);
+            events.data = [this, receive = std::move(receive)](Bytes bytes, bool binary) {
+                if (binary && faults_.silence_telemetry) return;
+                if (receive) receive(std::move(bytes), binary);
+            };
+        }
         transport_->start(config, std::move(events));
     }
-    void stop() noexcept override { transport_->stop(); }
+    void stop() noexcept override {
+        if (index_ == 0) faults_.silence_telemetry = false;
+        transport_->stop();
+    }
     bool finished() const override { return transport_->finished(); }
     Connection state() const override {
         return failed() ? Connection::failed : transport_->state();
@@ -50,6 +61,7 @@ public:
     std::atomic<unsigned> telemetry_frames{0}, video_frames{0};
     std::array<std::atomic<unsigned>, 2> connections{}, stops{};
     std::atomic<bool> metadata{false}, authority{false};
+    std::atomic<unsigned> silence_recoveries{0};
     void telemetry(const Bytes&) override { ++telemetry_frames; }
     void video(const EncodedVideo& frame) override {
         metadata = frame.codec == "h264" && !frame.bytes.empty() &&
@@ -60,6 +72,8 @@ public:
         const auto index = stream == Stream::video ? 1 : 0;
         if (state == Connection::connected) ++connections[index];
         if (state == Connection::stopped) ++stops[index];
+        if (stream == Stream::telemetry && state == Connection::failed &&
+            detail == "no MAVLink telemetry for 15 seconds") ++silence_recoveries;
         std::cerr << "LIVE connection stream=" << index << " state=" << static_cast<int>(state)
                   << " detail=" << detail << '\n';
     }
@@ -131,17 +145,26 @@ void live(const std::string& thing, const std::string& region, const std::string
             "telemetry loss interrupted video");
     std::cerr << "LIVE PASS injected telemetry-peer loss; video stayed connected\n";
 
+    telemetry_before = observer.telemetry_frames.load(); video_before = observer.video_frames.load();
+    faults.silence_telemetry = true;
+    wait([&] { return observer.silence_recoveries >= 1 && observer.connections[0] >= 3 &&
+                     observer.telemetry_frames > telemetry_before + 10; },
+         "nominally connected silent telemetry did not recover", 40s);
+    require(observer.connections[1] == 2 && observer.video_frames > video_before,
+            "silent telemetry recovery interrupted video");
+    std::cerr << "LIVE PASS injected connected telemetry silence; fresh peer recovered, video stayed connected\n";
+
     const auto stops_before = observer.stops[1].load();
     telemetry_before = observer.telemetry_frames.load();
     faults.redcon = 2;
     wait([&] { return observer.stops[1] > stops_before && observer.telemetry_frames > telemetry_before + 10; },
          "injected REDCON 2 did not retire only video", 10s);
-    require(observer.connections[0] == 2, "injected REDCON 2 reconnected telemetry");
+    require(observer.connections[0] == 3, "injected REDCON 2 reconnected telemetry");
     video_before = observer.video_frames.load();
     faults.redcon = 0;
     wait([&] { return observer.connections[1] >= 3 && observer.video_frames > video_before + 10; },
          "video did not resume after lifecycle override", 40s);
-    require(observer.connections[0] == 2, "video resumption reconnected telemetry");
+    require(observer.connections[0] == 3, "video resumption reconnected telemetry");
     std::cerr << "LIVE PASS injected lifecycle 1/2/1; actual device shadow unchanged\n";
 
     faults.verification_failure = true;

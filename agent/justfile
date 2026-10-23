@@ -71,5 +71,39 @@ test: build
     mkdir -p "{{project_root}}/tmp"
     uv run --no-project --with 'jsonschema>=4.18,<5' python -m unittest discover -s "{{agent_dir}}/tests" -v
 
+# Prepare a source-only image context. AWS resource operations remain manual.
+probe-package:
+    #!/bin/sh
+    set -eu
+    cd "{{project_root}}"
+    package_dir="$TMPDIR/agent-probe-package"
+    mkdir -p "$package_dir"
+    just --justfile "{{project_root}}/justfile" agent::trust >/dev/null
+    git ls-files --cached --others --exclude-standard -- \
+        agent/CMakeLists.txt agent/README.md agent/justfile \
+        ':(glob)agent/include/agent/*.hpp' ':(glob)agent/src/*.cpp' \
+        ':(glob)agent/cmake/*.cmake' ':(glob)agent/cmake/*.patch' \
+        ':(glob)agent/tests/*.cpp' ':(glob)agent/tests/test_*.py' \
+        agent/probe/CMakeLists.txt agent/probe/Dockerfile \
+        agent/probe/hooks.json agent/probe/stack.yaml \
+        devices/common/kvs/sdk.commit ':(glob)devices/common/kvs/cmake/*.cmake' \
+        | LC_ALL=C sort -u > "$package_dir/source-files.txt"
+    while IFS= read -r source_file; do
+        shasum -a 256 "$source_file"
+    done < "$package_dir/source-files.txt" > "$package_dir/source-sha256.txt"
+    shasum -a 256 "$package_dir/source-sha256.txt" | cut -d ' ' -f 1 > "$package_dir/build-id.txt"
+    git rev-parse HEAD > "$package_dir/source-revision.txt"
+    git status --short -- agent devices/common/kvs > "$package_dir/source-status.txt"
+    # BSD tar otherwise emits AppleDouble metadata outside the source allowlist.
+    COPYFILE_DISABLE=1 tar -cf "$package_dir/source.tar" -T "$package_dir/source-files.txt"
+    cp "{{agent_dir}}/probe/Dockerfile" "$package_dir/Dockerfile"
+    cp "$TMPDIR/agent-trust/aws-roots.pem" "$package_dir/aws-roots.pem"
+    cd "$package_dir"
+    build_id=$(cat build-id.txt)
+    zip -q "$build_id.zip" Dockerfile source.tar aws-roots.pem build-id.txt \
+        source-revision.txt source-status.txt source-files.txt source-sha256.txt
+    shasum -a 256 "$build_id.zip"
+    printf '%s\n' "$package_dir/$build_id.zip"
+
 @default:
     @just --list

@@ -31,7 +31,7 @@ if(NOT aws_sdk_revision STREQUAL "269ff2277f247d78526414b5052729844532362e")
   message(FATAL_ERROR "AWS SDK source does not match the pinned commit")
 endif()
 find_package(Threads REQUIRED)
-add_library(agent_core src/core.cpp src/aws.cpp src/credentials.cpp src/kvs.cpp src/peer.cpp)
+add_library(agent_core src/core.cpp src/aws.cpp src/credentials.cpp src/kvs.cpp src/peer.cpp src/microvm.cpp src/microvm_server.cpp)
 target_include_directories(agent_core PUBLIC include)
 target_link_libraries(agent_core PUBLIC aws-cpp-sdk-core aws-cpp-sdk-iot aws-cpp-sdk-iot-data Threads::Threads)
 include(../devices/common/kvs/cmake/AwsKvsWebRtc.cmake)
@@ -54,7 +54,18 @@ ExternalProject_Add_Step(txing_aws_kvs_webrtc_sdk agent_event_loop_fix
   DEPENDERS configure
   DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyKvsEventLoopFix.cmake"
           "${CMAKE_CURRENT_SOURCE_DIR}/cmake/kvs-lws-event-loop.patch")
+ExternalProject_Add_Step(txing_aws_kvs_webrtc_sdk agent_stage_archives
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSYSTEM_DEPS_DIR=${TXING_AWS_KVS_WEBRTC_SDK_SYSTEM_DEPS_DIR}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageKvsArchives.cmake"
+  DEPENDEES build
+  DEPENDERS install
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageKvsArchives.cmake")
 target_include_directories(agent_core PUBLIC "${TXING_AWS_KVS_WEBRTC_SDK_INSTALL_DIR}/include")
+find_path(AGENT_LWS_INCLUDE_DIR libwebsockets.h REQUIRED)
+target_include_directories(agent_core SYSTEM PRIVATE "${AGENT_LWS_INCLUDE_DIR}")
+set(TXING_AGENT_BUILD_ID "development" CACHE STRING "Source manifest identifier recorded by the probe")
+target_compile_definitions(agent_core PRIVATE TXING_AGENT_BUILD_ID="${TXING_AGENT_BUILD_ID}")
 target_compile_options(agent_core PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(txing-agent src/main.cpp)
 target_link_libraries(txing-agent PRIVATE agent_core)
@@ -63,6 +74,13 @@ if(BUILD_TESTING)
   target_link_libraries(agent-tests PRIVATE agent_core)
   add_test(NAME agent-runtime COMMAND agent-tests)
   set_tests_properties(agent-runtime PROPERTIES TIMEOUT 45)
+  add_executable(agent-host-tests tests/microvm_test.cpp)
+  target_link_libraries(agent-host-tests PRIVATE agent_core)
+  add_test(NAME agent-microvm-host COMMAND agent-host-tests)
+  set_tests_properties(agent-microvm-host PROPERTIES TIMEOUT 20)
+  add_executable(agent-microvm-probe tests/microvm_probe.cpp)
+  target_link_libraries(agent-microvm-probe PRIVATE agent_core)
+  target_include_directories(agent-microvm-probe SYSTEM PRIVATE "${AGENT_LWS_INCLUDE_DIR}")
   # Requires an operator-selected active Thing; default tests never call AWS.
   add_executable(agent-live-tests tests/live_test.cpp)
   target_link_libraries(agent-live-tests PRIVATE agent_core)

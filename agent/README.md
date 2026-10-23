@@ -6,6 +6,15 @@ automated checks and active TBot observation passed, including independent
 peer recovery and verification-timeout checks against real streams. Cloud hosting, QGroundControl integration,
 and publication belong to later issues in milestone 10.
 
+The disposable MicroVM feasibility experiment is being implemented under
+[#165](https://github.com/mparkachov/txing/issues/165). `just agent::probe-package`
+prepares its source-only image context; the [operator runbook](../docs/agent-microvm-acceptance.md)
+describes resource creation, role/ingress checks, sustained observation and cleanup.
+Live MicroVM feasibility is accepted within the
+[current-stage fifty-minute limit](../docs/constraints/agent-session-limit.md).
+The board's credential renewal can interrupt sessions earlier; the runbook
+records that limitation. Controller and lifecycle automation remain later work.
+
 Read the [design](../docs/components/agent.md),
 [constraints](../docs/constraints/agent.md), and
 [cloud shadow contract](../docs/contracts/agent-shadow.md) for ownership boundaries.
@@ -105,6 +114,11 @@ SDK peer and encoded H.264 callbacks; neither derives TBot names nor parses
 MAVLink. One process-owned SDK lifetime outlives both connections. Peer recovery
 backs off from one to ten seconds, with a twenty-second negotiation deadline.
 Each session preserves its own error context.
+If a connected MAVLink peer delivers no valid telemetry for fifteen seconds,
+the runtime releases any control and retires that peer through the same bounded
+recovery path. Lifecycle success and control replies do not hide telemetry
+silence; healthy video keeps its independent connection. Reopening never
+reacquires control automatically.
 
 Video reaches the operator with encoded bytes, codec, SDK presentation time in
 100 ns media-clock ticks, and wall-clock receipt time. Its separate consumer has
@@ -134,7 +148,9 @@ Record those separately using the [native acceptance record](../docs/agent-nativ
 
 For an explicitly selected active Thing, the separate live acceptance executable
 opens real AWS/KVS connections, then injects peer loss, lifecycle overrides and
-verification failures **inside its own process**. It never writes a shadow,
+verification failures **inside its own process**. It also suppresses telemetry
+receipt while retaining the connected transport, then verifies that a fresh
+peer restores telemetry without reconnecting video. It never writes a shadow,
 changes the device's REDCON, acquires control, or sends a MAVLink action. It is
 excluded from default CTest:
 

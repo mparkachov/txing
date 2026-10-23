@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Disposable issue-165 probe artifacts and roles; no controller or lifecycle automation
+Parameters:
+  ThingId:
+    Type: String
+    AllowedPattern: '[A-Za-z0-9_\-]+'
+Resources:
+  Artifacts:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+  Logs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda-microvms/${AWS::StackName}'
+      RetentionInDays: 7
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: SourceAndLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${Artifacts.Arn}/probe/*'
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt Logs.Arn
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: ObserveSelectedDevice
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: iot:DescribeThing
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${ThingId}'
+              - Effect: Allow
+                Action: iot:GetThingShadow
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${ThingId}/sparkplug'
+              - Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+              - Effect: Allow
+                Action: [kinesisvideo:DescribeSignalingChannel, kinesisvideo:GetSignalingChannelEndpoint,
+                         kinesisvideo:GetIceServerConfig, kinesisvideo:ConnectAsViewer]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/${ThingId}-mavlink/*'
+                  - !Sub 'arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/${ThingId}-board-video/*'
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt Logs.Arn
+Outputs:
+  ArtifactBucket:
+    Value: !Ref Artifacts
+  BuildRoleArn:
+    Value: !GetAtt BuildRole.Arn
+  ExecutionRoleArn:
+    Value: !GetAtt ExecutionRole.Arn
+  LogGroup:
+    Value: !Ref Logs
