@@ -37,7 +37,7 @@ class AgentShadowContractTests(unittest.TestCase):
         self.assertValid(payload)
         reported = payload["state"]["reported"]
         self.assertEqual(reported["run"]["id"], reported["runtime"]["runId"])
-        self.assertEqual(reported["activation"]["deadline"] - reported["activation"]["startedAt"], 8 * 3600)
+        self.assertEqual(reported["activation"]["deadline"] - reported["activation"]["startedAt"], 3000)
         self.assertEqual(reported["runtime"]["mavlink"]["state"], "connected")
         self.assertEqual(reported["runtime"]["video"]["state"], "error")
         reported["runtime"]["mavlink"] = {"state": "error", "lastError": "mavlink: ICE failed"}

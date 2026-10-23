@@ -56,7 +56,7 @@ trust:
     mv "$trust_dir/aws-roots.pem.new" "$trust_dir/aws-roots.pem"
     printf '%s\n' "$trust_dir/aws-roots.pem"
 
-# Foreground observation; explicit-control QGC operation is tracked in #166.
+# Foreground localhost QGroundControl; observation unless --control is explicit.
 [positional-arguments]
 run thing_id *args: build
     #!/bin/sh
@@ -87,6 +87,8 @@ probe-package:
         agent/probe/CMakeLists.txt agent/probe/Dockerfile \
         agent/probe/hooks.json agent/probe/stack.yaml \
         devices/common/kvs/sdk.commit ':(glob)devices/common/kvs/cmake/*.cmake' \
+        ':(glob)devices/common/board/mavlink/include/**/*.h' \
+        ':(glob)devices/common/board/mavlink/LICENSES/*' devices/common/board/mavlink/PROVENANCE.md \
         | LC_ALL=C sort -u > "$package_dir/source-files.txt"
     while IFS= read -r source_file; do
         shasum -a 256 "$source_file"

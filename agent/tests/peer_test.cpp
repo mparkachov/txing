@@ -1,6 +1,12 @@
 #include "agent/core.hpp"
 #include "agent/kvs.hpp"
+#include "agent/manual.hpp"
 #include <aws/core/utils/json/JsonSerializer.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <array>
+#include <sstream>
 #include <stdexcept>
 using namespace txing::agent;
 using namespace std::chrono_literals;
@@ -152,4 +158,59 @@ void sdk_peers() {
     // Destroy peers while the session's callback queues and the process SDK
     // are still alive. Stopping one must leave the other SDK peer operational.
     telemetry.reset();
+}
+
+void sdk_manual() {
+    // Real UDP -> ManualOperator -> Session/Actions -> pinned SCTP/DTLS peers,
+    // and real H.264 delivery to that same manual operator. No AWS/device.
+    const auto fd = socket(AF_INET, SOCK_DGRAM, 0);
+    require(fd >= 0, "create QGC test socket");
+    struct Socket { int fd; ~Socket() { close(fd); } } socket_guard{fd};
+    sockaddr_in endpoint{}; endpoint.sin_family = AF_INET; endpoint.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    require(bind(fd, reinterpret_cast<sockaddr*>(&endpoint), sizeof(endpoint)) == 0, "bind QGC test socket");
+    socklen_t length = sizeof(endpoint);
+    require(getsockname(fd, reinterpret_cast<sockaddr*>(&endpoint), &length) == 0, "read QGC test port");
+    require(fcntl(fd, F_SETFL, O_NONBLOCK) == 0, "nonblocking QGC test socket");
+    std::ostringstream diagnostics;
+    ManualOperator op({0, ntohs(endpoint.sin_port), true}, diagnostics);
+    auto listener = endpoint; listener.sin_port = htons(op.port());
+    std::shared_ptr<Pair> telemetry, video;
+    int index = 0;
+    Session session(profile("tbot", "local-manual-test", "eu-central-1", "not-used"), [&] {
+        return std::make_unique<LocalTransport>(index++ == 0 ? &telemetry : &video);
+    }, op, std::chrono::steady_clock::now());
+    struct Cleanup {
+        Session& session; std::shared_ptr<Pair>& telemetry; std::shared_ptr<Pair>& video;
+        ~Cleanup() { session.shutdown("manual SDK cleanup"); telemetry.reset(); video.reset(); }
+    } cleanup{session, telemetry, video};
+    const auto bytes = frame(true);
+    EncodedVideo encoded{{0,0,0,1,0x65,0x88,0x84,0,0x10,0xff,0xff}, "h264", 10000000, {}};
+    bool received_without_presence = false;
+    const auto deadline = std::chrono::steady_clock::now() + 12s;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto now = std::chrono::steady_clock::now();
+        op.poll(session, now); session.verified({true, 1}, now); require(session.tick(now), "manual SDK session stopped");
+        if (telemetry && telemetry->master_state == Connection::connected) telemetry->master->send(bytes, true);
+        if (video && video->master_state == Connection::connected) {
+            video->master->send_video(encoded); encoded.presentation_100ns += 333333;
+        }
+        std::array<std::uint8_t, 512> buffer{};
+        const auto size = recv(fd, buffer.data(), buffer.size(), 0);
+        if (size >= 0) {
+            require(Bytes(buffer.begin(), buffer.begin() + size) == bytes, "SDK downlink signature/frame altered");
+            if (!received_without_presence) {
+                require(!op.status().client, "SDK telemetry waited for client presence"); received_without_presence = true;
+            }
+            require(sendto(fd, bytes.data(), bytes.size(), 0, reinterpret_cast<sockaddr*>(&listener), sizeof(listener)) ==
+                    static_cast<ssize_t>(bytes.size()), "send QGC SDK test frame");
+        }
+        if (telemetry && telemetry->actions > 0 && op.status().video > 0) break;
+        std::this_thread::sleep_for(20ms);
+    }
+    require(received_without_presence && op.status().telemetry > 0 && op.status().video > 0, "manual SDK observations missing");
+    require(op.status().held && telemetry->actions > 0 && telemetry->frame_preserved, "manual SDK authorized frame missing/corrupt");
+    op.disconnect(session, "manual SDK test disconnect"); session.tick(std::chrono::steady_clock::now());
+    const auto released = std::chrono::steady_clock::now() + 1s;
+    while (!telemetry->releases && std::chrono::steady_clock::now() < released) std::this_thread::sleep_for(5ms);
+    require(telemetry->releases == 1, "manual SDK disconnect did not release");
 }

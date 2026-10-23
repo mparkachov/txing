@@ -314,6 +314,7 @@ void projected_lifecycle() {
     std::lock_guard<std::mutex> lock(mutex); REQUIRE(calls[1] - calls[0] >= 1900ms);
 }
 void sdk_peers();
+void sdk_manual();
 int main() {
     // Every SDK configuration read in tests stays inside repository scratch.
     const auto scratch = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / "tmp/agent-test";
@@ -333,7 +334,8 @@ int main() {
             {"operator and authority", operator_and_authority}, {"loss and shutdown", loss_and_shutdown},
             {"queued authority", queued_authority},
             {"bounded video", bounded_video}, {"credentials and errors", credentials_and_errors},
-            {"SDK credential chain", sdk_credential_chain}, {"projected lifecycle", projected_lifecycle}, {"real SDK peers", sdk_peers}}) {
+            {"SDK credential chain", sdk_credential_chain}, {"projected lifecycle", projected_lifecycle},
+            {"real SDK peers", sdk_peers}, {"real SDK manual UDP", sdk_manual}}) {
             test.second(); std::cout << "PASS " << test.first << std::endl;
         }
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; result = 1; }

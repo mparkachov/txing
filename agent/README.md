@@ -3,10 +3,14 @@
 The C++ foreground observer is implemented for
 [#164](https://github.com/mparkachov/txing/issues/164). Native macOS build,
 automated checks and active TBot observation passed, including independent
-peer recovery and verification-timeout checks against real streams. Cloud hosting, QGroundControl integration,
-and publication belong to later issues in milestone 10.
+peer recovery and verification-timeout checks against real streams. The native
+QGroundControl UDP operator is implemented for
+[#166](https://github.com/mparkachov/txing/issues/166); its loopback, lease and
+real SDK integration checks are recorded in the
+[manual acceptance report](../docs/agent-manual-acceptance.md).
+Physical TBot acceptance, cloud automation and publication remain later issues.
 
-The disposable MicroVM feasibility experiment is being implemented under
+The disposable MicroVM feasibility experiment was accepted under
 [#165](https://github.com/mparkachov/txing/issues/165). `just agent::probe-package`
 prepares its source-only image context; the [operator runbook](../docs/agent-microvm-acceptance.md)
 describes resource creation, role/ingress checks, sustained observation and cleanup.
@@ -42,9 +46,70 @@ just agent::test
 just agent::run <registered-tbot-thing-id> --region eu-central-1
 ```
 
-The foreground run observes and logs; Ctrl-C or SIGTERM closes both sessions.
-The optional UDP port and `--control` interface is still pending #166.
+The foreground run observes and logs; Ctrl-C or SIGTERM releases authority and
+closes both sessions. The agent binds `127.0.0.1:14551` and sends telemetry to
+QGroundControl at `127.0.0.1:14550` immediately, even before QGC sends anything.
 `attach`, `deploy` and `publish` remain pending their respective cloud issues.
+
+## Local QGroundControl
+
+In QGroundControl **Application Settings → Comm Links**, use one UDP link with
+local/listening port **14550** and remote host **127.0.0.1:14551**. If configuring
+that link manually, disable the duplicate UDP auto-connect link. Keep heartbeat
+emission enabled under Telemetry/MAVLink settings. QGC supports configuring UDP
+local ports and remote hosts in its [Comm Links settings](https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/comm_links.html);
+heartbeat emission is documented in [Telemetry settings](https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/telemetry.html).
+
+```sh
+# View telemetry; QGC parameter/configuration writes are blocked.
+just agent::run <registered-tbot-thing-id> --region eu-central-1
+
+# Explicit full MAVLink control, including parameter retrieval/configuration.
+just agent::run <registered-tbot-thing-id> --control --region eu-central-1
+
+# Different agent listener; change QGC's remote host to 127.0.0.1:15551.
+just agent::run <registered-tbot-thing-id> 15551 --control --region eu-central-1
+
+# Different QGC listening port as well; configure its local port to 15550.
+just agent::run <registered-tbot-thing-id> 15551 --qgc-port 15550 --region eu-central-1
+```
+
+Only the configured loopback QGC source port establishes presence or sends
+uplink. Initial valid MAVLink 1 heartbeats establish presence without crossing
+the board's MAVLink 2 channel. MAVLink 2 telemetry initiates QGC negotiation;
+complete uplink frames, including unfamiliar messages and signatures, retain
+their bytes. Each UDP datagram must contain complete frames: no joining across
+datagrams. MAVLink 2 CRCs/signatures are validated by the flight controller.
+
+`--control` makes one `takeover=false` lease attempt after client presence and
+telemetry readiness. Pre-grant traffic is dropped; QGC's protocol retries can
+send it after the grant. A busy Office/other peer remains owner. Once granted,
+parameter/configuration, arm, disarm and re-arm traffic use that same lease.
+Video is received/count-discarded through the common operator interface; this
+command does not display video in QGC.
+
+Control releases after five seconds without valid client traffic, local socket
+failure, WebRTC/lease loss, lifecycle shutdown, or process exit. UDP has no close
+notification: disconnecting QGC's link or exiting QGC is detected by the same
+five-second deadline. Downlink telemetry does not count as client activity.
+After a busy/lost/released attempt, reconnecting or sending more traffic never
+reacquires control; explicitly restart with `--control` for another attempt.
+An observation-only run cannot acquire control.
+
+Ports must be distinct integers from 1 to 65535. If the agent listener is
+occupied, stop its other owner or choose another positional port. Diagnostics
+include individual connection errors, control changes, observation counts,
+rejected datagrams and dropped UDP/enqueue sends. Work is bounded to 32
+datagrams per poll, 16 KiB and 32 complete frames per datagram; malformed,
+truncated and excessive datagrams are rejected in full.
+
+Rollout is local: run `just agent::test`, configure QGC as above, then start the
+foreground command. No board/rig/Office installation or AWS infrastructure
+update is needed. The current image accepted in #165 predates this native
+adapter; future cloud use needs a newly built image. End native sessions by
+fifty minutes under the [current-stage limit](../docs/constraints/agent-session-limit.md).
+Real GUI negotiation, parameter, motion, contention and failure acceptance on
+a secured lifted TBot remain #167 and have not been performed for #166.
 
 The build, AWS SDK checkout/CRT dependencies, and pinned KVS SDK cache stay under
 `tmp/agent-build/`. The first build downloads the SDKs; subsequent builds reuse

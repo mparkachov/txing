@@ -13,8 +13,11 @@ is tied to ZIP SHA-256
 `209bd78f25c2eb293b1dd6bbfe051436ee89ed7884f430aa5a84c50f28154287`.
 AWS passed both ARM64 CTest targets, final snapshot-safe linking and the waiting
 ready/validate hooks. The immutable package and image are preserved. All runtime
-source still matches that package; the sole current packaged-file difference is
-`agent/README.md`, updated to describe this accepted limitation.
+source matched that package at #165 closeout; its sole packaged-file difference
+then was `agent/README.md`, updated to describe this accepted limitation.
+Subsequent native QGroundControl work in #166 changes the application source;
+that work needs a fresh image before future cloud use. This immutable image
+and historical acceptance evidence remain the #165 revision.
 
 The bounded re-audit uses **598 recorded status samples** inside fifty minutes
 of actual seventh-VM service start. Its last sample is at 16:00:43.361 CEST,

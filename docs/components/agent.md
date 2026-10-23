@@ -7,8 +7,11 @@ The superseded Go/Fargate implementation has been removed. The C++ foreground
 observer and automated runtime checks are implemented under #164 in
 `agent/`; native macOS build/automated checks, active TBot observation,
 independent peer recovery and verification-timeout acceptance passed. The
-controller, QGroundControl integration, and cloud/live physical acceptance
-remain later work. See the [native acceptance record](../agent-native-acceptance.md).
+native QGroundControl UDP adapter is implemented under #166 with loopback,
+lease and real SDK integration checks. Physical local acceptance, controller
+and released-cloud acceptance remain later work. See the
+[native observation](../agent-native-acceptance.md) and
+[manual adapter acceptance](../agent-manual-acceptance.md) records.
 
 ## Purpose
 
@@ -133,9 +136,9 @@ generated bindings where message interpretation is needed.
 
 ## Native operation
 
-The table describes the complete target interface. Build/test and foreground
-observation are being introduced in #164; the UDP/manual-control run arguments,
-attachment, deployment and publication remain pending their later issues.
+The table describes the complete target interface. Build/test, foreground
+observation and UDP/manual-control run arguments are implemented under
+#164/#166; attachment, deployment and publication remain later work.
 
 | Command | Behavior |
 | --- | --- |
@@ -149,6 +152,10 @@ attachment, deployment and publication remain pending their later issues.
 Both manual commands bind `127.0.0.1:14551` by default. QGroundControl listens
 on UDP 14550 and sends to the chosen agent listener port. The optional positional
 port changes the agent listener. Report invalid or occupied ports clearly.
+`--qgc-port <port>` optionally changes the loopback QGC endpoint (and expected
+client source port); it must differ from the listener. Native
+[usage and QGC settings](../../agent/README.md#local-qgroundcontrol) describe the
+one-shot control request and UDP disconnect deadline.
 
 Send available telemetry immediately to the configured QGroundControl endpoint;
 do not wait for an incoming MAVLink 2 heartbeat. Recognize initial MAVLink 1
