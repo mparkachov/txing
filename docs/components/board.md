@@ -2291,6 +2291,15 @@ normal wake/SSH recovery, a writable-root diagnostic window, existing system
 and service logs on storage, a Mac-side copy, startup order and evidence
 retrieval after reboot.
 
+For #171's captured Wi-Fi SDIO DMA fault, see the
+[diagnosis and bounded mitigation](../tbot-wifi-outage.md). It includes
+read-only SSH capture and an operator-run 25 MHz clock trial with verification
+and restoration; neither the trial nor the candidate PIO bypass is a verified
+TBot fix.
+The operator closed #171 after confirming a later battery power loss and
+REDCON 4 transition. Battery hardware follow-up is handled in another system;
+the linked record preserves the earlier kernel and trial evidence.
+
 ### Restart Order
 
 Unit service restarts have a required order, dependencies first:

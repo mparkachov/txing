@@ -5,6 +5,11 @@ kernel/system messages, existing service stdout/stderr, installed versions and
 periodic machine state. The board's normal `/var/log` and `/var/tmp` are tmpfs;
 those logs disappear when board power is removed.
 
+If the board must stay read-only, use the
+[network capture and Wi-Fi fault guidance](tbot-wifi-outage.md#capture-while-the-board-stays-read-only)
+instead. That capture needs no serial connection, but cannot retain the final
+trace if Wi-Fi fails before sending it and board power is then removed.
+
 For this diagnostic session, keep the ext4 root writable and bind a directory
 under `/root/tbot-capture/` over `/var/log`. Existing OpenRC services then write
 their usual log paths to storage. The bind mount is temporary: after reboot,
@@ -332,8 +337,10 @@ two-hour cap. No rebuild is needed unless packaged source changes.
 All six recorded observers are terminated. The fifth/sixth launch blocks are
 historical and must not be reused for another run. The seventh #165 launch is prepared in
 `tmp/issue-165/operator-seventh-run.md`, reusing the accepted image without
-board changes. Board remediation is separately tracked in #171 outside the
-current milestone; the sixth outage capture has been recovered and preserved.
+board changes. The separate #171 investigation was closed at the operator's
+request on 2026-10-25 after confirmed battery power loss and a REDCON 4
+transition; battery hardware follow-up is handled in another system. The
+sixth outage capture has been recovered and preserved.
 The historical retrieval commands are in
 `tmp/issue-165/operator-sixth-outage-retrieve.md`. Cloud launches, auth-token creation and final
 termination remain operator-run.
