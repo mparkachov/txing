@@ -6,10 +6,12 @@ real credential expiry. Contention, takeover, disconnect, process interruption,
 REDCON 3/4 and DDEATH evidence is retained. Earlier transport timeouts remain
 unresolved. Run 21 isolates a real camera failure while MAVLink continues, but
 exposes a board readiness bug: actual REDCON briefly reaches 2, then returns to
-1 without video frames. A bounded runtime fix is prepared as KVS 0.18.4;
-manual rollout and a physical repeat remain required. The operator confirms
-the TBot is parked at actual REDCON 4, power off and tracks stopped. New changes
-remain uncommitted as requested.
+1 without video frames. The operator independently commits/releases/installs
+KVS 0.18.4, but its real repeat (23) still reports actual 1 without frames while
+the worker waits during teardown. A corrected cleanup order is prepared as
+0.18.5; manual rollout and physical repetition remain required. The operator
+confirms the TBot is parked at actual REDCON 4, power off and tracks stopped.
+New changes remain uncommitted as requested.
 This record covers the actual development Mac, QGroundControl
 and secured lifted TBot. Automated checks and process-injected faults support
 diagnosis but do not replace the physical evidence required by #167.
@@ -844,6 +846,68 @@ camera-only fault while disarmed and verify stable actual 2, no video reconnect
 or new frames, continuing MAVLink and fresh parameter retrieval. Keep #167 open
 until real evidence supports those results.
 
+## Installed 0.18.4 repeat and camera cleanup ordering — 2026-10-26
+
+The operator independently commits the previous repair and native diagnostics
+at `219f3c871eb8a6fc649a80180eb51c8da730d53a`, publishes `kvs-master-v0.18.4`,
+and installs it. The worktree is initially clean. The downloaded immutable
+archive SHA-256 is
+`cc3749b081051856492687b92b2d28041aca0efbdef3d97d9ec107917771380c`;
+its executable SHA-256
+`39facd7cb51a7836fba526797b4798ab1e761276c14bed3e6e313c6bbd7417c9`
+matches both the operator's installed executable and running PID 2656.
+These are distinct from the earlier local unstripped artifact. The same native
+executable `907c3188…` and its source hashes are reverified. No agent commit,
+publication or installation is performed.
+
+In run 23, fresh actual 1/video/MAVLink and disarmed/unowned state are verified
+before starting the bounded native session. The operator confirms the lifted
+setup, Office View only, centered sticks and Mac log capture. After connecting
+QGC and freshly loading parameters, one QGC/mavlink-2/epoch 1 lease is granted.
+The operator's exact Unicam detach returns 0. Frames freeze at **3,272**, while
+telemetry and the same disarmed lease continue. Actual REDCON remains 1, and
+Office refresh still shows “Connecting to board video…”. All 77 shadow samples
+remain disarmed. This is another failed physical readiness case.
+
+Camera teardown logs reach removed-device/buffer cleanup. The main worker's
+kernel wait channel/stack show a futex wait; the exact userspace function is
+unidentified. The attempted per-thread listing fails and supplies no further
+evidence. Source ordering explains why this can hide video failure: 0.18.4
+calls capturer `Stop` before closing video and reporting ERROR. A camera
+cleanup wait delays both. The earlier regression incorrectly required camera
+cleanup completion before the error report.
+
+The 0.18.5 correction closes/drains the video session, reports ERROR, then
+releases camera resources. This preserves the READY-callback protection while
+removing camera teardown from the readiness-publication path. The separate
+MAVLink loop continues. The revised regression verifies video closure and
+ERROR are already visible at camera-stop entry; it fails on 0.18.4 (three
+assertions) and passes with the correction. Secret-free failure-stage markers
+identify video closure, camera-release entry and completion if another wait
+occurs. No new thread, schema, authority, SDK pin or retry policy is added.
+
+The corrected stub regression, canonical native suite, real-SDK macOS suite,
+production Alpine ARM64 real-SDK/gRPC tests and fresh-runtime smoke all pass.
+Source hashes match the recorded build inputs. The local unstripped 0.18.5
+artifact SHA-256 is
+`e29900247af1cd018ad382610bc34f01a702a4414c4c0c7955a5a22a01816b9a`;
+musl/AArch64 and libcamera 0.7 linkage are verified. This is build evidence;
+0.18.5 has not been published, installed or physically accepted.
+
+The native process is deliberately stopped after **308.823 seconds**, group
+exit 143. Last observation: **16,397 telemetry / 3,272 video / 5,542 valid QGC
+datagrams**, 71 consumer video drops and zero UDP rejects/drops. Native control
+clears for the process signal; fresh version 1220 is unowned/disarmed/Hold.
+The operator stops the capture, disconnects QGC and confirms actual 4,
+board/motor power off and tracks stopped; fresh Sparkplug 1776 agrees. No
+software camera recovery or additional motion is attempted.
+
+Evidence is frozen under `tmp/issue-167/23-*`; the correction plan, validation
+and manual rollout instructions are under `24-*`. The installed board remains
+0.18.4. The 0.18.5 source/artifact requires an explicit operator release and
+coordinated maintenance before another real camera-loss test. Earlier
+unrelated control-timeout causes remain unresolved. Criteria 4 and 6 stay open.
+
 ## First foreground run
 
 Use Office to select REDCON 1 and wait for actual 1 with available MAVLink/video.
@@ -899,8 +963,8 @@ failed attempts and the source/executable identity for every retry.
 | Lease loss | Operator performs a deliberate competing-owner takeover; old native authority clears and later traffic/reconnection does not reacquire | Run 08 explicit Office takeover revokes native authority; later release/QGC traffic never reacquires |
 | WebRTC loss | Operator-induced real telemetry-link loss releases control; native peer recovery preserves healthy video and never reacquires | Run 13 natural telemetry gap revokes control, freshly clears board ownership/disarms, preserves video and recovers MAVLink without reacquisition; cause and controlled fault case remain open |
 | Verification loss | Real loss of authoritative lifecycle reads stops the worker after fifteen seconds; record the fault method, last successful verification, lease release and terminal reason | Run 20 real expiry/HTTP 403 stops the worker and releases its held lease; fresh board state unowned/disarmed/Hold; exact last successful API-read timestamp unlogged |
-| Video failure | Actual video failure while MAVLink stays available leaves telemetry/control working; record separate connection/counter evidence | Run 21 preserves MAVLink but falsely restores video readiness; 0.18.4 repair requires manual rollout/repeat |
-| REDCON 2 and 1→2 | Actual projection reaches 2; MAVLink remains usable and only video closes. A request for 2 satisfied by actual 1 does not pass this case | Run 21 actual 1→2→1 exposes stale READY with frozen video; stable corrected behavior remains unverified |
+| Video failure | Actual video failure while MAVLink stays available leaves telemetry/control working; record separate connection/counter evidence | Runs 21/23 preserve MAVLink but fail readiness; prepared 0.18.5 correction requires manual rollout/repeat |
+| REDCON 2 and 1→2 | Actual projection reaches 2; MAVLink remains usable and only video closes. A request for 2 satisfied by actual 1 does not pass this case | Run 21 actual 1→2→1 exposes stale READY; run 23 stays 1 with frozen video; stable corrected behavior remains unverified |
 | REDCON 3/4 | Separate real transitions to 3 and 4 terminate the native session and release authority | Earlier actual 3 and run 09 actual 4 terminate/revoke native authority; post-loss/off board lease shadows stay stale |
 | Device death | Actual DDEATH projection terminates the native session and releases authority; record how the operator produced death | Run 10 whole-TBot power-off produces DDEATH and native exit 0; authority cleared on preceding control timeout; board lease shadow stale |
 

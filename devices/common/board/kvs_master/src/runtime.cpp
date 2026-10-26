@@ -401,18 +401,26 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
         first_error = error.what();
     }
 
-    // Drain video callbacks before publishing a terminal camera error. Viewer
-    // count updates report READY and must not revive a failed video path while
-    // the independent MAVLink worker remains available.
-    capturer->Stop();
+    // Drain viewer-count READY callbacks, then publish ERROR before camera
+    // cleanup: releasing removed camera hardware can wait indefinitely.
+    if (first_error) {
+        EmitMarker("TXING_KVS_VIDEO_FAILURE", {{"stage", "closing_video"}});
+    }
     kvs_session->Stop();
+    if (first_error) {
+        TryReportVideoState(bridge_client.get(), BridgeVideoState::kError, 0, *first_error);
+        EmitMarker("TXING_KVS_VIDEO_FAILURE", {{"stage", "releasing_camera"}});
+    }
+    capturer->Stop();
+    if (first_error) {
+        EmitMarker("TXING_KVS_VIDEO_FAILURE", {{"stage", "camera_released"}});
+    }
 
     if (first_error && mavlink_control_thread.joinable()) {
         // A video/camera failure must not tear down the independent MAVLink
         // control signaling path. Keep this worker alive for the control loop
         // until OpenRC asks it to stop; video readiness remains error until a
         // supervised restart restores the video path.
-        TryReportVideoState(bridge_client.get(), BridgeVideoState::kError, 0, *first_error);
         while (!g_stop_requested.load()) {
             SleepUntilStopped(std::chrono::milliseconds(200));
         }
@@ -425,7 +433,6 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
     }
 
     if (first_error) {
-        TryReportVideoState(bridge_client.get(), BridgeVideoState::kError, 0, *first_error);
         throw std::runtime_error(*first_error);
     }
 

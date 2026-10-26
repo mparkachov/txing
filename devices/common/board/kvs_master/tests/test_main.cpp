@@ -158,6 +158,7 @@ struct FakeCapturerState {
     bool throw_after_frames = false;
     std::string error_message = "capturer failure";
     std::vector<EncodedVideoFrame> frames;
+    std::function<void()> on_stop;
 };
 
 class FakeVideoCapturer final : public VideoCapturer {
@@ -197,6 +198,9 @@ class FakeVideoCapturer final : public VideoCapturer {
     }
 
     void Stop() noexcept override {
+        if (state_->on_stop) {
+            state_->on_stop();
+        }
         state_->stopped = true;
         state_->status = VideoCapturerStatus::kStopped;
     }
@@ -692,6 +696,14 @@ void TestRuntimeCameraFailureCannotRestoreVideoReadiness() {
     capturer_state.frames = {EncodedVideoFrame {{0x00, 0x00, 0x01}, 1'000'000, true}};
     capturer_state.throw_after_frames = true;
     FakeBridgeState bridge_state;
+    bool error_reported = false;
+
+    // Camera teardown may wait on removed hardware. Its entry must already
+    // see video closed and ERROR published, without waiting for it to return.
+    capturer_state.on_stop = [&] {
+        Expect(kvs_state.stopped, "video must close before camera teardown can wait");
+        Expect(error_reported, "video ERROR must be visible before camera teardown can wait");
+    };
 
     // Closing a viewer can publish one last viewer-count READY callback.
     kvs_state.on_stop = [&] { bridge_state.reported_states.push_back(BridgeVideoState::kReady); };
@@ -699,7 +711,8 @@ void TestRuntimeCameraFailureCannotRestoreVideoReadiness() {
         if (state != BridgeVideoState::kError) {
             return;
         }
-        Expect(capturer_state.stopped, "camera resources must be released on video failure");
+        error_reported = true;
+        Expect(!capturer_state.stopped, "camera teardown must not delay the video ERROR report");
         Expect(kvs_state.stopped, "failed video must stop accepting viewers before ERROR is published");
         // A still-active signaling session permits the reconnect that caused
         // physical case 21 to restore READY with no new camera frames.
@@ -718,6 +731,7 @@ void TestRuntimeCameraFailureCannotRestoreVideoReadiness() {
     config.mavlink_bridge_socket_path = "/unused-mavlink-bridge.sock";
     Run(config, hooks);
 
+    Expect(capturer_state.stopped, "runtime should still release camera resources after publishing ERROR");
     Expect(kvs_state.pushes.size() == 1, "camera must fail after a real first keyframe");
     bool saw_error = false;
     for (const auto state : bridge_state.reported_states) {

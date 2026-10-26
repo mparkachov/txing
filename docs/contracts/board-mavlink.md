@@ -52,11 +52,14 @@ SRTP, SCTP, and thread-pool runtime. Replacing or stopping one session must not
 deinitialize the runtime used by the other. Startup failures stop and join the
 control thread before the worker exits.
 
-On a camera or video failure, the worker stops the capturer and video session
-before publishing the final video ERROR. This drains viewer-count callbacks so
-they cannot restore READY after failure. The independent MAVLink loop remains
-available until the worker is stopped; restoring video requires a supervised
-restart with a functioning camera.
+On a camera or video failure, the worker stops the video session to drain its
+viewer-count READY callbacks, then publishes video ERROR before releasing the
+camera. Camera cleanup can wait on removed hardware and must not delay video
+unavailability or peer closure. The independent MAVLink loop remains available
+until the worker is stopped; restoring video requires a supervised restart
+with a functioning camera. Failure-stage markers distinguish video closure,
+camera release entry and camera release completion without exposing media or
+credentials.
 
 ## Office operation and safety semantics
 
