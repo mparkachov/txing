@@ -401,6 +401,12 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
         first_error = error.what();
     }
 
+    // Drain video callbacks before publishing a terminal camera error. Viewer
+    // count updates report READY and must not revive a failed video path while
+    // the independent MAVLink worker remains available.
+    capturer->Stop();
+    kvs_session->Stop();
+
     if (first_error && mavlink_control_thread.joinable()) {
         // A video/camera failure must not tear down the independent MAVLink
         // control signaling path. Keep this worker alive for the control loop
@@ -412,9 +418,6 @@ void Run(const RuntimeConfig& config, const RuntimeHooks& hooks) {
         }
         first_error.reset();
     }
-
-    capturer->Stop();
-    kvs_session->Stop();
 
     g_stop_requested.store(true);
     if (mavlink_control_thread.joinable()) {

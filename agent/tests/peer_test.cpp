@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <array>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 using namespace txing::agent;
@@ -271,4 +272,31 @@ void sdk_concurrent_data_channel() {
         std::this_thread::sleep_for(2ms);
     require(send_errors == 0 && corrupt == 0, "concurrent SDK sends failed or changed message type/content");
     require(binary_received == count && text_received == count, "concurrent SDK text/binary messages missing");
+    // Validate the production diagnostic against real ICE/SCTP traffic. Only
+    // numeric fields are exposed, even when peer labels contain private text.
+    std::map<std::string, long long> counters;
+    const auto metric_deadline = std::chrono::steady_clock::now() + 1s;
+    std::string diagnostic;
+    do {
+        diagnostic = pair.viewer->diagnostics();
+        std::istringstream fields(diagnostic);
+        std::string field;
+        while (fields >> field) {
+            const auto equals = field.find('=');
+            require(equals != std::string::npos, "SDK diagnostic field lacks numeric value");
+            const auto value = field.substr(equals + 1);
+            require(!value.empty() && value.find_first_not_of("-0123456789") == std::string::npos,
+                    "SDK diagnostic exposed nonnumeric peer data");
+            counters[field.substr(0, equals)] = std::stoll(value);
+        }
+        if (counters["dcReceived"] >= 2 * count) break;
+        std::this_thread::sleep_for(1ms);
+    } while (std::chrono::steady_clock::now() < metric_deadline);
+    require(diagnostic.size() < 1024 && diagnostic.find("concurrent-test") == std::string::npos,
+            "SDK diagnostic exposed channel identity or exceeded its bound");
+    if (!(counters["iceStatus"] == 0 && counters["dcAvailable"] == 1 && counters["dcLastSendStatus"] == 0 &&
+          counters["dcSendFailures"] == 0 && counters["dcBinaryReceived"] == count &&
+          counters["iceSent"] > 0 && counters["iceReceived"] > 0 &&
+          counters["dcSent"] == count && counters["dcReceived"] == 2 * count))
+        throw std::runtime_error("SDK diagnostics failed to report real bidirectional ICE/SCTP counters: " + diagnostic);
 }

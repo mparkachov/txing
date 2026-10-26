@@ -1,5 +1,6 @@
 #include "agent/kvs.hpp"
 #include <cstring>
+#include <sstream>
 #include <stdexcept>
 
 namespace txing::agent {
@@ -12,6 +13,9 @@ struct Peer::Impl {
     std::atomic<PRtcDataChannel> channel{nullptr};
     PRtcRtpTransceiver video = nullptr;
     std::mutex mutex;
+    std::atomic<std::uint64_t> sent{0}, received{0}, sent_bytes{0}, received_bytes{0};
+    std::atomic<std::uint64_t> binary_sent{0}, binary_received{0}, send_failures{0};
+    std::atomic<STATUS> last_send_status{STATUS_SUCCESS};
     static Impl& self(UINT64 p) { return *reinterpret_cast<Impl*>(p); }
     static void ice(UINT64 p, PCHAR c) noexcept {
         auto& s = self(p);
@@ -32,6 +36,8 @@ struct Peer::Impl {
     }
     static void message(UINT64 p, PRtcDataChannel, BOOL binary, PBYTE bytes, UINT32 size) noexcept {
         auto& s = self(p);
+        ++s.received; s.received_bytes += size;
+        if (binary) ++s.binary_received;
         try {
             if (size > 4096) { s.on_state(Connection::failed); return; }
             if (s.events.data) s.events.data(Bytes(bytes, bytes + size), binary);
@@ -113,8 +119,13 @@ bool Peer::send(const Bytes& bytes, bool binary) {
     auto& s = *impl_;
     std::lock_guard<std::mutex> lock(s.mutex);
     auto channel = s.channel.load();
-    return channel && bytes.size() <= 4096 &&
-        STATUS_SUCCEEDED(dataChannelSend(channel, binary, const_cast<PBYTE>(bytes.data()), bytes.size()));
+    if (!channel || bytes.size() > 4096) return false;
+    const auto status = dataChannelSend(channel, binary, const_cast<PBYTE>(bytes.data()), bytes.size());
+    s.last_send_status = status;
+    if (STATUS_FAILED(status)) { ++s.send_failures; return false; }
+    ++s.sent; s.sent_bytes += bytes.size();
+    if (binary) ++s.binary_sent;
+    return true;
 }
 bool Peer::send_video(const EncodedVideo& video) {
     auto& s = *impl_;
@@ -124,5 +135,40 @@ bool Peer::send_video(const EncodedVideo& video) {
     frame.presentationTs = video.presentation_100ns; frame.decodingTs = frame.presentationTs;
     frame.duration = HUNDREDS_OF_NANOS_IN_A_SECOND / 30;
     return STATUS_SUCCEEDED(writeFrame(s.video, &frame));
+}
+std::string Peer::diagnostics() {
+    auto& s = *impl_;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    RtcStats stats{};
+    stats.requestedTypeOfStats = RTC_STATS_TYPE_CANDIDATE_PAIR;
+    const auto ice_status = rtcPeerConnectionGetMetrics(s.peer, nullptr, &stats);
+    std::ostringstream out;
+    out << "unixMs=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count() << " iceStatus=" << ice_status;
+    if (STATUS_SUCCEEDED(ice_status)) {
+        const auto& ice = stats.rtcStatsObject.iceCandidatePairStats;
+        const auto now = GETTIME();
+        const auto age = [now](UINT64 then) -> long long {
+            return then ? static_cast<long long>((now > then ? now - then : 0) / 10000) : -1;
+        };
+        out << " iceState=" << static_cast<int>(ice.state)
+            << " iceSent=" << ice.packetsSent << " iceReceived=" << ice.packetsReceived
+            << " iceBytesSent=" << ice.bytesSent << " iceBytesReceived=" << ice.bytesReceived
+            << " iceSendDrops=" << ice.packetsDiscardedOnSend
+            << " iceLastTxAgeMs=" << age(ice.lastPacketSentTimestamp)
+            << " iceLastRxAgeMs=" << age(ice.lastPacketReceivedTimestamp)
+            << " stunRequests=" << ice.requestsSent << " stunResponses=" << ice.responsesReceived;
+    }
+    auto channel = s.channel.load();
+    out << " dcAvailable=" << (channel != nullptr);
+    // The pinned SDK remaps locally created channel IDs without updating the
+    // public id, so its data-channel metrics lookup can fail after negotiation.
+    // Count actual SDK send results and callbacks here; never use private IDs.
+    out << " dcLastSendStatus=" << s.last_send_status.load()
+        << " dcSendFailures=" << s.send_failures.load()
+        << " dcSent=" << s.sent.load() << " dcReceived=" << s.received.load()
+        << " dcBytesSent=" << s.sent_bytes.load() << " dcBytesReceived=" << s.received_bytes.load()
+        << " dcBinarySent=" << s.binary_sent.load() << " dcBinaryReceived=" << s.binary_received.load();
+    return out.str();
 }
 }

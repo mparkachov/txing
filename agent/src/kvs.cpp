@@ -1,6 +1,7 @@
 #include "agent/kvs.hpp"
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
 #include <sstream>
 #include <stdexcept>
 
@@ -102,7 +103,8 @@ private:
         channel.cachingPeriod = SIGNALING_API_CALL_CACHE_TTL_SENTINEL_VALUE;
         channel.retry = TRUE; channel.reconnect = TRUE; channel.asyncIceServerConfig = TRUE;
         SignalingClientInfo client{}; client.version = SIGNALING_CLIENT_INFO_CURRENT_VERSION;
-        const auto identity = "agent-" + std::to_string(GETTIME());
+        peer_id_ = GETTIME();
+        const auto identity = "agent-" + std::to_string(peer_id_);
         copy(client.clientId, identity); client.loggingLevel = LOG_LEVEL_WARN;
         client.signalingClientCreationMaxRetryAttempts = 1;
         SignalingClientCallbacks callbacks{}; callbacks.version = SIGNALING_CLIENT_CALLBACKS_CURRENT_VERSION;
@@ -161,9 +163,21 @@ private:
     void add_candidate(const std::string& payload) {
         peer_->candidate(payload);
     }
+    void report_stats(const char* phase) noexcept {
+        try {
+            std::lock_guard<std::mutex> lock(peer_mutex_);
+            if (!peer_) return;
+            const auto counters = peer_->diagnostics();
+            std::fprintf(stderr, "sdk counters stream=%s peer=%llu phase=%s connection=%d %s\n",
+                         config_.media == Media::data ? "telemetry" : "video",
+                         static_cast<unsigned long long>(peer_id_), phase, static_cast<int>(state_.load()),
+                         counters.c_str());
+        } catch (...) { /* Optional diagnostics cannot change transport state. */ }
+    }
     void run() noexcept {
         try {
             initialize();
+            auto report_at = std::chrono::steady_clock::now();
             while (!stopping_ && state_ != Connection::failed) {
                 std::unique_lock<std::mutex> lock(mutex_);
                 wake_.wait_for(lock, std::chrono::milliseconds(100), [this] {
@@ -174,6 +188,11 @@ private:
                     if (stopping_ || state_ == Connection::failed) break;
                     process(message);
                 }
+                const auto now = std::chrono::steady_clock::now();
+                if (state_ == Connection::connected && now >= report_at) {
+                    report_stats("periodic");
+                    report_at = now + std::chrono::seconds(5);
+                }
             }
         } catch (const std::exception& e) {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -182,6 +201,7 @@ private:
             if (!credential_error.empty()) error_ += "; " + credential_error;
             state_ = Connection::failed;
         } catch (...) { state_ = Connection::failed; }
+        report_stats("stop");
         // Stop SDK callbacks and join signaling before releasing callback data
         // or credentials. The process-owned KvsRuntime outlives both peers.
         if (IS_VALID_SIGNALING_CLIENT_HANDLE(signaling_)) {
@@ -208,6 +228,7 @@ private:
     bool answered_ = false;
     SIGNALING_CLIENT_HANDLE signaling_ = INVALID_SIGNALING_CLIENT_HANDLE_VALUE;
     std::unique_ptr<Peer> peer_;
+    UINT64 peer_id_ = 0;
     std::thread worker_;
 };
 }

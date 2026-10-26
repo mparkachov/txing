@@ -47,6 +47,8 @@ public:
     void candidate(const std::string&);
     bool send(const Bytes&, bool);
     bool send_video(const EncodedVideo&);
+    // Numeric transport counters only; no addresses, labels or peer content.
+    std::string diagnostics();
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

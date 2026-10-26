@@ -52,6 +52,12 @@ SRTP, SCTP, and thread-pool runtime. Replacing or stopping one session must not
 deinitialize the runtime used by the other. Startup failures stop and join the
 control thread before the worker exits.
 
+On a camera or video failure, the worker stops the capturer and video session
+before publishing the final video ERROR. This drains viewer-count callbacks so
+they cannot restore READY after failure. The independent MAVLink loop remains
+available until the worker is stopped; restoring video requires a supervised
+restart with a functioning camera.
+
 ## Office operation and safety semantics
 
 Office presents two operator modes for every MAVLink-capable board:

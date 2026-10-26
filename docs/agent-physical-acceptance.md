@@ -1,18 +1,15 @@
 # Native physical acceptance — #167
 
-Status, 2026-10-25: **open**. The complete manual flow passes in run 06: fresh
-parameters, arm, brief drive, stop on input release, disarm, re-arm and final
-disarm under one continuous lease. QGC disconnect and process interruption
-release control; reconnect does not reacquire. Office-first contention and
-deliberate lease takeover also pass. Three earlier interrupted runs remain
-recorded. Actual REDCON 3/4 and DDEATH shutdown are recorded; actual REDCON 2
-and the other selective-loss checks remain pending. A malformed control message
-interrupts the verification-release test. Native diagnostics and a concrete
-SDK-race candidate are prepared; a board send-serialization repair is prepared
-as 0.18.3 and is not deployed. The TBot is
-parked at actual REDCON 4 with power off and stopped tracks.
-Earlier physical successes remain historical evidence; affected cases must be
-repeated on the prepared board release before final acceptance.
+Status, 2026-10-26: **open**. Run 16 passes the complete manual flow on installed
+KVS 0.18.3/current native diagnostics, and run 20 verifies held-lease release on
+real credential expiry. Contention, takeover, disconnect, process interruption,
+REDCON 3/4 and DDEATH evidence is retained. Earlier transport timeouts remain
+unresolved. Run 21 isolates a real camera failure while MAVLink continues, but
+exposes a board readiness bug: actual REDCON briefly reaches 2, then returns to
+1 without video frames. A bounded runtime fix is prepared as KVS 0.18.4;
+manual rollout and a physical repeat remain required. The operator confirms
+the TBot is parked at actual REDCON 4, power off and tracks stopped. New changes
+remain uncommitted as requested.
 This record covers the actual development Mac, QGroundControl
 and secured lifted TBot. Automated checks and process-injected faults support
 diagnosis but do not replace the physical evidence required by #167.
@@ -522,6 +519,331 @@ off and physically stopped tracks. All owned native processes and recorders
 through run 12 are terminal. No camera cable was disconnected, no board repair
 deployed and no commit created. #167 remains open.
 
+## Resumption on KVS 0.18.3 — 2026-10-26
+
+The operator reports installed `txing-board-kvs-master 0.18.3` and REDCON 1.
+Their `/boot/usercfg.txt` output retains `camera_auto_detect=1`, the PWM overlay
+and the existing `dtparam=sdio_overclock=25` trial. This is operator-supplied
+configuration evidence, not a verified repair of the earlier power/kernel fault.
+
+At resumption, the working tree was clean at
+`dd252da7c37bcebbfdec1463e67e0ef39ef196fd`,
+committed outside this agent's actions. All eleven source hashes match the
+prepared repair. The published `kvs-master-v0.18.3` release targets that commit.
+Its downloaded archive matches GitHub's SHA-256 digest
+`ae9e1692c2291cd10cea6c990705580db827204c4ef5ec5d31d78183604a889d`;
+the sole root-level stripped binary has SHA-256
+`562f1c89d015564fa95f333f0cfa51964825219c21f4c37328d3003577d396d1`.
+This differs from the earlier unstripped local build and does not by itself
+establish which executable the board service is running. The operator then
+reports OpenRC status started and confirms both the installed binary and
+`/proc/2655/exe` match the release binary checksum above.
+
+A new read-only preflight captures Sparkplug version 1717, actual DDATA/REDCON 1
+with board/MAVLink/video available. MAVLink version 1109 reports a ready link,
+fresh heartbeat, disarmed Manual and one observer. Command 32 was recorded at
+09:15:21 UTC; the current-stage fifty-minute ceiling still applies across
+replacement native runs. The operator reconfirms secured/lifted conditions,
+tracks clear, disarmed/stopped, Office View only and QGC connected with centered
+sticks. A new bounded native run starts at 09:23 UTC with the same `df306c4f…`
+executable and a read-only shadow recorder. Initial telemetry negotiation times
+out awaiting an SDP answer, then retries successfully while video stays live.
+Both streams advance, but QGC UDP remains zero and no control grant occurs.
+The operator is asked to reconnect the configured QGC link; no arm or drive
+instruction is given during that interval. After the operator confirms the
+reconnection, QGC traffic arrives and native control is acquired. Fresh MAVLink
+version 1111 confirms QGroundControl/session mavlink-2/epoch 1, disarmed Manual.
+The operator is then instructed to refresh parameters, select Manual and use
+ordinary Arm with force-arm off and sticks centered; driving is not yet
+requested. Raw preflight, release identity and live run evidence are retained
+under `tmp/issue-167/13-*`.
+
+Fresh parameter retrieval and ordinary Arm/Manual are confirmed by the operator
+and shadow version 1112. Before any drive, QGC reports Comms Lost and a failed
+Arm/Disarm response. The operator clarifies that no drive was performed. Native
+authority clears on `control request timed out`; telemetry freezes at 15,940
+while video continues. Fresh version 1114 reports no owner, disarmed/Hold
+(field metadata timestamp 09:29:09 UTC). This is fresh board state after the
+loss, not confirmation that the operator's Disarm command succeeded. Neither
+physical movement/stop-on-release nor re-arm is accepted.
+
+The fifteen-second telemetry-silence watchdog retires only MAVLink; the stream
+reconnects and its counters resume by the 09:29:34 sample while video keeps
+advancing. QGC traffic continues with no automatic control reacquisition. One
+grant and one timeout revocation are recorded, with no malformed-JSON event.
+The cause remains unconfirmed; neither the 0.18.3 repair nor the SDIO trial is
+declared to resolve this failure.
+
+The run is deliberately stopped at 09:31:01 UTC after 444.410 seconds, native
+process-group exit 143. Last counts are 21,384 telemetry messages, 12,019 video
+frames and 9,729 valid QGC datagrams; one consumer video drop, zero UDP
+rejects/drops. The 136-sample main recorder is terminal, as are the bounded
+post-failure and parked recorders. The operator confirms actual REDCON 4,
+board/motor power off and physically stopped tracks; fresh Sparkplug version
+1720 agrees. This failed repeat keeps the manual-flow gate open. Next diagnosis
+must remain disarmed and correlate board logs with any repeated timeout.
+`13-repaired-manual-flow-result.json` retains the source/installed identities,
+transitions, operator reports, run result and exact evidence limits.
+
+## Disarmed diagnostic capture — 2026-10-26
+
+The operator recovers to REDCON 1 with QGC disconnected and supplies fresh
+startup log lines: two `onSetStunServerIp` errors and one
+`onSctpSessionDataChannelOpen` error, each status 0x00000001, followed by a
+MAVLink data-channel-open marker. They report that the old failure log is lost
+on the read-only-root device. No remount or log-persistence configuration is
+changed. Instead, the operator confirms a filtered SSH log stream saved on the
+Mac as `tmp/issue-167/14-board-kvs-live.log`, keeping new evidence across a later
+board power-off. The old run-13 board log remains unavailable.
+
+The pinned SDK defines this code as `STATUS_NULL_ARG`. The early-STUN function
+can emit it when its optional shared context is uninitialized; the incoming
+data-channel function checks both the peer pointer and registered callback.
+A video peer with MCP disabled deliberately lacks that callback. The supplied
+line has no peer identity, so this is a possible interpretation rather than an
+assignment to a particular peer or the cause of run 13. Actual MAVLink attachment
+and fresh telemetry are independently observed after the startup errors.
+
+Preflight versions 1725/1122 show actual 1, available streams, disarmed Manual
+and one observer. Command 34 dates to 09:39:20 UTC, giving the activation's
+current-stage ceiling of 10:29:20 UTC. Run 14 starts at 09:48 UTC with the
+unchanged `df306c4f…` native executable, a 900-second bound and a read-only
+shadow recorder. QGC is initially disconnected: both observers stay disarmed,
+no control grant occurs and UDP counts stay zero. Telemetry attaches directly;
+video retries after an initial unanswered offer, then advances independently.
+The operator is instructed to reconnect QGC and refresh parameters while
+keeping sticks centered, the Mac capture running and the TBot disarmed.
+
+The operator confirms fresh parameters and Disarmed. One lease grant is
+recorded under mavlink-2/epoch 1. The same control timeout then recurs entirely
+disarmed: fresh version 1126 is unowned/disarmed/Hold, MAVLink silence triggers
+retirement and reconnection, and video continues. Later QGC traffic does not
+reacquire control. All 146 captured samples are disarmed. The filtered board
+capture has no corresponding MAVLink bridge error; a frozen run snapshot is
+retained separately from the still-running SSH stream. Its startup signalling
+send timeout (0x0000000f) precedes acquisition and cannot identify the later
+control-timeout cause. The stream contains a new peer-open marker on recovery.
+
+Run 14 is deliberately stopped after 494.510 seconds, group exit 143. Final
+counts: 25,605 telemetry, 13,725 video, 9,114 QGC datagrams; 21 consumer video
+drops, zero UDP rejects/drops. The main and post-stop recorders are terminal.
+Fresh post-stop state remains unowned/disarmed/Hold at actual REDCON 1. The
+operator-run SSH log capture stays open; no drive or arm is attempted. Evidence:
+`14-disarmed-diagnostic-result.json` and `14-board-kvs-run-snapshot.log`.
+
+The operator cannot run sudo on the Mac; the proposed packet capture is not
+performed. A native-only diagnostic change adds periodic and teardown SDK ICE
+packet/byte/consent counters and adapter counts of SDK send results and receive
+callbacks, with numeric status and sample time. The first real-SDK regression
+finds that the pinned SDK remaps a locally created channel's private ID without
+updating its public ID, making its data-channel metrics lookup fail. The
+production diagnostic uses adapter callback/API counts instead of a private-ID
+workaround; this lookup finding is not the cause of the actual control failure.
+
+The final real-SDK regression verifies live bidirectional ICE and 1,000 sent /
+2,000 received data-channel messages, and checks that diagnostic fields have
+numeric values without labels or payload. All 3 CTest targets and 19 Python
+checks pass. Existing worker/lifetime locks are used; no new queue/thread,
+addresses, credentials or peer content are introduced in the diagnostic.
+Authority, lifecycle and recovery remain unchanged. Native executable SHA-256 is
+`907c318866be09ee852f28ac1818fcff1ff1be18cd5a1d8b54ea1e94bdd9d912`.
+Run 15 starts with that uncommitted diagnostic source and a ten-minute bound,
+within command 34's activation ceiling. Fresh parameters load; the operator
+reports Not Ready / Hold and leaves the TBot disarmed. It holds one lease under
+mavlink-4/epoch 2 for the rest of the observation without reproducing a control
+timeout or later telemetry retirement. The initial MAVLink offer needs a retry;
+the filtered board log captures startup signalling/TURN errors, followed by a
+successful peer open. They are not assigned as the cause of runs 13/14.
+
+The harness ends run 15 at its 600-second deadline (600.256 seconds elapsed,
+group exit 143). Native process-signal revocation is followed by fresh version
+1133, unowned/disarmed/Hold. The 185-sample recorder and post-stop sampler are
+terminal. Last pre-stop totals: 36,165 telemetry / 16,464 video / 11,849 valid
+QGC datagrams, 369 consumer video drops and zero UDP rejects/drops. The drop
+count belongs to the bounded consumer queue, not observed network packet loss.
+All captured samples remain disarmed.
+
+There are 235 SDK counter snapshots, including periodic and teardown samples.
+Connected periodic telemetry/video samples number 114/118; maximum sampled
+last-packet ages are 358/27 ms, with zero API-send failures. These five-second
+samples and callback/API counts are not a packet capture or proof of continuous
+wire delivery. This finite non-recurrence does not identify or fix the earlier
+timeouts and supplies no motion acceptance. The operator stops the SSH capture,
+disconnects QGC and confirms actual REDCON 4, board/motor power off and tracks
+stopped. Logs and a frozen board snapshot are retained on the Mac. A fresh
+activation with the same diagnostics is prepared for another manual-flow
+repeat; it has not started yet.
+No board root/configuration change or new board release is needed for this
+native diagnostic. No passing motion test is claimed.
+
+## Manual-flow repeat with counters — 2026-10-26
+
+After the parked checkpoint, the operator starts a fresh REDCON 1 activation and
+reconfirms live Office video/MAVLink, secured/lifted conditions, clear tracks,
+disarmed/stopped, Office View only and QGC disconnected. A new filtered SSH
+capture is saved to `16-board-kvs-live.log` on the Mac. Run 16 uses the same
+`907c3188…` executable, a fifteen-minute bound inside the new activation ceiling,
+and a read-only shadow recorder. Both streams attach; fresh MAVLink version
+1139 is disarmed Manual with two observers and no owner. After QGC reconnects,
+the operator confirms fresh parameters and then completes ordinary Arm, slight
+one-second throttle, stop on full release, ordinary Disarm, ordinary re-arm
+with centered sticks, and final Disarm with physically stopped tracks. No
+force-arm or further movement is used. Shadow versions 1140–1144 capture
+false → true → false → true → false in Manual under the same
+QGroundControl/session mavlink-2/epoch 1 lease. Native logs contain one grant
+and no intervening control loss. The complete manual-flow criterion passes
+again on installed KVS 0.18.3 and the current native diagnostic build.
+
+The native session is deliberately stopped at 10:39:19 UTC after 588.204
+seconds, group exit 143. Last pre-stop counts: 34,345 telemetry messages, 16,141
+video frames, 12,899 QGC datagrams; 255 consumer video drops, zero UDP
+rejects/drops. Signal revocation is followed by fresh version 1146,
+unowned/disarmed/Hold. The 183-sample recorder and post-stop sampler end; a
+frozen board log snapshot is retained. Earlier timeout causes remain unresolved.
+
+## Verification-expiry repeat — 2026-10-26
+
+The operator keeps the TBot disarmed, disconnects QGC, retains Office View only
+and the Mac board-log capture, then manually creates a private 900-second STS
+session. Run 17 checks ownership/mode 0600 without logging the credential tuple;
+only the child receives it, with profile/metadata fallback disabled and empty
+repository-local AWS configuration. The actual expiry is 10:58:41 UTC. The
+native run starts with the same `907c3188…` executable, has an expiry-plus-90-second
+bound within the activation ceiling, and uses the normal-profile read-only
+sampler for independent board evidence.
+
+The operator misses the QGC reconnect window. All native UDP/control counts stay
+zero, and no lease is acquired. Actual shadow reads then fail HTTP 403 at expiry;
+the native process ends at 10:58:55.952 UTC with `lifecycle unverified for 15
+seconds`, exit 1, without a signal or harness deadline. This is 14.952 seconds
+after the recorded credential expiry; the exact last successful native API-read
+timestamp is not separately logged. The 240-sample recorder ends. Last totals:
+49,031 telemetry, 20,838 video, 189 consumer drops, zero QGC datagrams. Real
+verification shutdown is recorded, but release of a held lease remains unproved.
+
+When the operator later reports QGC remaining disconnected, the old native relay
+has already ended. Late normal-profile reads show actual 1 and unowned/disarmed/
+Hold; they do not establish a held-lease release that never occurred. The private
+expired fixture is removed after checking its actual credential values against
+fifteen evidence files with zero matches. The operator corrects an initial
+Office/power-off problem report and confirms actual REDCON 4, disconnected and
+power off; fresh Sparkplug 1738 agrees. All owned native processes and recorders
+through run 17 are terminal.
+
+For the next attempt, normal-profile QGC connectivity must be established first.
+Only then create a fresh temporary session and hand over to the expiring native
+process while leaving the already-configured QGC UDP link connected. This avoids
+requiring another timed UI reconnect after issuing credentials.
+
+## Normal baseline and connected expiry handoff — 2026-10-26
+
+The operator recovers a fresh REDCON 1 activation, with secured/lifted conditions,
+disarmed/stopped, Office View only and a new Mac SSH capture
+(`18-board-kvs-live.log`). Run 18 uses normal `mayor` credentials and the same
+`907c3188…` native executable. After the agent receives both streams, QGC's
+Comm Links row shows Disconnect and its vehicle is connected. Real UDP traffic
+and shadow version 1169 verify QGroundControl/session mavlink-2/epoch 1 while
+disarmed. The operator keeps the link connected and manually creates a fresh
+private 900-second STS fixture only after this baseline works.
+
+The normal native process is deliberately stopped after 480.440 seconds,
+group exit 143; its 147-sample recorder ends. Fresh independent preflight
+confirms release and disarmed state before an explicitly started replacement.
+The new bounded run 19 uses the temporary tuple in its child environment only,
+with empty local AWS configuration and profile/metadata fallback disabled.
+The existing QGC UDP link remains connected through this handoff. After an
+initial MAVLink offer retry, both streams advance and native control is granted;
+fresh version 1174 verifies disarmed/Hold under mavlink-3/epoch 2.
+
+The actual credential expiry is 13:20:52 UTC (15:20:52 Berlin). The independent
+recorder retains normal credentials. Run 19 encounters another control timeout
+and MAVLink gap before that expiry, while video continues. Its saved SDK counters
+show the affected association remaining nominally connected, no reported send
+errors and stalled receipt before retirement; they do not identify the underlying
+cause. It recovers observation without reacquisition and is deliberately stopped
+at 13:16:19 UTC after 576.252 seconds, exit 143. The 179-sample recorder ends.
+This invalidates held-lease verification proof for run 19.
+
+A new explicit disarmed run 20 reuses the still-valid tuple close to its original
+expiry. Its expiry is unchanged; no system clock, credential lifetime, lifecycle
+response or timeout is simulated or modified. With about 149 seconds remaining
+at startup, both streams attach after one MAVLink offer retry; fresh version 1180
+confirms QGroundControl/session mavlink-5/epoch 3, disarmed/Hold. The QGC UDP link
+remains connected. A separate pre-expiry snapshot and the native log confirm
+authority remains held until real verification loss, with no earlier revocation.
+
+The boundary observer detects actual shadow-read HTTP 403 at 13:20:53.968 UTC,
+then `agent stopped: lifecycle unverified for 15 seconds` at 13:21:06.872 UTC.
+Native authority clears for that same lifecycle reason and the process finishes
+at 13:21:09.117 UTC, exit 1, without a signal or harness cutoff. Observer times
+are file-poll detection times; the exact last successful native API-read time
+is not logged. Fresh normal-profile version 1182 is unowned/disarmed/Hold with
+only the Office observer. **Held-lease release on real verification loss passes.**
+The 52-sample recorder and boundary observer are terminal. The expired fixture
+is removed after zero credential-value matches across 31 evidence files.
+
+Both cases retain raw logs, SDK samples, actions and independent shadows; the
+combined board snapshot is `19-20-board-kvs-snapshot.log`. Earlier transport
+timeout causes remain unresolved. The next camera-only test is prepared for the
+operator-identified IMX708/Unicam platform device `3f801000.csi`, with explicit
+bind/restart recovery and fresh activation required before the fault. No camera
+detach has been performed yet.
+
+## Camera-only loss and stale readiness — 2026-10-26
+
+After a fresh operator 4→1 cycle, run 21 establishes real video and MAVLink,
+QGC connected/disarmed, and one QGroundControl/mavlink-2/epoch 1 lease. The
+operator detaches only the verified Unicam receiver `3f801000.csi` through its
+sysfs `unbind` entry; exit status is 0. No ribbon cable is disconnected, root
+remount is needed, or arming/motion input is sent.
+
+Encoded video stops at **6,669 frames**. Board logs show the camera frontend
+timeout and `/dev/video0`/`video1` removal. Sparkplug version 1753 reaches actual
+REDCON 2 with board/MAVLink capabilities available and video unavailable. The
+native operator closes only video; telemetry and the same disarmed control
+lease continue. However, version 1754 returns to actual 1 after a viewer-count
+READY callback, and the reopened video peer receives no further frames. Office
+reports actual 1 and “connecting to board video…”. This is a failed readiness
+case, not final acceptance of selective video loss or REDCON 2 behavior.
+
+The runtime catches camera failure and publishes ERROR, but keeps the video
+KVS session alive while waiting for the independent MAVLink thread. Its
+`ReportReadyViewerCount` callback can then override ERROR. The repair stops the
+capturer and video signaling/peers before publishing the final ERROR and
+waiting. The process-wide SDK and separate MAVLink loop stay available until
+the normal worker stop. No schema, authority, SDK pin or retry policy changes.
+The regression supplies a first keyframe, a camera error, a late viewer-count
+callback and an explicit shutdown with the control thread configured. It fails
+on 0.18.3 and passes after the cleanup-order fix.
+
+Validation passes the stub regression, canonical native board suite, real-SDK
+macOS suite, and production Alpine ARM64 real-SDK/gRPC suite. The fresh Alpine
+runtime smoke passes with version 0.18.4 and resolved libcamera 0.7 libraries.
+The local unstripped artifact SHA-256 is
+`6befe6df22b1947d89e71f5dad1762d595bf961a6ba35bc5427dfc54daee09f1`.
+Its source inputs match the recorded pre-build hashes. This artifact has not
+been published or installed; the later immutable release rebuild has its own
+asset/install identity.
+
+The native session is deliberately stopped after **737.025 seconds**, group
+exit 143. Last counts: **41,562 telemetry / 6,669 video / 12,029 valid QGC
+datagrams**, 52 bounded consumer video drops and zero UDP rejects/drops. All
+196 shadow samples remain disarmed; fresh version 1196 is unowned/disarmed/Hold
+after shutdown. Operator stop/bind/start commands succeed but camera recovery
+does not: actual 2/no video remains, and libcamera cannot reopen the sensor
+node. The operator stops the capture and confirms actual 4, board/motor power
+off and tracks stopped. A new power cycle is required before the physical
+repeat; sysfs rebind is not recorded as a successful recovery.
+
+Raw `21-*` logs, triple-shadow samples, frozen board log, operator actions and
+result JSON are retained under `tmp/issue-167/`. Repair plan and validation
+are under `22-*`. The prepared KVS version is 0.18.4. Publish its immutable
+release only after an explicit operator commit/push, then use the coordinated
+[TBot maintenance procedure](components/board.md#maintenance). Repeat the
+camera-only fault while disarmed and verify stable actual 2, no video reconnect
+or new frames, continuing MAVLink and fresh parameter retrieval. Keep #167 open
+until real evidence supports those results.
+
 ## First foreground run
 
 Use Office to select REDCON 1 and wait for actual 1 with available MAVLink/video.
@@ -570,15 +892,15 @@ failed attempts and the source/executable identity for every retry.
 | Case | Required physical evidence | Status |
 | --- | --- | --- |
 | Observation | QGC receives live telemetry; native operator receives/counts encoded video at actual REDCON 1; no control acquisition | Streams/QGC messages verified; full numeric GUI display unverified |
-| Parameters and one control session | Fresh parameter retrieval after free-lease grant; operator arms, drives, stops input, disarms, re-arms and finally disarms; native grant remains continuous and board session/epoch unchanged throughout | Historical pass in run 06 under mavlink-3/epoch 2; repeat on repaired board pending; warning unresolved |
+| Parameters and one control session | Fresh parameter retrieval after free-lease grant; operator arms, drives, stops input, disarms, re-arms and finally disarms; native grant remains continuous and board session/epoch unchanged throughout | Passes again in run 16 on KVS 0.18.3/current native diagnostics; failed runs 13/14 and their unresolved cause remain recorded |
 | Office contention | Office acquires first; a fresh explicit agent run reports busy, does not displace Office and sends no uplink; after Office releases, the same agent run still does not acquire automatically | Run 07 reports busy, preserves Office ownership and does not acquire after release |
 | Client inactivity/disconnect | With control held and motion stopped, disable QGC heartbeat/traffic or disconnect its UDP link; board/native authority clears at the five-second client deadline; reconnecting never reacquires | Disarmed disconnect releases board/native authority; reconnect does not reacquire; exact cutoff timing unmeasured |
 | Process interruption | Ctrl-C/SIGTERM on the foreground agent releases its real board lease and stops both sessions; record observed disarm/Hold outcome rather than infer it | Run 06 Ctrl-C releases held lease; fresh board state unowned/disarmed/Hold |
 | Lease loss | Operator performs a deliberate competing-owner takeover; old native authority clears and later traffic/reconnection does not reacquire | Run 08 explicit Office takeover revokes native authority; later release/QGC traffic never reacquires |
-| WebRTC loss | Operator-induced real telemetry-link loss releases control; native peer recovery preserves healthy video and never reacquires | Natural outage revokes native authority without reacquisition; board-side expiry/recovery still unverified |
-| Verification loss | Real loss of authoritative lifecycle reads stops the worker after fifteen seconds; record the fault method, last successful verification, lease release and terminal reason | Run 11 real HTTP 403 causes verification shutdown; earlier invalid-JSON revocation prevents held-lease release proof |
-| Video failure | Actual video failure while MAVLink stays available leaves telemetry/control working; record separate connection/counter evidence | Pending |
-| REDCON 2 and 1→2 | Actual projection reaches 2; MAVLink remains usable and only video closes. A request for 2 satisfied by actual 1 does not pass this case | Run 09 target 2 succeeds but actual stays 1; transition remains unverified |
+| WebRTC loss | Operator-induced real telemetry-link loss releases control; native peer recovery preserves healthy video and never reacquires | Run 13 natural telemetry gap revokes control, freshly clears board ownership/disarms, preserves video and recovers MAVLink without reacquisition; cause and controlled fault case remain open |
+| Verification loss | Real loss of authoritative lifecycle reads stops the worker after fifteen seconds; record the fault method, last successful verification, lease release and terminal reason | Run 20 real expiry/HTTP 403 stops the worker and releases its held lease; fresh board state unowned/disarmed/Hold; exact last successful API-read timestamp unlogged |
+| Video failure | Actual video failure while MAVLink stays available leaves telemetry/control working; record separate connection/counter evidence | Run 21 preserves MAVLink but falsely restores video readiness; 0.18.4 repair requires manual rollout/repeat |
+| REDCON 2 and 1→2 | Actual projection reaches 2; MAVLink remains usable and only video closes. A request for 2 satisfied by actual 1 does not pass this case | Run 21 actual 1→2→1 exposes stale READY with frozen video; stable corrected behavior remains unverified |
 | REDCON 3/4 | Separate real transitions to 3 and 4 terminate the native session and release authority | Earlier actual 3 and run 09 actual 4 terminate/revoke native authority; post-loss/off board lease shadows stay stale |
 | Device death | Actual DDEATH projection terminates the native session and releases authority; record how the operator produced death | Run 10 whole-TBot power-off produces DDEATH and native exit 0; authority cleared on preceding control timeout; board lease shadow stale |
 

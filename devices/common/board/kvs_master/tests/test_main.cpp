@@ -11,6 +11,7 @@
 #include <atomic>
 #include <array>
 #include <condition_variable>
+#include <csignal>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -103,6 +104,7 @@ struct FakeKvsState {
     bool started = false;
     bool stopped = false;
     std::vector<FakeKvsPush> pushes;
+    std::function<void()> on_stop;
 };
 
 class FakeKvsSession final : public KvsSession {
@@ -133,6 +135,9 @@ class FakeKvsSession final : public KvsSession {
 
     void Stop() noexcept override {
         state_->stopped = true;
+        if (state_->on_stop) {
+            state_->on_stop();
+        }
     }
 
     std::optional<std::string> TakeFatalError() override {
@@ -150,6 +155,7 @@ struct FakeCapturerState {
     bool stopped = false;
     bool throw_on_start = false;
     bool throw_on_get_frame = false;
+    bool throw_after_frames = false;
     std::string error_message = "capturer failure";
     std::vector<EncodedVideoFrame> frames;
 };
@@ -178,6 +184,10 @@ class FakeVideoCapturer final : public VideoCapturer {
             throw std::runtime_error(state_->error_message);
         }
         if (state_->frames.empty()) {
+            if (state_->throw_after_frames) {
+                state_->status = VideoCapturerStatus::kError;
+                throw std::runtime_error(state_->error_message);
+            }
             state_->status = VideoCapturerStatus::kStopped;
             return std::nullopt;
         }
@@ -202,6 +212,7 @@ class FakeVideoCapturer final : public VideoCapturer {
 struct FakeBridgeState {
     std::vector<txing::board::kvs_master::BridgeVideoState> reported_states;
     std::string requested_worker_name;
+    std::function<void(txing::board::kvs_master::BridgeVideoState)> on_report;
 };
 
 class FakeBridgeClient final : public txing::board::kvs_master::BoardVideoBridgeClient {
@@ -232,6 +243,9 @@ class FakeBridgeClient final : public txing::board::kvs_master::BoardVideoBridge
         const std::string&
     ) override {
         state_->reported_states.push_back(state);
+        if (state_->on_report) {
+            state_->on_report(state);
+        }
     }
 
     void OpenMcpSession(const std::string&, const std::string&, const std::string&) override {}
@@ -671,6 +685,51 @@ void TestRuntimeJoinsControlThreadWhenVideoConstructionFails() {
     Expect(kvs_state.started && kvs_state.stopped, "the next worker attempt should recover normally");
 }
 
+void TestRuntimeCameraFailureCannotRestoreVideoReadiness() {
+    using txing::board::kvs_master::BridgeVideoState;
+    FakeKvsState kvs_state;
+    FakeCapturerState capturer_state;
+    capturer_state.frames = {EncodedVideoFrame {{0x00, 0x00, 0x01}, 1'000'000, true}};
+    capturer_state.throw_after_frames = true;
+    FakeBridgeState bridge_state;
+
+    // Closing a viewer can publish one last viewer-count READY callback.
+    kvs_state.on_stop = [&] { bridge_state.reported_states.push_back(BridgeVideoState::kReady); };
+    bridge_state.on_report = [&](BridgeVideoState state) {
+        if (state != BridgeVideoState::kError) {
+            return;
+        }
+        Expect(capturer_state.stopped, "camera resources must be released on video failure");
+        Expect(kvs_state.stopped, "failed video must stop accepting viewers before ERROR is published");
+        // A still-active signaling session permits the reconnect that caused
+        // physical case 21 to restore READY with no new camera frames.
+        if (!kvs_state.stopped) {
+            bridge_state.reported_states.push_back(BridgeVideoState::kReady);
+        }
+        // Only an explicit worker stop should end the independent control loop.
+        std::raise(SIGTERM);
+    };
+    auto hooks = HooksFrom(&kvs_state, &capturer_state);
+    hooks.create_bridge_client = [&](const std::string&) {
+        return std::make_unique<FakeBridgeClient>(&bridge_state);
+    };
+    auto config = TestRuntimeConfig();
+    config.board_video_bridge_socket_path = "/unused-video-bridge.sock";
+    config.mavlink_bridge_socket_path = "/unused-mavlink-bridge.sock";
+    Run(config, hooks);
+
+    Expect(kvs_state.pushes.size() == 1, "camera must fail after a real first keyframe");
+    bool saw_error = false;
+    for (const auto state : bridge_state.reported_states) {
+        if (state == BridgeVideoState::kError) {
+            saw_error = true;
+        }
+        Expect(!(saw_error && state == BridgeVideoState::kReady), "late video callbacks must not restore READY after camera ERROR");
+    }
+    Expect(saw_error, "camera loss must publish ERROR while the control worker remains running");
+    Expect(bridge_state.reported_states.back() == BridgeVideoState::kStopped, "explicit shutdown must complete normally after isolated video failure");
+}
+
 #if TXING_KVS_REAL_SDK
 void TestConcurrentSdkSessionConstruction() {
     ScopedUnsetEnv ca_override("TXING_KVS_SYSTEM_CA_CERT_PATH");
@@ -1031,6 +1090,7 @@ int main() {
     TestRuntimeAdvancesWhenEncoderTimestampsStayZero();
     TestRuntimePropagatesCapturerErrors();
     TestRuntimeJoinsControlThreadWhenVideoConstructionFails();
+    TestRuntimeCameraFailureCannotRestoreVideoReadiness();
     TestRuntimeDoesNotExportTlsCaEnvironment();
     TestMarkerFormatting();
     TestMasterAnswerPreparationOrder();

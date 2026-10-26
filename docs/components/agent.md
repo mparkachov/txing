@@ -71,6 +71,12 @@ Transport receives explicit channel, region, media/data role, and data-channel
 label. It neither derives TBot names nor parses MAVLink nor manages cloud runs.
 Keep diagnostics actionable and free of secrets: retain SDK errors and
 operation context rather than replacing all failures with a generic exit.
+Native transport diagnostics sample SDK ICE packet/byte/consent counters and
+adapter counts of successful SDK sends and receive callbacks every five seconds
+while connected, and once before teardown. Numeric sample time and the generated
+peer identity correlate with board logs; addresses, labels, peer payloads and
+authentication material are excluded. These best-effort snapshots do not change
+authority, lifecycle or retry decisions.
 
 ### Operator interface
 
