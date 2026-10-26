@@ -26,6 +26,14 @@ byte-for-byte: it does not select a dialect, validate a dialect-specific CRC,
 rewrite source or target IDs, or filter MAVLink message types. The flight
 controller is the protocol authority and validates the tunneled frames.
 
+The worker serializes complete SDK data-channel sends for each MAVLink peer.
+Binary telemetry and text control replies originate on different threads; the
+pinned SDK shares mutable SCTP send metadata between calls. Closing a peer
+blocks later channel binding, waits for in-flight sends, then joins the local
+telemetry reader before freeing the SDK peer. Late callbacks cannot write to a
+closed or replaced channel. This preserves the message type and bytes without
+changing the control envelopes or lease rules.
+
 An observer peer is receive-only. After it acquires the active-control lease,
 the peer has a full bidirectional MAVLink tunnel; the lease is the only board
 write gate. The small JSON control envelopes are solely the authority and

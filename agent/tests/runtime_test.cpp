@@ -28,6 +28,7 @@ Bytes frame(bool signed_frame = false) {
 struct RecordingOperator : Operator {
     std::atomic<int> telemetry_count{0}, video_count{0}, granted{0}, lost{0};
     std::atomic<bool> block_video{false}, in_video{false};
+    std::string loss_reason;
     Actions* actions = nullptr;
     void telemetry(const Bytes&) override { ++telemetry_count; }
     void video(const EncodedVideo& f) override {
@@ -36,9 +37,9 @@ struct RecordingOperator : Operator {
         ++video_count;
     }
     void connection(Stream, Connection, const std::string&) override {}
-    void control(bool held, const std::string&) override {
+    void control(bool held, const std::string& reason) override {
         if (held) { ++granted; if (actions) actions->send(frame(true)); }
-        else ++lost;
+        else { loss_reason = reason; ++lost; }
     }
 };
 struct FakeState {
@@ -240,6 +241,33 @@ void queued_authority() {
     REQUIRE(f.session.send(frame(true))); f.session.tick(f.now);
     REQUIRE(f.links[0]->binary == std::vector<Bytes>{frame(true)});
 }
+void malformed_control_diagnostics() {
+    const std::string marker = "private-control-marker";
+    for (const auto& payload : std::vector<std::string>{
+            "", marker, "{\"" + marker + "\":",
+            "{\"" + marker + "\":\"" + std::string(1, '\0') + "\"}"}) {
+        Fixture f; f.active(); f.acquire();
+        auto telemetry = f.links[0], video = f.links[1];
+        telemetry->renew = false;
+        f.session.client_activity(); f.session.tick(f.now + 1s);
+        const auto sent = telemetry->binary.size();
+        REQUIRE(f.session.send(frame(true)));
+        receive(telemetry, payload); f.session.tick(f.now + 2s);
+        eventually([&] { return f.op.lost == 1; });
+        REQUIRE(telemetry->binary.size() == sent); // Fence queued authority.
+        REQUIRE(!f.session.send(frame(true)));
+        REQUIRE(telemetry->text.back().find("control.release_active") != std::string::npos);
+        REQUIRE(f.op.loss_reason.find("invalid control JSON") == 0);
+        REQUIRE(f.op.loss_reason.find("bytes=" + std::to_string(payload.size())) != std::string::npos);
+        REQUIRE(f.op.loss_reason.find(marker) == std::string::npos);
+        REQUIRE(f.op.loss_reason.size() < 180);
+        telemetry->events.data(frame(), true);
+        f.session.client_activity(); f.session.tick(f.now + 3s);
+        eventually([&] { return f.op.telemetry_count == 1; });
+        REQUIRE(telemetry->stops == 0 && video->stops == 0);
+        REQUIRE(f.op.granted == 1); // Healthy traffic does not reacquire.
+    }
+}
 void bounded_video() {
     Queue<Bytes> q(2, 3); REQUIRE(q.push({1,2}, 2)); REQUIRE(q.push({3,4}, 2)); REQUIRE(q.dropped() == 1);
     REQUIRE(!q.push({1,2,3,4}, 4)); REQUIRE(q.pop().value() == Bytes({3,4}));
@@ -315,6 +343,7 @@ void projected_lifecycle() {
 }
 void sdk_peers();
 void sdk_manual();
+void sdk_concurrent_data_channel();
 int main() {
     // Every SDK configuration read in tests stays inside repository scratch.
     const auto scratch = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / "tmp/agent-test";
@@ -333,9 +362,11 @@ int main() {
             {"silent telemetry recovery", silent_telemetry_recovery},
             {"operator and authority", operator_and_authority}, {"loss and shutdown", loss_and_shutdown},
             {"queued authority", queued_authority},
+            {"malformed control diagnostics", malformed_control_diagnostics},
             {"bounded video", bounded_video}, {"credentials and errors", credentials_and_errors},
             {"SDK credential chain", sdk_credential_chain}, {"projected lifecycle", projected_lifecycle},
-            {"real SDK peers", sdk_peers}, {"real SDK manual UDP", sdk_manual}}) {
+            {"real SDK peers", sdk_peers}, {"real SDK manual UDP", sdk_manual},
+            {"real SDK concurrent data channel", sdk_concurrent_data_channel}}) {
             test.second(); std::cout << "PASS " << test.first << std::endl;
         }
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; result = 1; }

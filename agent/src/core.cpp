@@ -123,7 +123,18 @@ void Session::lose(const std::string& reason, bool release_lease) {
 
 void Session::response(const std::string& payload, Time now) {
     JsonValue json(Aws::String(payload.c_str()));
-    if (!json.WasParseSuccessful()) { lose("invalid control JSON"); return; }
+    if (!json.WasParseSuccessful()) {
+        const auto first = payload.find_first_not_of(" \t\r\n");
+        const auto last = payload.find_last_not_of(" \t\r\n");
+        const bool object_framed = first != std::string::npos &&
+            payload[first] == '{' && payload[last] == '}';
+        // Report bounded structure, never peer content or parser excerpts.
+        lose("invalid control JSON (bytes=" + std::to_string(payload.size()) +
+             ", nul=" + std::to_string(payload.find('\0') != std::string::npos) +
+             ", objectFramed=" + std::to_string(object_framed) +
+             ", pending=" + (pending_type_.empty() ? "none" : pending_type_) + ")");
+        return;
+    }
     auto view = json.View();
     if (!view.IsObject() || !view.ValueExists("type") || !view.GetObject("type").IsString()) return;
     const auto type = view.GetString("type");

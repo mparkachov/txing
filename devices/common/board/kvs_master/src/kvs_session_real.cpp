@@ -4,6 +4,7 @@
 #include "kvs_master/board_video_bridge.hpp"
 #include "kvs_master/markers.hpp"
 #include "kvs_master/peer_negotiation.hpp"
+#include "kvs_master/serialized_data_channel.hpp"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -468,7 +469,7 @@ struct StreamingSession {
     PRtcPeerConnection peer_connection = nullptr;
     PRtcRtpTransceiver video_transceiver = nullptr;
     PRtcDataChannel mcp_data_channel = nullptr;
-    PRtcDataChannel mavlink_data_channel = nullptr;
+    SerializedDataChannel<PRtcDataChannel> mavlink_data_channel;
     RtcSessionDescriptionInit answer_description{};
     std::atomic_bool terminate_requested{false};
     std::atomic_bool first_frame{true};
@@ -1039,7 +1040,8 @@ class RealKvsSession final : public KvsSession {
         if (session == nullptr) {
             return;
         }
-        session->mavlink_data_channel = nullptr;
+        // Do not hold the send lock while Close joins the telemetry reader.
+        session->mavlink_data_channel.Close();
         std::lock_guard<std::mutex> lock(session->mavlink_lock);
         if (session->mavlink_peer != nullptr) {
             session->mavlink_peer->Close(reason == nullptr ? "MAVLink data channel closed" : reason);
@@ -1048,28 +1050,32 @@ class RealKvsSession final : public KvsSession {
         session->mavlink_epoch = 0;
     }
 
-    void OpenMavlinkDataChannel(StreamingSession* session) {
+    void OpenMavlinkDataChannel(StreamingSession* session, PRtcDataChannel data_channel) {
         if (session == nullptr || mavlink_bridge_client_ == nullptr) {
             return;
         }
         std::lock_guard<std::mutex> lock(session->mavlink_lock);
+        if (session->terminate_requested.load()) {
+            return;
+        }
         try {
             session->mavlink_peer = mavlink_bridge_client_->OpenPeer(
                 session->peer_id,
-                [session](std::vector<std::uint8_t> frame) {
+                [session, data_channel](std::vector<std::uint8_t> frame) {
                     if (
                         session->terminate_requested.load() ||
-                        session->mavlink_data_channel == nullptr ||
                         frame.empty()
                     ) {
                         return;
                     }
-                    UNUSED_PARAM(dataChannelSend(
-                        session->mavlink_data_channel,
-                        TRUE,
-                        frame.data(),
-                        static_cast<UINT32>(frame.size())
-                    ));
+                    session->mavlink_data_channel.Send(data_channel, [&](PRtcDataChannel channel) {
+                        UNUSED_PARAM(dataChannelSend(
+                            channel,
+                            TRUE,
+                            frame.data(),
+                            static_cast<UINT32>(frame.size())
+                        ));
+                    });
                 }
             );
             EmitMarker("TXING_MAVLINK_DATACHANNEL_OPEN", {{"peerId", session->peer_id}});
@@ -1803,8 +1809,10 @@ class RealKvsSession final : public KvsSession {
             return;
         }
         if (is_mavlink) {
-            session->mavlink_data_channel = data_channel;
-            session->owner->OpenMavlinkDataChannel(session);
+            if (!session->mavlink_data_channel.Bind(data_channel)) {
+                return;
+            }
+            session->owner->OpenMavlinkDataChannel(session, data_channel);
         } else {
             session->mcp_data_channel = data_channel;
             EmitMarker("TXING_MCP_DATACHANNEL_OPEN", {{"sessionId", session->peer_id}});
@@ -1851,12 +1859,14 @@ class RealKvsSession final : public KvsSession {
             if (!response.has_value()) {
                 return;
             }
-            UNUSED_PARAM(dataChannelSend(
-                data_channel,
-                FALSE,
-                reinterpret_cast<PBYTE>(const_cast<char*>(response->data())),
-                static_cast<UINT32>(response->size())
-            ));
+            session->mavlink_data_channel.Send(data_channel, [&](PRtcDataChannel channel) {
+                UNUSED_PARAM(dataChannelSend(
+                    channel,
+                    FALSE,
+                    reinterpret_cast<PBYTE>(const_cast<char*>(response->data())),
+                    static_cast<UINT32>(response->size())
+                ));
+            });
             return;
         }
         if (is_binary) {

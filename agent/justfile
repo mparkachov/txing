@@ -87,6 +87,7 @@ probe-package:
         agent/probe/CMakeLists.txt agent/probe/Dockerfile \
         agent/probe/hooks.json agent/probe/stack.yaml \
         devices/common/kvs/sdk.commit ':(glob)devices/common/kvs/cmake/*.cmake' \
+        devices/common/board/kvs_master/include/kvs_master/serialized_data_channel.hpp \
         ':(glob)devices/common/board/mavlink/include/**/*.h' \
         ':(glob)devices/common/board/mavlink/LICENSES/*' devices/common/board/mavlink/PROVENANCE.md \
         | LC_ALL=C sort -u > "$package_dir/source-files.txt"
@@ -95,7 +96,9 @@ probe-package:
     done < "$package_dir/source-files.txt" > "$package_dir/source-sha256.txt"
     shasum -a 256 "$package_dir/source-sha256.txt" | cut -d ' ' -f 1 > "$package_dir/build-id.txt"
     git rev-parse HEAD > "$package_dir/source-revision.txt"
-    git status --short -- agent devices/common/kvs > "$package_dir/source-status.txt"
+    git status --short -- agent devices/common/kvs \
+        devices/common/board/kvs_master/include/kvs_master/serialized_data_channel.hpp \
+        > "$package_dir/source-status.txt"
     # BSD tar otherwise emits AppleDouble metadata outside the source allowlist.
     COPYFILE_DISABLE=1 tar -cf "$package_dir/source.tar" -T "$package_dir/source-files.txt"
     cp "{{agent_dir}}/probe/Dockerfile" "$package_dir/Dockerfile"

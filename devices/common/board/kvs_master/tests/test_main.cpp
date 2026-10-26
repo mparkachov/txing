@@ -2,15 +2,18 @@
 #include "kvs_master/config.hpp"
 #include "kvs_master/markers.hpp"
 #include "kvs_master/peer_negotiation.hpp"
+#include "kvs_master/serialized_data_channel.hpp"
 #include "kvs_master/runtime.hpp"
 #include "kvs_master/version.hpp"
 #include "kvs_master/video_capturer.hpp"
 
 #include <chrono>
+#include <atomic>
 #include <array>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <cstdlib>
 #include <iostream>
 #include <iterator>
@@ -931,9 +934,88 @@ void TestRuntimeReportsStoppedToBridgeOnCleanExit() {
     );
 }
 
+void TestMavlinkSendTypesUnderConcurrency() {
+    txing::board::kvs_master::SerializedDataChannel<int*> sender;
+    int channel = 1;
+    sender.Bind(&channel);
+    std::atomic<int> sdk_metadata{0};
+    std::atomic<int> corrupted{0}, writes{0}, rejected{0};
+    auto produce = [&](int kind) {
+        for (int i = 0; i < 2'000; ++i) {
+            if (!sender.Send(&channel, [&](int* current) {
+                if (current != &channel) {
+                    ++corrupted;
+                }
+                // Model the SDK's shared PPID while allowing a competing call.
+                sdk_metadata.store(kind);
+                std::this_thread::yield();
+                if (sdk_metadata.load() != kind) {
+                    ++corrupted;
+                }
+                ++writes;
+            })) {
+                ++rejected;
+            }
+        }
+    };
+    std::thread telemetry(produce, 53);
+    std::thread control(produce, 51);
+    telemetry.join();
+    control.join();
+    Expect(corrupted == 0, "concurrent telemetry/control must retain SDK message type and channel");
+    Expect(writes == 4'000 && rejected == 0, "both producers must finish every bound-channel send");
+}
+
+void TestDataChannelCloseAndStaleCallbacks() {
+    txing::board::kvs_master::SerializedDataChannel<int*> sender;
+    int old_channel = 1, new_channel = 2;
+    sender.Bind(&old_channel);
+    Expect(sender.Bind(&new_channel), "open peer may bind its replacement channel");
+    int writes = 0;
+    Expect(!sender.Send(&old_channel, [&](int*) { ++writes; }), "replacement must reject old-channel callbacks");
+    Expect(sender.Send(&new_channel, [&](int* channel) {
+        Expect(channel == &new_channel, "replacement send must use its bound channel");
+        ++writes;
+    }), "replacement channel must remain usable");
+    Expect(writes == 1, "only the current channel may reach the SDK after rebind");
+    std::promise<void> entered, release;
+    auto entered_future = entered.get_future();
+    auto release_future = release.get_future().share();
+    std::thread writer([&] {
+        sender.Send(&new_channel, [&](int*) {
+            entered.set_value();
+            release_future.wait();
+        });
+    });
+    if (entered_future.wait_for(std::chrono::seconds(1)) != std::future_status::ready) {
+        release.set_value();
+        writer.join();
+        Expect(false, "bound-channel send must enter its callback");
+        return;
+    }
+    std::promise<void> clearing;
+    auto clearing_future = clearing.get_future();
+    auto cleared = std::async(std::launch::async, [&] {
+        clearing.set_value();
+        sender.Close();
+    });
+    clearing_future.wait();
+    Expect(cleared.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout,
+           "closing a channel must wait for its in-flight SDK call");
+    release.set_value();
+    writer.join();
+    cleared.get();
+    Expect(!sender.Send(&new_channel, [&](int*) { ++writes; }), "closed channel must reject late sends");
+    Expect(!sender.Bind(&old_channel), "late open callback must not rebind a closed peer");
+    Expect(!sender.Send(&old_channel, [&](int*) { ++writes; }), "closed peer must remain unable to send");
+    Expect(writes == 1, "no callback may reach the SDK after close");
+}
+
 }  // namespace
 
 int main() {
+    TestMavlinkSendTypesUnderConcurrency();
+    TestDataChannelCloseAndStaleCallbacks();
 #if TXING_KVS_REAL_SDK
     TestConcurrentSdkSessionConstruction();
 #endif

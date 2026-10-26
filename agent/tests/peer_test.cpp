@@ -1,6 +1,7 @@
 #include "agent/core.hpp"
 #include "agent/kvs.hpp"
 #include "agent/manual.hpp"
+#include "kvs_master/serialized_data_channel.hpp"
 #include <aws/core/utils/json/JsonSerializer.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -38,11 +39,13 @@ public:
             const std::string response = "{\"type\":\"" + response_type + "\",\"requestId\":\"" +
                 std::string(v.GetString("requestId").c_str()) +
                 "\",\"state\":{\"epoch\":9,\"leaseTtlMs\":5000,\"activeControl\":{\"sessionId\":\"real-peer\",\"actor\":\"test\",\"epoch\":9}}}";
-            master->send(Bytes(response.begin(), response.end()), false);
+            send_master(Bytes(response.begin(), response.end()), false);
         };
         master = std::make_unique<Peer>(master_config, rtc, std::move(master_events), [this](std::string c) {
             std::lock_guard<std::mutex> lock(mutex); to_viewer.push_back(std::move(c));
         }, [this](Connection state) { master_state = state; });
+        master_identity = master.get();
+        master_writer.Bind(master_identity);
         const auto offer = viewer->description(true);
         master->remote_description(offer);
         const auto answer = master->description(false);
@@ -61,10 +64,18 @@ public:
     }
     ~Pair() {
         stop = true; if (worker.joinable()) worker.join();
+        master_writer.Close();
         // Peer callbacks still reference Pair, which outlives these resets.
         viewer.reset(); master.reset();
     }
+    bool send_master(const Bytes& bytes, bool binary) {
+        bool sent = false;
+        master_writer.Send(master_identity, [&](Peer* peer) { sent = peer->send(bytes, binary); });
+        return sent;
+    }
 private:
+    txing::board::kvs_master::SerializedDataChannel<Peer*> master_writer;
+    Peer* master_identity = nullptr;
     std::mutex mutex;
     std::vector<std::string> to_viewer, to_master;
     std::atomic<bool> stop{false};
@@ -125,7 +136,7 @@ void sdk_peers() {
         const auto now = std::chrono::steady_clock::now();
         session.verified({true, 1}, now); require(session.tick(now), "SDK peer session stopped");
         if (telemetry && telemetry->master_state == Connection::connected) {
-            telemetry->master->send(telemetry_frame, true);
+            telemetry->send_master(telemetry_frame, true);
             if (!requested && telemetry->viewer_state == Connection::connected) {
                 session.acquire("test-operator"); requested = true;
             }
@@ -150,7 +161,7 @@ void sdk_peers() {
     video.reset(); // Destroy both video SDK peers while telemetry stays alive.
     const auto telemetry_deadline = std::chrono::steady_clock::now() + 1s;
     while (op.telemetry_frames == previous_telemetry && std::chrono::steady_clock::now() < telemetry_deadline) {
-        telemetry->master->send(telemetry_frame, true);
+        telemetry->send_master(telemetry_frame, true);
         session.tick(std::chrono::steady_clock::now()); std::this_thread::sleep_for(5ms);
     }
     require(op.telemetry_frames > previous_telemetry, "video teardown broke healthy SDK telemetry");
@@ -190,7 +201,7 @@ void sdk_manual() {
     while (std::chrono::steady_clock::now() < deadline) {
         const auto now = std::chrono::steady_clock::now();
         op.poll(session, now); session.verified({true, 1}, now); require(session.tick(now), "manual SDK session stopped");
-        if (telemetry && telemetry->master_state == Connection::connected) telemetry->master->send(bytes, true);
+        if (telemetry && telemetry->master_state == Connection::connected) telemetry->send_master(bytes, true);
         if (video && video->master_state == Connection::connected) {
             video->master->send_video(encoded); encoded.presentation_100ns += 333333;
         }
@@ -213,4 +224,51 @@ void sdk_manual() {
     const auto released = std::chrono::steady_clock::now() + 1s;
     while (!telemetry->releases && std::chrono::steady_clock::now() < released) std::this_thread::sleep_for(5ms);
     require(telemetry->releases == 1, "manual SDK disconnect did not release");
+}
+
+void sdk_concurrent_data_channel() {
+    // The same board sender guards calls from a telemetry thread and from an
+    // SDK receive callback. Both real SCTP message types must survive the load.
+    constexpr int count = 1'000;
+    const auto bytes = frame(true);
+    std::atomic<int> binary_received{0}, text_received{0}, corrupt{0}, send_errors{0};
+    TransportEvents events;
+    events.data = [&](Bytes message, bool binary) {
+        if (binary) {
+            if (message != bytes) ++corrupt;
+            ++binary_received;
+        } else {
+            Aws::Utils::Json::JsonValue json(std::string(message.begin(), message.end()).c_str());
+            if (!json.WasParseSuccessful() || !json.View().IsObject() || !json.View().ValueExists("type") ||
+                !json.View().GetObject("type").IsString() ||
+                json.View().GetString("type") != "control.renewed") ++corrupt;
+            ++text_received;
+        }
+    };
+    Pair pair(profile("tbot", "concurrent-test", "region", "ca").telemetry, std::move(events));
+    const auto connected = std::chrono::steady_clock::now() + 12s;
+    while ((pair.viewer_state != Connection::connected || pair.master_state != Connection::connected) &&
+           std::chrono::steady_clock::now() < connected) std::this_thread::sleep_for(2ms);
+    require(pair.viewer_state == Connection::connected && pair.master_state == Connection::connected,
+            "concurrent SDK data channel did not connect");
+    std::thread telemetry([&] {
+        for (int i = 0; i < count; ++i) {
+            if (!pair.send_master(bytes, true)) ++send_errors;
+            std::this_thread::sleep_for(1ms);
+        }
+    });
+    std::thread control([&] {
+        for (int i = 0; i < count; ++i) {
+            const std::string request = "{\"type\":\"control.renew_active\",\"requestId\":\"stress-" +
+                                        std::to_string(i) + "\",\"epoch\":9}";
+            if (!pair.viewer->send(Bytes(request.begin(), request.end()), false)) ++send_errors;
+            std::this_thread::sleep_for(1ms);
+        }
+    });
+    telemetry.join(); control.join();
+    const auto received = std::chrono::steady_clock::now() + 5s;
+    while ((binary_received < count || text_received < count) && std::chrono::steady_clock::now() < received)
+        std::this_thread::sleep_for(2ms);
+    require(send_errors == 0 && corrupt == 0, "concurrent SDK sends failed or changed message type/content");
+    require(binary_received == count && text_received == count, "concurrent SDK text/binary messages missing");
 }
