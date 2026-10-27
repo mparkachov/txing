@@ -77,7 +77,7 @@ class FakeSignalingClient extends EventEmitter {
   }
 }
 
-const createPeer = (signal?: AbortSignal) => {
+const createPeer = (signal?: AbortSignal, receiveTimeoutMs = 15_000) => {
   const peer = new FakePeerConnection()
   const signaling = new FakeSignalingClient()
   const states: Array<{ state: string; message?: string }> = []
@@ -87,7 +87,7 @@ const createPeer = (signal?: AbortSignal) => {
     onMessage: (message) => messages.push(message),
     onStateChange: (state, message) => states.push({ state, message }),
     signal,
-  }, peer as unknown as RTCPeerConnection, signaling, 5)
+  }, peer as unknown as RTCPeerConnection, signaling, 5, receiveTimeoutMs)
   // Capture failures immediately, including cancellation before awaiting them.
   void opening.catch(() => undefined)
   return { messages, opening, peer, signaling, states }
@@ -100,6 +100,46 @@ const openingOutcome = async (opening: Promise<unknown>): Promise<string> =>
   ])
 
 describe('MAVLink connection after board wake', () => {
+  test('retires an apparently open peer when received data stops', async () => {
+    const fixture = createPeer(undefined, 15)
+    fixture.peer.channel.open()
+    fixture.peer.connectionState = 'connected'
+    const handle = await fixture.opening
+    await Bun.sleep(60)
+    try {
+      expect(fixture.peer.closeCount).toBe(1)
+      expect(fixture.peer.channel.closeCount).toBe(1)
+      expect(fixture.signaling.closeCount).toBe(1)
+      expect(fixture.states.at(-1)?.message).toContain('received no messages')
+      expect(() => handle.sendText('stale request')).toThrow('not open')
+      expect(fixture.peer.channel.sent).toEqual([])
+    } finally {
+      handle.close()
+    }
+  })
+
+  test('keeps an established peer alive while messages arrive and clears its receive timer on close', async () => {
+    const fixture = createPeer(undefined, 120)
+    fixture.peer.channel.open()
+    const handle = await fixture.opening
+    try {
+      await Bun.sleep(60)
+      fixture.peer.channel.dispatchEvent(new MessageEvent('message', { data: 'observer state' }))
+      await Bun.sleep(80)
+      expect(fixture.peer.closeCount).toBe(0)
+      fixture.peer.channel.dispatchEvent(new MessageEvent('message', { data: new Uint8Array([1, 2, 3]) }))
+      await Bun.sleep(80)
+      expect(fixture.peer.closeCount).toBe(0)
+      handle.close()
+      await Bun.sleep(140)
+      expect(fixture.peer.closeCount).toBe(1)
+      expect(fixture.states.filter(({ state }) => state === 'closed')).toHaveLength(1)
+      expect(fixture.states.filter(({ state }) => state === 'error')).toHaveLength(0)
+    } finally {
+      handle.close()
+    }
+  })
+
   test('waits for the projected MAVLink capability before opening a peer', () => {
     const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
     const enabled = appSource.match(/const isMavlinkControlEnabled =([\s\S]*?)\n {2}const /)?.[1]

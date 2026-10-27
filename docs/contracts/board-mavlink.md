@@ -61,6 +61,23 @@ with a functioning camera. Failure-stage markers distinguish video closure,
 camera release entry and camera release completion without exposing media or
 credentials.
 
+The worker emits `TXING_MAVLINK_DIAGNOSTICS` from its existing cleanup loop at
+most once per five seconds per peer, and at teardown entry (`final=1`). Fixed
+operation groups cover receive callbacks, control bridge dispatch, uplink
+bridge writes, telemetry/reply sends including writer-lock waits, and actual
+SDK sends. Each group reports started/finished/failed counts, pending count and
+age, and last/maximum elapsed time. An SDK status code, wall-clock timestamp,
+steady-clock timestamp and local numeric peer instance complete the record.
+No frame/JSON content, credentials, SDP, TURN data or remote identity enters
+this diagnostic line.
+
+Counter reads do not acquire callback, send or bridge locks. Samples are
+approximate across fields, and pending age uses the most recent operation
+start if multiple calls overlap. Teardown entry is not proof that cleanup
+finished. Blocking cleanup, signaling maintenance or output can delay later
+samples; a sampling gap alone does not identify a particular lock. Diagnostics
+do not change authority, retry, queues, deadlines or transport behavior.
+
 ## Office operation and safety semantics
 
 Office presents two operator modes for every MAVLink-capable board:
@@ -68,6 +85,9 @@ Office presents two operator modes for every MAVLink-capable board:
 - **View only** is the default. A connected peer can observe telemetry but
   cannot transmit control frames.
 - **Control** starts only after the operator acquires the active-control lease.
+  The explicit Office action requests `takeover=true` regardless of cached
+  owner information, so a human can displace another controller without first
+  refreshing the page.
   The Office client prepares the flight controller for manual driving, then
   sends `MANUAL_CONTROL` at 10 Hz, including neutral frames while no arrow key
   is held. Arm state and Manual/Hold selection are flight-controller details,
@@ -80,6 +100,15 @@ reconnect backoff (1 second, doubling up to 10 seconds). Capability loss or rout
 changes cancel pending negotiations and close established peers. A reconnect
 returns to View only; acquiring or taking over control remains an explicit
 operator action.
+
+An established Office peer with no received messages for fifteen seconds is
+closed and replaced through that existing recovery path. A control-request
+timeout also closes the session instead of letting later button clicks reuse
+the same unresponsive channel. Late messages from the retired session cannot
+restore authority or update its flight state. Failed acquisition is never
+automatically replayed; the next takeover requires another explicit action on
+the recovered connection. Ordinary Manual/Arm preparation and release after
+preparation failure retain their existing semantics.
 
 This Office behavior is a client policy only. It limits what Office sends but
 does not constrain other active MAVLink clients using the same data channel.

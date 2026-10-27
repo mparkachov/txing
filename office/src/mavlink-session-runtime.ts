@@ -109,6 +109,7 @@ export const connectMavlinkPeer = async (
   peerConnection: RTCPeerConnection,
   signalingClient: KvsWebRtcSignalingClient,
   openTimeoutMs = 20_000,
+  receiveTimeoutMs = 15_000,
 ): Promise<MavlinkDataChannelRuntimeHandle> => {
   const dataChannel = peerConnection.createDataChannel(options.label, {
     ordered: true,
@@ -116,6 +117,7 @@ export const connectMavlinkPeer = async (
   dataChannel.binaryType = 'arraybuffer'
   let closed = false
   let openTimerId: ReturnType<typeof setTimeout> | undefined
+  let receiveTimerId: ReturnType<typeof setTimeout> | undefined
   let openSettled = false
   let resolveOpen: () => void = () => undefined
   let rejectOpen: (error: Error) => void = () => undefined
@@ -131,6 +133,7 @@ export const connectMavlinkPeer = async (
     }
     closed = true
     clearTimeout(openTimerId)
+    clearTimeout(receiveTimerId)
     options.signal?.removeEventListener('abort', abort)
     signalingClient.removeAllListeners()
     signalingClient.close()
@@ -144,6 +147,16 @@ export const connectMavlinkPeer = async (
   }
   const abort = (): void => close('closed', 'MAVLink connection cancelled')
 
+  const refreshReceiveDeadline = (): void => {
+    if (closed || !openSettled) {
+      return
+    }
+    clearTimeout(receiveTimerId)
+    receiveTimerId = setTimeout(() => {
+      close('error', 'MAVLink data channel received no messages before the receive deadline')
+    }, receiveTimeoutMs)
+  }
+
   dataChannel.addEventListener('open', () => {
     if (!closed) {
       options.onStateChange('open')
@@ -152,6 +165,7 @@ export const connectMavlinkPeer = async (
         clearTimeout(openTimerId)
         resolveOpen()
       }
+      refreshReceiveDeadline()
     }
   })
   dataChannel.addEventListener('message', (event) => {
@@ -159,11 +173,13 @@ export const connectMavlinkPeer = async (
       return
     }
     if (typeof event.data === 'string') {
+      refreshReceiveDeadline()
       options.onMessage(event.data)
       return
     }
     const bytes = toMessageBytes(event.data)
     if (bytes) {
+      refreshReceiveDeadline()
       options.onMessage(bytes)
     }
   })

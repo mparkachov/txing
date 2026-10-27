@@ -1,17 +1,18 @@
 # Native physical acceptance — #167
 
-Status, 2026-10-26: **open**. Run 16 passes the complete manual flow on installed
-KVS 0.18.3/current native diagnostics, and run 20 verifies held-lease release on
-real credential expiry. Contention, takeover, disconnect, process interruption,
-REDCON 3/4 and DDEATH evidence is retained. Earlier transport timeouts remain
-unresolved. Run 21 isolates a real camera failure while MAVLink continues, but
-exposes a board readiness bug: actual REDCON briefly reaches 2, then returns to
-1 without video frames. The operator independently commits/releases/installs
-KVS 0.18.4, but its real repeat (23) still reports actual 1 without frames while
-the worker waits during teardown. A corrected cleanup order is prepared as
-0.18.5; manual rollout and physical repetition remain required. The operator
-confirms the TBot is parked at actual REDCON 4, power off and tracks stopped.
-New changes remain uncommitted as requested.
+Status, 2026-10-27: **open**. Run 16 passes the complete manual flow, and run 20
+verifies held-lease release on real credential expiry. On operator-installed
+KVS 0.18.5, cases 25/26 now pass real camera-only isolation, stable actual
+REDCON 1→2 and fresh MAVLink-only entry at actual 2 with parameter retrieval.
+Camera recovery through an operator 4→1 power cycle restores video/MAVLink.
+The subsequent fifteen-minute disarmed case 27 completes without a recurrence
+and releases its held lease. Office then fails two explicit control attempts
+with `control.activate` timeouts. Required human takeover remains a blocking
+acceptance condition; Office 0.18.3 client recovery/policy changes are prepared
+but require manual deployment and a real handoff retest. Earlier intermittent
+transport timeouts remain unexplained. Board-side timing diagnostics are
+prepared as 0.18.6. These new changes remain uncommitted; earlier cases and
+their exact tested versions remain recorded below.
 This record covers the actual development Mac, QGroundControl
 and secured lifted TBot. Automated checks and process-injected faults support
 diagnosis but do not replace the physical evidence required by #167.
@@ -908,6 +909,130 @@ and manual rollout instructions are under `24-*`. The installed board remains
 coordinated maintenance before another real camera-loss test. Earlier
 unrelated control-timeout causes remain unresolved. Criteria 4 and 6 stay open.
 
+## Real video isolation and entry at REDCON 2 — 2026-10-27
+
+The operator independently commits the cleanup-order correction at
+`613e335b99162209cac646d3c60b1a44561b22fa`, publishes `kvs-master-v0.18.5` and
+installs it. The downloaded archive SHA-256 is
+`6ad54d784567564d87e4e619c77fc18efe3e6a34267185490f96da2ec5541c43`;
+its executable SHA-256
+`6e886995f48429d123289b00e07642920ba2e240e23af3ae4e0c63ed496f8ae3`
+matches both installed bytes and running PID 2654. Source starts clean. The
+same native executable `907c3188…` and its source hashes are reverified. No
+assistant commit, release or board installation occurs.
+
+Case 25 establishes both real streams at actual 1, fresh QGC parameters and one
+disarmed QGC/mavlink-2/epoch 1 lease. The operator's Unicam detach returns 0.
+Video freezes at **1,933 frames**; the worker reports `closing_video`, then
+`releasing_camera`. The video shadow reports ERROR/not ready and the projection
+reaches actual 2 with `capability.video=false`. It remains at 2 for **143.794
+observed seconds** through the end of this run. Fresh QGC parameter names and
+values load while Disarmed; telemetry and the same lease continue. A failed
+video recovery attempt occurs during loss/lifecycle propagation before final
+closure; raw connection order is retained and per-event timing is not separately
+logged. No new video frames or later readiness revival occurs.
+
+Camera-release completion is not observed: `camera_released` is absent. The
+diagnostic stage narrows the remaining cleanup wait but does not identify the
+exact library call. That wait no longer hides video failure or stops MAVLink.
+This passes real video-only isolation and the live 1→2 behavior. The native
+session ends deliberately after **237.862 seconds**, group exit 143. Last
+observations: **13,595 telemetry / 1,933 video / 4,816 QGC datagrams**, 62 bounded
+consumer video drops and zero UDP rejects/drops. All 63 shadow samples are
+disarmed; fresh version 1235 is unowned/disarmed/Hold after release.
+
+Without rebinding or restarting services, a new explicit case 26 starts from
+actual 2. It opens only MAVLink, acquires QGC/mavlink-3/epoch 2 and retrieves
+fresh parameters while Disarmed. There is **no video peer and zero video
+frames**. All 68 samples remain actual 2 and Disarmed. Deliberate stop after
+**249.972 seconds**, group exit 143, records **15,512 telemetry / 4,916 QGC
+datagrams**, zero UDP rejects/drops and zero video drops. Fresh version 1239 is
+unowned/disarmed/Hold. This passes fresh entry at actual 2 with MAVLink alone.
+
+The operator then performs a real 4→1 power cycle and confirms restored live
+video/MAVLink, secured/lifted/disarmed/stopped conditions, Office View only and
+centered QGC sticks. Fresh actual 1 and ready streams independently confirm
+recovery. The operator reports no rights for packet capture; none is performed
+or requested again. Frozen case/result/provenance/board logs are under
+`tmp/issue-167/25-*` and `26-*`.
+
+## Recovered stability observation and remaining diagnosis — 2026-10-27
+
+Case 27 runs normally at actual 1 after that power cycle. Fresh parameters load
+while Disarmed; video/MAVLink continue under one QGC/mavlink-2/epoch 1 lease.
+The bounded fifteen-minute observation ends at **900.250 seconds**, group exit
+143, on the harness signal, not a spontaneous transport/lifecycle failure.
+The 232-sample recorder ends. Last observations: **56,786 telemetry / 24,776
+video / 12,215 QGC datagrams**, 307 consumer queue drops, zero UDP rejects/drops.
+The only control loss is the final process signal; fresh version 1249 is
+unowned/disarmed/Hold. This is finite non-recurrence, not proof of the cause or
+repair of the earlier intermittent control/telemetry stalls.
+
+A standalone local SDK probe attempts a forced overlap between the shared
+writer and a receive-callback reply. Its local peers fail to connect, so the
+schedule is never exercised. The result is **inconclusive**, not a demonstrated
+deadlock. No production concurrency change is made on that basis.
+
+The prepared 0.18.6 diagnostics add numeric operation counts, pending ages and
+completion timings on the board, sampled by the existing cleanup worker and at
+teardown entry. They distinguish receive callbacks, control bridge dispatch,
+uplink writes, telemetry/reply writer waits and SDK sends without acquiring
+their operation locks for a counter snapshot. Fixed fields exclude payloads,
+credentials and remote identity. Tests cover blocked-call visibility,
+concurrent counts, exception accounting and numeric-only bounded output.
+Authority, SDK pins, queues, threads, retries and deadlines are unchanged.
+This diagnostic build is not a timeout repair or physical acceptance result;
+manual release/maintenance/retest is required before its board-side data exists.
+
+The functional video/REDCON checkboxes are now supported by cases 25/26 and
+the previously recorded real REDCON 3/4/death cases. The overall gate remains
+open for the earlier unresolved transport behavior. No later cloud work starts.
+
+## Required Office takeover — failed attempt and prepared client repair
+
+After case 27 ends and QGC disconnects, the operator tries the Office control
+button twice. Exact notifications in Europe/Berlin on 2026-10-27 are
+**08:35:02** and **08:35:11**, both `Timed out waiting for control.activate`.
+These are activation-exchange timeouts, not Manual/Arm command rejections.
+Intermediate grant/expiry states are not captured. Later fresh MAVLink version
+1253 is unowned/disarmed/Hold. The operator selects REDCON 4 at **08:37:59** and
+confirms actual 4/power off; Sparkplug 1802 independently reports actual 4 and
+unavailable board/MAVLink/video capabilities.
+
+The operator explicitly reiterates the design requirement to take manual
+control from Office. This attempt remains blocking even though the preceding
+video/REDCON checks pass. The current source derives takeover=true/false from
+cached owner state; its control-request timeout rejects without retiring the
+channel, so repeated clicks can reuse the same unresponsive peer. There is
+also no established receive-silence deadline. These are verified recovery and
+policy gaps; the exact transport cause of the missing replies is unproved.
+
+Prepared Office **0.18.3** makes the explicit manual action request takeover
+independently of cached ownership. The tested high-level client operation
+preserves ordinary Manual/Arm preparation, no force-arm override, and safe
+release if preparation fails. A control timeout closes the session, and
+fifteen seconds without received messages retires an apparently open peer.
+The existing backoff replaces the observer connection in View only. No failed
+takeover is automatically replayed, and late replies/flight telemetry from a
+closed session are ignored.
+
+Two new recovery regressions fail on the old client and pass with the repair.
+Additional tests verify the actual takeover envelope with an empty owner cache,
+ordinary Manual/Arm frames, preparation rejection/release, no Arm after failed
+acquisition, receive-activity deadline extension, and a fresh explicit retry.
+All **213 Office tests**, lint and the production build pass. The shared Office
+and component version files are aligned at 0.18.3. One existing unused-argument
+lint error is cleared without changing cmd_vel behavior.
+
+The source is uncommitted and not deployed. Rollout/retest steps are prepared
+in `tmp/issue-167/29-operator-office-takeover.md`: publish Office through its
+existing Git/Cloudflare path, load the new client, then verify a real Office
+takeover from an active QGC lease without reloading Office, old-agent fencing,
+stopped tracks and safe release. The Office action ordinarily arms the vehicle,
+so that retest remains an operator-run secured/lifted procedure. Board 0.18.6
+diagnostics support further diagnosis but do not claim a transport repair.
+Keep the Office handoff criterion and #167 open until the physical path works.
+
 ## First foreground run
 
 Use Office to select REDCON 1 and wait for actual 1 with available MAVLink/video.
@@ -960,11 +1085,11 @@ failed attempts and the source/executable identity for every retry.
 | Office contention | Office acquires first; a fresh explicit agent run reports busy, does not displace Office and sends no uplink; after Office releases, the same agent run still does not acquire automatically | Run 07 reports busy, preserves Office ownership and does not acquire after release |
 | Client inactivity/disconnect | With control held and motion stopped, disable QGC heartbeat/traffic or disconnect its UDP link; board/native authority clears at the five-second client deadline; reconnecting never reacquires | Disarmed disconnect releases board/native authority; reconnect does not reacquire; exact cutoff timing unmeasured |
 | Process interruption | Ctrl-C/SIGTERM on the foreground agent releases its real board lease and stops both sessions; record observed disarm/Hold outcome rather than infer it | Run 06 Ctrl-C releases held lease; fresh board state unowned/disarmed/Hold |
-| Lease loss | Operator performs a deliberate competing-owner takeover; old native authority clears and later traffic/reconnection does not reacquire | Run 08 explicit Office takeover revokes native authority; later release/QGC traffic never reacquires |
+| Lease loss | Operator performs a deliberate competing-owner takeover; old native authority clears and later traffic/reconnection does not reacquire | Run 08 passes historically; new Office activation timeouts block current acceptance until the prepared client is deployed and the real handoff repeats |
 | WebRTC loss | Operator-induced real telemetry-link loss releases control; native peer recovery preserves healthy video and never reacquires | Run 13 natural telemetry gap revokes control, freshly clears board ownership/disarms, preserves video and recovers MAVLink without reacquisition; cause and controlled fault case remain open |
 | Verification loss | Real loss of authoritative lifecycle reads stops the worker after fifteen seconds; record the fault method, last successful verification, lease release and terminal reason | Run 20 real expiry/HTTP 403 stops the worker and releases its held lease; fresh board state unowned/disarmed/Hold; exact last successful API-read timestamp unlogged |
-| Video failure | Actual video failure while MAVLink stays available leaves telemetry/control working; record separate connection/counter evidence | Runs 21/23 preserve MAVLink but fail readiness; prepared 0.18.5 correction requires manual rollout/repeat |
-| REDCON 2 and 1→2 | Actual projection reaches 2; MAVLink remains usable and only video closes. A request for 2 satisfied by actual 1 does not pass this case | Run 21 actual 1→2→1 exposes stale READY; run 23 stays 1 with frozen video; stable corrected behavior remains unverified |
+| Video failure | Actual video failure while MAVLink stays available leaves telemetry/control working; record separate connection/counter evidence | Case 25 passes on 0.18.5: real camera loss, stable actual 2, same disarmed lease/telemetry and fresh parameters |
+| REDCON 2 and 1→2 | Actual projection reaches 2; MAVLink remains usable and only video closes. A request for 2 satisfied by actual 1 does not pass this case | Case 25 passes live 1→2; case 26 passes fresh actual-2 entry with parameters, no video peer and zero video frames |
 | REDCON 3/4 | Separate real transitions to 3 and 4 terminate the native session and release authority | Earlier actual 3 and run 09 actual 4 terminate/revoke native authority; post-loss/off board lease shadows stay stale |
 | Device death | Actual DDEATH projection terminates the native session and releases authority; record how the operator produced death | Run 10 whole-TBot power-off produces DDEATH and native exit 0; authority cleared on preceding control timeout; board lease shadow stale |
 

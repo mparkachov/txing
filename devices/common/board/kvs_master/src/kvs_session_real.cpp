@@ -3,6 +3,7 @@
 #include "kvs_master/board_mavlink_bridge.hpp"
 #include "kvs_master/board_video_bridge.hpp"
 #include "kvs_master/markers.hpp"
+#include "kvs_master/mavlink_diagnostics.hpp"
 #include "kvs_master/peer_negotiation.hpp"
 #include "kvs_master/serialized_data_channel.hpp"
 
@@ -470,6 +471,7 @@ struct StreamingSession {
     PRtcRtpTransceiver video_transceiver = nullptr;
     PRtcDataChannel mcp_data_channel = nullptr;
     SerializedDataChannel<PRtcDataChannel> mavlink_data_channel;
+    MavlinkDiagnostics mavlink_diagnostics;
     RtcSessionDescriptionInit answer_description{};
     std::atomic_bool terminate_requested{false};
     std::atomic_bool first_frame{true};
@@ -1068,14 +1070,19 @@ class RealKvsSession final : public KvsSession {
                     ) {
                         return;
                     }
-                    session->mavlink_data_channel.Send(data_channel, [&](PRtcDataChannel channel) {
-                        UNUSED_PARAM(dataChannelSend(
+                    auto send = session->mavlink_diagnostics.Track(MavlinkOperation::telemetry);
+                    const bool bound = session->mavlink_data_channel.Send(data_channel, [&](PRtcDataChannel channel) {
+                        auto sdk = session->mavlink_diagnostics.Track(MavlinkOperation::sdk);
+                        const auto status = dataChannelSend(
                             channel,
                             TRUE,
                             frame.data(),
                             static_cast<UINT32>(frame.size())
-                        ));
+                        );
+                        session->mavlink_diagnostics.SdkStatus(status);
+                        if (STATUS_FAILED(status)) { sdk.Fail(); send.Fail(); }
                     });
+                    if (!bound) send.Fail();
                 }
             );
             EmitMarker("TXING_MAVLINK_DATACHANNEL_OPEN", {{"peerId", session->peer_id}});
@@ -1104,6 +1111,7 @@ class RealKvsSession final : public KvsSession {
         if (session->mavlink_peer == nullptr) {
             return std::nullopt;
         }
+        auto control = session->mavlink_diagnostics.Track(MavlinkOperation::control);
         try {
             const std::string response = session->mavlink_peer->HandleControl(std::string(payload));
             if (const auto epoch = ExtractJsonRawField(response, "epoch")) {
@@ -1120,6 +1128,7 @@ class RealKvsSession final : public KvsSession {
             }
             return response;
         } catch (const std::exception& error) {
+            control.Fail();
             EmitMarker(
                 "TXING_MAVLINK_DATACHANNEL_ERROR",
                 {{"peerId", session->peer_id}, {"detail", error.what()}}
@@ -1136,12 +1145,14 @@ class RealKvsSession final : public KvsSession {
         if (session->mavlink_peer == nullptr || session->mavlink_epoch == 0) {
             return;
         }
+        auto uplink = session->mavlink_diagnostics.Track(MavlinkOperation::uplink);
         try {
             session->mavlink_peer->SendFrame(
                 std::vector<std::uint8_t>(data, data + len),
                 session->mavlink_epoch
             );
         } catch (const std::exception& error) {
+            uplink.Fail();
             EmitMarker(
                 "TXING_MAVLINK_DATACHANNEL_ERROR",
                 {{"peerId", session->peer_id}, {"detail", error.what()}}
@@ -1628,6 +1639,7 @@ class RealKvsSession final : public KvsSession {
         SetSessionConnected(session.get(), false);
         session->terminate_requested.store(true);
         if (session_kind_ == KvsSessionKind::kMavlinkControl) {
+            EmitMavlinkDiagnostics(*session, true);
             CloseMavlinkDataChannel(session.get(), "MAVLink WebRTC peer session destroyed");
         } else {
             CloseMcpIpc(session.get(), "MCP WebRTC peer session destroyed");
@@ -1684,8 +1696,38 @@ class RealKvsSession final : public KvsSession {
         wake_condition_.notify_all();
     }
 
+    static void EmitMavlinkDiagnostics(const StreamingSession& session, bool final) noexcept {
+        try {
+            const auto line = session.mavlink_diagnostics.Line(final);
+            std::fprintf(stdout, "%s\n", line.c_str());
+            std::fflush(stdout);
+        } catch (...) {
+            // Diagnostic allocation/output failure must not change transport.
+        }
+    }
+
+    void ReportMavlinkDiagnostics() noexcept {
+        if (session_kind_ != KvsSessionKind::kMavlinkControl) return;
+        const auto now = MavlinkDiagnostics::NowMs();
+        if (now - last_mavlink_diagnostic_ms_ < 5000) return;
+        last_mavlink_diagnostic_ms_ = now;
+        try {
+            std::vector<std::shared_ptr<StreamingSession>> sessions;
+            {
+                std::lock_guard<std::mutex> lock(state_lock_);
+                for (const auto& item : sessions_by_peer_) {
+                    if (item.second) sessions.push_back(item.second);
+                }
+            }
+            for (const auto& session : sessions) EmitMavlinkDiagnostics(*session, false);
+        } catch (...) {
+            // No diagnostics are required for signaling/control to continue.
+        }
+    }
+
     void CleanupLoop() noexcept {
         while (true) {
+            ReportMavlinkDiagnostics();
             std::vector<std::shared_ptr<StreamingSession>> sessions_to_destroy;
             CollectTerminatedSessions(&sessions_to_destroy);
             for (const auto& session : sessions_to_destroy) {
@@ -1850,6 +1892,7 @@ class RealKvsSession final : public KvsSession {
             return;
         }
         if (session->owner->session_kind_ == KvsSessionKind::kMavlinkControl) {
+            auto callback = session->mavlink_diagnostics.Track(MavlinkOperation::callback);
             if (is_binary) {
                 session->owner->DispatchMavlinkDataChannelFrame(session, message, message_len);
                 return;
@@ -1859,14 +1902,19 @@ class RealKvsSession final : public KvsSession {
             if (!response.has_value()) {
                 return;
             }
-            session->mavlink_data_channel.Send(data_channel, [&](PRtcDataChannel channel) {
-                UNUSED_PARAM(dataChannelSend(
+            auto send = session->mavlink_diagnostics.Track(MavlinkOperation::reply);
+            const bool bound = session->mavlink_data_channel.Send(data_channel, [&](PRtcDataChannel channel) {
+                auto sdk = session->mavlink_diagnostics.Track(MavlinkOperation::sdk);
+                const auto status = dataChannelSend(
                     channel,
                     FALSE,
                     reinterpret_cast<PBYTE>(const_cast<char*>(response->data())),
                     static_cast<UINT32>(response->size())
-                ));
+                );
+                session->mavlink_diagnostics.SdkStatus(status);
+                if (STATUS_FAILED(status)) { sdk.Fail(); send.Fail(); }
             });
+            if (!bound) send.Fail();
             return;
         }
         if (is_binary) {
@@ -1954,6 +2002,7 @@ class RealKvsSession final : public KvsSession {
     bool recreate_signaling_client_ = false;
 
     std::thread cleanup_thread_;
+    std::uint64_t last_mavlink_diagnostic_ms_ = 0;
     std::mutex state_lock_;
     std::condition_variable wake_condition_;
     std::mutex signaling_client_lock_;

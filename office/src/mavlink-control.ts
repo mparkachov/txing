@@ -398,6 +398,23 @@ export class MavlinkControlSession {
     return state
   }
 
+  public async takeManualControl(target: MavlinkTarget): Promise<void> {
+    // The explicit human action may displace an owner that the observer has
+    // not seen yet. Cached ownership is for display, not takeover authority.
+    await this.activate(true)
+    try {
+      await this.selectMode(target, 'manual')
+      await this.armDisarm(target, true)
+    } catch (error) {
+      try {
+        await this.release()
+      } catch {
+        this.close()
+      }
+      throw error
+    }
+  }
+
   public async release(): Promise<MavlinkControlState> {
     const epoch = this.requireActiveEpoch()
     const { state } = await this.sendControlRequest('control.release_active', { epoch })
@@ -459,6 +476,9 @@ export class MavlinkControlSession {
   }
 
   public handleMessage(message: string | Uint8Array): void {
+    if (this.closed) {
+      return
+    }
     if (typeof message === 'string') {
       this.handleControlResponse(message)
       return
@@ -587,6 +607,9 @@ export class MavlinkControlSession {
       const timeoutId = this.setTimer(() => {
         this.pendingControl.delete(requestId)
         reject(new Error(`Timed out waiting for ${type}`))
+        // A channel that cannot answer authority requests must be replaced,
+        // rather than reused by every subsequent click. Recovery stays View only.
+        this.close()
       }, mavlinkRequestTimeoutMs)
       this.pendingControl.set(requestId, {
         timeoutId,

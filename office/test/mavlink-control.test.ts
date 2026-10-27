@@ -100,13 +100,132 @@ const createSession = () => {
     sendText: (message) => textMessages.push(message),
   }
   session.attach(handle)
-  return { binaryFrames, session, states, telemetry, textMessages }
+  return { binaryFrames, handle, session, states, telemetry, textMessages }
 }
 
 const lastRequest = (messages: string[]): Record<string, unknown> =>
   JSON.parse(messages[messages.length - 1] ?? '{}') as Record<string, unknown>
 
 describe('shared MAVLink Office control', () => {
+  test('explicit manual takeover ignores a stale empty owner cache and uses ordinary Manual/Arm commands', async () => {
+    const fixture = createSession()
+    fixture.handle.sendText = (message) => {
+      fixture.textMessages.push(message)
+      const request = lastRequest(fixture.textMessages)
+      expect(request).toMatchObject({ type: 'control.activate', takeover: true })
+      fixture.session.handleMessage(controlResponse(String(request.requestId), controlState({
+        activeControl: { actor: 'human@example.test', sessionId: 'office-owner', epoch: 12 },
+      }), 'control.activated'))
+    }
+    fixture.handle.sendBinary = (frame) => {
+      fixture.binaryFrames.push(frame)
+      const parsed = parseMavlinkFrame(frame)
+      const payload = new DataView(parsed.payload.buffer, parsed.payload.byteOffset, parsed.payload.byteLength)
+      const command = payload.getUint16(28, true)
+      queueMicrotask(() => {
+        fixture.session.handleMessage(commandAckFrame(command))
+        fixture.session.handleMessage(heartbeatFrame({ armed: command === 400, mode: 0 }))
+      })
+    }
+    expect(fixture.states).toEqual([])
+    await fixture.session.takeManualControl(target)
+    expect(fixture.binaryFrames.map((frame) => {
+      const parsed = parseMavlinkFrame(frame)
+      return new DataView(parsed.payload.buffer, parsed.payload.byteOffset).getUint16(28, true)
+    })).toEqual([176, 400])
+    const arm = parseMavlinkFrame(fixture.binaryFrames[1])
+    expect(new DataView(arm.payload.buffer, arm.payload.byteOffset).getFloat32(4, true)).toBe(0)
+    expect(fixture.states.at(-1)?.held).toBe(true)
+    fixture.session.close()
+  })
+
+  test('releases a granted takeover when ordinary Manual preparation fails, without sending Arm', async () => {
+    const fixture = createSession()
+    fixture.handle.sendText = (message) => {
+      fixture.textMessages.push(message)
+      const request = lastRequest(fixture.textMessages)
+      fixture.session.handleMessage(controlResponse(String(request.requestId), controlState({
+        activeControl: request.type === 'control.activate'
+          ? { actor: 'human@example.test', sessionId: 'office-owner', epoch: 12 }
+          : null,
+        epoch: 12,
+      }), request.type === 'control.activate' ? 'control.activated' : 'control.released'))
+    }
+    fixture.handle.sendBinary = (frame) => {
+      fixture.binaryFrames.push(frame)
+      queueMicrotask(() => {
+        fixture.session.handleMessage(commandAckFrame(176, 2))
+        fixture.session.handleMessage(heartbeatFrame({ armed: false, mode: 0 }))
+      })
+    }
+    await expect(fixture.session.takeManualControl(target)).rejects.toThrow('was rejected')
+    expect(fixture.textMessages.map((message) => JSON.parse(message).type)).toEqual([
+      'control.activate', 'control.release_active',
+    ])
+    expect(fixture.binaryFrames).toHaveLength(1)
+    expect(fixture.states.at(-1)?.held).toBe(false)
+    fixture.session.close()
+  })
+
+  test('retires an unanswered activation channel and fences late replies until a fresh explicit attempt', async () => {
+    const timers = new Map<number, { delay: number; run: () => void }>()
+    let nextTimer = 0
+    let closeCount = 0
+    let lateTelemetry = 0
+    const messages: string[] = []
+    const connectionStates: string[] = []
+    const session = new MavlinkControlSession({
+      actor: 'human@example.test',
+      requestId: () => 'unanswered-activation',
+      setTimeout: ((run: () => void, delay: number) => {
+        const id = ++nextTimer
+        timers.set(id, { run, delay })
+        return id
+      }) as typeof window.setTimeout,
+      clearTimeout: ((id: number) => { timers.delete(id) }) as typeof window.clearTimeout,
+      onControlState: () => {},
+      onFlightState: () => {},
+      onTelemetry: () => { lateTelemetry += 1 },
+      onProtocolError: () => {},
+      onStateChange: (state) => { connectionStates.push(state) },
+    })
+    session.attach({
+      close: () => { closeCount += 1 },
+      sendBinary: () => { throw new Error('timeout must not send flight commands') },
+      sendText: (message) => { messages.push(message) },
+    })
+    const activation = session.activate(true)
+    void activation.catch(() => undefined)
+    const timeout = [...timers.values()].find(({ delay }) => delay === 7_000)
+    expect(timeout).toBeDefined()
+    timeout?.run()
+    await expect(activation).rejects.toThrow('Timed out waiting for control.activate')
+    expect(closeCount).toBe(1)
+    expect(connectionStates.at(-1)).toBe('closed')
+    session.handleMessage(controlResponse('unanswered-activation', controlState({
+      activeControl: { actor: 'human@example.test', sessionId: 'late-owner', epoch: 5 },
+    }), 'control.activated'))
+    session.handleMessage(heartbeatFrame({ armed: true }))
+    expect(lateTelemetry).toBe(0)
+    const retryOnOldChannel = session.activate(true)
+    void retryOnOldChannel.catch(() => undefined)
+    expect(messages).toHaveLength(1)
+    session.close()
+    await expect(retryOnOldChannel).rejects.toThrow('MAVLink data channel')
+
+    const fresh = createSession()
+    expect(fresh.textMessages).toEqual([])
+    const explicitRetry = fresh.session.activate(true)
+    const request = lastRequest(fresh.textMessages)
+    expect(request).toMatchObject({ type: 'control.activate', takeover: true })
+    fresh.session.handleMessage(controlResponse(String(request.requestId), controlState({
+      activeControl: { actor: 'human@example.test', sessionId: 'new-owner', epoch: 6 },
+    }), 'control.activated'))
+    await explicitRetry
+    expect(fresh.states.at(-1)?.held).toBe(true)
+    fresh.session.close()
+  })
+
   test('negotiates a separate data-only peer with no video transceiver or VideoPanel lifecycle', () => {
     const runtime = readFileSync(new URL('../src/mavlink-session-runtime.ts', import.meta.url), 'utf8')
     const panel = readFileSync(

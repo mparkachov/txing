@@ -295,19 +295,8 @@ export function MavlinkControlProvider({
       throw new Error('MAVLink control is not ready')
     }
     setDriveReady(false)
-    await session.activate(controlState.activeControl !== null)
-    try {
-      await session.selectMode(initialTarget, 'manual')
-      await session.armDisarm(initialTarget, true)
-      setDriveReady(true)
-    } catch (error) {
-      try {
-        await session.release()
-      } catch {
-        session.close()
-      }
-      throw error
-    }
+    await session.takeManualControl(initialTarget)
+    setDriveReady(true)
   }
 
   const releaseDriveControl = async (): Promise<void> => {

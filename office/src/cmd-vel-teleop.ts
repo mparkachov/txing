@@ -38,6 +38,7 @@ export class CmdVelTeleopController {
   }
 
   handleKeyDown(key: string, _repeat = false): boolean {
+    void _repeat
     if (!this.active || !isCmdVelControlKey(key)) {
       return false
     }

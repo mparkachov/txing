@@ -1,6 +1,7 @@
 #include "kvs_master/aws_env.hpp"
 #include "kvs_master/config.hpp"
 #include "kvs_master/markers.hpp"
+#include "kvs_master/mavlink_diagnostics.hpp"
 #include "kvs_master/peer_negotiation.hpp"
 #include "kvs_master/serialized_data_channel.hpp"
 #include "kvs_master/runtime.hpp"
@@ -1084,9 +1085,95 @@ void TestDataChannelCloseAndStaleCallbacks() {
     Expect(writes == 1, "no callback may reach the SDK after close");
 }
 
+std::unordered_map<std::string, std::uint64_t> DiagnosticFields(const std::string& line) {
+    Expect(line.size() < 2048, "MAVLink diagnostic line must stay bounded");
+    std::istringstream input(line);
+    std::string field;
+    input >> field;
+    Expect(field == "TXING_MAVLINK_DIAGNOSTICS", "MAVLink diagnostic prefix must be fixed");
+    std::unordered_map<std::string, std::uint64_t> fields;
+    while (input >> field) {
+        const auto split = field.find('=');
+        Expect(split != std::string::npos, "diagnostic fields must have numeric values");
+        if (split == std::string::npos) continue;
+        const auto value = field.substr(split + 1);
+        const bool numeric = !value.empty() && value.find_first_not_of("0123456789") == std::string::npos;
+        Expect(numeric, "diagnostics must not include payloads, identities or error text");
+        if (numeric) fields[field.substr(0, split)] = std::stoull(value);
+    }
+    return fields;
+}
+
+void TestMavlinkDiagnosticsObserveBlockedCall() {
+    using txing::board::kvs_master::MavlinkDiagnostics;
+    using txing::board::kvs_master::MavlinkOperation;
+    MavlinkDiagnostics diagnostics;
+    std::promise<void> entered, resume;
+    auto started = entered.get_future();
+    auto release = resume.get_future();
+    std::thread blocked([&] {
+        auto callback = diagnostics.Track(MavlinkOperation::callback);
+        auto write = diagnostics.Track(MavlinkOperation::uplink);
+        entered.set_value();
+        release.wait();
+        write.Fail();
+    });
+    const bool ready = started.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+    Expect(ready, "blocked diagnostic fixture must enter the operation");
+    if (ready) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        const auto fields = DiagnosticFields(diagnostics.Line(false));
+        Expect(fields.at("callbackPending") == 1 && fields.at("uplinkPending") == 1,
+               "snapshots must expose a callback waiting in an unfinished bridge write");
+        Expect(fields.at("uplinkPendingMs") > 0 && fields.at("sdkStarted") == 0,
+               "snapshots must distinguish bridge waits from SDK calls without joining the writer");
+    }
+    resume.set_value();
+    blocked.join();
+    const auto fields = DiagnosticFields(diagnostics.Line(true));
+    Expect(fields.at("final") == 1 && fields.at("callbackPending") == 0 && fields.at("uplinkPending") == 0,
+           "completion must clear pending operations");
+    Expect(fields.at("uplinkFailed") == 1 && fields.at("callbackFailed") == 0,
+           "only the explicitly failed operation should count as failed");
+}
+
+void TestMavlinkDiagnosticsConcurrentCountsAndConfidentiality() {
+    using txing::board::kvs_master::MavlinkDiagnostics;
+    using txing::board::kvs_master::MavlinkOperation;
+    MavlinkDiagnostics diagnostics;
+    std::array<std::thread, 4> workers;
+    for (auto& worker : workers) {
+        worker = std::thread([&] {
+            for (int i = 0; i < 250; ++i) {
+                auto callback = diagnostics.Track(MavlinkOperation::callback);
+                auto control = diagnostics.Track(MavlinkOperation::control);
+                auto sdk = diagnostics.Track(MavlinkOperation::sdk);
+                if (i % 10 == 0) control.Fail();
+            }
+        });
+    }
+    for (auto& worker : workers) worker.join();
+    try {
+        auto control = diagnostics.Track(MavlinkOperation::control);
+        throw std::runtime_error("private-payload-and-credential-fixture");
+    } catch (const std::runtime_error&) {}
+    diagnostics.SdkStatus(0xffffffffU);
+    const auto line = diagnostics.Line(false);
+    const auto fields = DiagnosticFields(line);
+    Expect(fields.at("callbackStarted") == 1000 && fields.at("callbackFinished") == 1000 &&
+               fields.at("controlStarted") == 1001 && fields.at("controlFinished") == 1001 &&
+               fields.at("controlFailed") == 101 && fields.at("sdkStarted") == 1000,
+           "concurrent and exception counts must preserve all completed operations");
+    Expect(fields.at("callbackPending") == 0 && fields.at("lastSdkStatus") == 0xffffffffU &&
+               line.find("private-payload") == std::string::npos,
+           "exception messages and private contents must never enter numeric diagnostics");
+}
+
 }  // namespace
 
 int main() {
+    TestMavlinkDiagnosticsObserveBlockedCall();
+    TestMavlinkDiagnosticsConcurrentCountsAndConfidentiality();
     TestMavlinkSendTypesUnderConcurrency();
     TestDataChannelCloseAndStaleCallbacks();
 #if TXING_KVS_REAL_SDK
