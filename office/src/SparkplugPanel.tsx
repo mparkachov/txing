@@ -12,7 +12,7 @@ type SparkplugPanelProps = {
 
 type RedconLevel = 1 | 2 | 3 | 4
 
-const orderedRedconLevels: readonly RedconLevel[] = [4, 3, 2, 1]
+const orderedRedconLevels: readonly RedconLevel[] = [1, 2, 3, 4]
 
 function SparkplugRedconControl({
   isInteractive,

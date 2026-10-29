@@ -7,8 +7,47 @@ under the [rollout runbook](constraints/agent-rollout.md) and
 [witness watch contract](constraints/agent-watch.md).
 
 The capability correction later on 2026-10-29 changes registry authorization and
-Sparkplug agent availability. The artifacts recorded below predate that change
-and must be rebuilt before rollout.
+Sparkplug agent availability. The refreshed build below includes that correction;
+the original build is retained afterward as historical evidence.
+
+## Refreshed capability build
+
+Both `just agent::controller-package` and the documented local runtime-image
+build completed on 2026-10-29 from clean source revision
+`b90ff864ef864a65fe6c8ee494f55c8dea6c6af5`, after the operator deployed rig
+`0.18.4`, shared Lambda `0.15.7`, Office `0.18.4`, and re-enlisted the TBot.
+
+- Source-manifest/build ID shared by the controller and runtime:
+  `f8d537fcfdf85cb5edcc2cb01b4654150d953f64beeb3297424096aa1b38a635`.
+- Controller ZIP: `tmp/agent-controller.YjcgBa/artifact/controller.zip`.
+- Controller SHA-256:
+  `abe816fe4fb1bf8c6be8a37f47dbc3c8809a3bf4005add8adb9d7896ed3d6f6c`.
+- Runtime source package:
+  `tmp/agent-cloud-package/f8d537fcfdf85cb5edcc2cb01b4654150d953f64beeb3297424096aa1b38a635.zip`.
+- Local runtime image:
+  `txing-agent-cloud@sha256:81de9f9ffe5d4f8d6af478f7ee60dc83e1338fae61f162857caff67083701f86`.
+- Both builds passed all eight Linux ARM64 CTest targets. The controller ZIP
+  integrity, packaged dependencies, provided.al2023 runtime loading, and expected
+  bootstrap startup failure without a Lambda runtime endpoint passed.
+- An isolated runtime container passed the ready hook with a POST to
+  `/aws/lambda-microvms/runtime/v1/ready` on port 8080. Its status endpoint on
+  port 8081 reported `waiting-for-run`, empty credentials/identity and zero
+  telemetry/video. Its build ID matches the controller. Image inspection confirms
+  Linux ARM64, user `10001:10001`, and mandatory assignment verification. The
+  temporary container was removed.
+- Logs: `tmp/agent-controller-capability-build.log` and
+  `tmp/agent-cloud-capability-build.log`. Runtime smoke evidence uses the
+  `tmp/agent-cloud-capability-*` files; the controller retains `provenance/`.
+
+Read-only AWS inspection confirms the TBot's current inactive projection has
+`capability.agent=false` at REDCON 4, no non-terminated MicroVMs were returned,
+the production agent stack is absent, and witness's image scope remains
+`disabled`. The existing environment artifact bucket is available for the initial
+controller upload. These observations do not establish cloud execution or watch
+acceptance. The next operator step is the initial disabled stack deployment,
+followed by a dedicated AWS image, witness configuration and live acceptance.
+
+## Original build (historical)
 
 ## Source and tooling
 

@@ -325,7 +325,7 @@ body {
   position: relative;
   z-index: 3;
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   flex: 1 1 auto;
   justify-content: flex-end;
   gap: 0.8rem;
@@ -333,9 +333,17 @@ body {
   min-width: 0;
 }
 
+.navigation-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
 .navigation-capabilities {
-  flex: 1 1 auto;
-  max-width: min(34rem, 44vw);
+  justify-content: flex-end;
+  padding-right: 0.2rem;
 }
 
 .sparkplug-strip {
@@ -2242,6 +2250,7 @@ button:disabled {
 
   .navigation-panel {
     gap: 0.7rem;
+    flex-wrap: wrap;
   }
 
   .navigation-panel-header {
@@ -2290,8 +2299,8 @@ button:disabled {
   }
 
   .navigation-capabilities {
-    max-width: none;
     padding-left: 0;
+    justify-content: flex-end;
   }
 
   .notification-tray {

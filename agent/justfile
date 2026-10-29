@@ -190,10 +190,17 @@ deploy:
     : "${TXING_AWS_STACK:?set the environment stack prefix}"
     case "$TXING_AWS_STACK" in *[!A-Za-z0-9-]*|'') echo "Invalid environment stack prefix" >&2; exit 1 ;; esac
     stack_name="${TXING_AWS_STACK}-agent"
+    unreserved=$(aws lambda get-account-settings --region eu-central-1 \
+        --query 'AccountLimit.UnreservedConcurrentExecutions' --output text)
+    case "$unreserved" in ''|*[!0-9]*) echo "Could not verify Lambda unreserved concurrency; deployment stopped." >&2; exit 1 ;; esac
+    if [ "$unreserved" -le 10 ]; then
+        echo "Lambda has only $unreserved unreserved concurrency units. The controller requires reserved concurrency 1; request a regional Concurrent executions quota increase before deploying. Keep ReservedConcurrentExecutions=1." >&2
+        exit 1
+    fi
     existing=$(aws cloudformation list-stacks --region eu-central-1 \
-        --query "StackSummaries[?StackName=='$stack_name'].StackStatus" --output json)
+        --query "StackSummaries[?StackName=='$stack_name' && StackStatus!='DELETE_COMPLETE'].StackStatus" --output json)
     if [ "$(printf '%s' "$existing" | jq 'length')" -ne 0 ]; then
-        echo "Stack $stack_name already exists; use the documented operator update procedure." >&2
+        echo "Stack $stack_name already exists. A failed initial ROLLBACK_COMPLETE stack must be deleted manually before retrying; use the documented update procedure for an existing working stack." >&2
         exit 1
     fi
     rule_name=$(printf '%s' "${TXING_AWS_STACK}_agent_lifecycle" | tr -c 'A-Za-z0-9_' '_')

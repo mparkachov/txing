@@ -2094,19 +2094,21 @@ function App({ initialAuthError = '' }: AppProps) {
           </div>
         </div>
         <div className="navigation-panel-actions">
-          {navigationCapabilities}
           {currentRouteThingName !== null && routeHeaderMetadata !== null ? (
-            <SparkplugPanel
-              sparkplugRedcon={reportedRedcon}
-              targetRedcon={pendingTargetRedcon}
-              isInteractive={isSparkplugDeviceCommandAvailable}
-              isRedconCommandDisabled={isRedconCommandDisabled}
-              isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
-              commandableRedconLevels={commandableRedconLevels}
-              onRedconSelect={(redcon) => {
-                void handleRedconSelect(redcon)
-              }}
-            />
+            <div className="navigation-status">
+              <SparkplugPanel
+                sparkplugRedcon={reportedRedcon}
+                targetRedcon={pendingTargetRedcon}
+                isInteractive={isSparkplugDeviceCommandAvailable}
+                isRedconCommandDisabled={isRedconCommandDisabled}
+                isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
+                commandableRedconLevels={commandableRedconLevels}
+                onRedconSelect={(redcon) => {
+                  void handleRedconSelect(redcon)
+                }}
+              />
+              {navigationCapabilities}
+            </div>
           ) : null}
           <NavigationUserMenu
             authUser={authUser}

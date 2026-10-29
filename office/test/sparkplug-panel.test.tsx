@@ -62,6 +62,9 @@ describe('sparkplug panel', () => {
     expect(markup).toContain('data-sparkplug-mode="interactive"')
     expect(markup).toContain('aria-label="Set REDCON 1 · Hot Rig · Red"')
     expect(markup).toContain('aria-label="Set REDCON 4 · Cold Camp · Green"')
+    expect(markup).toMatch(
+      /aria-label="Set REDCON 1 · Hot Rig · Red"[\s\S]*aria-label="Set REDCON 2 · Ember Watch · Orange"[\s\S]*aria-label="Set REDCON 3 · Torch-Up · Yellow"[\s\S]*aria-label="Set REDCON 4 · Cold Camp · Green"/,
+    )
     expect(markup).toContain('sparkplug-redcon-line')
     expect(markup).not.toContain('status-switch-track')
     expect(markup).not.toContain('status-battery-shell')

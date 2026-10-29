@@ -154,6 +154,33 @@ Retain the image build log and its Linux ARM64 CTest results. This local tag
 is for validation; production MicroVM image creation uses the operator-run AWS
 procedure below.
 
+### Lambda concurrency prerequisite and failed first deployment
+
+The controller requires `ReservedConcurrentExecutions=1` to serialize launch,
+assignment and orphan-repair work. Keep that reservation: shadow version checks
+alone do not replace the controller-wide serialization assumption.
+
+Before initial deployment, inspect `aws lambda get-account-settings --region
+eu-central-1`. An account with only ten concurrent executions and ten unreserved
+units cannot reserve one while retaining the service's unreserved minimum.
+Request a regional **Concurrent executions** quota increase through AWS Service
+Quotas; the standard published default of 1,000 provides headroom. Wait for the
+approved limit to appear in account settings. Other accounts may have a larger
+unreserved minimum; AWS validates the actual reservation. The deploy recipe
+rejects an unreserved pool of ten or less before creating resources.
+See [Lambda quotas](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html)
+and [reserved concurrency](https://docs.aws.amazon.com/lambda/latest/dg/configuration-concurrency.html).
+
+A failed initial stack at `ROLLBACK_COMPLETE` must be deleted manually before
+recreating it; it cannot be updated in place. Inventory its resources first.
+The artifact bucket has a retention policy and may remain after rollback or
+stack deletion. Record its name and review it separately; the next deployment
+creates a new bucket. Do not delete the shared bucket holding the controller
+ZIP. After the operator deletes the failed stack and waits for deletion, rerun
+`just agent::deploy` with the same reviewed controller object. The recipe ignores
+`DELETE_COMPLETE` history while continuing to refuse an existing live/failed
+stack. It never performs automatic deletion or removes the concurrency limit.
+
 The controller ZIP must be uploaded by the operator to an existing S3 bucket
 under an immutable, reviewed key before the first deployment. Set
 `TXING_AGENT_CONTROLLER_BUCKET` and `TXING_AGENT_CONTROLLER_KEY` to that object,
