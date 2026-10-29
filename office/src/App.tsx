@@ -532,6 +532,7 @@ function App({ initialAuthError = '' }: AppProps) {
     (route.kind !== 'device_video' ||
       (currentDeviceAdapter !== null && routeHeaderMetadata.capabilities.includes('video')))
   const activeShadowTarget = shadowTargetState.status === 'ready' ? shadowTargetState.target : null
+  const hasAgentCapability = routeHeaderMetadata?.capabilities.includes('agent') ?? false
 
   useEffect(() => {
     const handlePopstate = (): void => {
@@ -652,7 +653,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
   useEffect(() => {
     const thingName = activeShadowTarget?.thingName
-    if (!isDebugEnabled || currentThingTypeName !== 'tbot' || !thingName) {
+    if (!isDebugEnabled || !hasAgentCapability || !thingName) {
       return
     }
     let cancelled = false
@@ -690,7 +691,7 @@ function App({ initialAuthError = '' }: AppProps) {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [activeShadowTarget?.thingName, currentThingTypeName, isDebugEnabled, resolveSessionIdToken])
+  }, [activeShadowTarget?.thingName, hasAgentCapability, isDebugEnabled, resolveSessionIdToken])
 
   const refreshRouteSparkplugShadow = useCallback(
     async (thingName: string): Promise<unknown | null> => {
@@ -2378,9 +2379,9 @@ function App({ initialAuthError = '' }: AppProps) {
 
         {isDebugEnabled && activeShadowTarget !== null && (
           <DebugPanel
-            agentShadow={currentThingTypeName === 'tbot' && agentShadowView?.thingName === activeShadowTarget.thingName
+            agentShadow={hasAgentCapability && agentShadowView?.thingName === activeShadowTarget.thingName
               ? agentShadowView
-              : currentThingTypeName === 'tbot'
+              : hasAgentCapability
                 ? { status: 'loading', json: '', error: '' }
                 : undefined}
             canLoadShadow={canLoadShadow}

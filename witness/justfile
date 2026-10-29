@@ -13,7 +13,7 @@ stack_name := ""
 @test:
     cd "{{witness_dir}}" && go test -tags lambda.norpc ./...
 
-deploy stack_name=stack_name:
+deploy stack_name=stack_name agent_image_name="":
     #!/bin/sh
     set -eu
     cd "{{witness_dir}}"
@@ -22,8 +22,11 @@ deploy stack_name=stack_name:
     txing_aws_init
     artifact_bucket="$(ensure_artifact_bucket)"
     ensure_lambda_seed_artifact txing-witness-lambda "$artifact_bucket"
-    deploy_template "$(lambda_stack_name witness)" "{{witness_dir}}/template.yaml" \
-      "EnvironmentStackName=$TXING_AWS_STACK"
+    set -- "EnvironmentStackName=$TXING_AWS_STACK"
+    if [ -n "{{agent_image_name}}" ]; then
+        set -- "$@" "AgentImageName={{agent_image_name}}"
+    fi
+    deploy_template "$(lambda_stack_name witness)" "{{witness_dir}}/template.yaml" "$@"
 
 @default:
     @just --list

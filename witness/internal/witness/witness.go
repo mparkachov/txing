@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/iot"
 	"github.com/aws/aws-sdk-go-v2/service/iotdataplane"
+	"github.com/aws/aws-sdk-go-v2/service/lambdamicrovms"
 )
 
 const (
@@ -59,8 +60,9 @@ type AWS interface {
 }
 
 type AWSClient struct {
-	iot     *iot.Client
-	iotData *iotdataplane.Client
+	iot      *iot.Client
+	iotData  *iotdataplane.Client
+	microvms *lambdamicrovms.Client
 }
 
 func NewAWSClient(ctx context.Context) (*AWSClient, error) {
@@ -81,7 +83,9 @@ func NewAWSClient(ctx context.Context) (*AWSClient, error) {
 	iotData := iotdataplane.NewFromConfig(cfg, func(options *iotdataplane.Options) {
 		options.BaseEndpoint = aws.String("https://" + strings.TrimSpace(*endpoint.EndpointAddress))
 	})
-	return &AWSClient{iot: iotClient, iotData: iotData}, nil
+	client := &AWSClient{iot: iotClient, iotData: iotData}
+	client.ConfigureAgentWatch(cfg)
+	return client, nil
 }
 
 func (c *AWSClient) DescribeThing(ctx context.Context, thingName string) (ThingDescription, error) {

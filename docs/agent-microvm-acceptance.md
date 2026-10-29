@@ -773,10 +773,9 @@ nerdctl.lima build --platform linux/arm64 --progress=plain \
 This selects ARM64, shows full output and stores the image in the local Lima
 containerd image store. The Dockerfile compiles the Linux application, runs CTest and verifies ARM64
 and final library resolution. This build needs public network access to ECR,
-AL2023 repositories and GitHub; it needs no AWS credentials. Keep Docker's build
-cache for subsequent iterations. Docker Desktop is an optional alternative:
-use `docker buildx build --platform linux/arm64 --progress=plain --load` with
-the same tag and context. It is not required when Lima already works.
+AL2023 repositories and GitHub; it needs no AWS credentials. Keep the Lima
+BuildKit cache for subsequent iterations and use `nerdctl.lima` for local
+builds, image inspection and container checks.
 
 Local container success does not exercise AWS snapshot/restore hooks, execution
 roles, managed ingress or real cloud KVS connectivity. Those remain the live

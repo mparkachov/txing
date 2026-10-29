@@ -146,7 +146,7 @@ class TypeCatalogTests(unittest.TestCase):
             ["sparkplug", "ble", "power", "board", "mavlink", "video"],
         )
         self.assertEqual(unit_record["capabilities"], ["sparkplug", "ble", "power", "board", "mcp", "video"])
-        self.assertEqual(tbot_record["capabilities"], ["sparkplug", "thread", "power", "board", "mavlink", "video"])
+        self.assertEqual(tbot_record["capabilities"], ["sparkplug", "thread", "power", "board", "mavlink", "video", "agent"])
         self.assertEqual(
             tbot_record["redconRules"],
             {
@@ -262,7 +262,7 @@ class TypeCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/tbot/capabilities"],
-            "sparkplug,thread,power,board,mavlink,video",
+            "sparkplug,thread,power,board,mavlink,video,agent",
         )
         self.assertEqual(
             ssm.parameters["/txing/town/raspi/cyberbrick/capabilities"],

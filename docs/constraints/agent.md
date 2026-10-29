@@ -27,6 +27,9 @@ arm-triggered QGroundControl designs; they are not a claim of implementation.
 - All new agent runtime and controller production code is C++. Link the pinned
   AWS KVS WebRTC C SDK directly into one agent process; use AWS SDK for C++
   credential/API facilities and libwebsockets for HTTP/WebSocket support.
+- The 2026-10-29 operator amendment permits a stop-only shutdown watch in the
+  existing Go witness Lambda. It reads agent assignments, never writes the agent
+  shadow or launches agents, and follows the [watch contract](agent-watch.md).
 - Use the same application source on macOS and Linux ARM64. Remove the Go
   supervisor, native viewer executable, credential pipes, and custom worker IPC.
   Build/release tooling is CMake, Just, and minimal POSIX shell; no new agent
@@ -65,6 +68,13 @@ arm-triggered QGroundControl designs; they are not a claim of implementation.
 
 ## Cloud and cost
 
+- Device types opt in through the normal `agent` capability declaration and
+  its named shadow. TBot currently declares it; other device types do not.
+  Cloud authorization requires that registry capability and the rig-projected
+  `capability.agent=true` at born REDCON 1/2. Explicit false or capability removal
+  stops the run; missing/invalid evidence fails closed. Agent cloud readiness
+  never gates the physical REDCON that enables it.
+
 - Use Lambda MicroVMs in `eu-central-1`. Initialize identities, credentials,
   and device sessions after snapshot restoration. Never snapshot live sessions.
 - Disable automatic idle suspension/resumption. A human attachment is not a
@@ -75,6 +85,11 @@ arm-triggered QGroundControl designs; they are not a claim of implementation.
 - Persist a fifty-minute (3000-second) budget per device activation across replacements.
   Expiry releases control and stops cloud operation until a subsequent
   inactive-to-active transition; no automatic rollover.
+- The 2026-10-28 operator decision accepts fail-closed recovery if the
+  controller misses an inactive interval: keep the expired activation until
+  the controller directly observes a later verified inactive-to-active
+  transition. An incomplete or unreadable projection is not an inactive
+  observation. Keep the witness projection unchanged.
 - New disposable requests also cap hosting at 3000 seconds. This is an upper
   bound, not an uninterrupted-session guarantee: the board's existing
   fifty-five-minute credential renewal can interrupt an older board session
@@ -86,6 +101,10 @@ arm-triggered QGroundControl designs; they are not a claim of implementation.
 - No idle MicroVM compute, dedicated VPC/NAT, ECR, ECS, or always-on agent
   networking. Retained artifacts/logs/snapshots and usage-based API/event costs
   are allowed. Do not promise zero total AWS charges.
+- Prompt normal shutdown has an independent witness repair path with a
+  two-minute grace and one-minute schedule. This operator-approved delayed
+  convergence depends on AWS service availability; live evidence must show
+  actual terminal VM state after a controller failure.
 
 ## Acceptance and publication
 

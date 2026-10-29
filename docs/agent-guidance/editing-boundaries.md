@@ -35,6 +35,11 @@ tooling, shell, infrastructure, or future-work implementation.
 - Justfiles export `TMPDIR` to the repository-local `./tmp` directory. Other
   repository scripts create and use `./tmp`; do not use host temporary
   directories as their default scratch location.
+- Local container builds on this workstation use `nerdctl.lima` with the
+  existing Lima/containerd/BuildKit engine. Check `nerdctl.lima info` and use
+  `nerdctl.lima build`, `pull`, `image inspect`, and `run`. Keep build contexts
+  and exported artifacts under repository `tmp/`. Do not require Docker or
+  buildx for these local commands. CI follows its declared runner tooling.
 
 ## AWS, host, and generated-material safety
 

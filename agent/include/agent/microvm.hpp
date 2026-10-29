@@ -7,6 +7,8 @@
 namespace txing::agent {
 struct MicrovmRun {
     std::string id, thing, region;
+    std::string run_id, activation_id;
+    std::int64_t deadline = 0;
 };
 struct HookReply { unsigned status; std::string body; };
 struct WireMessage { Bytes bytes; bool binary; };
@@ -30,11 +32,12 @@ private:
 class MicrovmApplication final : public Operator {
 public:
     using Runner = std::function<void(const MicrovmRun&, MicrovmApplication&)>;
-    explicit MicrovmApplication(Runner, std::function<void()> prepare = {});
+    explicit MicrovmApplication(Runner, std::function<void()> prepare = {}, bool require_assignment = false);
     ~MicrovmApplication();
     HookReply hook(const std::string& path, const std::string& body);
     std::string status() const;
     bool attach();
+    bool attached() const;
     void detach();
     void message(Bytes, bool binary);
     std::optional<WireMessage> outgoing();
@@ -42,6 +45,7 @@ public:
     bool stopping() const { return stopping_; }
     void stop();
     void actions(Actions*);
+    void authorized(bool, Time verified_at = Time{});
     void credential_status(std::string);
     void stopped(std::string);
     void telemetry(const Bytes&) override;
@@ -49,6 +53,7 @@ public:
     void connection(Stream, Connection, const std::string&) override;
     void control(bool, const std::string&) override;
 private:
+    bool assignment_fresh(Time now) const;
     void publish(std::string);
     void publish(WireMessage);
     Runner runner_;
@@ -59,13 +64,16 @@ private:
     MicrovmRun run_;
     Time started_{};
     std::string phase_ = "waiting-for-run", reason_, credentials_ = "{}";
-    std::string codec_;
+    std::string codec_, control_state_ = "observing", control_error_;
     std::uint64_t telemetry_ = 0, video_ = 0, presentation_ = 0, receipt_ = 0;
     std::size_t frame_bytes_ = 0;
     std::array<Connection, 2> connections_{Connection::stopped, Connection::stopped};
     std::array<std::string, 2> errors_;
     Actions* actions_ = nullptr;
-    bool attached_ = false, held_ = false, prepared_ = false;
+    bool attached_ = false, held_ = false, prepared_ = false, control_attempted_ = false;
+    const bool require_assignment_;
+    bool authorized_ = false;
+    Time assignment_verified_at_{};
     std::function<void()> wake_;
     Queue<WireMessage> outgoing_{128, 512 * 1024};
 };

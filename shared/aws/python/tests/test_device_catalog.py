@@ -65,7 +65,7 @@ class DeviceCatalogTests(unittest.TestCase):
         self.assertEqual(manifest.display_name, "TBot")
         self.assertEqual(
             manifest.capabilities,
-            ("sparkplug", "thread", "power", "board", "mavlink", "video"),
+            ("sparkplug", "thread", "power", "board", "mavlink", "video", "agent"),
         )
         self.assertEqual(manifest.compatible_rig_types, ("raspi",))
         self.assertEqual(manifest.redcon_command_levels, (4, 3, 2, 1))
@@ -82,7 +82,7 @@ class DeviceCatalogTests(unittest.TestCase):
             [contract.name for contract in manifest.shadows.values()],
             ["sparkplug", "thread", "power", "board", "mavlink", "video", "agent"],
         )
-        self.assertNotIn("agent", manifest.capabilities)
+        self.assertIn("agent", manifest.capabilities)
         agent_default = json.loads(manifest.load_default_shadow_bytes("agent"))
         self.assertEqual(agent_default["state"]["reported"]["lifecycle"], {"state": "stopped"})
         self.assertIsNone(agent_default["state"]["reported"]["run"])
@@ -278,7 +278,7 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             capabilities["tbot"],
-            ("sparkplug", "thread", "power", "board", "mavlink", "video"),
+            ("sparkplug", "thread", "power", "board", "mavlink", "video", "agent"),
         )
         self.assertEqual(
             capabilities["cyberbrick"],
@@ -299,7 +299,7 @@ class DeviceCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             capabilities_for_thing_type("tbot", repo_root=REPO_ROOT),
-            ("sparkplug", "thread", "power", "board", "mavlink", "video"),
+            ("sparkplug", "thread", "power", "board", "mavlink", "video", "agent"),
         )
         self.assertEqual(
             capabilities_for_thing_type("cyberbrick", repo_root=REPO_ROOT),

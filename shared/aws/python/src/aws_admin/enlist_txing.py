@@ -515,7 +515,7 @@ class EnlistService:
         initialized: list[str] = []
         capabilities = _capabilities(record, context=self._record_context(record))
         shadow_records = self._shadow_records(record)
-        for shadow_name in dict.fromkeys((*capabilities, *shadow_records)):
+        for shadow_name in capabilities:
             if shadow_name == "sparkplug":
                 payload: dict[str, Any] | str = build_offline_device_shadow_payload(
                     group_id=town_id,
@@ -886,10 +886,9 @@ class EnlistService:
                 thing_name=thing_name,
             )
         )
-        shadow_names = capabilities + (("agent",) if thing_type_name == "tbot" else ())
         deleted_shadows = tuple(
             shadow_name
-            for shadow_name in shadow_names
+            for shadow_name in capabilities
             if self._delete_shadow(thing_name, shadow_name)
         )
         detached_principals = self._detach_thing_principals(thing_name)

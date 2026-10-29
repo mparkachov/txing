@@ -20,6 +20,7 @@ const (
 	MCPCapability       = "mcp"
 	MAVLinkCapability   = "mavlink"
 	VideoCapability     = "video"
+	AgentCapability     = "agent"
 
 	NodeRedconBorn = uint8(1)
 	NodeRedconDead = uint8(4)
@@ -181,6 +182,11 @@ func (s *DeviceRuntimeState) Snapshot(nowMS uint64) DeviceSnapshot {
 
 	applyCapabilityDependencyGates(capabilities, redcon4Observed)
 	redcon := SelectBestRedconWithMetrics(s.inventory.RedconRules, s.inventory.RedconMetricRules, s.inventory.RedconCommandLevels, capabilities, redconMetrics)
+	// Cloud agent availability follows device authority, rather than waiting
+	// for a cloud run to start. It must not gate the REDCON that starts it.
+	if _, declared := capabilities[AgentCapability]; declared {
+		capabilities[AgentCapability] = capabilities[SparkplugCapability] && redcon != nil && *redcon <= 2
+	}
 	sparkplugAvailable := capabilities["sparkplug"]
 	return DeviceSnapshot{
 		ThingName:          s.inventory.ThingName,

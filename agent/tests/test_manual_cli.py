@@ -20,6 +20,7 @@ class ManualCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         for text in ("[udp-port]", "[--control]", "127.0.0.1:14551", "127.0.0.1:14550", "observation by default"):
             self.assertIn(text, result.stdout)
+        self.assertIn("--attach <thing-id>", result.stdout)
 
     def test_invalid_ports_fail_before_ca_credentials_or_network(self):
         for value in ("0", "65536", "-1", "abc", "1.5", "99999999999999999999"):
@@ -49,6 +50,10 @@ class ManualCliTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn(f"bind 127.0.0.1:{port}", result.stderr)
                 self.assertIn("choose another [udp-port]", result.stderr)
+                attached = self.invoke("--attach", "fixture", str(port), "--control", "--ca",
+                                       str(ROOT / "agent/probe/hooks.json"), env=env)
+                self.assertEqual(attached.returncode, 2)
+                self.assertIn(f"bind 127.0.0.1:{port}", attached.stderr)
 
     def test_endpoint_cannot_be_the_listener(self):
         result = self.invoke("fixture", "16051", "--qgc-port", "16051", "--ca",

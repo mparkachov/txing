@@ -1,7 +1,7 @@
 type = "tbot"
 device_name = "tbot"
 display_name = "TBot"
-capabilities = ["sparkplug", "thread", "power", "board", "mavlink", "video"]
+capabilities = ["sparkplug", "thread", "power", "board", "mavlink", "video", "agent"]
 compatible_rig_types = ["raspi"]
 redcon_command_levels = [4, 3, 2, 1]
 

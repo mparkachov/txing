@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/tbot-agent-shadow-v2.schema.json",
   "title": "TBot cloud agent named shadow v2",
-  "description": "Controller-owned cloud diagnostics, optional and outside REDCON. See docs/contracts/agent-shadow.md for freshness, authorization, and run fencing.",
+  "description": "Controller-owned diagnostics for the declared agent capability. See docs/contracts/agent-shadow.md for freshness, authorization, and run fencing.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,6 +23,24 @@
             "lifecycle"
           ],
           "properties": {
+            "controller": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["projectionVersion", "sourceTimestampMs", "inactiveObservedAt", "observed", "active"],
+              "properties": {
+                "projectionVersion": {"type": "integer", "minimum": 0},
+                "sourceTimestampMs": {"type": "integer", "minimum": 0},
+                "inactiveObservedAt": {"type": "integer", "minimum": 0},
+                "unverifiedSince": {"type": "integer", "minimum": 0},
+                "stopRequestedAt": {"type": "integer", "minimum": 0},
+                "observed": {"type": "boolean"},
+                "active": {"type": "boolean"},
+                "runActivationId": {"type": "string", "minLength": 1},
+                "runPhase": {"enum": ["reserved", "running", "stopping"]},
+                "launchRequest": {"type": "string", "minLength": 1, "maxLength": 2048}
+              },
+              "description": "Controller reconciliation state; launch request contains no credentials or authentication tokens."
+            },
             "run": {
               "type": [
                 "object",

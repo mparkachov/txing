@@ -370,7 +370,7 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertEqual(result["attributes"]["webAdapter"], "web/tbot-adapter.tsx")
         self.assertEqual(
             result["attributes"]["capabilities"],
-            "sparkplug,thread,power,board,mavlink,video",
+            "sparkplug,thread,power,board,mavlink,video,agent",
         )
         self.assertEqual(result["attributes"]["redconCommandLevels"], "4,3,2,1")
         self.assertEqual(
@@ -556,7 +556,7 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertNotIn(thing_name, self.runtime.iot.things)
         self.assertEqual(result["auxiliaryResources"], {})
 
-    def test_discharge_tbot_deletes_optional_agent_shadow(self) -> None:
+    def test_discharge_tbot_deletes_declared_agent_capability_shadow(self) -> None:
         town = self._enlist_town()
         raspi = self._enlist_rig(town["thingName"], "raspi", "server")
         device = self._enlist_device(raspi["thingName"], "tbot", "tbot")

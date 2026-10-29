@@ -119,6 +119,30 @@ class AgentShadowContractTests(unittest.TestCase):
         payload["state"]["desired"] = {"control": "held"}
         self.assertInvalid(payload)
 
+    def test_controller_bookkeeping_has_bounded_launch_request(self):
+        payload = load("default-agent-shadow.json")
+        payload["state"]["reported"]["controller"] = {
+            "projectionVersion": 2, "sourceTimestampMs": 1000,
+            "inactiveObservedAt": 10, "observed": True, "active": False,
+        }
+        self.assertValid(payload)
+        controller = payload["state"]["reported"]["controller"]
+        controller["unverifiedSince"] = 12
+        self.assertValid(payload)
+        controller["unverifiedSince"] = -1
+        self.assertInvalid(payload)
+        controller.pop("unverifiedSince")
+        controller["stopRequestedAt"] = 12
+        self.assertValid(payload)
+        controller["stopRequestedAt"] = -1
+        self.assertInvalid(payload)
+        controller.pop("stopRequestedAt")
+        controller["launchRequest"] = "x" * 2049
+        self.assertInvalid(payload)
+        controller.pop("launchRequest")
+        controller["secret"] = "not allowed"
+        self.assertInvalid(payload)
+
     def test_iot_response_envelope_is_accepted(self):
         payload = load("fixtures/agent-shadow.json")
         payload["metadata"] = {"reported": {"endpoint": {"timestamp": 1792281660}}}

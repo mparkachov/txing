@@ -1,5 +1,13 @@
 # Agent
 
+Device types opt in through the `agent` capability and its corresponding named
+shadow. TBot currently declares it. Registry membership and the rig-projected
+`capability.agent` availability authorize execution; the controller owns the
+shadow's actual cloud run status. Devices without the capability cannot launch
+or attach an agent. Missing availability fails closed until the updated rig
+publishes verified lifecycle evidence. See the
+[capability rollout](../docs/constraints/agent-rollout.md#agent-capability-rollout).
+
 The C++ foreground observer is implemented for
 [#164](https://github.com/mparkachov/txing/issues/164). Native macOS build,
 automated checks and active TBot observation passed, including independent
@@ -8,7 +16,10 @@ QGroundControl UDP operator is implemented for
 [#166](https://github.com/mparkachov/txing/issues/166); its loopback, lease and
 real SDK integration checks are recorded in the
 [manual acceptance report](../docs/agent-manual-acceptance.md).
-Physical TBot acceptance, cloud automation and publication remain later issues.
+Physical TBot acceptance is recorded in
+[#167](https://github.com/mparkachov/txing/issues/167), including its unresolved
+intermittent transport-timeout limitation. Cloud automation and publication
+are separate issues.
 
 The disposable MicroVM feasibility experiment was accepted under
 [#165](https://github.com/mparkachov/txing/issues/165). `just agent::probe-package`
@@ -17,7 +28,8 @@ describes resource creation, role/ingress checks, sustained observation and clea
 Live MicroVM feasibility is accepted within the
 [current-stage fifty-minute limit](../docs/constraints/agent-session-limit.md).
 The board's credential renewal can interrupt sessions earlier; the runbook
-records that limitation. Controller and lifecycle automation remain later work.
+records that limitation. The #168 controller, cloud host and attachment are in
+development; deployment and live acceptance are not implied by source changes.
 
 Read the [design](../docs/components/agent.md),
 [constraints](../docs/constraints/agent.md), and
@@ -49,7 +61,50 @@ just agent::run <registered-tbot-thing-id> --region eu-central-1
 The foreground run observes and logs; Ctrl-C or SIGTERM releases authority and
 closes both sessions. The agent binds `127.0.0.1:14551` and sends telemetry to
 QGroundControl at `127.0.0.1:14550` immediately, even before QGC sends anything.
-`attach`, `deploy` and `publish` remain pending their respective cloud issues.
+`publish` remains the separate immutable-release workflow in #169.
+
+## Cloud attachment
+
+Once the replacement infrastructure and an accepted image are deployed and
+enabled by the operator, use the same QGroundControl link configuration as a
+local run:
+
+```sh
+just agent::attach <registered-tbot-thing-id>
+just agent::attach <registered-tbot-thing-id> 14551 --control
+```
+
+Attachment discovers and verifies the current assignment, obtains a token for
+port 8081, and forwards to the existing agent rather than opening another
+device session. Observation is the default. `--control` makes one free-lease
+attempt after QGroundControl presence and telemetry readiness. Only one manual
+attachment is accepted. Inactivity, connection loss, assignment loss, token
+cutoff or process exit releases manual control without reacquisition. The
+client requests a five-minute token and closes at four minutes; start another
+explicit attachment to continue. While connected, it periodically checks the
+token with an authenticated status request and closes if that check fails. It
+does not reconnect and acquire control on its own. The cloud agent observes
+telemetry/video before any attachment.
+
+If the controller has missed an inactive interval, or first encounters an
+already-active device without a stored activation, it fails closed until it
+directly observes a later inactive-to-active transition. Its remaining
+50-minute budget is conservatively measured from the last verified inactive
+observation. See the [agent shadow contract](../docs/contracts/agent-shadow.md).
+Do not delete or reset the controller-owned shadow to manufacture a new budget.
+
+## Preparing cloud artifacts
+
+`just agent::cloud-package` prepares the source-only production MicroVM image
+context, including the mandatory assignment-verification startup flag. The
+operator runs `just agent::controller-package` with `nerdctl.lima` and its
+existing Lima BuildKit engine to build an
+ARM64 `provided.al2023` controller ZIP locally. Both recipes write under `tmp/`;
+neither calls AWS. The [manual replacement runbook](../docs/constraints/agent-rollout.md)
+describes artifact upload, initial disabled deployment, prerequisites,
+enablement and draining. The production image and controller ZIP must be built
+and checked from the same reviewed source. Do not use the earlier disposable
+probe image as the production image.
 
 ## Local QGroundControl
 

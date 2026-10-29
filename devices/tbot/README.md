@@ -110,8 +110,10 @@ an operator must manually delete the legacy named `mcp` shadow. Do not remove
 it before the MAVLink runtime cutover is verified, and no deploy or enlistment
 operation deletes it automatically.
 
-The planned [C++ agent](../../agent/README.md) uses an optional `agent` named
-shadow outside the REDCON capability list. Its
+TBot declares the `agent` capability alongside MAVLink and video. Its
+[C++ agent](../../agent/README.md) owns the corresponding `agent` named shadow.
+The rig publishes agent availability for a born device at REDCON 1/2; cloud
+execution status does not gate physical device readiness. The
 [replacement contract](../../docs/contracts/agent-shadow.md) records cloud run
 identity, release, activation deadline, HTTPS attachment, and sampled runtime
 diagnostics; the controller alone writes operational status. The old Go/Fargate
@@ -122,7 +124,7 @@ After deploying the updated shared AWS catalog/enlistment code, re-enlist an
 existing TBot with the `aws::deploy-device` command above to create a missing
 `agent` shadow. Re-enlistment preserves an existing shadow, including the old
 format; follow the [manual replacement runbook](../../docs/constraints/agent-rollout.md)
-to retire old writers and reset only this optional shadow. Office Debug reads
+to retire old writers and reset only this capability shadow. Office Debug reads
 the JSON without interpreting the old task/UDP shape. Its absence or errors do
 not block normal device use. Office publication remains Git-driven.
 

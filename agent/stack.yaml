@@ -1,0 +1,247 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: C++ cloud agent controller and managed MicroVM support; disabled until operator acceptance
+Parameters:
+  ControllerBucket:
+    Type: String
+    MinLength: 3
+    Description: Existing bucket containing the operator-built ARM64 controller ZIP
+  ControllerKey:
+    Type: String
+    MinLength: 1
+    Description: Immutable S3 key for the controller ZIP
+  LifecycleRuleName:
+    Type: String
+    Default: txing_agent_lifecycle
+    AllowedPattern: '[A-Za-z0-9_]+'
+  AutomationEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+  PrerequisitesConfirmed:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+  ImageName:
+    Type: String
+    Default: disabled
+    AllowedPattern: '[A-Za-z0-9_-]+'
+  ImageVersion:
+    Type: String
+    Default: ''
+  Release:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+Rules:
+  FrankfurtOnly:
+    Assertions:
+      - Assert: !Equals [!Ref AWS::Region, eu-central-1]
+        AssertDescription: The approved cloud agent runs in eu-central-1.
+  EnableRequiresAcceptedArtifacts:
+    RuleCondition: !Equals [!Ref AutomationEnabled, 'true']
+    Assertions:
+      - Assert: !Equals [!Ref PrerequisitesConfirmed, 'true']
+        AssertDescription: Complete the documented native, probe, physical, drain and artifact prerequisites first.
+      - Assert: !Not [!Equals [!Ref ImageName, disabled]]
+        AssertDescription: A dedicated MicroVM image name is required.
+      - Assert: !Not [!Equals [!Ref ImageVersion, '']]
+        AssertDescription: An immutable MicroVM image version is required.
+      - Assert: !Not [!Equals [!Ref Release, '']]
+        AssertDescription: An immutable agent release is required.
+Conditions:
+  Enabled: !Equals [!Ref AutomationEnabled, 'true']
+  ImageConfigured: !Not [!Equals [!Ref ImageName, disabled]]
+Resources:
+  Artifacts:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VersioningConfiguration: {Status: Enabled}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+  MicrovmLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda-microvms/${AWS::StackName}'
+      RetentionInDays: 14
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: BuildArtifactsAndLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${Artifacts.Arn}/*'
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt MicrovmLogs.Arn
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: ObserveAndVerifyAssignments
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: iot:DescribeThing
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*'
+              - Effect: Allow
+                Action: iot:GetThingShadow
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*'
+              - Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: '*'
+              - Effect: Allow
+                Action: [kinesisvideo:DescribeSignalingChannel, kinesisvideo:GetSignalingChannelEndpoint,
+                         kinesisvideo:GetIceServerConfig, kinesisvideo:ConnectAsViewer]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/*-mavlink/*'
+                  - !Sub 'arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/*-board-video/*'
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt MicrovmLogs.Arn
+  ControllerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: ReconcileAgents
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [iot:ListThings, iot:DescribeEndpoint]
+                Resource: '*'
+              - Effect: Allow
+                Action: iot:DescribeThing
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*'
+              - Effect: Allow
+                Action: iot:GetThingShadow
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*'
+              - Effect: Allow
+                Action: iot:UpdateThingShadow
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*'
+              - Effect: Allow
+                Action: [lambda:RunMicrovm, lambda:GetMicrovm, lambda:TerminateMicrovm, lambda:CreateMicrovmAuthToken]
+                Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${ImageName}'
+              - Effect: Allow
+                Action: lambda:ListMicrovms
+                Resource: '*'
+              - Effect: Allow
+                Action: lambda:PassNetworkConnector
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:ALL_INGRESS'
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:INTERNET_EGRESS'
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt ExecutionRole.Arn
+                Condition:
+                  StringEquals: {iam:PassedToService: lambda.amazonaws.com}
+  Controller:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      Handler: bootstrap
+      Role: !GetAtt ControllerRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      ReservedConcurrentExecutions: 1
+      Code: {S3Bucket: !Ref ControllerBucket, S3Key: !Ref ControllerKey}
+      Environment:
+        Variables:
+          TXING_AGENT_AUTOMATION: !If [Enabled, enabled, disabled]
+          TXING_AGENT_IMAGE: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${ImageName}'
+          TXING_AGENT_IMAGE_VERSION: !Ref ImageVersion
+          TXING_AGENT_RELEASE: !Ref Release
+          TXING_AGENT_EXECUTION_ROLE: !GetAtt ExecutionRole.Arn
+          TXING_AGENT_LOG_GROUP: !Ref MicrovmLogs
+  LifecycleRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: !Ref LifecycleRuleName
+      TopicRulePayload:
+        AwsIotSqlVersion: '2016-03-23'
+        RuleDisabled: !If [Enabled, false, true]
+        Sql: "SELECT topic(3) AS thingName FROM '$aws/things/+/shadow/name/sparkplug/update/documents'"
+        Actions:
+          - Lambda: {FunctionArn: !GetAtt Controller.Arn}
+  LifecyclePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Controller
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt LifecycleRule.Arn
+  RepairRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: rate(1 minute)
+      State: !If [ImageConfigured, ENABLED, DISABLED]
+      Targets:
+        - Arn: !GetAtt Controller.Arn
+          Id: agent-controller
+  RepairPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Controller
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RepairRule.Arn
+  AttachmentPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Read current agent assignment and create a MicroVM attachment token
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: iot:DescribeEndpoint
+            Resource: '*'
+          - Effect: Allow
+            Action: iot:DescribeThing
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*'
+          - Effect: Allow
+            Action: iot:GetThingShadow
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/*'
+          - Effect: Allow
+            Action: [lambda:GetMicrovm, lambda:CreateMicrovmAuthToken]
+            Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${ImageName}'
+Outputs:
+  ArtifactBucket: {Value: !Ref Artifacts}
+  BuildRoleArn: {Value: !GetAtt BuildRole.Arn}
+  ExecutionRoleArn: {Value: !GetAtt ExecutionRole.Arn}
+  ControllerArn: {Value: !GetAtt Controller.Arn}
+  AttachmentPolicyArn: {Value: !Ref AttachmentPolicy}
+  LogGroup: {Value: !Ref MicrovmLogs}

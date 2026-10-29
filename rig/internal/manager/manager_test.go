@@ -65,7 +65,7 @@ func tbotInventory() protocol.InventoryDevice {
 	return protocol.InventoryDevice{
 		ThingName:           "tbot-1",
 		ThingType:           "tbot",
-		Capabilities:        []string{"sparkplug", "thread", PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability},
+		Capabilities:        []string{"sparkplug", "thread", PowerCapability, BoardCapability, MAVLinkCapability, VideoCapability, AgentCapability},
 		RedconCommandLevels: []uint8{4, 3, 2, 1},
 		RedconRules: map[uint8][]string{
 			4: {"sparkplug", "thread"},
@@ -266,6 +266,9 @@ func TestCyberbrickMavlinkRedconMatrix(t *testing.T) {
 			if got := redconValue(t, state.Snapshot(1000).Redcon); got != testCase.wantRedcon {
 				t.Fatalf("REDCON = %d, want %d", got, testCase.wantRedcon)
 			}
+			if _, exists := state.Snapshot(1000).Capabilities[AgentCapability]; exists {
+				t.Fatal("device without agent capability gained availability")
+			}
 		})
 	}
 }
@@ -347,6 +350,12 @@ func TestTbotMavlinkRedconMatrix(t *testing.T) {
 
 			if got := redconValue(t, state.Snapshot(1000).Redcon); got != testCase.wantRedcon {
 				t.Fatalf("REDCON = %d, want %d", got, testCase.wantRedcon)
+			}
+			if got := state.Snapshot(1000).Capabilities[AgentCapability]; got != (testCase.wantRedcon <= 2) {
+				t.Fatalf("agent availability = %v at REDCON %d", got, testCase.wantRedcon)
+			}
+			if state.Snapshot(1000 + StateTTLMS + 1).Capabilities[AgentCapability] {
+				t.Fatal("stale device authority retained agent availability")
 			}
 		})
 	}

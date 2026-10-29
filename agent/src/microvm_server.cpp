@@ -90,6 +90,7 @@ struct Server {
                 }
                 return 0;
             case LWS_CALLBACK_SERVER_WRITEABLE: {
+                if (!server.app.attached()) return -1;
                 auto message = server.app.outgoing();
                 if (!message) return 0;
                 std::vector<unsigned char> buffer(LWS_PRE + message->bytes.size());

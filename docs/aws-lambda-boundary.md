@@ -50,12 +50,18 @@ to the shared `lambda` release stream.
 This is approved replacement guidance, not completed implementation. The old
 `txing-tbot-companion-lambda` Go controller and Fargate paths have been removed
 from the repository; deployed-resource retirement remains a manual operator
-action. The replacement C++ runtime/controller is still planned. See
+action. The replacement C++ controller and runtime integration are in progress
+under #168; prepared source does not establish deployment or live acceptance. See
 [Agent](components/agent.md) and [Agent constraints](constraints/agent.md).
 
 Firmware uses the stock Zephyr C stack; standalone rig daemons and the existing
 shared runtime Lambdas remain Go. Existing admin Python functions are unchanged.
-No new agent Go or Python production/publication code is introduced.
+Agent runtime, controller and publication code remain subject to the C++
+implementation boundary.
+The 2026-10-29 operator amendment adds one narrow exception: the independent
+stop-only [agent watch](constraints/agent-watch.md) runs in the existing Go
+witness function. It does not implement agent startup, assignment, shadow
+publication, device sessions, or the C++ controller's ordinary workflow.
 
 Within this repository, deploy actions are CloudFormation-backed AWS stack
 updates. Publish actions promote already-built release artifacts to existing

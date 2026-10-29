@@ -124,6 +124,45 @@ class MicrovmHostTests(unittest.TestCase):
         self.assertEqual(self.request(self.hooks, "/aws/lambda-microvms/runtime/v1/terminate", "")[0], 200)
         self.assertEqual(self.run_hook()[0], 409)
 
+    def test_cloud_hook_rejects_expired_and_oversized_deadlines_over_http(self):
+        hooks, ingress = port(), port()
+        while hooks == ingress or hooks in (self.hooks, self.ingress) or ingress in (self.hooks, self.ingress):
+            hooks, ingress = port(), port()
+        environment = dict(os.environ)
+        environment.update({"AWS_EC2_METADATA_DISABLED": "true",
+                            "AWS_CONFIG_FILE": str(ROOT / "tmp/agent-test/no-config"),
+                            "AWS_SHARED_CREDENTIALS_FILE": str(ROOT / "tmp/agent-test/no-credentials")})
+        process = subprocess.Popen([str(ROOT / "tmp/agent-build/agent-host-tests"), "--serve-cloud", str(hooks), str(ingress)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=environment)
+        try:
+            limit = time.monotonic() + 5
+            while True:
+                try:
+                    self.request(ingress, "/status")
+                    break
+                except (OSError, http.client.HTTPException):
+                    if process.poll() is not None or time.monotonic() >= limit:
+                        self.fail("cloud host fixture did not start")
+                    time.sleep(0.02)
+            def request_run(deadline):
+                payload = json.dumps({"microvmId": "mvm-fixture", "runHookPayload": json.dumps({
+                    "thingId": "tbot-fixture", "region": "eu-central-1", "runId": "run-1",
+                    "activationId": "activation-1", "deadline": str(deadline)})})
+                return self.request(hooks, "/aws/lambda-microvms/runtime/v1/run", payload)
+            self.assertEqual(request_run(1)[0], 409)
+            self.assertEqual(request_run(int(time.time()) + 6000)[0], 400)
+            self.assertEqual(self.request(ingress, "/status")[1]["phase"], "waiting-for-run")
+            self.assertEqual(request_run(int(time.time()) + 60)[0], 200)
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                process.stderr.close()
+
     def test_websocket_binary_text_fragments_and_exclusivity(self):
         self.run_hook()
         stream = WebSocket(self.ingress)

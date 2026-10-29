@@ -2,6 +2,7 @@
 #include "agent/kvs.hpp"
 #include "agent/manual.hpp"
 #include "agent/microvm.hpp"
+#include "agent/attach.hpp"
 #include <aws/core/Aws.h>
 #include <aws/core/auth/AWSCredentialsProviderChain.h>
 #include <aws/core/client/DefaultRetryStrategy.h>
@@ -17,6 +18,8 @@ void interrupt(int) { interrupted = 1; }
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--microvm")
         return txing::agent::microvm_main(argc - 1, argv + 1);
+    if (argc > 1 && std::string(argv[1]) == "--attach")
+        return txing::agent::attach_main(argc - 1, argv + 1);
     std::string thing, region, ca;
     txing::agent::ManualOptions manual;
     bool has_port = false;
@@ -29,6 +32,7 @@ int main(int argc, char** argv) {
                              "UDP listener 127.0.0.1:14551; QGroundControl endpoint 127.0.0.1:14550.\n"
                              "Foreground observation by default; --control attempts a free lease once.\n"
                              "Ctrl-C releases and closes both sessions.\n"
+                             "txing-agent --attach <thing-id> [udp-port] [--control] [--qgc-port <port>] [--ca <verified-pem>]\n"
                              "txing-agent --microvm --ca <verified-pem> [--hook-port 8080] [--attachment-port 8081]\n";
                 return 0;
             }
@@ -64,11 +68,16 @@ int main(int argc, char** argv) {
         config.retryStrategy = Aws::MakeShared<Aws::Client::DefaultRetryStrategy>("txing-agent", 0);
         txing::agent::AwsDevice device(credentials, config);
         const auto registered_type = device.registered_type(thing);
+        if (!device.has_capability(thing, "agent"))
+            throw std::runtime_error("Thing does not declare the agent capability");
         auto profile = txing::agent::profile(registered_type, thing, config.region.c_str(), ca);
         std::cerr << "observing Thing=" << thing << " registeredType=" << registered_type
                   << " region=" << config.region << '\n';
         txing::agent::KvsRuntime sdk;
-        txing::agent::LifecyclePoller lifecycle([&] { return device.lifecycle(thing); });
+        txing::agent::LifecyclePoller lifecycle([&] {
+            if (!device.has_capability(thing, "agent")) return txing::agent::Lifecycle{false, 4};
+            return device.lifecycle(thing);
+        });
         txing::agent::Session session(std::move(profile), [credentials] {
             return txing::agent::make_kvs_transport(credentials);
         }, *observer, std::chrono::steady_clock::now());

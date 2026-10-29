@@ -66,17 +66,40 @@ run thing_id *args: build
     ca_path=$(just --justfile "{{project_root}}/justfile" agent::trust)
     exec "{{project_root}}/tmp/agent-build/txing-agent" "$thing_id" --ca "$ca_path" "$@"
 
+# Attach QGroundControl to the verified current cloud run.
+[positional-arguments]
+attach thing_id *args: build
+    #!/bin/sh
+    set -eu
+    thing_id=$1
+    shift
+    ca_path=$(just --justfile "{{project_root}}/justfile" agent::trust)
+    exec "{{project_root}}/tmp/agent-build/txing-agent" --attach "$thing_id" --ca "$ca_path" "$@"
+
 test: build
     ctest --test-dir "{{project_root}}/tmp/agent-build" --output-on-failure
     mkdir -p "{{project_root}}/tmp"
     uv run --no-project --with 'jsonschema>=4.18,<5' python -m unittest discover -s "{{agent_dir}}/tests" -v
 
-# Prepare a source-only image context. AWS resource operations remain manual.
+# Prepare a source-only disposable probe image context.
 probe-package:
+    just --justfile "{{project_root}}/justfile" agent::_image-package probe
+
+# Prepare the production image context with mandatory assignment verification.
+cloud-package:
+    just --justfile "{{project_root}}/justfile" agent::_image-package cloud
+
+[private]
+[positional-arguments]
+_image-package kind:
     #!/bin/sh
     set -eu
     cd "{{project_root}}"
-    package_dir="$TMPDIR/agent-probe-package"
+    case "$1" in
+        probe|cloud) kind="$1" ;;
+        *) echo "Invalid image package kind" >&2; exit 1 ;;
+    esac
+    package_dir="$TMPDIR/agent-$kind-package"
     mkdir -p "$package_dir"
     just --justfile "{{project_root}}/justfile" agent::trust >/dev/null
     git ls-files --cached --others --exclude-standard -- \
@@ -85,7 +108,7 @@ probe-package:
         ':(glob)agent/cmake/*.cmake' ':(glob)agent/cmake/*.patch' \
         ':(glob)agent/tests/*.cpp' ':(glob)agent/tests/test_*.py' \
         agent/probe/CMakeLists.txt agent/probe/Dockerfile \
-        agent/probe/hooks.json agent/probe/stack.yaml \
+        agent/probe/hooks.json agent/probe/stack.yaml agent/cloud/Dockerfile agent/cloud/Controller.Dockerfile agent/stack.yaml \
         devices/common/kvs/sdk.commit ':(glob)devices/common/kvs/cmake/*.cmake' \
         devices/common/board/kvs_master/include/kvs_master/serialized_data_channel.hpp \
         ':(glob)devices/common/board/mavlink/include/**/*.h' \
@@ -101,7 +124,7 @@ probe-package:
         > "$package_dir/source-status.txt"
     # BSD tar otherwise emits AppleDouble metadata outside the source allowlist.
     COPYFILE_DISABLE=1 tar -cf "$package_dir/source.tar" -T "$package_dir/source-files.txt"
-    cp "{{agent_dir}}/probe/Dockerfile" "$package_dir/Dockerfile"
+    cp "{{agent_dir}}/$kind/Dockerfile" "$package_dir/Dockerfile"
     cp "$TMPDIR/agent-trust/aws-roots.pem" "$package_dir/aws-roots.pem"
     cd "$package_dir"
     build_id=$(cat build-id.txt)
@@ -109,6 +132,76 @@ probe-package:
         source-revision.txt source-status.txt source-files.txt source-sha256.txt
     shasum -a 256 "$build_id.zip"
     printf '%s\n' "$package_dir/$build_id.zip"
+
+# Build a provided.al2023 ARM64 controller ZIP locally; no AWS calls.
+controller-package: cloud-package
+    #!/bin/sh
+    set -eu
+    command -v nerdctl.lima >/dev/null 2>&1 || { echo "nerdctl.lima with the Lima BuildKit engine is required for the ARM64 controller package." >&2; exit 1; }
+    package_dir="$TMPDIR/agent-cloud-package"
+    output_dir=$(mktemp -d "$TMPDIR/agent-controller.XXXXXX")
+    cd "{{project_root}}"
+    if ! shasum -a 256 -c "$package_dir/source-sha256.txt" > "$output_dir/source-verified.txt"; then
+        echo "Source changed since the cloud package was prepared; rebuild it before packaging the controller." >&2
+        exit 1
+    fi
+    context_dir="$output_dir/context"
+    artifact_dir="$output_dir/artifact"
+    mkdir -p "$context_dir" "$artifact_dir"
+    cp "$package_dir/source.tar" "$package_dir/source-sha256.txt" \
+        "$package_dir/build-id.txt" "$package_dir/source-revision.txt" "$context_dir/"
+    cp "{{agent_dir}}/cloud/Controller.Dockerfile" "$context_dir/Dockerfile"
+    nerdctl.lima version > "$output_dir/container-engine.txt"
+    nerdctl.lima build --platform linux/arm64 --progress plain --target export \
+        --file "$context_dir/Dockerfile" \
+        --output "type=local,dest=$artifact_dir" "$context_dir"
+    cp "$output_dir/container-engine.txt" "$artifact_dir/provenance/container-engine.txt"
+    nerdctl.lima pull --platform linux/arm64 public.ecr.aws/lambda/provided:al2023 >/dev/null
+    runtime_image=$(nerdctl.lima image inspect public.ecr.aws/lambda/provided:al2023 | jq -er '.[0].RepoDigests[0]')
+    printf '%s\n' "$runtime_image" > "$artifact_dir/provenance/runtime-image.txt"
+    nerdctl.lima run --rm --network none --platform linux/arm64 --entrypoint /bin/sh \
+        -v "$artifact_dir:/var/task:ro" "$runtime_image" -c \
+        'LD_LIBRARY_PATH="/var/task/lib:${LD_LIBRARY_PATH:-}" /lib/ld-linux-aarch64.so.1 --list /var/task/bootstrap' \
+        > "$artifact_dir/provenance/runtime-links.txt"
+    if grep -q 'not found' "$artifact_dir/provenance/runtime-links.txt"; then
+        echo "Controller dependencies are missing from the provided.al2023 package." >&2
+        exit 1
+    fi
+    if nerdctl.lima run --rm --network none --platform linux/arm64 --entrypoint /var/task/bootstrap -e AWS_LAMBDA_RUNTIME_API= \
+        -v "$artifact_dir:/var/task:ro" "$runtime_image" \
+        > "$artifact_dir/provenance/bootstrap-smoke.txt" 2>&1; then
+        echo "Controller unexpectedly started without a Lambda runtime API." >&2
+        exit 1
+    fi
+    grep -q 'Lambda runtime API address is invalid' "$artifact_dir/provenance/bootstrap-smoke.txt"
+    cd "$artifact_dir"
+    test -x bootstrap
+    zip -qr controller.zip bootstrap lib provenance
+    shasum -a 256 controller.zip
+    printf '%s\n' "$artifact_dir/controller.zip"
+
+# Operator-run initial CloudFormation deployment. Always starts disabled.
+deploy:
+    #!/bin/sh
+    set -eu
+    : "${TXING_AGENT_CONTROLLER_BUCKET:?set the existing controller artifact bucket}"
+    : "${TXING_AGENT_CONTROLLER_KEY:?set the immutable controller ZIP key}"
+    eval "$(just --justfile "{{project_root}}/justfile" _project-aws-env aws '')"
+    : "${TXING_AWS_STACK:?set the environment stack prefix}"
+    case "$TXING_AWS_STACK" in *[!A-Za-z0-9-]*|'') echo "Invalid environment stack prefix" >&2; exit 1 ;; esac
+    stack_name="${TXING_AWS_STACK}-agent"
+    existing=$(aws cloudformation list-stacks --region eu-central-1 \
+        --query "StackSummaries[?StackName=='$stack_name'].StackStatus" --output json)
+    if [ "$(printf '%s' "$existing" | jq 'length')" -ne 0 ]; then
+        echo "Stack $stack_name already exists; use the documented operator update procedure." >&2
+        exit 1
+    fi
+    rule_name=$(printf '%s' "${TXING_AWS_STACK}_agent_lifecycle" | tr -c 'A-Za-z0-9_' '_')
+    aws cloudformation deploy --region eu-central-1 --stack-name "$stack_name" \
+        --template-file "{{agent_dir}}/stack.yaml" --capabilities CAPABILITY_IAM \
+        --parameter-overrides "ControllerBucket=$TXING_AGENT_CONTROLLER_BUCKET" \
+        "ControllerKey=$TXING_AGENT_CONTROLLER_KEY" "LifecycleRuleName=$rule_name" \
+        AutomationEnabled=false PrerequisitesConfirmed=false
 
 @default:
     @just --list

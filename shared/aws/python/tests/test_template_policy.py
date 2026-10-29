@@ -841,19 +841,30 @@ class AwsTemplatePolicyTests(unittest.TestCase):
             "CatalogBasePath: /txing/town/raspi/tbot",
             "deviceType: tbot",
             "rigType: raspi",
-            "capabilities: sparkplug,thread,power,board,mavlink,video",
+            "capabilities: sparkplug,thread,power,board,mavlink,video,agent",
             "redconCommandLevels: 4,3,2,1",
             "redconRules/4: sparkplug,thread",
             "redconRules/3: sparkplug,thread,power",
             "redconRules/2: sparkplug,thread,power,board,mavlink",
             "redconRules/1: sparkplug,thread,power,board,mavlink,video",
             "shadows/mavlink/schema: aws/mavlink-shadow.schema.json",
+            "shadows/agent/schema: aws/agent-shadow.schema.json",
+            "shadows/agent/default: aws/default-agent-shadow.json",
             'resources/mavlink/channelName: "{device_id}-mavlink"',
             "web/adapter: web/tbot-adapter.tsx",
             'resources/boardVideo/channelName: "{device_id}-board-video"',
         ):
             self.assertIn(expected, tbot_catalog)
         self.assertIn('"deviceId":"tbot-local"', tbot_catalog)
+        agent_default_line = next(
+            line for line in tbot_catalog.splitlines()
+            if line.strip().startswith("shadows/agent/defaultPayload:")
+        )
+        agent_default = json.loads(agent_default_line.split(":", 1)[1].strip().strip("'"))
+        expected_agent_default = json.loads(
+            (REPO_ROOT / "devices/tbot/aws/default-agent-shadow.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(agent_default, expected_agent_default)
         self.assertNotIn("redconMetricRules/1", tbot_catalog)
         self.assertNotIn("shadows/mcp/schema", tbot_catalog)
         cyberbrick_catalog = root_template.split(

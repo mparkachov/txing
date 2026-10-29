@@ -193,6 +193,19 @@ Capability availability rules:
   manager waits for the existing freshness TTL before publishing `DDEATH` so a
   short BLE scan or reconnect gap does not become a birth/death flap
 
+Agent capability availability:
+
+- Device types opt in through the declared `agent` capability and its normal
+  named-shadow mapping. TBot currently opts in.
+- SparkplugManager derives `capability.agent` from fresh device authority: true
+  for a born device at REDCON 1/2, false otherwise. This enables cloud execution;
+  the controller-owned agent shadow records the actual run and errors.
+- Agent execution readiness does not participate in physical REDCON selection,
+  so startup cannot depend on an agent that is still waiting to launch.
+- The controller and runtime require both the registry declaration and projected
+  availability. Explicit false revokes execution; missing/invalid availability
+  is unverified, and cannot create an inactive-to-active transition.
+
 Capability-owned shadow rule:
 
 - each capability that produces typed data owns its corresponding named shadow

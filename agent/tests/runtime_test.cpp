@@ -1,13 +1,19 @@
 #include "agent/core.hpp"
 #include "agent/aws.hpp"
+#include "agent/controller_shadow.hpp"
+#include "agent/cloud.hpp"
+#include "agent/runtime_sample.hpp"
+#include "agent/reconcile.hpp"
 #include "agent/kvs.hpp"
 #include <aws/core/Aws.h>
 #include <aws/core/auth/AWSCredentialsProviderChain.h>
 #include <aws/core/utils/json/JsonSerializer.h>
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <filesystem>
 #include <fstream>
+#include <map>
 using namespace txing::agent;
 using namespace std::chrono_literals;
 using Aws::Utils::Json::JsonValue;
@@ -328,11 +334,27 @@ void sdk_credential_chain() {
 }
 void projected_lifecycle() {
     const std::string start = "{\"state\":{\"reported\":{\"topic\":{\"deviceId\":\"id\",\"namespace\":\"spBv1.0\",\"messageType\":\"";
-    auto born = parse_lifecycle(start + "DDATA\"},\"payload\":{\"metrics\":{\"redcon\":2}}}}}", "id");
+    auto born = parse_lifecycle(start + "DDATA\"},\"payload\":{\"metrics\":{\"redcon\":2,\"capability\":{\"agent\":true}}}}}}", "id");
     REQUIRE(born.born && born.redcon == 2);
     REQUIRE(!parse_lifecycle(start + "DDEATH\"}}}}", "id").born);
     bool rejected = false;
-    try { parse_lifecycle(start + "DDATA\"},\"payload\":{\"metrics\":{\"redcon\":2}}}}}", "wrong"); }
+    try { parse_lifecycle(start + "DDATA\"},\"payload\":{\"metrics\":{\"redcon\":2,\"capability\":{\"agent\":true}}}}}}", "wrong"); }
+    catch (...) { rejected = true; } REQUIRE(rejected);
+    const std::string versioned = "{\"version\":9,\"state\":{\"reported\":{\"topic\":{\"deviceId\":\"id\",\"namespace\":\"spBv1.0\",\"messageType\":\"";
+    auto active = parse_projection_observation(versioned + "DDATA\"},\"payload\":{\"timestamp\":1000,\"metrics\":{\"redcon\":1,\"capability\":{\"agent\":true}}}}}}", "id");
+    REQUIRE(active.version == 9 && active.active && *active.active && active.source_timestamp_ms == 1000);
+    const auto disabled = parse_projection_observation(versioned + "DDATA\"},\"payload\":{\"timestamp\":1001,\"metrics\":{\"redcon\":1,\"capability\":{\"agent\":false}}}}}}", "id");
+    REQUIRE(disabled.active && !*disabled.active);
+    rejected = false;
+    try { parse_projection_observation(versioned + "DDATA\"},\"payload\":{\"timestamp\":1001,\"metrics\":{\"redcon\":1}}}}}", "id"); }
+    catch (...) { rejected = true; } REQUIRE(rejected);
+    auto inactive = parse_projection_observation(versioned + "DDEATH\"},\"payload\":{\"timestamp\":1001,\"metrics\":{}}}}}", "id");
+    REQUIRE(inactive.active && !*inactive.active);
+    rejected = false;
+    try { parse_projection_observation(versioned + "DDEATH\"},\"payload\":{}}}}", "id"); }
+    catch (...) { rejected = true; } REQUIRE(rejected);
+    rejected = false;
+    try { parse_projection_observation(start + "DDATA\"},\"payload\":{\"metrics\":{\"redcon\":2,\"capability\":{\"agent\":true}}}}}}", "id"); }
     catch (...) { rejected = true; } REQUIRE(rejected);
     std::mutex mutex; std::vector<Time> calls;
     LifecyclePoller poller([&] {
@@ -340,6 +362,140 @@ void projected_lifecycle() {
     });
     eventually([&] { std::lock_guard<std::mutex> lock(mutex); return calls.size() >= 2; }, 2500ms);
     std::lock_guard<std::mutex> lock(mutex); REQUIRE(calls[1] - calls[0] >= 1900ms);
+}
+void controller_shadow() {
+    auto snapshot = parse_controller_shadow(R"({"version":4,"state":{"reported":{"lifecycle":{"state":"stopped"}}}})");
+    auto id = [] { return "activation-1"; };
+    observe_activation(snapshot.state.activation, {9, false, 9000}, 100, 3000, id);
+    observe_activation(snapshot.state.activation, {10, true, 10000}, 101, 3000, id);
+    REQUIRE(reserve_run(snapshot.state, CurrentLifecycle::active, 101, "run-1", "1.0.0", "request"));
+    snapshot.unverified_since = 100;
+    const auto patch = controller_shadow_patch(snapshot, 101, 101);
+    auto restored = parse_controller_shadow(patch);
+    REQUIRE(restored.shadow_version == 4 && restored.unverified_since == 100 && restored.state.activation.projection_version == 10 &&
+            restored.state.activation.activation->deadline == 3100 && restored.state.run->run_id == "run-1" &&
+            restored.state.run->request == "request" && restored.state.run->phase == RunPhase::reserved);
+    REQUIRE(accept_launch(restored.state, "run-1", "vm-1", true, CurrentLifecycle::active, 102) == LaunchResult::accepted);
+    auto running = parse_controller_shadow(controller_shadow_patch(restored, 102, 102));
+    REQUIRE(running.state.run->microvm_id == "vm-1" && running.state.run->phase == RunPhase::running);
+    fence_run(running.state, CurrentLifecycle::inactive, 103);
+    running = parse_controller_shadow(controller_shadow_patch(running, 103, 102));
+    REQUIRE(running.stop_requested_at == 103);
+    running = parse_controller_shadow(controller_shadow_patch(running, 170, 102));
+    REQUIRE(running.stop_requested_at == 103); // Repeated writes cannot postpone witness's grace period.
+    REQUIRE(confirm_run_stopped(running.state, "run-1", "vm-1"));
+    const auto stopped = parse_controller_shadow(controller_shadow_patch(running, 103, 102));
+    REQUIRE(!stopped.state.run && stopped.stop_requested_at == 0 && stopped.state.activation.activation->deadline == 3100);
+    bool rejected = false;
+    try { parse_controller_shadow(R"({"version":5,"state":{"reported":{"lifecycle":{"state":"expired"},"activation":{"id":"old","startedAt":1,"deadline":3001}}}})"); }
+    catch (...) { rejected = true; } REQUIRE(rejected);
+}
+void cloud_launch_request() {
+    const CloudConfig config{"image-arn", "7", "execution-role", "log-group", "eu-central-1"};
+    const auto first = make_cloud_request(config, "tbot-test", "run-1", "activation-1", 3100, 100);
+    const auto retry = make_cloud_request(config, "tbot-test", "run-1", "activation-1", 3100, 100);
+    REQUIRE(first == retry);
+    JsonValue request(Aws::String(first.c_str()));
+    auto view = request.View();
+    REQUIRE(request.WasParseSuccessful() && view.GetInt64("maximumDurationInSeconds") == 3000 &&
+            view.GetString("clientToken") == "run-1" && !view.ValueExists("idlePolicy"));
+    JsonValue hook(view.GetString("runHookPayload"));
+    REQUIRE(hook.WasParseSuccessful() && hook.View().GetString("runId") == "run-1" &&
+            hook.View().GetString("activationId") == "activation-1" && hook.View().GetString("deadline") == "3100");
+    auto replacement = make_cloud_request(config, "tbot-test", "run-2", "activation-1", 3100, 3090);
+    JsonValue next(Aws::String(replacement.c_str()));
+    REQUIRE(next.View().GetInt64("maximumDurationInSeconds") == 10);
+    bool rejected = false;
+    try { make_cloud_request(config, "tbot-test", "run-2", "activation-1", 3100, 3100); }
+    catch (...) { rejected = true; } REQUIRE(rejected);
+}
+void known_assignment_drain() {
+    struct Fake : KnownDrainBackend {
+        std::vector<std::string> names, described, fenced, terminated;
+        std::map<std::string, ControllerSnapshot> shadows;
+        std::string image;
+        std::vector<std::string> things() override { return names; }
+        std::optional<ControllerSnapshot> read(const std::string& thing) override {
+            const auto it = shadows.find(thing); return it == shadows.end() ? std::nullopt : std::optional(it->second);
+        }
+        CloudRunDetails describe(const std::string& id) override {
+            described.push_back(id);
+            return {{id, id == "vm-terminal" ? "TERMINATED" : "RUNNING", {}},
+                    id == "vm-mismatch" ? "arn:aws:lambda:eu-central-1:123456789012:microvm-image:other" : image};
+        }
+        bool fence(const std::string& thing, ControllerSnapshot&) override {
+            fenced.push_back(thing); return thing != "conflict";
+        }
+        void terminate(const std::string& id) override { terminated.push_back(id); }
+    } io;
+    io.image = "arn:aws:lambda:eu-central-1:123456789012:microvm-image:agent";
+    const CloudConfig config{io.image, "1", "execution-role", "log-group", "eu-central-1"};
+    auto add = [&](const std::string& thing, const std::string& id, const std::string& request_thing) {
+        ControllerSnapshot snapshot;
+        snapshot.state.run = RunReservation{"run-1", "activation-1", "1.0.0",
+            make_cloud_request(config, request_thing, "run-1", "activation-1", 3100, 100), id, RunPhase::running};
+        io.shadows.emplace(thing, snapshot);
+    };
+    add("good", "vm-good", "good");
+    add("mismatch", "vm-mismatch", "mismatch");
+    add("conflict", "vm-conflict", "conflict");
+    add("wrong-thing", "vm-wrong", "someone-else");
+    add("wrong-activation", "vm-wrong-activation", "wrong-activation");
+    io.shadows.at("wrong-activation").state.run->activation_id = "other-activation";
+    add("wrong-token", "vm-wrong-token", "wrong-token");
+    io.shadows.at("wrong-token").state.run->run_id = "other-run";
+    add("unidentified", "", "unidentified");
+    add("terminal", "vm-terminal", "terminal");
+    io.names = {"good", "missing", "mismatch", "conflict", "wrong-thing", "wrong-activation",
+                "wrong-token", "unidentified", "terminal"};
+    REQUIRE(!drain_known_assignments(io));
+    REQUIRE(io.terminated == std::vector<std::string>{"vm-good"});
+    REQUIRE(io.fenced == std::vector<std::string>({"good", "conflict", "terminal"}));
+    for (const std::string invalid : {"vm-wrong", "vm-wrong-activation", "vm-wrong-token"})
+        REQUIRE(std::find(io.described.begin(), io.described.end(), invalid) == io.described.end());
+    io.names = {"terminal"};
+    REQUIRE(drain_known_assignments(io));
+}
+void runtime_sampling() {
+    ControllerSnapshot snapshot; snapshot.shadow_version = 7;
+    observe_activation(snapshot.state.activation, {1, false, 1000}, 100, 3000, [] { return "a"; });
+    observe_activation(snapshot.state.activation, {2, true, 2000}, 101, 3000, [] { return "a"; });
+    REQUIRE(reserve_run(snapshot.state, CurrentLifecycle::active, 101, "run", "1.0.0", "request"));
+    REQUIRE(accept_launch(snapshot.state, "run", "vm", true, CurrentLifecycle::active, 101) == LaunchResult::accepted);
+    const std::string stopped = R"({"phase":"stopped","thingId":"tbot-test","runId":"run","activationId":"a","microvmId":"vm","assignmentVerified":false})";
+    REQUIRE(runtime_stopped_for(snapshot, "tbot-test", stopped));
+    REQUIRE(!runtime_stopped_for(snapshot, "other-thing", stopped));
+    REQUIRE(!runtime_stopped_for(snapshot, "tbot-test", "{"));
+    REQUIRE(!runtime_stopped_for(snapshot, "tbot-test", R"({"phase":"stopped","thingId":"tbot-test","runId":"run","activationId":"old","microvmId":"vm"})"));
+    REQUIRE(!runtime_stopped_for(snapshot, "tbot-test", R"({"phase":"running","thingId":"tbot-test","runId":"run","activationId":"a","microvmId":"vm"})"));
+    auto superseded = snapshot; superseded.state.run->microvm_id = "new-vm";
+    REQUIRE(!runtime_stopped_for(superseded, "tbot-test", stopped));
+    superseded = snapshot; superseded.state.run->phase = RunPhase::stopping;
+    REQUIRE(!runtime_stopped_for(superseded, "tbot-test", stopped));
+    const std::string fresh = R"({"phase":"running","thingId":"tbot-test","runId":"run","activationId":"a","microvmId":"vm","deadline":3100,"assignmentVerified":true,"assignmentAgeMs":500})";
+    REQUIRE(runtime_verified_for(snapshot, "tbot-test", fresh, 1000));
+    REQUIRE(!runtime_verified_for(snapshot, "other", fresh, 1000));
+    REQUIRE(!runtime_verified_for(snapshot, "tbot-test", fresh, 14500));
+    REQUIRE(!runtime_verified_for(snapshot, "tbot-test", fresh, -1));
+    REQUIRE(!runtime_verified_for(snapshot, "tbot-test", stopped, 0));
+    REQUIRE(!runtime_verified_for(superseded, "tbot-test", fresh, 0));
+    REQUIRE(!runtime_verified_for(snapshot, "tbot-test", R"({"phase":"running","thingId":"tbot-test","runId":"run","activationId":"a","microvmId":"vm","deadline":3100,"assignmentVerified":true})", 0));
+    const std::string sample = R"({"phase":"running","runId":"run","activationId":"a","microvmId":"vm","deadline":3100,"assignmentVerified":true,"telemetry":{"state":2,"error":""},"video":{"state":3,"error":"KVS signaling callback: KVS status 0xbeef; private-token"},"control":{"state":"lost","error":"stale_epoch"},"videoFrames":42,"lastVideo":{"receiptUnixMs":105000}})";
+    const auto patch = runtime_sample_patch(snapshot, "vm.lambda-microvm.eu-central-1.on.aws", sample, 105);
+    JsonValue result(Aws::String(patch.c_str()));
+    const auto reported = result.View().GetObject("state").GetObject("reported");
+    const auto runtime = reported.GetObject("runtime");
+    REQUIRE(result.View().GetInt64("version") == 7 && runtime.GetString("runId") == "run" &&
+            runtime.GetObject("mavlink").GetString("state") == "connected" &&
+            runtime.GetObject("video").GetString("state") == "error" &&
+            runtime.GetObject("video").GetString("lastError") == "KVS signaling callback: KVS status 0xbeef" &&
+            runtime.GetObject("control").GetString("lastError") == "stale_epoch" && patch.find("private-token") == std::string::npos);
+    bool rejected = false;
+    try { runtime_sample_patch(snapshot, "example.com", sample, 105); }
+    catch (...) { rejected = true; } REQUIRE(rejected);
+    snapshot.state.run->run_id = "new-run"; rejected = false;
+    try { runtime_sample_patch(snapshot, "vm.lambda-microvm.eu-central-1.on.aws", sample, 105); }
+    catch (...) { rejected = true; } REQUIRE(rejected);
 }
 void sdk_peers();
 void sdk_manual();
@@ -364,7 +520,7 @@ int main() {
             {"queued authority", queued_authority},
             {"malformed control diagnostics", malformed_control_diagnostics},
             {"bounded video", bounded_video}, {"credentials and errors", credentials_and_errors},
-            {"SDK credential chain", sdk_credential_chain}, {"projected lifecycle", projected_lifecycle},
+            {"SDK credential chain", sdk_credential_chain}, {"projected lifecycle", projected_lifecycle}, {"controller shadow", controller_shadow}, {"cloud launch request", cloud_launch_request}, {"known assignment drain", known_assignment_drain}, {"runtime sampling", runtime_sampling},
             {"real SDK peers", sdk_peers}, {"real SDK manual UDP", sdk_manual},
             {"real SDK concurrent data channel", sdk_concurrent_data_channel}}) {
             test.second(); std::cout << "PASS " << test.first << std::endl;

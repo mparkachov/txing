@@ -8,8 +8,10 @@ observer and automated runtime checks are implemented under #164 in
 `agent/`; native macOS build/automated checks, active TBot observation,
 independent peer recovery and verification-timeout acceptance passed. The
 native QGroundControl UDP adapter is implemented under #166 with loopback,
-lease and real SDK integration checks. Physical local acceptance, controller
-and released-cloud acceptance remain later work. See the
+lease and real SDK integration checks. Local physical acceptance is recorded
+under #167 with its intermittent timeout limitation. #168 prepares the cloud
+controller, host and attachment; its Linux ARM64 packaging and live operation
+remain to be verified. Released-cloud acceptance remains #170. See the
 [native observation](../agent-native-acceptance.md) and
 [manual adapter acceptance](../agent-manual-acceptance.md) records.
 
@@ -41,7 +43,7 @@ Do not retain parallel runtimes or compatibility wrappers.
 Preserve the independently committed board, rig, and Office connection fixes;
 the board's deployed MAVLink/video protocols; and the shared SDK pin and build
 resources already consumed by other components. Removing the old implementation
-does not authorize reverting whole historical commits. The existing optional
+does not authorize reverting whole historical commits. The existing capability-owned
 `agent` named shadow remains the cloud diagnostic entry point, but its
 ECS/public-UDP-specific schema is replaced.
 
@@ -144,7 +146,8 @@ generated bindings where message interpretation is needed.
 
 The table describes the complete target interface. Build/test, foreground
 observation and UDP/manual-control run arguments are implemented under
-#164/#166; attachment, deployment and publication remain later work.
+#164/#166. #168 prepares attachment and initial disabled deployment; immutable
+publication remains #169.
 
 | Command | Behavior |
 | --- | --- |
@@ -219,6 +222,12 @@ Retries, new image versions, process replacements, and delayed events cannot
 reset that allowance. At expiry, release control and stop; permit another
 activation only after a subsequent inactive-to-active lifecycle transition.
 Do not implement automatic rollover.
+The operator accepted fail-closed recovery for missed inactive intervals on
+2026-10-28. The controller also requires an inactive observation before the
+first activation and measures its budget from the last verified inactive
+observation, so delayed observation can shorten or exhaust the budget. The
+[shadow contract](../contracts/agent-shadow.md) specifies the ordering and
+missing-projection rules.
 
 The cloud runtime verifies its assignment in addition to device lifecycle.
 Stale assignments cannot retain control or advertise a usable attachment.
@@ -235,8 +244,17 @@ usable endpoint. Local runs never participate in this ownership.
 The field definitions, default, examples, and writer/fencing rules are in the
 [agent shadow contract](../contracts/agent-shadow.md).
 
-Office continues to show the optional shadow in Debug. It remains outside
-REDCON capability derivation and must not block ordinary device use when absent.
+The operator-approved [witness watch](../constraints/agent-watch.md) provides
+independent delayed shutdown repair. It retains healthy assignments and checks
+off/expired runs and aged unassigned instances of the dedicated image. It has
+its own minute schedule and never writes agent shadows or launches agents.
+
+Device types declare `agent` in their capability list and provision its named
+shadow through the normal catalog path. TBot currently opts in; other types do
+not. The rig publishes `capability.agent=true` at born REDCON 1/2 and false when
+inactive. The registry declaration and current availability authorize execution;
+the agent shadow describes the actual run. Its readiness does not gate REDCON.
+Office shows Agent Debug for devices declaring the capability.
 Update its schema/default and relevant consumers directly during implementation;
 do not maintain an ECS-shaped shadow compatibility layer.
 

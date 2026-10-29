@@ -5,7 +5,10 @@ Status: replacement contract established by
 controller are still planned under [milestone 10](https://github.com/mparkachov/txing/milestone/10).
 This contract replaces the old ECS task/public UDP status directly.
 
-The optional TBot `agent` named shadow is cloud operational diagnostics. Its
+The `agent` capability owns the `agent` named shadow for cloud operational
+diagnostics. Device types opt in through their manifest capability list; TBot
+is the current supported type. Provisioning and discharge use the same declared
+capability-to-shadow mapping as other capabilities. Its
 [schema](../../devices/tbot/aws/agent-shadow.schema.json),
 [stopped default](../../devices/tbot/aws/default-agent-shadow.json), and
 [running example](../../devices/tbot/aws/fixtures/agent-shadow.json) are
@@ -35,6 +38,8 @@ Runtime IAM must grant no `agent` shadow write permission.
 | `runtime.video.state`, `framesReceived`, `lastFrameAt`, `lastError` | Independent video state, cumulative encoded frames delivered to the operator in this run, last frame receipt time, and its error |
 | `runtime.control.state`, `lastError` | `observing`, `acquiring`, `held`, or `lost`; sampled session authority, not a grant to the reader |
 | `lastError` | Controller/launch/lifecycle error; does not replace individual connection/control errors |
+| `controller` | Durable reconciliation state: last verified projection version, source timestamp and activity, last inactive observation time, the start of any controller verification outage, and the current run's activation, phase, and exact non-secret launch request |
+| `controller.stopRequestedAt` | First stopping-write time for the current run; repeated writes retain it so witness's two-minute repair grace cannot be postponed |
 
 All times are integer Unix epoch seconds in UTC. `sampledAt` is the controller's
 sample receipt time; it must not be refreshed by replaying a cached response.
@@ -42,6 +47,10 @@ sample receipt time; it must not be refreshed by replaying a cached response.
 timestamp delivered by the operator interface. Counters reset with `run.id`.
 Errors retain useful operation context without credentials, tokens, or signed
 URLs. A healthy MAVLink connection must not erase a video error, or vice versa.
+The launch request may contain only operational configuration and identities;
+it must never contain credentials, an attachment token, or another secret.
+The MicroVM launch `clientToken` is an idempotency identity, not an
+authentication token; it is the same non-secret opaque ID stored as `run.id`.
 
 Nullable fields may be absent: AWS IoT applies null updates as property deletion.
 The default includes explicit nulls for initialization; its stored response may
@@ -68,12 +77,42 @@ at the current project stage (the [2026-10-23 duration decision](../constraints/
 including retries, replacements, and publication. Only a subsequent verified
 inactive-to-active transition permits a fresh activation budget.
 
+A fenced launch with no known MicroVM ID remains reserved for its activation.
+A later directly observed and unexpired activation may supersede that unknown
+reservation with a conditionally persisted new run. The old request is never
+retried; late results cannot alter the replacement, and leftover instances are
+handled as orphans by the controller/watch. This is assignment revocation, not
+proof that compute is off. Runs with a known MicroVM ID retain that identity
+until terminal state is confirmed.
+
+The controller must directly observe verified inactive and then active states
+to recognize a later transition. If the inactive interval is missed, it retains
+the expired activation and fails closed until another such transition is
+observed. An incomplete or unreadable projection is not evidence of inactivity.
+This limitation was accepted by the operator on 2026-10-28; witness does not
+retain an activation history for the repair pass to reconstruct.
+An initially active projection without an earlier inactive observation also
+fails closed. The controller rejects missing, repeated or older Sparkplug
+source timestamps as transition evidence, including old last-will timestamps;
+the shadow's own version alone cannot rule out a replayed source message. The
+budget begins at the last verified inactive observation, a conservative lower
+bound on the transition time. Long controller outages or clock irregularities
+can therefore shorten the remaining budget or require another transition.
+
 The controller must compare the current run and activation before every write,
 use version-conditional shadow updates, and resample after conflicts. Samples
 must match `runtime.runId == run.id` and the currently assigned MicroVM. Changing
 run identity clears the old endpoint and sample before publishing the new run.
 Late responses from superseded runs cannot restore either. Orphan termination
 and launch reconciliation remain controller responsibilities.
+
+The independent [witness shutdown watch](../constraints/agent-watch.md) is an
+operator-approved stop-only repair path. It reads this shadow and requests
+MicroVM termination after a grace period; it never writes agent status or
+creates activations. It also checks persisted deadlines when the controller
+has stopped updating lifecycle state. For assigned runs, the operator limited
+watch shutdown evidence to an off agent shadow or an expired deadline;
+Sparkplug inactivity alone does not authorize watch termination.
 
 The JSON Schema checks structure and lifecycle/endpoint constraints. Dynamic
 identity equality, monotonic deadlines, elapsed time, freshness, and conditional
@@ -88,13 +127,27 @@ The runtime polls authority every two seconds and stops after fifteen seconds
 without verification. Stale assignment or shutdown releases control and denies
 usable attachment. Attachment uses short-lived, port-scoped AWS authentication,
 one manual attachment, and the existing cloud session/lease.
+The controller stores `controller.unverifiedSince` when its own verification
+first fails. On a later pass after fifteen seconds of continuous failure, it
+fences the run unless authenticated status for that exact running assignment
+proves that the runtime has verified its authority within fifteen seconds,
+including the time spent fetching status. This evidence can only defer a stop;
+it cannot authorize a launch or endpoint or extend the activation. A successful
+controller verification clears the timer. It is independent of the last
+controller sweep, optional in older records, and never represents an inactive
+edge. A clock reversal across a persisted failure interval fences the run.
 
 ## Device and Office boundaries
 
-Rig/witness remain device lifecycle authorities. Agent status is absent from
-capabilities and REDCON rules; it cannot make a device born, available, or ready.
-Office reads the optional JSON in TBot Debug independently of ordinary device
-shadows, and isolates missing/read-error states. It does not use this diagnostic
+Rig/witness remain device lifecycle authorities. The registry declares `agent`
+for supported device types, and the rig publishes `capability.agent` availability
+when the device is born at REDCON 1 or 2. This authorizes cloud agent execution;
+the `agent` shadow records actual cloud execution and errors. Agent readiness
+does not gate device REDCON, avoiding a dependency cycle at startup. Missing or
+invalid availability is unverified; explicit false revokes execution. Registry
+capability removal also revokes execution.
+Office discovers and reads this shadow from declared capabilities, independently
+of the device type name, and isolates missing/read-error states. It does not use this diagnostic
 sample to grant control, determine REDCON, or block normal device operation.
 
 Observation remains the operator default. Explicit control acquires a free
