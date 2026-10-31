@@ -1,9 +1,10 @@
 # Initial agent replacement and manual retirement
 
 Status: operator runbook for the C++ replacement. Repository cleanup does not
-imply deployed AWS cleanup. The #168 cloud implementation and deployment
-artifacts require validation and operator execution; immutable release
-publication remains #169.
+imply deployed AWS cleanup. The #168 implementation, ARM64 artifacts and bounded
+operator-run source-build test are recorded in the
+[cloud evidence](../agent-cloud-build-validation.md). Launches are disabled
+after that test. Immutable release publication remains #169.
 
 Follow the [agent design](../components/agent.md) validation gates before enabling
 the replacement. Native operation, the disposable MicroVM feasibility probe,

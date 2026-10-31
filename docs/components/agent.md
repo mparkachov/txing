@@ -2,16 +2,20 @@
 
 Status: approved replacement design, 2026-10-18. Implementation and acceptance
 are tracked in [milestone 10](https://github.com/mparkachov/txing/milestone/10).
-This document describes the target architecture, not completed functionality.
+This document describes the approved architecture; implementation and acceptance
+status are distinguished below.
 The superseded Go/Fargate implementation has been removed. The C++ foreground
 observer and automated runtime checks are implemented under #164 in
 `agent/`; native macOS build/automated checks, active TBot observation,
 independent peer recovery and verification-timeout acceptance passed. The
 native QGroundControl UDP adapter is implemented under #166 with loopback,
 lease and real SDK integration checks. Local physical acceptance is recorded
-under #167 with its intermittent timeout limitation. #168 prepares the cloud
-controller, host and attachment; its Linux ARM64 packaging and live operation
-remain to be verified. Released-cloud acceptance remains #170. See the
+under #167 with its intermittent timeout limitation. The #168 cloud controller,
+host and attachment are implemented, with Linux ARM64 packaging and bounded
+operator-run source-build acceptance recorded in the
+[cloud evidence](../agent-cloud-build-validation.md). The unpublished diagnostic
+test build is not a production release. Immutable publication remains #169 and
+released-cloud physical acceptance remains #170. See the
 [native observation](../agent-native-acceptance.md) and
 [manual adapter acceptance](../agent-manual-acceptance.md) records.
 

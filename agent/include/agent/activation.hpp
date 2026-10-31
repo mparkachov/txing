@@ -32,6 +32,9 @@ struct ProjectionObservation {
     // Original Sparkplug payload timestamp; used only to reject replayed or
     // out-of-order projections, never as a trusted activation clock.
     std::int64_t source_timestamp_ms = 0;
+    // Runtime stream selection uses this same verified shadow read. This is
+    // transient device state, not part of the persisted activation record.
+    int redcon = 4;
 };
 enum class ActivationChange { unverified, stale, unchanged, inactive, activated };
 

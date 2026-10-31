@@ -5,6 +5,7 @@
 #include "agent/runtime_sample.hpp"
 #include "agent/reconcile.hpp"
 #include "agent/kvs.hpp"
+#include "agent/microvm.hpp"
 #include <aws/core/Aws.h>
 #include <aws/core/auth/AWSCredentialsProviderChain.h>
 #include <aws/core/utils/json/JsonSerializer.h>
@@ -343,6 +344,7 @@ void projected_lifecycle() {
     const std::string versioned = "{\"version\":9,\"state\":{\"reported\":{\"topic\":{\"deviceId\":\"id\",\"namespace\":\"spBv1.0\",\"messageType\":\"";
     auto active = parse_projection_observation(versioned + "DDATA\"},\"payload\":{\"timestamp\":1000,\"metrics\":{\"redcon\":1,\"capability\":{\"agent\":true}}}}}}", "id");
     REQUIRE(active.version == 9 && active.active && *active.active && active.source_timestamp_ms == 1000);
+    REQUIRE(active.redcon == 1);
     const auto disabled = parse_projection_observation(versioned + "DDATA\"},\"payload\":{\"timestamp\":1001,\"metrics\":{\"redcon\":1,\"capability\":{\"agent\":false}}}}}}", "id");
     REQUIRE(disabled.active && !*disabled.active);
     rejected = false;
@@ -497,6 +499,55 @@ void runtime_sampling() {
     try { runtime_sample_patch(snapshot, "vm.lambda-microvm.eu-central-1.on.aws", sample, 105); }
     catch (...) { rejected = true; } REQUIRE(rejected);
 }
+void assigned_cloud_streams() {
+    const auto projection = [](int redcon, unsigned version, unsigned timestamp, bool available = true) {
+        JsonValue metrics;
+        JsonValue capability; capability.WithBool("agent", available);
+        metrics.WithInteger("redcon", redcon).WithObject("capability", std::move(capability));
+        JsonValue topic; topic.WithString("deviceId", "id").WithString("namespace", "spBv1.0").WithString("messageType", "DDATA");
+        JsonValue payload; payload.WithInt64("timestamp", timestamp).WithObject("metrics", std::move(metrics));
+        JsonValue reported; reported.WithObject("topic", std::move(topic)).WithObject("payload", std::move(payload));
+        JsonValue state; state.WithObject("reported", std::move(reported));
+        JsonValue document; document.WithInt64("version", version).WithObject("state", std::move(state));
+        return parse_projection_observation(document.View().WriteCompact().c_str(), "id");
+    };
+    MicrovmRun run{"vm", "id", "region", "run", "activation", 3100};
+    ControllerState assignment;
+    assignment.activation = {9, 1000, 100, true, true, Activation{"activation", 100, 3100}};
+    assignment.run = RunReservation{"run", "activation", "0.0.0", "request", "vm", RunPhase::running};
+    Fixture f;
+    f.session.verified(assigned_run_lifecycle(run, projection(1, 9, 1000), assignment), f.now);
+    REQUIRE(f.session.tick(f.now));
+    REQUIRE(f.links.size() == 2);
+    auto telemetry = f.links[0], video = f.links[1];
+    REQUIRE(telemetry->config.channel == "id-mavlink" && video->config.channel == "id-board-video");
+    video->events.video({Bytes{1, 2, 3}, "h264", 1, std::chrono::system_clock::now()});
+    eventually([&] { return f.op.video_count == 1; });
+
+    f.session.verified(assigned_run_lifecycle(run, projection(2, 10, 2000), assignment), f.now + 1s);
+    REQUIRE(f.session.tick(f.now + 1s));
+    REQUIRE(video->stops == 1 && telemetry->stops == 0 && f.links.size() == 2);
+    f.session.verified(assigned_run_lifecycle(run, projection(1, 11, 3000), assignment), f.now + 2s);
+    REQUIRE(f.session.tick(f.now + 2s));
+    REQUIRE(f.links.size() == 3 && telemetry->stops == 0 && f.links[2]->config.channel == "id-board-video");
+    REQUIRE(assignment.activation.activation->deadline == 3100 && assignment.run->microvm_id == "vm");
+
+    auto stale = projection(1, 8, 900);
+    bool rejected = false;
+    try { assigned_run_lifecycle(run, stale, assignment); } catch (...) { rejected = true; }
+    REQUIRE(rejected);
+    auto pending = assignment; pending.run->phase = RunPhase::reserved;
+    rejected = false;
+    try { assigned_run_lifecycle(run, projection(1, 9, 1000), pending); } catch (...) { rejected = true; }
+    REQUIRE(rejected);
+    auto replaced = assignment; replaced.run->microvm_id = "other-vm";
+    REQUIRE(!assigned_run_lifecycle(run, projection(1, 9, 1000), replaced).born);
+    auto expired_identity = run; ++expired_identity.deadline;
+    REQUIRE(!assigned_run_lifecycle(expired_identity, projection(1, 9, 1000), assignment).born);
+    f.session.verified(assigned_run_lifecycle(run, projection(1, 12, 4000, false), assignment), f.now + 3s);
+    REQUIRE(!f.session.tick(f.now + 3s));
+    REQUIRE(telemetry->stops == 1 && f.links[2]->stops == 1);
+}
 void sdk_peers();
 void sdk_manual();
 void sdk_concurrent_data_channel();
@@ -520,7 +571,7 @@ int main() {
             {"queued authority", queued_authority},
             {"malformed control diagnostics", malformed_control_diagnostics},
             {"bounded video", bounded_video}, {"credentials and errors", credentials_and_errors},
-            {"SDK credential chain", sdk_credential_chain}, {"projected lifecycle", projected_lifecycle}, {"controller shadow", controller_shadow}, {"cloud launch request", cloud_launch_request}, {"known assignment drain", known_assignment_drain}, {"runtime sampling", runtime_sampling},
+            {"SDK credential chain", sdk_credential_chain}, {"projected lifecycle", projected_lifecycle}, {"assigned cloud streams", assigned_cloud_streams}, {"controller shadow", controller_shadow}, {"cloud launch request", cloud_launch_request}, {"known assignment drain", known_assignment_drain}, {"runtime sampling", runtime_sampling},
             {"real SDK peers", sdk_peers}, {"real SDK manual UDP", sdk_manual},
             {"real SDK concurrent data channel", sdk_concurrent_data_channel}}) {
             test.second(); std::cout << "PASS " << test.first << std::endl;

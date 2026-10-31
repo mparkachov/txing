@@ -10,6 +10,11 @@ struct MicrovmRun {
     std::string run_id, activation_id;
     std::int64_t deadline = 0;
 };
+struct ProjectionObservation;
+struct ControllerState;
+// Caller verifies registry capability separately. Preserve the actual REDCON
+// from the same projection whose identity/order authorizes this assignment.
+Lifecycle assigned_run_lifecycle(const MicrovmRun&, const ProjectionObservation&, const ControllerState&);
 struct HookReply { unsigned status; std::string body; };
 struct WireMessage { Bytes bytes; bool binary; };
 

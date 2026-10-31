@@ -66,7 +66,7 @@ ProjectionObservation parse_projection_observation(const std::string& json, cons
         throw std::runtime_error("sparkplug shadow: incomplete projection or missing source timestamp");
     const auto lifecycle = parse_lifecycle(json, thing);
     return {static_cast<std::uint64_t>(root.GetInt64("version")),
-            lifecycle.born && lifecycle.redcon <= 2, view.GetInt64("timestamp")};
+            lifecycle.born && lifecycle.redcon <= 2, view.GetInt64("timestamp"), lifecycle.redcon};
 }
 
 AwsDevice::AwsDevice(std::shared_ptr<Aws::Auth::AWSCredentialsProvider> credentials,

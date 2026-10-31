@@ -2,7 +2,9 @@
 
 Status: replacement contract established by
 [Issue #163](https://github.com/mparkachov/txing/issues/163). The C++ runtime and
-controller are still planned under [milestone 10](https://github.com/mparkachov/txing/milestone/10).
+controller are implemented under [milestone 10](https://github.com/mparkachov/txing/milestone/10);
+bounded source-build evidence is recorded in the
+[cloud acceptance history](../agent-cloud-build-validation.md).
 This contract replaces the old ECS task/public UDP status directly.
 
 The `agent` capability owns the `agent` named shadow for cloud operational
@@ -116,8 +118,8 @@ Sparkplug inactivity alone does not authorize watch termination.
 
 The JSON Schema checks structure and lifecycle/endpoint constraints. Dynamic
 identity equality, monotonic deadlines, elapsed time, freshness, and conditional
-write authorization are controller/runtime invariants, to be implemented and
-tested in their owning issues. A valid JSON document alone proves none of them.
+write authorization are enforced and tested by the controller/runtime. A valid
+JSON document alone proves none of them.
 
 Readers retain both identity and freshness. Shadow `timestamp` is not evidence
 that every nested status was sampled then. Attachment discovery must verify

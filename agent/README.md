@@ -28,8 +28,13 @@ describes resource creation, role/ingress checks, sustained observation and clea
 Live MicroVM feasibility is accepted within the
 [current-stage fifty-minute limit](../docs/constraints/agent-session-limit.md).
 The board's credential renewal can interrupt sessions earlier; the runbook
-records that limitation. The #168 controller, cloud host and attachment are in
-development; deployment and live acceptance are not implied by source changes.
+records that limitation. The #168 C++ controller, cloud host and attachment are
+implemented. Operator-run source-build acceptance covers automatic telemetry/video,
+authenticated QGC attachment, explicit lease ownership, client-loss fencing and
+terminal shutdown; see the [cloud evidence](../docs/agent-cloud-build-validation.md).
+The diagnostic `0.0.0` test build is unpublished. Immutable publication remains
+#169 and final released-cloud physical acceptance remains #170. Launches are
+disabled after the controlled test.
 
 Read the [design](../docs/components/agent.md),
 [constraints](../docs/constraints/agent.md), and

@@ -116,3 +116,66 @@ expires. Sparkplug inactivity alone does not authorize watch termination.
    errors/permissions and perform the documented manual drain.
 
 Prepared code, loopback API tests and an ARM64 build are not live AWS acceptance.
+
+### Isolate the controller during the orphan test
+
+Binding an image while agent automation is disabled enables the controller's
+termination-only minute schedule. A successful cleanup with that schedule
+running does not independently prove witness repair. For operator-run witness
+acceptance, pause only the controller repair rule and temporarily set the
+controller's reserved concurrency to zero to block queued asynchronous retries.
+Wait longer than its configured 120-second timeout for an invocation already
+running to finish. Leave witness's independent schedule enabled throughout.
+These are manual fault-injection actions, not changes to the normal concurrency
+requirement of one.
+
+The first orphan test can keep the device at REDCON 4 and leave its stopped
+agent shadow unmodified. Deliberately launch one instance of the dedicated image
+with unique run/activation identities that have no persisted assignment. The
+production runtime must refuse device sessions; no shadow is forged to authorize
+it. This controlled unassigned launch is only an acceptance fixture. Use a
+600-second hosting cap and matching absolute hook deadline generated immediately
+before launch, so a witness request after its 120-second grace is distinguishable
+from platform expiry. Do not set an idle suspension policy.
+
+Record AWS start time, nonterminal state during the grace, the exact witness
+termination request and later `TERMINATED` state. A failed run hook, manual stop,
+or platform lifetime expiry is not witness success. If it remains nonterminal
+five minutes after AWS start time, record failure and stop it manually. Restore
+controller concurrency to one and its repair rule only after every test VM is
+confirmed terminal. Keep ordinary launches disabled. Known off/deadline cases
+and healthy/replacement preservation remain separate live acceptance checks.
+
+### Synthetic assigned-record tests
+
+Known off/deadline branches may be exercised with administrative fixture data
+on a temporary untyped IoT Thing marked `testFixture`. This Thing has no rig,
+hardware, credentials or signaling channels. Its unsupported registered type
+causes the production runtime to stop before opening device connections.
+Fabricated records on this fixture are test inputs, not operational assignments;
+they must never be installed on a real device Thing or counted as proof of
+controller/device session health. The controller-only operational writer rule
+and real device activation histories remain unchanged.
+
+With the primary controller isolated and witness enabled, launch one VM for
+the fixture and bind its identity to a schema-valid, version-conditional
+synthetic `running` record before the orphan grace expires. Include individual
+media errors, a future activation deadline and consistent run metadata. Generate
+the request token and absolute deadline together immediately before launch;
+validate their timestamp and remaining lifetime before binding. A failed run
+hook or expired fixture does not establish watch acceptance. Observe
+preservation beyond the orphan cutoff, then transition that same record to
+`stopping` with its first `stopRequestedAt`. Preserve the run/activation and
+reject repeated transitions that would postpone the grace. Witness must retain
+it through that off-time grace and later request termination; require actual
+terminal state before the hosting cap.
+
+In a separate VM case, leave the synthetic record `running` as its deliberately
+shortened absolute deadline passes. Observe preservation before deadline+120,
+then a witness termination request and terminal state before the independent
+hosting cap. Clear the previous off timestamp when binding the new test run.
+Never extend a real activation or reset a real device's shadow for testing.
+After terminal confirmation, delete only the temporary fixture's shadow and
+Thing and restore controller concurrency/rule settings. These tests establish
+watch behavior for stored off/deadline evidence; real healthy runs, device
+streams, attachment and controller-driven lifecycle remain separate acceptance.

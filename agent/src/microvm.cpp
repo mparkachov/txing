@@ -132,23 +132,8 @@ void device_run(const MicrovmRun& run, MicrovmApplication& application, const st
     LifecyclePoller lifecycle([&] {
         if (run.run_id.empty()) return device.lifecycle(run.thing);
         const auto projection = device.projection(run.thing);
-        if (!run.run_id.empty()) {
-            if (!device.has_capability(run.thing, "agent")) return Lifecycle{false, 4};
-            const auto assignment = parse_controller_shadow(device.agent_shadow(run.thing)).state;
-            if (!assignment.run || assignment.run->run_id != run.run_id || !assignment.activation.activation ||
-                assignment.activation.activation->id != run.activation_id ||
-                assignment.activation.activation->deadline != run.deadline ||
-                assignment.run->activation_id != run.activation_id || assignment.run->phase == RunPhase::stopping)
-                return Lifecycle{false, 4};
-            if (assignment.run->phase == RunPhase::reserved && (assignment.run->microvm_id.empty() ||
-                assignment.run->microvm_id == run.id)) throw std::runtime_error("agent assignment pending");
-            if (assignment.run->phase != RunPhase::running || assignment.run->microvm_id != run.id)
-                return Lifecycle{false, 4};
-            if (!projection.active || !*projection.active) return Lifecycle{false, 4};
-            if (!projection_matches_active(assignment.activation, projection))
-                throw std::runtime_error("stale or inconsistent lifecycle projection");
-        }
-        return Lifecycle{true, 2};
+        if (!device.has_capability(run.thing, "agent")) return Lifecycle{false, 4};
+        return assigned_run_lifecycle(run, projection, parse_controller_shadow(device.agent_shadow(run.thing)).state);
     });
     Session session(std::move(selected), [credentials] { return make_kvs_transport(credentials); },
                     application, std::chrono::steady_clock::now());
@@ -184,6 +169,24 @@ void device_run(const MicrovmRun& run, MicrovmApplication& application, const st
         application.stopped(session.stop_reason());
     } catch (...) { application.actions(nullptr); throw; }
 }
+}
+
+Lifecycle assigned_run_lifecycle(const MicrovmRun& run, const ProjectionObservation& projection,
+                                 const ControllerState& assignment) {
+    if (!assignment.run || assignment.run->run_id != run.run_id || !assignment.activation.activation ||
+        assignment.activation.activation->id != run.activation_id ||
+        assignment.activation.activation->deadline != run.deadline ||
+        assignment.run->activation_id != run.activation_id || assignment.run->phase == RunPhase::stopping)
+        return {false, 4};
+    if (assignment.run->phase == RunPhase::reserved && (assignment.run->microvm_id.empty() ||
+        assignment.run->microvm_id == run.id)) throw std::runtime_error("agent assignment pending");
+    if (assignment.run->phase != RunPhase::running || assignment.run->microvm_id != run.id)
+        return {false, 4};
+    if (!projection.active || !*projection.active || projection.redcon < 1 || projection.redcon > 2)
+        return {false, 4};
+    if (!projection_matches_active(assignment.activation, projection))
+        throw std::runtime_error("stale or inconsistent lifecycle projection");
+    return {true, projection.redcon};
 }
 
 AuditedCredentials::AuditedCredentials(std::shared_ptr<Aws::Auth::AWSCredentialsProvider> source)
