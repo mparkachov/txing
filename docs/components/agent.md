@@ -14,9 +14,10 @@ under #167 with its intermittent timeout limitation. The #168 cloud controller,
 host and attachment are implemented, with Linux ARM64 packaging and bounded
 operator-run source-build acceptance recorded in the
 [cloud evidence](../agent-cloud-build-validation.md). The unpublished diagnostic
-test build is not a production release. Immutable publication tooling is
-prepared under #169 with a passing local ARM64 candidate; immutable release and
-live publication evidence are still pending. See the
+test build is not a production release. #169 immutable publication is accepted:
+the clean `agent-v0.1.0` release passed ARM64 checks, and operator-run AWS
+publication selected image `3.0` with its matching controller. Both launch
+switches remain false. See the
 [publication runbook](../agent-release-publication.md). Released-cloud physical
 acceptance remains #170. See the
 [native observation](../agent-native-acceptance.md) and

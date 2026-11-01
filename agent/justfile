@@ -329,13 +329,50 @@ publish version:
         image_version=$(jq -er '.imageVersion' "$work/built.json")
     else
         grep -Eq 'NoSuchKey|Not Found|404' "$work/receipt-error.txt" || { cat "$work/receipt-error.txt" >&2; exit 1; }
-        if [ "$action" = create-microvm-image ]; then
-            aws lambda-microvms "$action" --region eu-central-1 --name "$image_name" --client-token "$token" --cli-input-json "file://$work/build-input.json" > "$work/submitted.json"
+        # Recover an accepted build before replaying a request whose response or
+        # receipt was lost. Never infer its version from the image's latest field.
+        if aws lambda-microvms list-microvm-image-versions --region eu-central-1 \
+            --image-identifier "$image_arn" --page-size 50 --output json \
+            > "$work/image-versions.json" 2> "$work/inventory-error.txt"; then
+            jq -e '.items | type=="array"' "$work/image-versions.json" >/dev/null
+        elif [ "$action" = create-microvm-image ] && grep -q 'ResourceNotFoundException' "$work/inventory-error.txt"; then
+            printf '{"items":[]}\n' > "$work/image-versions.json"
         else
-            aws lambda-microvms "$action" --region eu-central-1 --image-identifier "$image_arn" --client-token "$token" --cli-input-json "file://$work/build-input.json" > "$work/submitted.json"
+            cat "$work/inventory-error.txt" >&2; exit 1
         fi
-        test "$(jq -er '.imageArn' "$work/submitted.json")" = "$image_arn"
-        image_version=$(jq -er '.imageVersion' "$work/submitted.json")
+        jq --slurpfile requested "$work/build-input.json" --arg image "$image_arn" \
+            'def canonical_base_version: if test("^(0|[1-9][0-9]*)$") then . + ".0" else . end;
+             def matches_build($request):
+               . as $candidate |
+               (($candidate.additionalOsCapabilities // [])==($request.additionalOsCapabilities // [])) and
+               (($candidate.environmentVariables // {})==($request.environmentVariables // {})) and
+               all($request | keys[]; . as $key |
+                 if $key=="baseImageVersion" then
+                   (($candidate[$key] | canonical_base_version)==($request[$key] | canonical_base_version))
+                 else $candidate[$key]==$request[$key] end);
+             [.items[] | select(.imageArn==$image and matches_build($requested[0]))]' \
+            "$work/image-versions.json" > "$work/matching-versions.json"
+        matches=$(jq 'length' "$work/matching-versions.json")
+        case "$matches" in
+            1)
+                image_version=$(jq -er '.[0].imageVersion' "$work/matching-versions.json")
+                printf 'Recovering existing image version %s.\n' "$image_version"
+                ;;
+            0)
+                conflicts=$(jq --arg uri "$uri" '[.items[] | select(.codeArtifact.uri==$uri)] | length' "$work/image-versions.json")
+                if [ "$conflicts" -ne 0 ]; then
+                    echo "Existing artifact versions have conflicting build configuration; selection unchanged." >&2; exit 1
+                fi
+                if [ "$action" = create-microvm-image ]; then
+                    aws lambda-microvms "$action" --region eu-central-1 --name "$image_name" --client-token "$token" --cli-input-json "file://$work/build-input.json" > "$work/submitted.json"
+                else
+                    aws lambda-microvms "$action" --region eu-central-1 --image-identifier "$image_arn" --client-token "$token" --cli-input-json "file://$work/build-input.json" > "$work/submitted.json"
+                fi
+                test "$(jq -er '.imageArn' "$work/submitted.json")" = "$image_arn"
+                image_version=$(jq -er '.imageVersion' "$work/submitted.json")
+                ;;
+            *) echo "Multiple image versions match the release; selection unchanged. Inspect the recorded inventory." >&2; exit 1 ;;
+        esac
     fi
     # Inspect the exact returned version, never latestActiveImageVersion.
     count=0
@@ -350,9 +387,11 @@ publish version:
             *) echo "Unrecognized build state: $state" >&2; exit 1 ;;
         esac
     done
+    # The managed catalog uses "2" while image metadata returns "2.0".
+    # Compare those forms without changing the immutable input or retry token.
     jq -e --arg uri "$uri" --arg base "$base_arn" --arg baseVersion "$TXING_AGENT_BASE_IMAGE_VERSION" \
         --arg image "$image_arn" --arg imageVersion "$image_version" \
-        '.status=="ACTIVE" and .imageArn==$image and .imageVersion==$imageVersion and .codeArtifact.uri==$uri and .baseImageArn==$base and .baseImageVersion==$baseVersion' "$work/image-version.json" >/dev/null
+        'def canonical_base_version: if test("^(0|[1-9][0-9]*)$") then . + ".0" else . end; .status=="ACTIVE" and .imageArn==$image and .imageVersion==$imageVersion and .codeArtifact.uri==$uri and .baseImageArn==$base and ((.baseImageVersion | canonical_base_version)==($baseVersion | canonical_base_version))' "$work/image-version.json" >/dev/null
     aws lambda-microvms get-microvm-image --region eu-central-1 --image-identifier "$image_arn" > "$work/image.json"
     jq -e '.state=="CREATED" or .state=="UPDATED"' "$work/image.json" >/dev/null
     jq -n --arg token "$token" --arg image "$image_arn" --arg imageVersion "$image_version" \

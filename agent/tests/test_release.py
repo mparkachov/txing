@@ -22,6 +22,13 @@ def flag(name): return args[args.index(name)+1]
 def emit(value): print(json.dumps(value))
 def fail(message): print(message, file=sys.stderr); sys.exit(1)
 mode = (root/"mode").read_text()
+def image_version():
+    request = json.loads((root/"request.json").read_text())
+    request.update(imageArn=os.environ["IMAGE"],imageVersion="3.0",state="FAILED" if mode=="failed-build" else "SUCCESSFUL",status="INACTIVE" if mode=="inactive-build" else "ACTIVE")
+    if mode == "wrong-artifact": request["codeArtifact"]["uri"] = "s3://other/other.zip"
+    if mode == "normalized-base": request["baseImageVersion"] = "2.0"
+    if mode == "wrong-base": request["baseImageVersion"] = "2.1"
+    return request
 tool = pathlib.Path(sys.argv[0]).name
 with (root/"calls.jsonl").open("a") as f: f.write(json.dumps([tool]+args)+"\n")
 if tool == "just": sys.exit(0)
@@ -57,17 +64,22 @@ elif service == "cloudformation":
     elif operation == "wait": pass
     else: fail("unexpected stack operation")
 elif service == "lambda-microvms":
-    if operation == "list-managed-microvm-image-versions": emit({"items":[{"imageVersion":"2.0","status":"EXPIRED" if mode=="expired-base" else "AVAILABLE"}]})
+    if operation == "list-managed-microvm-image-versions": emit({"items":[{"imageVersion":"2" if mode=="normalized-base" else "2.0","status":"EXPIRED" if mode=="expired-base" else "AVAILABLE"}]})
+    elif operation == "list-microvm-image-versions":
+        if mode == "inventory-denied": fail("AccessDenied")
+        if mode == "missing-image" and not (root/"request.json").exists(): fail("ResourceNotFoundException")
+        items = [image_version()] if (root/"request.json").exists() else []
+        if mode == "duplicate-builds" and items: items.append(dict(items[0], imageVersion="4.0"))
+        emit({"items":items})
     elif operation in ("create-microvm-image", "update-microvm-image"):
+        if mode == "replay-rejected" and (root/"request.json").exists():
+            fail("ValidationException: The provided clientToken was used with different request parameters.")
         request = json.loads(pathlib.Path(flag("--cli-input-json")[7:]).read_text())
         (root/"request.json").write_text(json.dumps(request))
         emit({"imageArn":os.environ["IMAGE"],"imageVersion":"3.0"})
     elif operation == "get-microvm-image-version":
         if mode == "poll-unavailable": fail("RequestTimeout")
-        request = json.loads((root/"request.json").read_text())
-        request.update(imageArn=os.environ["IMAGE"],imageVersion="3.0",state="FAILED" if mode=="failed-build" else "SUCCESSFUL",status="INACTIVE" if mode=="inactive-build" else "ACTIVE")
-        if mode == "wrong-artifact": request["codeArtifact"]["uri"] = "s3://other/other.zip"
-        emit(request)
+        emit(image_version())
     elif operation == "get-microvm-image": emit({"imageArn":os.environ["IMAGE"],"state":"UPDATED"})
     else: fail("unexpected image operation")
 elif service == "lambda" and operation == "get-function-configuration":
@@ -144,7 +156,7 @@ class AgentReleaseTests(unittest.TestCase):
         shutil.copyfile(archive, self.root / "package.zip")
         return archive
 
-    def publish(self, mode="success", version="1.2.3"):
+    def publish(self, mode="success", version="1.2.3", base_version="2.0"):
         (self.root / "mode").write_text(mode)
         recipe = (ROOT / "agent/justfile").read_text().split("publish version:\n", 1)[1]
         recipe = textwrap.dedent(recipe.split("\n# Operator-run initial", 1)[0])
@@ -153,7 +165,7 @@ class AgentReleaseTests(unittest.TestCase):
         script.write_text(recipe)
         env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FIXTURE": str(self.root),
                "IMAGE": IMAGE, "TMPDIR": str(self.root), "TXING_AWS_STACK": "test",
-               "TXING_AGENT_BASE_IMAGE_VERSION": "2.0"}
+               "TXING_AGENT_BASE_IMAGE_VERSION": base_version}
         return subprocess.run(["sh", str(script), version], env=env, text=True, capture_output=True)
 
     def calls(self):
@@ -192,7 +204,7 @@ class AgentReleaseTests(unittest.TestCase):
         self.assertTrue((self.root / "s3/agent/1.2.3/built.json").exists())
 
     def test_failure_never_changes_selection(self):
-        for mode in ("failed-build", "inactive-build", "wrong-artifact", "expired-base", "receipt-denied"):
+        for mode in ("failed-build", "inactive-build", "wrong-artifact", "wrong-base", "expired-base", "receipt-denied"):
             with self.subTest(mode=mode):
                 result = self.publish(mode)
                 self.assertNotEqual(result.returncode, 0)
@@ -206,14 +218,65 @@ class AgentReleaseTests(unittest.TestCase):
         builds = [call for call in self.calls() if call[1:3] == ["lambda-microvms", "update-microvm-image"]]
         self.assertEqual(len(builds), 1)
 
-    def test_interrupted_build_reuses_identical_request_token(self):
+    def test_normalized_managed_base_preserves_request_and_reuses_receipt(self):
+        for _ in range(2):
+            result = self.publish("normalized-base", base_version="2")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.parameters()["Release"], "1.2.3")
+        request = json.loads((self.root / "s3/agent/1.2.3/build-input.json").read_text())
+        self.assertEqual(request["baseImageVersion"], "2")
+        receipt = json.loads((self.root / "s3/agent/1.2.3/built.json").read_text())
+        self.assertEqual(receipt["build"]["baseImageVersion"], "2.0")
+        builds = [call for call in self.calls() if call[1:3] == ["lambda-microvms", "update-microvm-image"]]
+        self.assertEqual(len(builds), 1)
+
+    def test_interrupted_build_recovers_exact_version_without_resubmission(self):
         self.assertNotEqual(self.publish("poll-unavailable").returncode, 0)
         result = self.publish()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         builds = [call for call in self.calls() if call[1:3] == ["lambda-microvms", "update-microvm-image"]]
-        self.assertEqual(len(builds), 2)
-        tokens = [call[call.index("--client-token") + 1] for call in builds]
-        self.assertEqual(tokens[0], tokens[1])
+        self.assertEqual(len(builds), 1)
+        request = (self.root / "s3/agent/1.2.3/build-input.json").read_bytes()
+        receipt = json.loads((self.root / "s3/agent/1.2.3/built.json").read_text())
+        self.assertEqual(receipt["token"], hashlib.sha256(request).hexdigest())
+
+    def test_recovery_avoids_rejected_update_replay(self):
+        self.assertNotEqual(self.publish("poll-unavailable").returncode, 0)
+        result = self.publish("replay-rejected")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.parameters()["ImageVersion"], "3.0")
+        self.assertEqual(sum(call[1:3] == ["lambda-microvms", "update-microvm-image"] for call in self.calls()), 1)
+
+    def test_ambiguous_matching_versions_stop_before_selection_or_submission(self):
+        self.assertNotEqual(self.publish("poll-unavailable").returncode, 0)
+        result = self.publish("duplicate-builds")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.parameters(), self.initial_parameters)
+        self.assertEqual(sum(call[1:3] == ["lambda-microvms", "update-microvm-image"] for call in self.calls()), 1)
+
+    def test_conflicting_build_configuration_is_not_adopted(self):
+        self.assertNotEqual(self.publish("poll-unavailable").returncode, 0)
+        path = self.root / "request.json"
+        original = json.loads(path.read_text())
+        for field, value in (("buildRoleArn", "another-role"), ("hooks", {}),
+                             ("resources", [{"minimumMemoryInMiB":8192}]),
+                             ("environmentVariables", {"UNREQUESTED":"value"}),
+                             ("additionalOsCapabilities", ["ALL"])):
+            with self.subTest(field=field):
+                changed = dict(original)
+                changed[field] = value
+                path.write_text(json.dumps(changed))
+                result = self.publish("replay-rejected")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.parameters(), self.initial_parameters)
+        self.assertEqual(sum(call[1:3] == ["lambda-microvms", "update-microvm-image"] for call in self.calls()), 1)
+
+    def test_unavailable_inventory_never_submits_a_build(self):
+        for mode in ("inventory-denied", "missing-image"):
+            with self.subTest(mode=mode):
+                self.assertNotEqual(self.publish(mode).returncode, 0)
+                self.assertEqual(self.parameters(), self.initial_parameters)
+        self.assertFalse(any(call[1:3] == ["lambda-microvms", "update-microvm-image"] for call in self.calls()))
 
     def test_selection_failure_can_retry_successful_build_without_rebuilding(self):
         result = self.publish("selection-denied")
@@ -247,7 +310,7 @@ class AgentReleaseTests(unittest.TestCase):
             if parameter["ParameterKey"] == "ImageName": parameter["ParameterValue"] = "disabled"
             if parameter["ParameterKey"] in ("AutomationEnabled", "PrerequisitesConfirmed"): parameter["ParameterValue"] = "false"
         path.write_text(json.dumps(state))
-        result = self.publish()
+        result = self.publish("missing-image")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(any(call[1:3] == ["lambda-microvms", "create-microvm-image"] for call in self.calls()))
         self.assertEqual(self.parameters()["AutomationEnabled"], "false")

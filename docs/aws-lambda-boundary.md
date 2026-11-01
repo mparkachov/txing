@@ -52,8 +52,9 @@ The old
 from the repository; deployed-resource retirement remains a manual operator
 action. The replacement C++ controller and runtime integration passed #168's
 bounded source-build acceptance. Immutable publication tooling is prepared
-under #169 with a passing local ARM64 candidate; immutable release/live
-publication evidence remains pending. See
+under completed #169: the clean `agent-v0.1.0` release passes ARM64 validation,
+and operator-run AWS publication selected image `3.0` and its matching
+controller. Launches remain disabled for #170 acceptance. See
 [Agent](components/agent.md) and [Agent constraints](constraints/agent.md).
 
 Firmware uses the stock Zephyr C stack; standalone rig daemons and the existing

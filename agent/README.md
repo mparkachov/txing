@@ -32,11 +32,14 @@ records that limitation. The #168 C++ controller, cloud host and attachment are
 implemented. Operator-run source-build acceptance covers automatic telemetry/video,
 authenticated QGC attachment, explicit lease ownership, client-loss fencing and
 terminal shutdown; see the [cloud evidence](../docs/agent-cloud-build-validation.md).
-The diagnostic `0.0.0` test build is unpublished. Immutable release tooling is
-prepared under #169; local ARM64 candidate checks pass, while immutable release
-and operator publication evidence are pending.
-Final released-cloud physical acceptance remains #170. Launches are disabled
-after the controlled test. See the [release workflow](../docs/agent-release-publication.md).
+The diagnostic `0.0.0` test build is unpublished. The immutable
+[agent-v0.1.0 release](https://github.com/mparkachov/txing/releases/tag/agent-v0.1.0)
+passes clean ARM64 build/package checks. AWS image version `3.0` built
+successfully and is selected with its matching controller under completed #169.
+Publication verification and interrupted-build recovery passed operator-run
+acceptance. Final released-cloud physical acceptance remains #170; both launch
+switches are still false. Keep launches disabled for that next gate. See the
+[release workflow](../docs/agent-release-publication.md).
 
 Read the [design](../docs/components/agent.md),
 [constraints](../docs/constraints/agent.md), and

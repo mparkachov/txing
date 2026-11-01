@@ -6,7 +6,9 @@ operator-run source-build test are recorded in the
 [cloud evidence](../agent-cloud-build-validation.md). Launches are disabled
 after that test. Immutable release tooling and operator instructions are
 prepared under #169 in the [publication runbook](../agent-release-publication.md);
-local ARM64 candidate checks pass; actual immutable release publication is pending.
+the clean `agent-v0.1.0` release and operator-run AWS image `3.0`/controller
+selection are accepted under #169. Both launch switches remain false pending
+the separate #170 released-cloud acceptance.
 
 Follow the [agent design](../components/agent.md) validation gates before enabling
 the replacement. Native operation, the disposable MicroVM feasibility probe,
