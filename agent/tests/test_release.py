@@ -79,6 +79,7 @@ else: fail("unexpected AWS operation")
 
 class AgentReleaseTests(unittest.TestCase):
     def setUp(self):
+        (ROOT / "tmp").mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / "tmp", prefix="agent-release-test-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

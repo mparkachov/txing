@@ -230,8 +230,9 @@ compare byte for byte.
 
 This is an **unpublished dirty-tree validation candidate**, not a production
 release. The final source manifest verified against the working tree before
-README/status documentation closeout; runtime, build and test sources remain
-unchanged. The GitHub workflow must build a clean committed revision before
+README/status documentation closeout. Runtime and build sources remain
+unchanged; the subsequent test-only CI fix is recorded below. The GitHub
+workflow must build a clean committed revision before
 operator publication. The accepted #167 timeout limitation remains unresolved.
 
 | Identity | Value |
@@ -257,3 +258,16 @@ No GitHub release, AWS execution, device control, firmware action, legacy
 cleanup or commit was performed by the implementing agent. #169 stays open
 for the clean release and actual operator-run publication/failure/selection
 evidence; #170 is not started.
+
+### First GitHub workflow attempt
+
+The operator dispatched [run 41293017611](https://github.com/mparkachov/txing/actions/runs/41293017611)
+from `main` at `ba73d72a2116d0ae374bf6ce4bb6a9ca1ce8c3d8`. It failed before
+ARM64 compilation/publication: direct unittest invocation encountered a fresh
+checkout with no `tmp/` parent for its temporary directories. Test setup now
+creates that repository-local parent idempotently. An exported source tree
+without `tmp/` reproduces all ten original errors; applying the fix makes the
+same ten-case command pass. Before/after evidence is under
+`tmp/issue-169-fresh.W4aHOH/`. A clean GitHub rerun containing this test-only fix
+is still required; this failed attempt created no immutable release or AWS
+publication evidence.
