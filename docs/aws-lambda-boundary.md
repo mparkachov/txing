@@ -47,11 +47,13 @@ runtime/controller publication follows the approved `agent` release and
 `just agent::publish <version>` interface rather than adding a Go controller
 to the shared `lambda` release stream.
 
-This is approved replacement guidance, not completed implementation. The old
+The old
 `txing-tbot-companion-lambda` Go controller and Fargate paths have been removed
 from the repository; deployed-resource retirement remains a manual operator
-action. The replacement C++ controller and runtime integration are in progress
-under #168; prepared source does not establish deployment or live acceptance. See
+action. The replacement C++ controller and runtime integration passed #168's
+bounded source-build acceptance. Immutable publication tooling is prepared
+under #169 with a passing local ARM64 candidate; immutable release/live
+publication evidence remains pending. See
 [Agent](components/agent.md) and [Agent constraints](constraints/agent.md).
 
 Firmware uses the stock Zephyr C stack; standalone rig daemons and the existing

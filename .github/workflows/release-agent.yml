@@ -1,0 +1,68 @@
+name: Release agent
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: txing-release-agent
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04-arm
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TXING_AGENT_CONTAINER_ENGINE: docker
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: extractions/setup-just@v3
+      - name: Validate immutable version
+        shell: sh
+        run: |
+          set -eu
+          test "$GITHUB_REF_TYPE" = branch
+          version=$(cat release/versions/agent)
+          case "$version" in *[!0-9.]*) echo "Strict MAJOR.MINOR.PATCH required" >&2; exit 1 ;; esac
+          printf '%s\n' "$version" | LC_ALL=C grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          tag="agent-v$version"
+          latest=$(git tag --list 'agent-v*' | sed 's/^agent-v//' | LC_ALL=C grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | LC_ALL=C sort -V | tail -n 1)
+          if [ -n "$latest" ]; then
+            test "$version" != "$latest"
+            test "$(printf '%s\n%s\n' "$latest" "$version" | LC_ALL=C sort -V | tail -n 1)" = "$version"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Immutable release $tag exists" >&2
+            exit 1
+          fi
+          printf 'version=%s\ntag=%s\n' "$version" "$tag" >> "$GITHUB_ENV"
+      - name: Test publication failure and retry behavior without AWS
+        shell: sh
+        run: python3 -m unittest discover -s agent/tests -p test_release.py -v
+      - name: Build, test and repeat packaging
+        shell: sh
+        run: just agent::release-package
+      - name: Publish immutable GitHub artifact
+        shell: sh
+        run: |
+          set -eu
+          package="tmp/agent-releases/$version/txing-agent-release-linux-arm64.zip"
+          unzip -p "$package" release.json > tmp/agent-release-notes.json
+          jq -e '.clean == true' tmp/agent-release-notes.json
+          gh release create "$tag" "$package" --target "$GITHUB_SHA" \
+            --title "$tag" --notes-file tmp/agent-release-notes.json --latest=false
+      - name: Retain build and execution evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-build-evidence
+          path: |
+            tmp/agent-release-*/build.log
+            tmp/agent-release-*/packaged-*.txt
+            tmp/agent-release-*/packaged-build.log
+            tmp/agent-release-*/stage/controller/provenance/
+            tmp/agent-release-*/stage/runtime/txing/*.txt

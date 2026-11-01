@@ -127,6 +127,12 @@ void tests() {
     io.host.state = "RUNNING";
     reconcile(io, 103, "2.0.0");
     require(io.stored.state.run->phase == RunPhase::running, "running host was not assigned");
+    const auto frozen_request = io.stored.state.run->request;
+    reconcile(io, 104, "3.0.0");
+    require(io.launches == 2 && io.terminations == 0 && io.stored.state.run->run_id == run &&
+            io.stored.state.run->release == "1.0.0" && io.stored.state.run->request == frozen_request &&
+            io.stored.state.activation.activation->deadline == deadline,
+            "new publication replaced a running release or reset its activation budget");
     io.observed.reset();
     reconcile(io, 104, "2.0.0");
     require(io.terminations == 0 && io.stored.state.run->phase == RunPhase::running && !io.stored.last_error.empty(),

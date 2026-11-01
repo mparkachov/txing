@@ -24,6 +24,7 @@ semantic version under `release/versions/`, and artifact-producing components
 publish normal GitHub Releases with component-prefixed tags:
 
 - rig: `release/versions/rig` publishes `rig-vX.Y.Z`
+- agent: `release/versions/agent` publishes `agent-vX.Y.Z`
 - Lambda: `release/versions/lambda` publishes Go runtime Lambda artifacts as
   `lambda-vX.Y.Z`
 - unit: `release/versions/unit` publishes `unit-vX.Y.Z`
@@ -38,6 +39,15 @@ its component version file, rejects an existing tag/release, and compares
 monotonicity only within that component tag stream. Office has no GitHub
 Release workflow or release asset; Cloudflare Pages builds and publishes office
 from Git.
+
+Agent releases publish `txing-agent-release-linux-arm64.zip`, containing the
+prebuilt C++ MicroVM runtime, dependency-packaged `provided.al2023` controller,
+source/dependency/base provenance and checksums. `just agent::deploy` creates
+initial disabled infrastructure; the operator's `just agent::publish <version>`
+uploads an immutable S3 package, waits for a successful image build and selects
+it for later launches. It preserves running versions and existing activation
+gates. See [agent publication](agent-release-publication.md) for pending live
+acceptance, initial/manual rollout and retained-cost/base-image requirements.
 
 Rig releases publish these Linux `aarch64` assets:
 
@@ -414,8 +424,9 @@ The implemented integrity policy is:
 - assets are retrieved from GitHub Releases over HTTPS through `mise` or the
   Python publisher
 
-Checksum assets or GitHub artifact attestations are not implemented yet. Add
-them later only when stronger artifact integrity requirements are needed.
+Agent releases include archive/file checksums and conditional immutable S3
+uploads. Other streams do not yet provide checksum assets; GitHub artifact
+attestations are not implemented.
 
 ## Verified Behavior
 

@@ -108,7 +108,8 @@ _image-package kind:
         ':(glob)agent/cmake/*.cmake' ':(glob)agent/cmake/*.patch' \
         ':(glob)agent/tests/*.cpp' ':(glob)agent/tests/test_*.py' \
         agent/probe/CMakeLists.txt agent/probe/Dockerfile \
-        agent/probe/hooks.json agent/probe/stack.yaml agent/cloud/Dockerfile agent/cloud/Controller.Dockerfile agent/stack.yaml \
+        agent/probe/hooks.json agent/probe/stack.yaml agent/cloud/Dockerfile agent/cloud/Release.Dockerfile agent/stack.yaml \
+        release/versions/agent docs/agent-physical-acceptance.md \
         devices/common/kvs/sdk.commit ':(glob)devices/common/kvs/cmake/*.cmake' \
         devices/common/board/kvs_master/include/kvs_master/serialized_data_channel.hpp \
         ':(glob)devices/common/board/mavlink/include/**/*.h' \
@@ -119,9 +120,7 @@ _image-package kind:
     done < "$package_dir/source-files.txt" > "$package_dir/source-sha256.txt"
     shasum -a 256 "$package_dir/source-sha256.txt" | cut -d ' ' -f 1 > "$package_dir/build-id.txt"
     git rev-parse HEAD > "$package_dir/source-revision.txt"
-    git status --short -- agent devices/common/kvs \
-        devices/common/board/kvs_master/include/kvs_master/serialized_data_channel.hpp \
-        > "$package_dir/source-status.txt"
+    git status --short > "$package_dir/source-status.txt"
     # BSD tar otherwise emits AppleDouble metadata outside the source allowlist.
     COPYFILE_DISABLE=1 tar -cf "$package_dir/source.tar" -T "$package_dir/source-files.txt"
     cp "{{agent_dir}}/$kind/Dockerfile" "$package_dir/Dockerfile"
@@ -150,9 +149,9 @@ controller-package: cloud-package
     mkdir -p "$context_dir" "$artifact_dir"
     cp "$package_dir/source.tar" "$package_dir/source-sha256.txt" \
         "$package_dir/build-id.txt" "$package_dir/source-revision.txt" "$context_dir/"
-    cp "{{agent_dir}}/cloud/Controller.Dockerfile" "$context_dir/Dockerfile"
+    cp "{{agent_dir}}/cloud/Dockerfile" "$context_dir/Dockerfile"
     nerdctl.lima version > "$output_dir/container-engine.txt"
-    nerdctl.lima build --platform linux/arm64 --progress plain --target export \
+    nerdctl.lima build --platform linux/arm64 --progress plain --target controller-export \
         --file "$context_dir/Dockerfile" \
         --output "type=local,dest=$artifact_dir" "$context_dir"
     cp "$output_dir/container-engine.txt" "$artifact_dir/provenance/container-engine.txt"
@@ -179,6 +178,209 @@ controller-package: cloud-package
     zip -qr controller.zip bootstrap lib provenance
     shasum -a 256 controller.zip
     printf '%s\n' "$artifact_dir/controller.zip"
+
+# Build the immutable release locally; no publication or AWS calls.
+release-package: cloud-package
+    #!/bin/sh
+    set -eu
+    cd "{{project_root}}"
+    version=$(cat release/versions/agent)
+    case "$version" in *[!0-9.]*) echo "Strict MAJOR.MINOR.PATCH required" >&2; exit 1 ;; esac
+    printf '%s\n' "$version" | LC_ALL=C grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+    # CI explicitly selects Docker; workstation builds use the existing Lima engine.
+    engine=${TXING_AGENT_CONTAINER_ENGINE:-nerdctl.lima}
+    "$engine" info >/dev/null
+    work=$(mktemp -d "$TMPDIR/agent-release-$version.XXXXXX")
+    source_dir="$work/source"
+    stage_dir="$work/stage"
+    mkdir -p "$source_dir" "$stage_dir"
+    for file in Dockerfile source.tar source-sha256.txt source-revision.txt source-status.txt build-id.txt aws-roots.pem; do
+        cp "$TMPDIR/agent-cloud-package/$file" "$source_dir/"
+    done
+    cp agent/cloud/Release.Dockerfile "$source_dir/Release.Dockerfile"
+    cp agent/probe/hooks.json agent/stack.yaml "$source_dir/"
+    cp docs/agent-physical-acceptance.md "$source_dir/physical-acceptance.md"
+    sed -n 's/^FROM \([^ ]*@sha256:[a-f0-9]*\).*/\1/p' agent/cloud/Release.Dockerfile > "$source_dir/container-base.txt"
+    test "$(wc -l < "$source_dir/container-base.txt" | tr -d ' ')" = 1
+    "$engine" build --platform linux/arm64 --progress plain --target release-export \
+        --output "type=local,dest=$stage_dir" "$source_dir" > "$work/build.log" 2>&1 || { cat "$work/build.log" >&2; exit 1; }
+    "$engine" pull --platform linux/arm64 public.ecr.aws/lambda/provided:al2023 >/dev/null
+    runtime_image=$("$engine" image inspect public.ecr.aws/lambda/provided:al2023 | jq -er '.[0].RepoDigests[0]')
+    provenance="$stage_dir/controller/provenance"
+    printf '%s\n' "$runtime_image" > "$provenance/runtime-image.txt"
+    # Variables in the following commands expand inside the container.
+    # shellcheck disable=SC2016
+    "$engine" run --rm --network none --platform linux/arm64 --entrypoint /bin/sh \
+        -v "$stage_dir/controller:/var/task:ro" "$runtime_image" -c \
+        'LD_LIBRARY_PATH="/var/task/lib:${LD_LIBRARY_PATH:-}" /lib/ld-linux-aarch64.so.1 --list /var/task/bootstrap' > "$provenance/runtime-links.txt"
+    if grep -q 'not found' "$provenance/runtime-links.txt"; then
+        echo "Missing controller runtime dependencies" >&2; exit 1
+    fi
+    if "$engine" run --rm --network none --platform linux/arm64 --entrypoint /var/task/bootstrap \
+        -e AWS_LAMBDA_RUNTIME_API= -v "$stage_dir/controller:/var/task:ro" "$runtime_image" > "$provenance/bootstrap-smoke.txt" 2>&1; then
+        echo "Controller unexpectedly ran without a Lambda runtime API" >&2; exit 1
+    fi
+    grep -q 'Lambda runtime API address is invalid' "$provenance/bootstrap-smoke.txt"
+    # Package twice from the frozen build. Differing archives fail before export.
+    for attempt in one two; do
+        mkdir -p "$work/$attempt"
+        cmake -DSTAGE_DIR="$stage_dir" -DSOURCE_DIR="$source_dir" \
+            -DPACKAGE_DIR="$work/$attempt/package" -DVERSION="$version" \
+            -P agent/cmake/Release.cmake
+    done
+    cmp "$work/one/txing-agent-release-linux-arm64.zip" "$work/two/txing-agent-release-linux-arm64.zip"
+    # Test the exact packaged image, without credentials/network or live sessions.
+    smoke="$work/smoke"
+    mkdir -p "$smoke"
+    unzip -q "$work/one/package/microvm.zip" -d "$smoke"
+    image="txing-agent-release:$version"
+    "$engine" build --platform linux/arm64 --progress plain --tag "$image" "$smoke" > "$work/packaged-build.log" 2>&1 || { cat "$work/packaged-build.log" >&2; exit 1; }
+    "$engine" run --rm --network none --platform linux/arm64 --entrypoint /opt/txing/txing-agent "$image" --help > "$work/packaged-help.txt"
+    # The snapshot host must also respond before any identity/credential setup.
+    # shellcheck disable=SC2016
+    "$engine" run --rm --network none --platform linux/arm64 --entrypoint /bin/sh "$image" -c \
+        '/opt/txing/txing-agent --microvm --require-assignment --ca /opt/txing/aws-roots.pem & agent_pid=$!; trap "kill $agent_pid; wait $agent_pid || true" EXIT; count=0; until curl --fail --silent --max-time 2 --data "" http://127.0.0.1:8080/aws/lambda-microvms/runtime/v1/ready; do count=$((count + 1)); test "$count" -lt 20 || exit 1; sleep 1; done' \
+        > "$work/packaged-ready.txt"
+    destination="$TMPDIR/agent-releases/$version"
+    if ! jq -e '.clean == true' "$work/one/package/release.json" >/dev/null; then
+        candidate=$(shasum -a 256 "$work/one/txing-agent-release-linux-arm64.zip" | cut -d ' ' -f 1)
+        destination="$TMPDIR/agent-releases/candidates/$version/$candidate"
+        echo "Dirty source: validation candidate only; production publication will reject it."
+    fi
+    mkdir -p "$destination"
+    if [ -e "$destination/txing-agent-release-linux-arm64.zip" ]; then
+        cmp "$work/one/txing-agent-release-linux-arm64.zip" "$destination/txing-agent-release-linux-arm64.zip" || { echo "Immutable local release exists; bump agent version." >&2; exit 1; }
+    else
+        cp "$work/one/txing-agent-release-linux-arm64.zip" "$destination/"
+    fi
+    shasum -a 256 "$destination/txing-agent-release-linux-arm64.zip"
+    printf 'Build/execution evidence: %s\n' "$work"
+
+# Operator-run publication to the existing stack. Does not enable or drain agents.
+[positional-arguments]
+publish version:
+    #!/bin/sh
+    set -eu
+    version=$1
+    case "$version" in *[!0-9.]*) echo "Strict MAJOR.MINOR.PATCH required" >&2; exit 1 ;; esac
+    printf '%s\n' "$version" | LC_ALL=C grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+    eval "$(just --justfile "{{project_root}}/justfile" _project-aws-env aws '')"
+    : "${TXING_AWS_STACK:?set the environment stack prefix}"
+    : "${TXING_AGENT_BASE_IMAGE_VERSION:?set a reviewed AVAILABLE managed base-image version}"
+    case "$TXING_AWS_STACK" in *[!A-Za-z0-9-]*|'') echo "Invalid environment stack prefix" >&2; exit 1 ;; esac
+    export AWS_PAGER='' AWS_DEFAULT_REGION=eu-central-1 AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=3
+    stack_name="${TXING_AWS_STACK}-agent"
+    mkdir -p "$TMPDIR"
+    work=$(mktemp -d "$TMPDIR/agent-publish-$version.XXXXXX")
+    printf 'Publication evidence: %s\n' "$work"
+    gh release download "agent-v$version" --repo mparkachov/txing \
+        --pattern txing-agent-release-linux-arm64.zip --dir "$work"
+    unzip -q "$work/txing-agent-release-linux-arm64.zip" -d "$work/release"
+    cd "$work/release"
+    shasum -a 256 -c SHA256SUMS
+    jq -e --arg version "$version" '.component == "agent" and .version == $version and .architecture == "linux/arm64" and .clean == true and (.localPhysicalAcceptance | startswith("docs/agent-physical-acceptance.md#"))' release.json >/dev/null
+    for artifact in microvm.zip controller.zip provenance.zip hooks.json stack.yaml; do
+        actual=$(shasum -a 256 "$artifact" | cut -d ' ' -f 1)
+        test "$actual" = "$(jq -er --arg name "$artifact" '.files[$name]' release.json)"
+    done
+    aws cloudformation describe-stacks --region eu-central-1 --stack-name "$stack_name" > "$work/before.json"
+    jq -e '.Stacks | length == 1' "$work/before.json" >/dev/null
+    jq -e '.Stacks[0].StackStatus | . == "CREATE_COMPLETE" or . == "UPDATE_COMPLETE" or . == "UPDATE_ROLLBACK_COMPLETE"' "$work/before.json" >/dev/null
+    output() { jq -er --arg name "$1" '.Stacks[0].Outputs[] | select(.OutputKey==$name) | .OutputValue' "$work/before.json"; }
+    parameter() { jq -er --arg name "$1" '.Stacks[0].Parameters[] | select(.ParameterKey==$name) | .ParameterValue' "$work/before.json"; }
+    bucket=$(output ArtifactBucket)
+    role=$(output BuildRoleArn)
+    logs=$(output LogGroup)
+    image_name=$(parameter ImageName)
+    action=update-microvm-image
+    if [ "$image_name" = disabled ]; then image_name=$stack_name; action=create-microvm-image; fi
+    # The stack ARN supplies partition/account; IAM names always come from outputs.
+    stack_arn=$(jq -er '.Stacks[0].StackId' "$work/before.json")
+    partition=$(printf '%s' "$stack_arn" | cut -d : -f 2)
+    account=$(printf '%s' "$stack_arn" | cut -d : -f 5)
+    image_arn="arn:$partition:lambda:eu-central-1:$account:microvm-image:$image_name"
+    base_arn="arn:$partition:lambda:eu-central-1:aws:microvm-image:al2023-1"
+    aws lambda-microvms list-managed-microvm-image-versions --region eu-central-1 --image-identifier "$base_arn" > "$work/base-images.json"
+    jq -e --arg version "$TXING_AGENT_BASE_IMAGE_VERSION" '.items[] | select(.imageVersion==$version and .status=="AVAILABLE")' "$work/base-images.json" >/dev/null
+    prefix="agent/$version"
+    # Conditional PUT never overwrites bytes. Existing objects must match exactly.
+    upload() {
+        file=$1
+        key=$2
+        if ! aws s3api put-object --region eu-central-1 --bucket "$bucket" --key "$key" \
+            --body "$file" --if-none-match '*' --checksum-algorithm SHA256 > "$work/upload-$(basename "$file").json" 2> "$work/upload-error.txt"; then
+            aws s3api get-object --region eu-central-1 --bucket "$bucket" --key "$key" "$work/existing-object" > "$work/existing-metadata.json"
+            cmp "$file" "$work/existing-object" || { echo "Immutable S3 object conflicts: $key" >&2; exit 1; }
+        fi
+    }
+    for artifact in microvm.zip controller.zip provenance.zip hooks.json stack.yaml release.json SHA256SUMS; do
+        upload "$artifact" "$prefix/$artifact"
+    done
+    uri="s3://$bucket/$prefix/microvm.zip"
+    jq -n --arg base "$base_arn" --arg baseVersion "$TXING_AGENT_BASE_IMAGE_VERSION" \
+        --arg role "$role" --arg uri "$uri" --arg logs "$logs" --arg version "$version" \
+        --arg egress "arn:$partition:lambda:eu-central-1:aws:network-connector:aws-network-connector:INTERNET_EGRESS" \
+        --slurpfile hooks hooks.json '{baseImageArn:$base,baseImageVersion:$baseVersion,buildRoleArn:$role,codeArtifact:{uri:$uri},description:("agent-v"+$version),logging:{cloudWatch:{logGroup:$logs}},egressNetworkConnectors:[$egress],cpuConfigurations:[{architecture:"ARM_64"}],resources:[{minimumMemoryInMiB:4096}],hooks:$hooks[0]}' > "$work/build-input.json"
+    upload "$work/build-input.json" "$prefix/build-input.json"
+    token=$(shasum -a 256 "$work/build-input.json" | cut -d ' ' -f 1)
+    # Persisted receipt avoids rebuilding an already successful release on retry.
+    if aws s3api get-object --region eu-central-1 --bucket "$bucket" --key "$prefix/built.json" "$work/built.json" > "$work/built-metadata.json" 2> "$work/receipt-error.txt"; then
+        jq -e --arg token "$token" --arg image "$image_arn" '.token==$token and .imageArn==$image' "$work/built.json" >/dev/null
+        image_version=$(jq -er '.imageVersion' "$work/built.json")
+    else
+        grep -Eq 'NoSuchKey|Not Found|404' "$work/receipt-error.txt" || { cat "$work/receipt-error.txt" >&2; exit 1; }
+        if [ "$action" = create-microvm-image ]; then
+            aws lambda-microvms "$action" --region eu-central-1 --name "$image_name" --client-token "$token" --cli-input-json "file://$work/build-input.json" > "$work/submitted.json"
+        else
+            aws lambda-microvms "$action" --region eu-central-1 --image-identifier "$image_arn" --client-token "$token" --cli-input-json "file://$work/build-input.json" > "$work/submitted.json"
+        fi
+        test "$(jq -er '.imageArn' "$work/submitted.json")" = "$image_arn"
+        image_version=$(jq -er '.imageVersion' "$work/submitted.json")
+    fi
+    # Inspect the exact returned version, never latestActiveImageVersion.
+    count=0
+    wait_deadline=$(($(date +%s) + 3600))
+    while :; do
+        aws lambda-microvms get-microvm-image-version --region eu-central-1 --image-identifier "$image_arn" --image-version "$image_version" > "$work/image-version.json"
+        state=$(jq -er '.state' "$work/image-version.json")
+        case "$state" in
+            SUCCESSFUL) break ;;
+            FAILED) cat "$work/image-version.json" >&2; exit 1 ;;
+            PENDING|IN_PROGRESS) count=$((count + 1)); if [ "$count" -ge 360 ] || [ "$(date +%s)" -ge "$wait_deadline" ]; then echo "Build wait exceeded one hour; selection unchanged." >&2; exit 1; fi; sleep 10 ;;
+            *) echo "Unrecognized build state: $state" >&2; exit 1 ;;
+        esac
+    done
+    jq -e --arg uri "$uri" --arg base "$base_arn" --arg baseVersion "$TXING_AGENT_BASE_IMAGE_VERSION" \
+        --arg image "$image_arn" --arg imageVersion "$image_version" \
+        '.status=="ACTIVE" and .imageArn==$image and .imageVersion==$imageVersion and .codeArtifact.uri==$uri and .baseImageArn==$base and .baseImageVersion==$baseVersion' "$work/image-version.json" >/dev/null
+    aws lambda-microvms get-microvm-image --region eu-central-1 --image-identifier "$image_arn" > "$work/image.json"
+    jq -e '.state=="CREATED" or .state=="UPDATED"' "$work/image.json" >/dev/null
+    jq -n --arg token "$token" --arg image "$image_arn" --arg imageVersion "$image_version" \
+        --slurpfile release release.json --slurpfile build "$work/image-version.json" \
+        '{token:$token,imageArn:$image,imageVersion:$imageVersion,release:$release[0],build:$build[0]}' > "$work/receipt.json"
+    if [ ! -s "$work/built.json" ]; then upload "$work/receipt.json" "$prefix/built.json"; fi
+    # A concurrent stack change requires a fresh review/retry, never stale overrides.
+    aws cloudformation describe-stacks --region eu-central-1 --stack-name "$stack_name" > "$work/current.json"
+    jq -S '.Stacks[0] | {Parameters,StackStatus,LastUpdatedTime,StackId} | .Parameters |= sort_by(.ParameterKey)' "$work/before.json" > "$work/before-state.json"
+    jq -S '.Stacks[0] | {Parameters,StackStatus,LastUpdatedTime,StackId} | .Parameters |= sort_by(.ParameterKey)' "$work/current.json" > "$work/current-state.json"
+    cmp "$work/before-state.json" "$work/current-state.json"
+    jq --arg bucket "$bucket" --arg key "$prefix/controller.zip" --arg image "$image_name" \
+        --arg imageVersion "$image_version" --arg release "$version" \
+        '.Stacks[0].Parameters | map(.ParameterKey as $k | if $k=="ControllerBucket" then {ParameterKey:$k,ParameterValue:$bucket} elif $k=="ControllerKey" then {ParameterKey:$k,ParameterValue:$key} elif $k=="ImageName" then {ParameterKey:$k,ParameterValue:$image} elif $k=="ImageVersion" then {ParameterKey:$k,ParameterValue:$imageVersion} elif $k=="Release" then {ParameterKey:$k,ParameterValue:$release} else {ParameterKey:$k,UsePreviousValue:true} end)' "$work/current.json" > "$work/parameters.json"
+    if aws cloudformation update-stack --region eu-central-1 --stack-name "$stack_name" --use-previous-template \
+        --capabilities CAPABILITY_IAM --parameters "file://$work/parameters.json" > "$work/selection.json" 2> "$work/selection-error.txt"; then
+        aws cloudformation wait stack-update-complete --region eu-central-1 --stack-name "$stack_name"
+    else
+        grep -q 'No updates are to be performed' "$work/selection-error.txt" || { cat "$work/selection-error.txt" >&2; exit 1; }
+    fi
+    aws cloudformation describe-stacks --region eu-central-1 --stack-name "$stack_name" > "$work/selected.json"
+    jq -e --arg version "$version" --arg imageVersion "$image_version" --arg image "$image_name" \
+        --arg bucket "$bucket" --arg key "$prefix/controller.zip" \
+        '.Stacks[0] | (.StackStatus=="UPDATE_COMPLETE" or .StackStatus=="CREATE_COMPLETE") and (.Parameters | map({key:.ParameterKey,value:.ParameterValue}) | from_entries | .Release==$version and .ImageVersion==$imageVersion and .ImageName==$image and .ControllerBucket==$bucket and .ControllerKey==$key)' "$work/selected.json" >/dev/null
+    controller=$(output ControllerArn)
+    aws lambda get-function-configuration --region eu-central-1 --function-name "$controller" > "$work/controller.json"
+    test "$(jq -er '.CodeSha256' "$work/controller.json")" = "$(openssl dgst -sha256 -binary controller.zip | openssl base64 -A)"
+    printf 'Selected agent-v%s, image %s version %s for subsequent launches. Evidence: %s\n' "$version" "$image_arn" "$image_version" "$work"
 
 # Operator-run initial CloudFormation deployment. Always starts disabled.
 deploy:

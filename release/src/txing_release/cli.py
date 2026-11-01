@@ -49,6 +49,10 @@ class Component:
 
 
 COMPONENTS = {
+    "agent": Component(
+        name="agent",
+        version_path=Path("release/versions/agent"),
+    ),
     "rig": Component(
         name="rig",
         version_path=Path("release/versions/rig"),

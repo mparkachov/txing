@@ -4,7 +4,9 @@ Status: operator runbook for the C++ replacement. Repository cleanup does not
 imply deployed AWS cleanup. The #168 implementation, ARM64 artifacts and bounded
 operator-run source-build test are recorded in the
 [cloud evidence](../agent-cloud-build-validation.md). Launches are disabled
-after that test. Immutable release publication remains #169.
+after that test. Immutable release tooling and operator instructions are
+prepared under #169 in the [publication runbook](../agent-release-publication.md);
+local ARM64 candidate checks pass; actual immutable release publication is pending.
 
 Follow the [agent design](../components/agent.md) validation gates before enabling
 the replacement. Native operation, the disposable MicroVM feasibility probe,
@@ -57,7 +59,7 @@ history for inspection; do not restore or redeploy the removed template.
    assets. Remove obsolete companion artifacts manually when no deployment
    references them. Preserve shared runtime Lambda artifacts and board/rig/KVS
    releases. Current release tooling/workflows no longer publish companion assets;
-   the new agent release stream is implemented in a later issue.
+   the `agent-vX.Y.Z` stream publishes the replacement artifacts separately.
 5. After all old writers are stopped, archive the capability-owned `agent` shadow for
    evidence, delete only that named shadow, and initialize from
    `devices/tbot/aws/default-agent-shadow.json` (or re-enlist to create it missing).
@@ -91,7 +93,7 @@ released-cloud operation. Board credential-renewal repair remains deferred.
 Ordinary immutable publication affects later launches; it leaves existing runs
 on their current version. Immediate adoption requires manual disarm, release,
 and drain. Bump the new `agent` component version before producing a new release
-artifact once its publication workflow exists.
+artifact. Use the [immutable publication workflow](../agent-release-publication.md).
 
 Record operator identity/time, source revision and versions, old trigger states,
 zero old tasks, shadow reset, exact retired/retained resources, acceptance logs,

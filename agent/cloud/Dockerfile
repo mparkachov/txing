@@ -44,16 +44,34 @@ RUN cmake -S agent -B /build/agent -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       -DOPENSSL_ROOT_DIR=/opt/snapsafe \
       -DTXING_AGENT_BUILD_ID="$(cat /opt/txing/build-id.txt)" \
     && cmake --build /build/agent --parallel 4 \
-    && ctest --test-dir /build/agent --output-on-failure \
+    && ctest --test-dir /build/agent --output-on-failure | tee /opt/txing/ctest.txt \
+    && grep -q '100% tests passed' /opt/txing/ctest.txt \
     && readelf -h /build/agent/txing-agent | tee /opt/txing/elf-header.txt \
     && readelf -h /build/agent/txing-agent | grep -q AArch64 \
     && cp /build/agent/txing-agent /opt/txing/txing-agent \
     && mkdir -p /opt/txing/lib \
     && cp -L /usr/lib64/libwebsockets.so.* /usr/lib64/libusrsctp.so.* \
          /usr/lib64/liblog4cplus*.so.* /opt/txing/lib/ \
-    && rpm -qa | sort > /opt/txing/packages.txt
+    && rpm -qa | sort > /opt/txing/packages.txt \
+    && git -C /build/agent/_deps/aws_sdk-src submodule status --recursive > /opt/txing/aws-crt-revisions.txt \
+    && mkdir -p /out/lib /out/provenance \
+    && cp /build/agent/txing-agent-controller /out/bootstrap \
+    && ldd /out/bootstrap > /out/provenance/linked-libraries.txt \
+    && ! grep -q 'not found' /out/provenance/linked-libraries.txt \
+    && awk '$2 == "=>" && $3 ~ /^\// {print $3}' /out/provenance/linked-libraries.txt | sort -u > /out/provenance/library-paths.txt \
+    && while IFS= read -r library; do \
+         case "$(basename "$library")" in libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*) continue ;; esac; \
+         cp -L "$library" /out/lib/; \
+       done < /out/provenance/library-paths.txt \
+    && cp /opt/txing/*.txt /out/provenance/ \
+    && readelf -h /out/bootstrap > /out/provenance/elf-header.txt \
+    && grep -q AArch64 /out/provenance/elf-header.txt \
+    && chmod -R a+rX /out
 
-FROM public.ecr.aws/lambda/microvms@sha256:c11ebc6785cc781bf9b6b2de43b5a9681a39141d3fdfb85a48600a6846dda2fd
+FROM scratch AS controller-export
+COPY --from=build /out/ /
+
+FROM public.ecr.aws/lambda/microvms@sha256:c11ebc6785cc781bf9b6b2de43b5a9681a39141d3fdfb85a48600a6846dda2fd AS runtime
 RUN dnf swap -y libcurl-minimal libcurl-full \
     && dnf swap -y curl-minimal curl-full \
     && dnf install -y libstdc++ libsrtp zlib openssl-snapsafe-libs ca-certificates \
@@ -66,9 +84,23 @@ RUN ldd /opt/txing/txing-agent > /opt/txing/linked-libraries.txt \
     && ! grep -q 'not found' /opt/txing/linked-libraries.txt \
     && grep -q '/opt/snapsafe/libcrypto.so.3' /opt/txing/linked-libraries.txt \
     && grep -q '/opt/snapsafe/libssl.so.3' /opt/txing/linked-libraries.txt \
+    && awk '$2 == "=>" && $3 ~ /^\// {print $3}' /opt/txing/linked-libraries.txt | sort -u > /opt/txing/library-paths.txt \
+    && while IFS= read -r library; do \
+         case "$library" in /opt/*) continue ;; esac; \
+         case "$(basename "$library")" in libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*) continue ;; esac; \
+         cp -L "$library" /opt/txing/lib/; \
+       done < /opt/txing/library-paths.txt \
     && rpm -qa | sort > /opt/txing/runtime-packages.txt \
     && chmod -R a+rX /opt/txing /opt/snapsafe
 USER 10001:10001
 WORKDIR /opt/txing
 EXPOSE 8080 8081
 ENTRYPOINT ["/opt/txing/txing-agent", "--microvm", "--require-assignment", "--ca", "/opt/txing/aws-roots.pem"]
+
+FROM scratch AS release-export
+COPY --from=runtime /opt/txing/ /runtime/txing/
+COPY --from=runtime /opt/snapsafe/libssl.so.3 /opt/snapsafe/libcrypto.so.3 /runtime/snapsafe/
+COPY --from=build /out/ /controller/
+
+# Keep source-only cloud/probe-era invocations runnable without a target flag.
+FROM runtime AS cloud

@@ -32,9 +32,11 @@ records that limitation. The #168 C++ controller, cloud host and attachment are
 implemented. Operator-run source-build acceptance covers automatic telemetry/video,
 authenticated QGC attachment, explicit lease ownership, client-loss fencing and
 terminal shutdown; see the [cloud evidence](../docs/agent-cloud-build-validation.md).
-The diagnostic `0.0.0` test build is unpublished. Immutable publication remains
-#169 and final released-cloud physical acceptance remains #170. Launches are
-disabled after the controlled test.
+The diagnostic `0.0.0` test build is unpublished. Immutable release tooling is
+prepared under #169; local ARM64 candidate checks pass, while immutable release
+and operator publication evidence are pending.
+Final released-cloud physical acceptance remains #170. Launches are disabled
+after the controlled test. See the [release workflow](../docs/agent-release-publication.md).
 
 Read the [design](../docs/components/agent.md),
 [constraints](../docs/constraints/agent.md), and
@@ -66,7 +68,8 @@ just agent::run <registered-tbot-thing-id> --region eu-central-1
 The foreground run observes and logs; Ctrl-C or SIGTERM releases authority and
 closes both sessions. The agent binds `127.0.0.1:14551` and sends telemetry to
 QGroundControl at `127.0.0.1:14550` immediately, even before QGC sends anything.
-`publish` remains the separate immutable-release workflow in #169.
+`just agent::publish <version>` selects a successful release build for later
+launches without restarting existing runs or enabling automation.
 
 ## Cloud attachment
 
@@ -99,6 +102,13 @@ observation. See the [agent shadow contract](../docs/contracts/agent-shadow.md).
 Do not delete or reset the controller-owned shadow to manufacture a new budget.
 
 ## Preparing cloud artifacts
+
+For versioned releases use `just agent::release-package`, then the manual
+`just release::build agent <branch>` GitHub workflow and
+`just agent::publish <version>`. The [publication runbook](../docs/agent-release-publication.md)
+covers checksums/provenance, required gates, IAM, initial deployment, ordinary
+updates, retained costs and base-image maintenance. These commands do not commit
+or bump versions. Building is local; publishing is an explicit operator AWS action.
 
 `just agent::cloud-package` prepares the source-only production MicroVM image
 context, including the mandatory assignment-verification startup flag. The

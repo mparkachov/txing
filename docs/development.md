@@ -85,6 +85,11 @@ component version file, fails unless it is newer than the latest existing tag
 with the same component prefix, and publishes only that component's artifacts.
 It does not commit or push version changes back to the selected branch.
 
+The C++ `agent` stream uses the same version/bump/dispatch interface and its
+own `just agent::publish <version>` operator workflow. See
+[immutable agent publication](agent-release-publication.md) for Linux ARM64
+build checks and the separate initial deployment/live acceptance gates.
+
 After a release workflow finishes, the operator Mac deploys CloudFormation
 infrastructure changes and then publishes already-built Lambda runtime
 artifacts with:
