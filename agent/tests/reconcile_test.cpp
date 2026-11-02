@@ -84,6 +84,49 @@ struct FakeDrain : DrainBackend {
     }
 };
 void tests() {
+    Fake accelerated;
+    reconcile(accelerated, 100, "1.0.0", {}, 180);
+    accelerated.observed = ProjectionObservation{2, true, 2000};
+    reconcile(accelerated, 101, "1.0.0", {}, 180);
+    accelerated.host.state = "RUNNING";
+    reconcile(accelerated, 102, "1.0.0", {}, 180);
+    const auto activation = accelerated.stored.state.activation.activation->id;
+    require(accelerated.stored.state.activation.activation->deadline == 280 && accelerated.launches == 1,
+            "accelerated activation ignored the configured budget or inactive observation time");
+    accelerated.host.state = "TERMINATED";
+    reconcile(accelerated, 140, "1.0.0", {}, 3000);
+    accelerated.host = {"vm-2", "RUNNING", "replacement"};
+    reconcile(accelerated, 141, "2.0.0", {}, 3000);
+    reconcile(accelerated, 142, "2.0.0", {}, 60);
+    require(accelerated.launches == 2 && accelerated.stored.state.activation.activation->id == activation &&
+            accelerated.stored.state.activation.activation->deadline == 280 &&
+            accelerated.stored.state.run->request.find(":280") != std::string::npos,
+            "replacement, publication or changed configuration reset the existing activation");
+    reconcile(accelerated, 280, "2.0.0", {}, 3000);
+    require(accelerated.terminations == 1 && accelerated.stored.state.run->phase == RunPhase::stopping,
+            "accelerated deadline did not stop the replacement");
+    accelerated.host.state = "TERMINATED";
+    reconcile(accelerated, 281, "2.0.0", {}, 3000);
+    accelerated.observed = ProjectionObservation{3, true, 3000};
+    reconcile(accelerated, 282, "2.0.0", {}, 3000);
+    require(!accelerated.stored.state.run && accelerated.launches == 2 &&
+            accelerated.stored.state.activation.activation->deadline == 280,
+            "continuously active device rolled over after accelerated expiry");
+    accelerated.observed = ProjectionObservation{4, false, 4000};
+    reconcile(accelerated, 283, "2.0.0", {}, 60);
+    accelerated.observed = ProjectionObservation{5, true, 5000};
+    reconcile(accelerated, 284, "2.0.0", {}, 60);
+    require(accelerated.launches == 3 && accelerated.stored.state.activation.activation->id != activation &&
+            accelerated.stored.state.activation.activation->deadline == 343,
+            "verified reactivation did not use the newly configured budget");
+    for (const auto budget : {0, -1, 3001}) {
+        Fake invalid;
+        bool rejected = false;
+        try { reconcile(invalid, 100, "1.0.0", {}, budget); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected && invalid.stored.shadow_version == 0 && invalid.launches == 0,
+                "invalid budget changed persistent state or launched a host");
+    }
     FakeDrain drain;
     require(!drain_disabled(drain) && drain.fenced == std::vector<std::string>({"one", "two"}) &&
             drain.terminated == std::vector<std::string>({"one", "two", "three"}) &&

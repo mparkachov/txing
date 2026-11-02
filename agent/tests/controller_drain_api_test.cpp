@@ -68,6 +68,20 @@ struct Fixture {
     ~Fixture() { if (worker.joinable()) worker.join(); if (listener >= 0) close(listener); }
 };
 void run() {
+    require(controller_activation_budget("") == 3000 && controller_activation_budget("3000") == 3000 &&
+            controller_activation_budget("180") == 180 && controller_activation_budget("1") == 1,
+            "supported activation budget setting rejected or default changed");
+    ControllerConfig budget_config{{"arn:aws:lambda:eu-central-1:123456789012:microvm-image:agent", "1", "role", "logs", "eu-central-1"}, "1.0.0"};
+    require(controller_configured(budget_config), "default controller budget invalid");
+    for (const std::string value : {"0", "-1", "+180", "0180", "3001", "999999999999999999999", "180.0", " 180", "180\n"}) {
+        budget_config.activation_budget_seconds = controller_activation_budget(value);
+        bool drained = false, rejected = false;
+        unsigned launched = 0;
+        try { controller_dispatch_automation("enabled", controller_configured(budget_config),
+                                            [&] { ++launched; }, [&] { drained = true; }); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        require(drained && rejected && launched == 0, "invalid activation budget did not use termination-only repair");
+    }
     Fixture fixture;
     auto credentials = Aws::MakeShared<Aws::Auth::SimpleAWSCredentialsProvider>("fixture", "fixture-key", "fixture-secret");
     Aws::Client::ClientConfiguration client(Aws::Client::ClientConfigurationInitValues{true});

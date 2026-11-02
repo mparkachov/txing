@@ -79,6 +79,13 @@ at the current project stage (the [2026-10-23 duration decision](../constraints/
 including retries, replacements, and publication. Only a subsequent verified
 inactive-to-active transition permits a fresh activation budget.
 
+For accelerated acceptance, the prepared 0.1.1 controller permits a shorter
+configured budget (1–3000 seconds, default 3000). It changes only newly created
+activations; replacing a run, publishing or changing configuration leaves an
+existing activation's ID/start/deadline intact. The shadow requires no new
+configuration field: the saved absolute deadline remains authoritative. See the
+[released-cloud acceptance procedure](../agent-cloud-acceptance.md).
+
 A fenced launch with no known MicroVM ID remains reserved for its activation.
 A later directly observed and unexpired activation may supersede that unknown
 reservation with a conditionally persisted new run. The old request is never

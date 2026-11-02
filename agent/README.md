@@ -37,7 +37,8 @@ The diagnostic `0.0.0` test build is unpublished. The immutable
 passes clean ARM64 build/package checks. AWS image version `3.0` built
 successfully and is selected with its matching controller under completed #169.
 Publication verification and interrupted-build recovery passed operator-run
-acceptance. Final released-cloud physical acceptance remains #170; both launch
+acceptance. Final released-cloud physical acceptance is in progress under
+[#170's staged record](../docs/agent-cloud-acceptance.md); both launch
 switches are still false. Keep launches disabled for that next gate. See the
 [release workflow](../docs/agent-release-publication.md).
 

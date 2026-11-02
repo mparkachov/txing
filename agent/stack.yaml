@@ -21,6 +21,11 @@ Parameters:
     Type: String
     Default: 'false'
     AllowedValues: ['false', 'true']
+  ActivationBudgetSeconds:
+    Type: String
+    Default: '3000'
+    AllowedPattern: '([1-9][0-9]{0,2}|[12][0-9]{3}|3000)'
+    Description: Maximum seconds for a new activation; shorten for operator acceptance, never extends an existing activation
   ImageName:
     Type: String
     Default: disabled
@@ -184,6 +189,7 @@ Resources:
           TXING_AGENT_IMAGE: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${ImageName}'
           TXING_AGENT_IMAGE_VERSION: !Ref ImageVersion
           TXING_AGENT_RELEASE: !Ref Release
+          TXING_AGENT_ACTIVATION_BUDGET_SECONDS: !Ref ActivationBudgetSeconds
           TXING_AGENT_EXECUTION_ROLE: !GetAtt ExecutionRole.Arn
           TXING_AGENT_LOG_GROUP: !Ref MicrovmLogs
   LifecycleRule:

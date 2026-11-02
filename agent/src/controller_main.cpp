@@ -73,7 +73,8 @@ int main() {
         client_config.region = "eu-central-1"; client_config.connectTimeoutMs = 2000; client_config.requestTimeoutMs = 5000;
         client_config.retryStrategy = Aws::MakeShared<Aws::Client::DefaultRetryStrategy>("agent-controller", 1);
         txing::agent::ControllerConfig config{{env("TXING_AGENT_IMAGE"), env("TXING_AGENT_IMAGE_VERSION"),
-            env("TXING_AGENT_EXECUTION_ROLE"), env("TXING_AGENT_LOG_GROUP"), "eu-central-1"}, env("TXING_AGENT_RELEASE")};
+            env("TXING_AGENT_EXECUTION_ROLE"), env("TXING_AGENT_LOG_GROUP"), "eu-central-1"}, env("TXING_AGENT_RELEASE"),
+            txing::agent::controller_activation_budget(env("TXING_AGENT_ACTIVATION_BUDGET_SECONDS"))};
         const auto base = "http://" + runtime + "/2018-06-01/runtime/invocation/";
         while (true) {
             const auto event = http(base + "next", nullptr);

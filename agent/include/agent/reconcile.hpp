@@ -28,7 +28,8 @@ enum class ReconcileResult { settled, again, conflict };
 // wall clock so deadlines are rechecked after blocking network operations;
 // steady elapsed time prevents a backwards wall-clock jump extending a pass.
 ReconcileResult reconcile(ReconcileBackend&, std::int64_t now, const std::string& release,
-                          const std::function<std::int64_t()>& clock = {});
+                          const std::function<std::int64_t()>& clock = {},
+                          std::int64_t activation_budget_seconds = 3000);
 std::vector<std::string> orphan_candidates(const std::vector<CloudRun>& inventory,
                                            const std::set<std::string>& assigned);
 enum class OrphanAction { defer, retain, terminate, fence_then_terminate };

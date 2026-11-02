@@ -9,7 +9,11 @@ namespace txing::agent {
 struct ControllerConfig {
     CloudConfig cloud;
     std::string release;
+    std::int64_t activation_budget_seconds = 3000;
 };
+// Missing setting uses the supported maximum. Invalid settings return zero,
+// making controller_configured false and preserving termination-only repair.
+std::int64_t controller_activation_budget(const std::string&);
 bool controller_configured(const ControllerConfig&);
 // Only an explicitly enabled controller with complete configuration may
 // reconcile/launch. All other states attempt termination-only repair first.

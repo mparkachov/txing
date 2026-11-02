@@ -109,6 +109,10 @@ struct Fixture {
             require(reserved.state.run && reserved.state.run->run_id == token &&
                     reserved.state.run->phase == RunPhase::reserved, "launch preceded its conditional reservation");
             Json hook(view.GetString("runHookPayload"));
+            require(view.GetInteger("maximumDurationInSeconds") > 0 &&
+                    view.GetInteger("maximumDurationInSeconds") <= 180 &&
+                    reserved.state.activation.activation->deadline - reserved.state.activation.activation->started_at == 180,
+                    "configured activation budget did not reach the persisted deadline and AWS wire request");
             require(hook.View().GetString("thingId") == "tbot-test" &&
                     hook.View().GetString("activationId") == reserved.state.run->activation_id.c_str() &&
                     hook.View().GetString("deadline") == std::to_string(reserved.state.activation.activation->deadline).c_str(),
@@ -186,7 +190,7 @@ void run(Fixture& fixture) {
     Aws::Client::ClientConfiguration client(Aws::Client::ClientConfigurationInitValues{true});
     client.region = "eu-central-1";
     client.retryStrategy = Aws::MakeShared<Aws::Client::DefaultRetryStrategy>("enabled-fixture", 0);
-    ControllerConfig config{{"arn:aws:lambda:eu-central-1:123456789012:microvm-image:agent", "1", "role", "logs", "eu-central-1"}, "1.0.0"};
+    ControllerConfig config{{"arn:aws:lambda:eu-central-1:123456789012:microvm-image:agent", "1", "role", "logs", "eu-central-1"}, "1.0.0", 180};
     const auto invoke = [&](const char* event) {
         handle_controller_event(event, config, credentials, client);
         require(fixture.failure.empty(), fixture.failure.c_str());
@@ -221,7 +225,7 @@ void run(Fixture& fixture) {
             fixture.snapshot().state.run->release == "2.0.0", "verified reactivation failed to launch a new release");
     auto expired = fixture.snapshot();
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    expired.state.activation.activation->started_at = now - 3000;
+    expired.state.activation.activation->started_at = now - 180;
     expired.state.activation.activation->deadline = now;
     fixture.shadow = Json(Aws::String(controller_shadow_patch(expired, now, expired.verified_at).c_str()));
     invoke(repair); invoke(repair); invoke(event);

@@ -5,8 +5,9 @@
 
 namespace txing::agent {
 ReconcileResult reconcile(ReconcileBackend& io, std::int64_t now, const std::string& release,
-                          const std::function<std::int64_t()>& clock) {
-    if (now <= 0 || release.empty()) throw std::invalid_argument("reconciliation requires time and release");
+                          const std::function<std::int64_t()>& clock, std::int64_t activation_budget_seconds) {
+    if (now <= 0 || release.empty() || activation_budget_seconds < 1 || activation_budget_seconds > 3000)
+        throw std::invalid_argument("reconciliation requires time, release and a 1-3000 second activation budget");
     auto anchor_wall = now;
     auto anchor_steady = std::chrono::steady_clock::now();
     const auto current_time = [&]() -> std::int64_t {
@@ -27,7 +28,7 @@ ReconcileResult reconcile(ReconcileBackend& io, std::int64_t now, const std::str
     if (supported && *supported) {
         const auto projection = io.projection();
         if (projection && projection->active) {
-            const auto change = observe_activation(snapshot.state.activation, *projection, now, 3000, [&] { return io.identity(); });
+            const auto change = observe_activation(snapshot.state.activation, *projection, now, activation_budget_seconds, [&] { return io.identity(); });
             if (change != ActivationChange::unverified && change != ActivationChange::stale) {
                 current = *projection->active ? CurrentLifecycle::active : CurrentLifecycle::inactive;
                 snapshot.verified_at = now;

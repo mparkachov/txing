@@ -43,7 +43,10 @@ The board credential/session repair is deferred at this stage.
   including replacements, retries and publications. Each replacement receives
   only the remaining budget. Expiry releases control and stops cloud operation;
   a continuously active device cannot obtain automatic rollover. This controller
-  enforcement and accelerated boundary acceptance remain later milestone work.
+  enforcement was implemented under #168. #170 prepares a bounded controller
+  activation-budget setting for accelerated acceptance; live released-system
+  boundary acceptance remains pending. See the
+  [released-cloud acceptance record](../agent-cloud-acceptance.md).
 - Native foreground sessions have the same supported operational ceiling; the
   operator ends them by fifty minutes. This documentation does not add an
   automatic timer to the current native command.
@@ -71,3 +74,19 @@ controller/released-cloud acceptance must exercise the duration boundary.
 
 No board installation, custom service, lifecycle debounce, automatic restart,
 controller deployment or AWS mutation is authorized by this documentation.
+
+## Accelerated released-cloud acceptance
+
+The prepared 0.1.1 controller accepts `ActivationBudgetSeconds` through
+CloudFormation (environment `TXING_AGENT_ACTIVATION_BUDGET_SECONDS`). Default
+is 3000; only integer values 1–3000 are accepted. Missing environment uses the
+default. Invalid configuration drains rather than authorizing launches.
+This setting affects only a new directly observed inactive-to-active activation.
+Existing activation IDs, start times and deadlines persist unchanged even when
+the setting changes. Runtime/hosting/shadow validation keeps the hard maximum
+of 3000 seconds. The operator restores the default after the accelerated test.
+
+0.1.0 has no such setting. Releasing the changed controller and applying the
+release template are manual prerequisites; ordinary publication preserves the
+existing template. A local accelerated test or prepared configuration is not
+proof of live expiry, replacement, no rollover or reactivation.

@@ -177,7 +177,7 @@ void reconcile_thing(AwsDevice& device, CloudMicrovms& cloud, const ControllerCo
     AwsBackend backend(device, cloud, config, thing);
     try {
         for (unsigned attempt = 0; attempt < attempts; ++attempt) {
-            const auto result = reconcile(backend, now_seconds(), config.release, now_seconds);
+            const auto result = reconcile(backend, now_seconds(), config.release, now_seconds, config.activation_budget_seconds);
             if (result == ReconcileResult::settled) return;
             if (attempt + 1 < attempts) std::this_thread::sleep_for(std::chrono::seconds(1));
         }
@@ -255,12 +255,20 @@ private:
 };
 }
 
+std::int64_t controller_activation_budget(const std::string& value) {
+    if (value.empty()) return 3000;
+    if (value.size() > 4 || value.front() == '0' || value.find_first_not_of("0123456789") != std::string::npos) return 0;
+    std::int64_t seconds = 0;
+    for (const auto digit : value) seconds = seconds * 10 + (digit - '0');
+    return seconds >= 1 && seconds <= 3000 ? seconds : 0;
+}
 bool controller_configured(const ControllerConfig& config) {
     const auto& image = config.cloud.image;
     const bool placeholder = image.size() >= 9 && image.compare(image.size() - 9, 9, ":disabled") == 0;
     return config.cloud.region == "eu-central-1" && !image.empty() && !placeholder &&
         !config.cloud.image_version.empty() && config.cloud.image_version.find_first_of(" \t\r\n") == std::string::npos &&
-        !config.cloud.execution_role.empty() && !config.cloud.log_group.empty() && valid_release(config.release);
+        !config.cloud.execution_role.empty() && !config.cloud.log_group.empty() && valid_release(config.release) &&
+        config.activation_budget_seconds >= 1 && config.activation_budget_seconds <= 3000;
 }
 void controller_dispatch_automation(const std::string& setting, bool configured,
                                     const std::function<void()>& reconcile,
