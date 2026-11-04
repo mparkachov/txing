@@ -15,8 +15,9 @@ controller or shadow projector.
   bounded watch check follows successful projection, including unchanged metrics;
   watch failure does not turn a successful projection into a failed invocation.
 - MQTT traffic is not periodic or guaranteed. A separate one-minute EventBridge
-  rule invokes the same witness Lambda even when devices and the controller are
-  silent. Its state does not follow the controller's automation switch.
+  Scheduler schedule invokes the same witness Lambda even when devices and the
+  controller are silent. Its state does not follow the controller's automation
+  switch.
 - For an off assignment (`stopping`, `stopped`, `expired`, `error`), wait 120
   seconds from `controller.stopRequestedAt`. The controller records that value
   on the first stopping write and retains it through repeated writes. Clear it
@@ -38,11 +39,12 @@ Configure witness with the same dedicated Frankfurt image name as the agent
 stack. Inventory covers every version of that image. Get and terminate IAM
 permissions are scoped to its image ARN; the watch has no run, resume, token,
 or pass-role permissions and receives no agent-shadow-write interface.
-The existing witness role retains Thing-level shadow-update permission for
-Sparkplug projection. HTTPS shadow IAM actions authorize the Thing ARN rather
-than a per-shadow ARN; appending `/agent` or `/sparkplug` would not implement
-shadow-specific isolation. Controller-only agent writes remain an application
-ownership rule. See the [AWS shadow REST authorization examples](https://docs.aws.amazon.com/iot/latest/developerguide/device-shadow-rest-api.html).
+The existing witness role grants shadow access on `thing/*` for Sparkplug
+projection. That wildcard matches both classic and named-shadow resources.
+A named shadow uses `thing/THING/SHADOW`, such as `thing/THING/sparkplug` or
+`thing/THING/agent`; the bare Thing ARN does not match those named resources.
+Controller-only agent writes remain an application ownership rule under the
+current wildcard policy. See the [AWS IoT action-resource reference](https://docs.aws.amazon.com/iot/latest/developerguide/iot-action-resources.html).
 
 Retain healthy starting and running assignments, including runs with individual
 media errors. Check the current VM/image identity and re-read its assignment
@@ -94,7 +96,7 @@ expires. Sparkplug inactivity alone does not authorize watch termination.
    the established operator workflow; `just release::publish lambda` updates all
    three shared Go runtime functions, so review their release contents first.
 3. Run `just witness::deploy <environment-stack> <agent-image-name>` manually to
-   configure the scoped permissions, environment and minute rule. The image name
+   configure the scoped permissions, environment and minute schedule. The image name
    must match the agent stack's `ImageName`. Omitting the second argument keeps
    the existing CloudFormation parameter; a first deployment defaults to
    `disabled`. Do not disable the watch as part of ordinary controller shutdown.
@@ -122,7 +124,7 @@ Prepared code, loopback API tests and an ARM64 build are not live AWS acceptance
 Binding an image while agent automation is disabled enables the controller's
 termination-only minute schedule. A successful cleanup with that schedule
 running does not independently prove witness repair. For operator-run witness
-acceptance, pause only the controller repair rule and temporarily set the
+acceptance, pause only the controller repair schedule and temporarily set the
 controller's reserved concurrency to zero to block queued asynchronous retries.
 Wait longer than its configured 120-second timeout for an invocation already
 running to finish. Leave witness's independent schedule enabled throughout.
@@ -142,7 +144,7 @@ Record AWS start time, nonterminal state during the grace, the exact witness
 termination request and later `TERMINATED` state. A failed run hook, manual stop,
 or platform lifetime expiry is not witness success. If it remains nonterminal
 five minutes after AWS start time, record failure and stop it manually. Restore
-controller concurrency to one and its repair rule only after every test VM is
+controller concurrency to one and its repair schedule only after every test VM is
 confirmed terminal. Keep ordinary launches disabled. Known off/deadline cases
 and healthy/replacement preservation remain separate live acceptance checks.
 
@@ -176,6 +178,6 @@ then a witness termination request and terminal state before the independent
 hosting cap. Clear the previous off timestamp when binding the new test run.
 Never extend a real activation or reset a real device's shadow for testing.
 After terminal confirmation, delete only the temporary fixture's shadow and
-Thing and restore controller concurrency/rule settings. These tests establish
+Thing and restore controller concurrency/schedule settings. These tests establish
 watch behavior for stored off/deadline evidence; real healthy runs, device
 streams, attachment and controller-driven lifecycle remain separate acceptance.

@@ -128,6 +128,59 @@ Keep automation disabled until the updated rig projection, artifacts, witness
 and existing live acceptance gates have been checked. A missing availability
 metric must not be treated as a verified inactive transition or an authorization.
 
+## Replace the milestone 10 minute rules with EventBridge Scheduler
+
+The controller repair pass and independent witness watch use
+`AWS::Scheduler::Schedule`, with a one-minute rate and flexible time windows
+off. Each schedule assumes its own generated-name IAM role, trusted only by
+Scheduler in the same account and default schedule group, and permitted to
+invoke only its target Lambda. See the [Scheduler target requirements](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-scheduler-schedule-target.html)
+and [schedule-group trust conditions](https://docs.aws.amazon.com/scheduler/latest/UserGuide/cross-service-confused-deputy-prevention.html).
+Delivery retries retain the former rules' bounds: at most 185 retries within
+24 hours. See the [EventBridge retry defaults](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-rule-retry-policy.html).
+Controller input explicitly retains `{"source":"aws.events"}` for its existing
+repair/drain dispatcher; witness retains `{"source":"txing.witness.agent-watch"}`.
+
+For existing stacks, apply the template correction manually:
+
+1. Keep launches disabled, disarm/release and drain as described below, and
+   confirm zero nonterminal MicroVMs before replacing triggers. Save both
+   stacks' current parameters and resource inventories. Retain the dedicated
+   image names and controller artifacts; the repair schedules must stay enabled
+   for a configured image even when `AutomationEnabled=false`.
+2. Update the existing agent stack with the reviewed `agent/stack.yaml`, using
+   `CAPABILITY_IAM` and preserving all existing parameter values. The initial
+   `just agent::deploy` recipe refuses an existing stack; use the normal
+   CloudFormation update flow. This creates `RepairScheduleRole` and
+   `RepairSchedule` and removes the stack-owned `RepairRule` and
+   `RepairPermission`.
+3. Run `just witness::deploy <environment-stack> <agent-image-name>` to update
+   the existing witness stack with the same dedicated image name. This creates
+   `AgentWatchScheduleRole` and `AgentWatchRepairSchedule` and removes the
+   stack-owned `AgentWatchSchedule` rule and `AgentWatchInvokePermission`.
+   The two stacks update independently; confirm witness repair is working
+   before considering agent enablement.
+4. After both updates complete, resolve the new schedules' physical names from
+   their CloudFormation logical IDs and inspect them with
+   `aws scheduler get-schedule --group-name default --name <physical-name> --region eu-central-1`.
+   Verify `rate(1 minute)`, flexible window `OFF`, the
+   expected state, target ARN, execution role and JSON input. Confirm the old
+   rules are absent and that each Lambda receives successful scheduled
+   invocations without device traffic. Existing fault-injection instructions
+   now pause/restore the controller's Scheduler schedule, rather than an
+   EventBridge rule.
+5. Keep the existing #170 acceptance and enablement gates. Historical rule
+   invocation evidence does not prove live Scheduler delivery. If an old rule
+   was created manually outside these stacks, inventory and remove it manually
+   after its replacement is verified; no cleanup automation is supplied.
+
+This correction changes templates only. Existing Lambda binaries and the
+MicroVM image can stay at their current versions; no runtime publication is
+required for the stack updates. Before producing another immutable `agent`
+release containing the changed stack template, bump `release/versions/agent`
+above its published version. A new shared `lambda` release is needed only if
+witness runtime source also changes.
+
 ## Prepared controller and production image
 
 Review the source and its [known local timeout limitation](../agent-physical-acceptance.md)

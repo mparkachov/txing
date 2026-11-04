@@ -83,6 +83,10 @@ tooling, shell, infrastructure, or future-work implementation.
 
 ## AWS and Cloudflare editing boundaries
 
+- Use EventBridge Scheduler (`AWS::Scheduler::Schedule`) for all new or
+  replacement AWS time-based schedules, including cron and rate schedules.
+  Do not create legacy EventBridge scheduled rules (`AWS::Events::Rule` with
+  `ScheduleExpression`).
 - Do not add repo-local operational state for AWS bring-up, hidden certificate
   paths, or generated AWS config.
 - IAM roles, IAM managed policies, IoT role aliases, and IoT policies use

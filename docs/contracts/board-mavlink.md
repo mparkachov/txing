@@ -88,8 +88,9 @@ Office presents two operator modes for every MAVLink-capable board:
   The explicit Office action requests `takeover=true` regardless of cached
   owner information, so a human can displace another controller without first
   refreshing the page.
-  The Office client prepares the flight controller for manual driving, then
-  sends `MANUAL_CONTROL` at 10 Hz, including neutral frames while no arrow key
+  After the lease grant, Office selects Manual mode and sends an ordinary Arm
+  command as part of its Control action. It then sends `MANUAL_CONTROL` at 10 Hz,
+  including neutral frames while no arrow key
   is held. Arm state and Manual/Hold selection are flight-controller details,
   not separate Office control modes.
 

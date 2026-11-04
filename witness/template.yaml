@@ -124,24 +124,45 @@ Resources:
       FunctionName: !Ref WitnessFunction
       Principal: iot.amazonaws.com
 
-  AgentWatchSchedule:
-    Type: AWS::Events::Rule
+  AgentWatchScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+                aws:SourceArn: !Sub arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule-group/default
+      Policies:
+        - PolicyName: InvokeAgentWatch
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt WitnessFunction.Arn
+
+  AgentWatchRepairSchedule:
+    Type: AWS::Scheduler::Schedule
     Properties:
       Description: Independent delayed repair of agent MicroVM shutdown, even without Sparkplug traffic.
+      GroupName: default
       ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow:
+        Mode: "OFF"
       State: !If [AgentWatchConfigured, ENABLED, DISABLED]
-      Targets:
-        - Arn: !GetAtt WitnessFunction.Arn
-          Id: AgentWatch
-          Input: '{"source":"txing.witness.agent-watch"}'
-
-  AgentWatchInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref WitnessFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt AgentWatchSchedule.Arn
+      Target:
+        Arn: !GetAtt WitnessFunction.Arn
+        RoleArn: !GetAtt AgentWatchScheduleRole.Arn
+        Input: '{"source":"txing.witness.agent-watch"}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 86400
+          MaximumRetryAttempts: 185
 
   WitnessTopicRule:
     Type: AWS::IoT::TopicRule

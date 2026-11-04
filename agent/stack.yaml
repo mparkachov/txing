@@ -210,21 +210,43 @@ Resources:
       Principal: iot.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !GetAtt LifecycleRule.Arn
-  RepairRule:
-    Type: AWS::Events::Rule
+  RepairScheduleRole:
+    Type: AWS::IAM::Role
     Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule-group/default'
+      Policies:
+        - PolicyName: InvokeController
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt Controller.Arn
+  RepairSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Description: Reconcile agent assignments or drain the dedicated image when launches are disabled.
+      GroupName: default
       ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow: {Mode: 'OFF'}
       State: !If [ImageConfigured, ENABLED, DISABLED]
-      Targets:
-        - Arn: !GetAtt Controller.Arn
-          Id: agent-controller
-  RepairPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref Controller
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt RepairRule.Arn
+      Target:
+        Arn: !GetAtt Controller.Arn
+        RoleArn: !GetAtt RepairScheduleRole.Arn
+        # Preserve the controller's repair/drain dispatch contract.
+        Input: '{"source":"aws.events"}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 86400
+          MaximumRetryAttempts: 185
   AttachmentPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:

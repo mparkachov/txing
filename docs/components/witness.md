@@ -13,10 +13,10 @@ Witness is the Go Sparkplug projection Lambda deployed by the standalone
 
 Witness is the only authority that writes the `sparkplug` named shadow for rig and unit things.
 It reads the controller-owned `agent` shadow without writing it. Successful
-Sparkplug projection includes a bounded watch check; a one-minute rule also
-runs the watch without device traffic. Configure the same dedicated agent image
-name on both stacks. Off/expired assignments receive a two-minute repair grace;
-the normal C++ controller remains responsible for prompt shutdown.
+Sparkplug projection includes a bounded watch check; a one-minute EventBridge
+Scheduler schedule also runs the watch without device traffic. Configure the
+same dedicated agent image name on both stacks. Off/expired assignments receive
+a two-minute repair grace; the normal C++ controller remains responsible for prompt shutdown.
 
 ## Deploy
 
