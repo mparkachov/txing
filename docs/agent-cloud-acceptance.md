@@ -1,7 +1,7 @@
 # Released cloud physical acceptance — #170
 
-Status: **in progress; secured QGC flow and bounded loss subcases accepted;
-full released-cloud acceptance remains open**.
+Status: **released-cloud acceptance criteria verified on 0.1.1/image 4.0;
+final #170 closeout awaits release-retention issue #175**.
 Selected on 2026-11-02 after #169 closed. This record covers the released
 system, real TBot and QGroundControl. Historical
 [#168 source-build checks](agent-cloud-build-validation.md) and automated tests
@@ -25,8 +25,13 @@ second drained inventory more than two minutes later. The November 5 synthetic
 assigned-record witness checks below now pass. Their fixture is removed,
 controller concurrency/repair are restored, and an independent complete
 five-image inventory remains drained in a later repeat check. Both
-ordinary launch gates stay false and the real device remains inactive.
-Whole-device DDEATH acceptance remains pending physical access. The operator's
+ordinary launch gates were left false and the real device inactive. The
+November 5 physical continuation below now accepts whole-device DDEATH:
+actual death projection, assignment/endpoint removal and terminal compute were
+followed by a later zero-compute repair observation. Its final operator-run
+return to disabled launch gates and repeated disabled/drained audit also pass.
+The recorder is stopped with 220 samples and zero read errors. Final #170 closeout follows
+the separately approved release-retention issue #175. The operator's
 2026-11-05 scope decision moves the three runtime findings into independent
 follow-ups outside milestone 10; their remedies do not block its completion.
 No repair is claimed. The separate Scheduler migration was
@@ -91,7 +96,7 @@ attachment tokens, SDP and TURN credentials out of evidence and tracker posts.
 
 | Case | Required observation | Status |
 | --- | --- | --- |
-| Identity | Exact GitHub release/source/build hashes, image version, controller code hash, Frankfurt stack and native attach executable; device/QGC/commands/logs | Released 0.1.1/image 4.0 identities verified below; final outcomes still being collected |
+| Identity | Exact GitHub release/source/build hashes, image version, controller code hash, Frankfurt stack and native attach executable; device/QGC/commands/logs | Released 0.1.1/image 4.0 identities and case evidence verified below; final issue closeout awaits #175 |
 | Unattached startup | Normal inactive→active starts one authorized released VM; no attach process; increasing real telemetry and encoded video counters/metadata; observation only | Verified bounded live run below; remaining cases separate |
 | REDCON 2/1 | Actual lifecycle 1→2 stops video alone, preserves MAVLink and run/deadline; 2→1 restores video; fresh actual-2 activation receives MAVLink only | Verified in separate directional cases: camera-only 1→2, fresh actual-2 entry, and video-config retry 2→1 with unchanged worker, telemetry peer and run/deadline |
 | QGC physical flow | `just agent::attach … --control`, real parameter retrieval, arm/drive/disarm/re-arm on secured lifted TBot; same session-owned lease across disarm/re-arm; final disarm/release | Verified live below |
@@ -101,7 +106,7 @@ attachment tokens, SDP and TURN credentials out of evidence and tracker posts.
 | Lifecycle/assignment evidence | Real denied/unavailable verification stops authority by fifteen seconds; stale endpoint/attachment is unusable; recovery cannot manufacture a new activation | Verified timed registry denial: sampled transition at 14.961–15.285 seconds of verification age, board release, stale ingress closure and unheld replacement under unchanged activation/deadline |
 | Repeated/delayed events | Deliver duplicate/stale event hints to the released controller while inspecting current projection; one authorized run and unchanged deadline; old endpoint/runtime identity never restores authority | Duplicate/delayed hints and expired attach refusal verified in duration test; timed loss adds stale ingress closure/no duplicate sampled VMs; independent video recovery now verified below |
 | Duration/replacement | Accelerated activation expires at its saved deadline, replacement gets remaining budget, configuration/publication cannot extend it, continued activity never rolls over; verified inactive→active permits a new activation | Verified 600-second replacement/expiry/no rollover, expired refusal, then observed reactivation with restored 3000-second allowance |
-| REDCON 3/4/death | Each real lifecycle condition stops authority and yields terminal AWS VM state plus complete empty nonterminal inventory; no stale usable endpoint | Actual REDCON 3 and 4 terminal states verified; device death pending |
+| REDCON 3/4/death | Each real lifecycle condition stops authority and yields terminal AWS VM state plus complete empty nonterminal inventory; no stale usable endpoint | Actual REDCON 3 and 4 terminal states and November 5 physical whole-device DDEATH verified, with later zero-compute/no-restart and disabled-return checks |
 | Cost/operations | Inventory agent networking/legacy resources; operator acknowledges remaining storage/log/snapshot/API/event/data costs and immutable publication/manual disarm-and-drain replacement | Inventory recorded and operator acknowledgement accepted; no zero-total-charge claim |
 
 Failures remain in this record and the open issue with exact evidence. The
@@ -2250,6 +2255,114 @@ verification bounds. Minute controller samples alone cannot prove those
 latencies. Runtime fencing can precede compute cleanup; witness's two-minute
 grace/minute schedule is delayed repair and shares AWS dependencies. Preserve
 that distinction in the result.
+
+## Whole-device DDEATH — physical continuation, 2026-11-05
+
+The operator regained physical access and selected the remaining #170 death
+check. Fresh Frankfurt inspection pinned the unchanged release **0.1.1**,
+image **4.0**, controller digest
+`bQnWs23qBN0zqG3uiREdAdPGdyZdDEHX6f1Nbif/AAo=`, budget **3000**, controller
+concurrency one, ordinary execution policy and both enabled Scheduler repair
+schedules. Both launch gates were initially false, actual TBot REDCON was 4,
+and complete inventory contained zero nonterminal VMs. At this checkpoint only
+the production image remained in the regional image list; the earlier
+five-image checks above are historical inventories, not the current count.
+
+The operator confirmed the secured/stopped/disarmed setup and enabled only the
+two existing launch gates using the deployed template. Enablement completed
+at 17:47:11 UTC. Independent reads verified preserved parameters, code,
+schedules and activation history and a fresh matching inactive controller
+observation of projection 2022 before the normal Office REDCON 1 activation.
+No attachment or control acquisition was requested.
+
+The automatic observer used these frozen identities:
+
+- Release source `a05504aab5685dec40622a08cef1c32c97c2f7a7`, runtime build
+  `ef2aed291deaf5bc5f387a36153ef3d0be86b05df4d39dbcb063c9fc4260c196`.
+- Run `18F1C2F3-70F0-4C00-BFA7-4A8EE37F4410`, VM
+  `microvm-d781634e-6bab-35f5-80a3-f8ce36b8a0d3`, activation
+  `C058B0B2-7806-43AA-97F7-5B748825F337`.
+- Activation start 17:50:00 UTC, unchanged deadline **18:40:00 UTC / 19:40:00
+  CET**. AWS start 17:50:04.752 UTC and remaining hosting cap 2996 seconds.
+
+Twelve valid healthy runtime samples over 55.165 seconds show telemetry
+messages 190→1141 and video frames 211→1867, both connections healthy,
+assignment verified, `attached=false`, `controlHeld=false` and observing
+control state. The fresh board shadow reports disarmed, heartbeat ready and
+all connected peers observing. Actual REDCON is 1 and the rig remains born.
+These are released observer results without a human attachment; the earlier
+secured driving sequence is not repeated here.
+
+The operator reported main power-off of the entire TBot at **18:54:07 CET /
+17:54:07 UTC**, following the procedure to switch off both Pi and MCU while
+leaving `raspi-6q6abe` and its network powered. The read-only recorder follows
+the exact frozen VM even after its assignment is removed.
+
+| Evidence | UTC | Interpretation |
+| --- | --- | --- |
+| Operator-reported physical off | 17:54:07 | Whole-device physical action; second-resolution operator time |
+| Actual DDEATH projection 2030 | 17:54:40.346 | Correct TBot/rig identity, empty metrics, no REDCON value; about 33 seconds after physical off |
+| AWS exact-VM TERMINATED | 17:54:41.185 | About 34 seconds after physical off, 2718.815 seconds before the original deadline |
+| Later zero-compute sample | 17:57:08 | 147.760 seconds after termination; same DDEATH, no assignment/endpoint, rig still born and no replacement VM |
+
+All thirty captured DDEATH samples in the initial audit retain empty metrics,
+the same activation/deadline, the terminal image-4.0 VM, an inactive controller
+and absent assignment/endpoint. Complete inventory has no nonterminal VM
+after death; post-power-off inventory never contains another VM identity.
+The later controller observation matches projection 2030. This establishes
+whole-device death convergence independently of the platform lifetime cap.
+
+The runtime logs also retain intermediate telemetry loss/retry. They do not
+establish an exact final runtime-fencing timestamp: status logging can stop
+before a final stopped sample, and SDK output can interleave with JSON. Only
+complete parseable status samples support the runtime assertions. The controller
+log window contains no exact-VM application termination message, and no matching
+witness termination event was returned in the saved window. No specific API
+caller or unsampled fencing latency is inferred from those absences. Actual
+projection and AWS terminal state are the death/compute evidence. Calculated
+physical delays are approximate because the operator timestamp has second
+resolution and capture reads have a five-second interval.
+
+Evidence is under `tmp/issue-170/device-death/resume-20261105/`: `preflight/`,
+`post-enable/`, `enable.bSTavq/`, `capture.3XwQB4/`, `launch-baseline/`,
+`healthy-baseline/`, `run-baseline.json`, `operator-power-off.json`, and
+`post-death/{timeline.jsonl,verified-summary.json,runtime-events.json}`.
+The guarded enable/disable scripts pass POSIX parsing and ShellCheck; their
+read-only prefixes independently exercised the live preconditions without
+submitting an update. All real AWS changes are operator-run; the implementing
+agent performs only read-only AWS inspection and local evidence/documentation
+work. No production code, immutable artifact or firmware is changed.
+
+The operator completed the disabled return at **17:59:03 UTC** in
+`disable.lcmFn5/`, leaving TBot off and QGC/attach disconnected. Independent
+service reads completed at **18:00:05 UTC** verify both launch gates false,
+automation/lifecycle trigger disabled, release 0.1.1/image 4.0/budget 3000,
+controller concurrency one, and both exact original Scheduler configurations
+enabled. Controller/witness code and full environments, stack resource
+identities and the real activation/deadline match the reviewed baseline.
+Actual DDEATH remains projected, the rig is born, the exact VM is terminal,
+assignment/endpoint are absent and complete regional image inventories contain
+zero nonterminal VMs.
+
+A repeated complete audit at **18:02:21–18:02:32 UTC** starts **136.278
+seconds after the first reads finished** and verifies the same disabled,
+drained, unchanged state. The read-only recorder finishes at 18:03:18 UTC with
+**220 samples and zero read errors**. Saved restoration evidence is in
+`post-disable/`, `post-disable-repeat/` and `verified-final-closeout.json`;
+`audit-closeout.sh` validates those saved service responses without service
+calls. POSIX parsing, ShellCheck and `git diff --check` pass. All real AWS
+updates were operator-run; no implementing-agent AWS mutation, automatic
+commit or firmware operation occurred. No further AWS rollout is needed for
+this physical acceptance case; leave TBot off and the ordinary gates disabled.
+
+This completes the evidence for all nine existing #170 acceptance criteria on
+the released 0.1.1/image 4.0 system, including the earlier cost acknowledgement
+and outside-milestone disposition of unresolved runtime findings. **#170 stays
+open** because the operator added **#175** before its final closeout; changed
+publication behavior still needs the targeted validation owned by that issue.
+Runtime follow-ups #172/#173/#174 remain open outside the milestone and are
+not repaired or selected for implementation by this check. Their fixes do not
+gate #170 or milestone 10.
 
 ## Final compute, cost and operator closeout
 

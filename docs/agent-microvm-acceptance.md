@@ -1001,6 +1001,13 @@ mutation. Do not exceed the fifty-minute hosting budget to wait for renewal.
 
 ## Operator: terminate and record cleanup
 
+The **2026-11-05** inventory and exact retirement commands for the retained
+issue-165 stack, four images and source artifacts are in
+[Retire the issue-165 AWS probe](agent-probe-165-cleanup.md). Operator cleanup
+is now independently verified complete: the stack reaches `DELETE_COMPLETE`
+at 12:39:06.434 UTC, with images, bucket, roles and log group absent. The newer
+`town-agent` stack/image remain present; local acceptance evidence is preserved.
+
 The experiment is incomplete until the operator terminates the actual MicroVM
 and confirms its final state. The hard lifetime is a cost backstop, not cleanup
 evidence. Preserve logs and non-secret provenance before removing resources.
