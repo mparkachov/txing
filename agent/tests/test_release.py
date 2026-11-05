@@ -47,7 +47,12 @@ if tool == "gh":
 service, operation = args[:2]
 if service == "s3api":
     if operation == "get-bucket-versioning":
-        emit({"Status":mode.title()} if mode in ("enabled","suspended") else {})
+        if "--query" in args:
+            assert flag("--query") == "{Status: Status}"
+            assert flag("--output") == "json"
+            emit({"Status": mode.title() if mode in ("enabled", "suspended") else None})
+        elif mode in ("enabled", "suspended"):
+            emit({"Status": mode.title()})
     elif operation == "list-objects-v2":
         items = [{"Key":str(p.relative_to(root/"s3")),"Size":p.stat().st_size}
                  for p in (root/"s3").rglob("*") if p.is_file() and str(p.relative_to(root/"s3")).startswith(flag("--prefix"))]

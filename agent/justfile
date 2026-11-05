@@ -289,7 +289,9 @@ publish version:
     output() { jq -er --arg name "$1" '.Stacks[0].Outputs[] | select(.OutputKey==$name) | .OutputValue' "$work/before.json"; }
     parameter() { jq -er --arg name "$1" '.Stacks[0].Parameters[] | select(.ParameterKey==$name) | .ParameterValue' "$work/before.json"; }
     bucket=$(output ArtifactBucket)
-    aws s3api get-bucket-versioning --region eu-central-1 --bucket "$bucket" > "$work/bucket-versioning.json"
+    # The CLI suppresses an empty response. Project Status to keep it explicit.
+    aws s3api get-bucket-versioning --region eu-central-1 --bucket "$bucket" \
+        --query '{Status: Status}' --output json > "$work/bucket-versioning.json"
     if ! jq -e '.Status == null' "$work/bucket-versioning.json" >/dev/null; then
         echo "Publication requires a new unversioned artifact bucket; follow docs/agent-release-publication.md before retrying." >&2
         exit 1
