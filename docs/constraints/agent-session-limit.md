@@ -27,7 +27,11 @@ kernel fault tracked in [#171](https://github.com/mparkachov/txing/issues/171).
 
 Detailed evidence and provenance are in the
 [MicroVM acceptance record](../agent-microvm-acceptance.md#seventh-board-capture--scheduled-renewal-interrupts-lifecycle).
-The board credential/session repair is deferred at this stage.
+The board credential/session repair is deferred to
+[#174](https://github.com/mparkachov/txing/issues/174). By the operator's
+2026-11-05 scope decision, it is outside every milestone and does not block
+milestone 10 or #170. The current duration limit and safety requirements remain
+unchanged.
 
 ## Meaning of the limit
 

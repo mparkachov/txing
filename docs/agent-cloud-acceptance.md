@@ -19,12 +19,36 @@ are accepted. The independent released-image witness orphan test also passes,
 with controller restoration and repeated zero-compute inventory verified.
 Independent video/REDCON 2/1 behavior now passes in the separately recorded
 directional cases below, including fresh actual-2 startup and same-worker
-video recovery with an unchanged telemetry peer. Final closeout verifies actual
-REDCON 4, terminal compute and both launch gates false; complete regional image
-inventories remain drained in a second check more than two minutes later.
-Whole-device death and unresolved transport/camera findings keep
-full acceptance open. The separate Scheduler migration was
+video recovery with an unchanged telemetry peer. The November 3 closeout
+verifies actual REDCON 4, terminal compute and both launch gates false, with a
+second drained inventory more than two minutes later. The November 5 synthetic
+assigned-record witness checks below now pass. Their fixture is removed,
+controller concurrency/repair are restored, and an independent complete
+five-image inventory remains drained in a later repeat check. Both
+ordinary launch gates stay false and the real device remains inactive.
+Whole-device DDEATH acceptance remains pending physical access. The operator's
+2026-11-05 scope decision moves the three runtime findings into independent
+follow-ups outside milestone 10; their remedies do not block its completion.
+No repair is claimed. The separate Scheduler migration was
 deployed after the timed cutoff, before observer replacement.
+
+## Independent runtime follow-ups — 2026-11-05 scope decision
+
+The operator explicitly selects separate tracking outside every milestone:
+
+- [#172](https://github.com/mparkachov/txing/issues/172): intermittent MAVLink/control stalls.
+- [#173](https://github.com/mparkachov/txing/issues/173): fatal camera cleanup hangs and recovery.
+- [#174](https://github.com/mparkachov/txing/issues/174): board IoT credential renewal/session disruption.
+
+These findings retain their evidence and unresolved status, but their remedies
+are outside milestone 10 and are not dependencies or blockers for #170 or that
+milestone. Historical checkpoints below preserve what was known at each time;
+this scope decision supersedes their statements that these remedies keep the
+milestone open. Creation of the follow-ups does not select implementation.
+Existing safety/authority behavior, the 3000-second limit and the remaining
+real released-system acceptance requirements stay intact. In particular, the
+physical whole-device DDEATH check remains in #170. The separate battery
+hardware disposition of closed #171 remains unchanged.
 
 ## Identity and initial read-only checkpoint
 
@@ -1965,6 +1989,185 @@ logs, `closeout/verified-inactive-read`, `closeout/post-disable`,
 `remote-video/capture-20261103T161326Z`. `audit_recovery.py` validates the saved
 live evidence without service calls or token access. No production code,
 dependency, release artifact, permission or protocol changes were required.
+
+### Remote assigned-record witness continuation — 2026-11-05
+
+The operator committed the preceding Scheduler/acceptance changes as
+`ba0103a8`, then requested more work without physical access. Fresh Frankfurt
+reads retain release **0.1.1**, image **4.0**, budget **3000**, both ordinary
+launch gates false, original controller/witness code, concurrency one and both
+exact enabled Scheduler configurations. The real TBot remains actual REDCON
+**4**/projection **2014**, with the same retained activation and no assignment
+or endpoint. Complete inventories across all five images contain zero
+nonterminal VMs.
+
+Selected the existing synthetic assigned-record cases in the
+[watch contract](constraints/agent-watch.md#synthetic-assigned-record-tests).
+The released-image orphan case already passes; these separate cases will
+check preservation despite synthetic media errors, an off-record grace and
+an expired deadline while the record still says running. The temporary
+untyped `testFixture` has no rig, hardware, credentials or signaling channels.
+Its administrative records never replace real-device authorization or prove
+physical DDEATH. No real Thing's operational shadow is written.
+
+The operator's `isolation.Eg0P9r` pauses only controller repair and sets
+concurrency zero. Independent reads at **08:58:15 UTC** confirm **133 seconds**
+of drain beyond the controller's 120-second timeout, exact witness schedule
+still enabled, actual REDCON 4, no assignment and zero nonterminal VMs.
+A bounded read-only recorder starts at **08:59:15 UTC**. An inherited short
+printed recovery path still named the prior batch; it is corrected to
+`remote-assigned-watch/recovery.md`, whose frozen stack/history references
+belong to this batch.
+
+The operator's `known.iMzYV6` creates only the frozen untyped fixture
+`agent-watch-170-20261105-f971f15f4722`, then launches image-4.0 VM
+`microvm-c22f3019-59b4-3333-a534-3a4d61cc8f47` at **09:07:16.882 UTC**.
+Its 600-second hosting cap is separate from any witness request. Version **2**
+binds synthetic running record **watch-known-170-1793869636-f971f15f4722**,
+activation interval **1793869636–1793870236**, with no endpoint and deliberate
+independent media-error fields. The real device stays inactive. Preservation
+beyond the orphan cutoff and later termination remain unaccepted at this
+launch checkpoint.
+
+Saved service evidence subsequently verifies preservation: **53** VM samples,
+including `RUNNING` at age **264.040 seconds**, unchanged synthetic version 2
+and media-error fields, eight recorded isolation samples, no witness watch
+errors/termination request in the bounded window, and the real device's
+shadow/history unchanged. This accepts synthetic assigned-record preservation,
+not real runtime or session health.
+
+The first audit incorrectly expected periodic runtime status from this
+unsupported fixture and assumed its log-stream name. The source rejects the
+unsupported profile before the periodic status logger, so no such stream is
+expected. Also normalized the Update response's echoed null deletions to the
+stored Get representation before comparing fixture state. These read-only
+audit corrections changed no deployed behavior. The unnecessary log lookup
+used the off-test time margin; no off transition is run after its remaining-time
+guard closes. AWS later records **TERMINATED at 09:17:18.804 UTC**, reason
+`MicroVM exceeded maximum lifetime.` This platform-cap termination is explicitly
+not witness shutdown acceptance. The first case remains preservation-only.
+
+Prepared a fresh bounded off-case attempt after this VM is terminal, reusing
+only the same untyped fixture and preserving the complete first-case evidence.
+Its version-conditional replacement requires the prior VM terminal and zero
+nonterminal production inventory before another launch. The off and separate
+deadline termination branches remain pending at this checkpoint.
+
+The fresh `known.YMjsVM` launch succeeds at **09:19:13.137 UTC** as image-4.0
+VM `microvm-5743b677-9018-3d49-8428-1870e4fcb990`, with a 600-second hosting
+cap. Synthetic version **3** binds run/activation
+**watch-known-170-1793870352-f971f15f4722**, interval
+**1793870352–1793870952**. The old VM is already terminal, and its original
+case files remain intact. The new audit verifies forty VM samples, `RUNNING`
+at age **197.787 seconds**, seven isolation samples, unchanged fixture errors/
+version and real TBot state/history, and zero controller events or witness watch
+errors in the saved window. Runtime log absence is kept separate from this
+assigned-record preservation result.
+
+The operator's first off block `off.59n9ST` succeeds at **09:24:59 UTC**, version
+**4**, preserving that run, VM, activation and deadline. The recorded first
+`stopRequestedAt=1793870699` makes witness eligible at **09:26:59 UTC**. The
+block reads back the full stored shadow after the partial Update response and
+verifies identity/deadline preservation. It cannot repeat/reset the off time.
+Grace preservation, exact witness request and terminal state remain to be
+audited before accepting this off branch.
+
+The off branch subsequently passes. The same VM is observed `RUNNING`
+**101.924 seconds** after off with version 4 and its first stop timestamp
+unchanged. Witness logs the exact-VM termination request at
+**09:27:15.393 UTC**, **136.393 seconds** after off. AWS confirms
+`TERMINATED` at **09:27:15.976 UTC**, **136.976 seconds** after off, reason
+`Success.`, before both its unchanged **09:29:12 UTC** synthetic deadline and
+the independent hosting cap. The saved audit includes **105** VM samples,
+**18** isolation samples, zero controller events and witness watch errors,
+unchanged fixture version/state after off, and unchanged real-device
+shadow/history. No manual termination is requested. This accepts the assigned
+off-record grace/termination branch on released image 4.0 with the independent
+Scheduler watch; it remains a synthetic administrative test.
+
+The separate `deadline.md` case is now released to the operator. It requires
+the off-case VM terminal and launches a new 240-second synthetic activation
+with an independent 600-second hosting cap, removing the old stop timestamp
+under a current-version condition. Its result and final fixture cleanup/
+controller restoration are still pending at this checkpoint.
+
+The operator's `deadline.2mdj0Q` starts released image-4.0 VM
+`microvm-b9e12ca4-f43d-34d3-8049-4abca9e0335a` at **09:32:36.595 UTC**.
+Synthetic version **5** records run/activation
+**watch-deadline-170-1793871155-f971f15f4722**, interval
+**1793871155–1793871395**: exactly 240 seconds, expiring at **09:36:35 UTC**.
+The independent hosting cap remains 600 seconds. The old stop timestamp is
+absent and the fixture stays `running`/active with the same synthetic media
+errors. Witness eligibility is **09:38:35 UTC**. No off transition is made
+for this case.
+
+Rotated the read-only recorder before the original bound could cut off this
+new case. The first recorder finishes with **413 samples/zero read errors**;
+the new capture begins at **09:33:15 UTC**, with the current VM running.
+Each completed case audit pins its actual capture directory for reproducible
+saved-evidence validation after rotation. Deadline grace/termination and the
+final cleanup/restoration remain live requirements at this point.
+
+The deadline branch also passes. The VM remains `RUNNING` **110.921 seconds**
+after expiry with unchanged running/active version **5** and no off timestamp.
+Witness logs the exact-VM termination request at **09:39:15.397 UTC**,
+**160.397 seconds** after the persisted deadline. AWS records `TERMINATED`
+at **09:39:15.919 UTC**, **160.919 seconds** after deadline and **399.324
+seconds** after start, reason `Success.`, before the independent 600-second
+hosting cap. The synthetic state/version remain unchanged. The audit contains
+**86** VM samples and **15** isolation samples, no controller events or witness
+watch errors, and unchanged real-device history/projection. No manual
+termination is requested. This establishes deadline evidence independently of
+an off-record transition.
+
+Both recorders are stopped before fixture cleanup: **413** and **99** samples,
+each with **zero read errors**. The operator is asked to run the reviewed
+fixture-only cleanup, then restore controller concurrency/schedule only if
+cleanup succeeds. The commands themselves check complete terminal inventories,
+the exact untyped/uncredentialed fixture attributes, both resource absences and
+the frozen controller/schedule configuration. Cleanup/restoration and a later
+repeat inventory still require live verification at this checkpoint.
+
+The operator completes `cleanup.8Eu5sy` at **10:12:42 UTC**, then
+`recovery.accIRl` restores the original controller repair schedule at
+**10:13:26.143 UTC**. Independent reads at **10:14:37–10:14:42 UTC** confirm
+both the temporary registry Thing and its `agent` shadow return
+`ResourceNotFoundException`, controller concurrency one, both exact original
+repair/watch schedules enabled, disabled automation/lifecycle trigger and
+ordinary execution-role policy only. Released controller/witness code and
+their complete environments remain unchanged, with release **0.1.1**, image
+**4.0**, budget **3000** and both ordinary gates false. The real TBot's
+projection **2014**, shadow version/state and activation history are unchanged,
+with no run or endpoint. Complete inventories across all five retained images
+contain zero nonterminal VMs. A later repeat check is pending.
+
+A second complete audit at **10:17:32–10:17:37 UTC**, starting **171.025
+seconds** after the initial reads finished, confirms the same restored settings,
+both fixture resources absent, unchanged real-device history/projection and
+zero nonterminal VMs across all five images. The remote assigned-watch batch
+is complete: preservation, off-record grace/termination and independent
+deadline grace/termination pass on released image 4.0, and all temporary test
+resources are removed. The earlier first VM's platform expiry remains
+preservation-only evidence. No retained-resource cleanup, production code,
+permission, release or artifact change is introduced.
+
+Final evidence: `remote-assigned-watch/post-recovery/` and
+`post-recovery-repeat/verified-restoration-summary.json`, both
+`verified-fixture-absence.json` responses, `cleanup.8Eu5sy`, `recovery.accIRl`,
+and `verified-final-closeout.json`. The saved-evidence audit checks both full
+function environments as well as code, schedule configurations, history and
+inventories. The implementing agent executes only needed read-only AWS calls,
+local validation and documentation/tracker updates; mutations remain
+operator-run. The acceptance record is uncommitted. #170 remains open with
+six whole criteria checked: physical whole-device DDEATH and the earlier
+camera/transport/credential-renewal findings remain separate.
+
+Prepared commands and raw evidence are under
+`tmp/issue-170/remote-assigned-watch/`; the current read-only preflight is under
+`remote-resume-20261105/preflight`. Actual cloud mutations remain operator-run.
+Fixture cleanup and exact controller restoration are reviewed before launch;
+manual termination/platform expiry/failed run hooks cannot count as witness
+acceptance. Full #170 acceptance and physical DDEATH remain open.
 
 ### Operator-run live cases
 
