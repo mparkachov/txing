@@ -57,12 +57,11 @@ Conditions:
   Enabled: !Equals [!Ref AutomationEnabled, 'true']
   ImageConfigured: !Not [!Equals [!Ref ImageName, disabled]]
 Resources:
-  Artifacts:
+  ReleaseArtifacts:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      VersioningConfiguration: {Status: Enabled}
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
@@ -92,7 +91,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: s3:GetObject
-                Resource: !Sub '${Artifacts.Arn}/*'
+                Resource: !Sub '${ReleaseArtifacts.Arn}/*'
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !GetAtt MicrovmLogs.Arn
@@ -267,7 +266,7 @@ Resources:
             Action: [lambda:GetMicrovm, lambda:CreateMicrovmAuthToken]
             Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${ImageName}'
 Outputs:
-  ArtifactBucket: {Value: !Ref Artifacts}
+  ArtifactBucket: {Value: !Ref ReleaseArtifacts}
   BuildRoleArn: {Value: !GetAtt BuildRole.Arn}
   ExecutionRoleArn: {Value: !GetAtt ExecutionRole.Arn}
   ControllerArn: {Value: !GetAtt Controller.Arn}

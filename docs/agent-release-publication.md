@@ -1,9 +1,11 @@
 # Immutable agent releases and publication
 
-Status: #169 implementation, clean `agent-v0.1.0` release and operator-run AWS
-publication/selection are accepted on 2026-11-01. `town-agent` image `3.0` and
-the matching controller are selected; both launch switches remain false.
-Keep automation disabled until the separate #170 released-cloud acceptance.
+Status: #169's original publication was accepted on 2026-11-01; its historical
+evidence is retained below. Released-cloud acceptance on 0.1.1/image 4.0 is
+recorded in [#170's acceptance record](agent-cloud-acceptance.md). #175 prepares
+the unversioned bucket and two-build retention described here for agent 0.1.2.
+The one-time operator reset/publication still needs live verification. Keep
+launch gates disabled during that reset.
 
 An `agent-vX.Y.Z` GitHub Release contains
 `txing-agent-release-linux-arm64.zip`. The archive holds `microvm.zip`,
@@ -99,7 +101,7 @@ just agent::deploy
 
 The recipe verifies concurrency headroom, refuses an existing stack and creates
 CloudFormation with both acceptance/launch switches false. The stack creates
-the retained versioned artifact bucket, generated IAM roles, logs, controller,
+the retained **unversioned** artifact bucket, generated IAM roles, logs, controller,
 managed attachment policy and initially disabled triggers. Never work around the controller's
 reserved concurrency of one. Failed `ROLLBACK_COMPLETE` initial stacks and
 retained buckets require the manual handling in the replacement runbook.
@@ -117,6 +119,13 @@ aws lambda-microvms list-managed-microvm-image-versions --region eu-central-1 \
 export TXING_AGENT_BASE_IMAGE_VERSION=<reviewed-AVAILABLE-imageVersion>
 just agent::publish <version>
 ```
+
+The discovered artifact bucket must have **never** had versioning enabled.
+The publisher checks `GetBucketVersioning` before uploading and refuses both
+`Enabled` and `Suspended`. Immutable release-specific keys and conditional
+writes provide the required normal-publisher immutability without S3 object
+versions. Existing versioned environments require the manual reset below;
+removing `VersioningConfiguration` cannot make their existing buckets unversioned.
 
 The command downloads the exact GitHub release, checks hashes and clean source
 provenance, and conditionally uploads `agent/<version>/` objects to the stack's
@@ -152,6 +161,43 @@ with the exact release ZIP. The retained work directory contains inputs,
 responses, selected parameters and artifact identities. It creates no device
 activation, token, attachment or VM and never changes agent shadows.
 
+### Retain the newest two successful builds
+
+After verified selection, the same publication command inventories the dedicated
+image and keeps the **two newest successful builds by AWS creation timestamp**,
+normalized across time zones. The first fresh publication keeps one; later
+publications keep two. Failed builds never occupy a retained slot. Retention
+stops on pending/incomplete/foreign inventory, missing retained bundle objects
+or a selected image outside that pair. Use one publisher per environment; a
+changed selection aborts cleanup.
+
+The publisher deletes older successful or failed versions and confirms each
+version `DELETED` or absent before deleting any source objects. It then removes
+unretained `agent/<MAJOR.MINOR.PATCH>/` bundles, including partial/failed uploads
+and leftovers from interrupted cleanup. Each retained bundle includes
+`microvm.zip`, `controller.zip`, `provenance.zip`, `hooks.json`, `stack.yaml`,
+`release.json`, `SHA256SUMS`, `build-input.json` and `built.json`. Unrelated keys
+and other images are outside cleanup. S3 requests contain at most 1000 keys;
+per-key deletion errors cause failure. Inventories, the retention plan and
+deletion responses remain in the printed evidence directory.
+
+Build or selection failure does not start retention. After selection, a cleanup
+error exits nonzero with **“Release selected, but retention is incomplete”**.
+The selection is usable; rerun the same `just agent::publish <version>` with
+the same managed base. The immutable receipt avoids another build, and current
+inventories resume deletion even if an old image or some objects are already
+gone. Deletion waits are bounded to five minutes per image version; a transient
+error can require a later retry.
+
+At this stage devices are assumed to run only the currently selected image
+when publication starts. Keeping that predecessor alongside the new image
+preserves those runs; handling older active versions is deferred. There is no
+automatic run termination, draining, scheduled cleanup service or new Python
+helper. GitHub releases and local acceptance evidence remain independent of
+the two-build AWS storage window; S3 is not the historical evidence archive.
+
+### Retry an interrupted publication
+
 An interrupted publication can be rerun with the same version/base: matching
 objects are retained and a successful receipt avoids another build. If the
 receipt is missing, the publisher first inventories the dedicated image's
@@ -166,8 +212,9 @@ Only when no version exists for that artifact does the publisher submit a
 build, retaining the original request token. A missing image is accepted only
 on initial creation. After an ambiguous API result, retain the evidence and
 retry the same inputs; do not change tokens, overwrite objects or guess a
-version from `latestActiveImageVersion`. Failed releases remain immutable
-evidence; repair source/configuration with a new agent version.
+version from `latestActiveImageVersion`. Repair failed source/configuration with
+a new agent version. Its GitHub artifact and local publication evidence remain
+immutable; a later successful publication may retire the failed image/S3 bundle.
 
 Existing running agents keep their stored release, exact launch request and
 activation deadline. New launches use the selected release. Publication does
@@ -177,6 +224,88 @@ disconnects clients, disables launches, waits for/executes the documented
 manual drain and confirms zero nonterminal VMs. Publish, then manually restore
 the previously approved activation switches and observe inactive then active.
 Never delete the agent shadow or reset the activation clock.
+
+## One-time reset to unversioned storage
+
+This is the operator-approved fresh start for #175. Perform it with launches
+disabled and zero nonterminal VMs. Existing agent image/artifact history is
+discarded; GitHub releases and unrelated infrastructure are preserved. The
+implementing agent prepares/reviews commands but must not execute AWS mutations.
+
+1. Record the current template, parameters, resources, artifact bucket,
+   dedicated image ARN, controller object/digest, activation history and repair
+   schedules. Disarm/release, disconnect clients, keep the device inactive,
+   disable both launch gates and verify complete terminal inventories. Build
+   the new immutable GitHub artifact from reviewed committed source before
+   disrupting AWS storage. The next prepared agent version is 0.1.2.
+2. Update the existing stack with the reviewed new `agent/stack.yaml`. Preserve
+   all parameters except the disabled gates and reset image selection:
+   `ImageName=disabled`, `ImageVersion=''`, `Release=''`. Preserve the existing
+   `ControllerBucket`/`ControllerKey` during this update. New logical resource
+   `ReleaseArtifacts` creates a fresh bucket, and `ArtifactBucket` points to it;
+   the old `Artifacts` bucket is retained outside the template. The build role
+   now reads the new bucket. Preserve unrelated resource identities and
+   activation history. The existing `ImageConfigured` condition temporarily
+   disables controller repair while `ImageName=disabled`; first publication
+   re-enables that same schedule. The independent witness schedule stays
+   enabled. `just agent::deploy` is for initial stacks and must not be used here.
+3. With all VMs terminal, manually delete the old dedicated image through
+   `delete-microvm-image` and wait for `DELETED` or confirmed
+   `ResourceNotFoundException` from `get-microvm-image`. Whole-image deletion
+   removes its versions and avoids deleting the last version separately.
+   Keep the old bucket/controller ZIP until the first fresh publication selects
+   its replacement. The image name must remain the normal
+   `<environment-stack>-agent` name used by witness. A short maintenance interval
+   without that image is expected. Do not invoke repair functions manually or
+   reset device shadows.
+4. Check the new bucket and publish the new GitHub release using the ordinary
+   command. Disabled `ImageName` makes the first publication create the image
+   afresh. Verify exact successful image/controller selection, new controller
+   bucket/key and digest, disabled gates, budget 3000, preserved history/schedules
+   and zero nonterminal VMs. Inspect the retention plan and final image/object
+   inventories. One image/bundle is correct after this first publication; two
+   remain after the second and third.
+   For #175 live validation, the prepared sequence republishes the immutable
+   GitHub 0.1.0 and 0.1.1 inputs into the new bucket, then publishes 0.1.2.
+   This exercises deletion of the first image and its complete bundle while
+   ending with 0.1.1 and 0.1.2. All builds are fresh; none of the old AWS
+   artifacts are copied. Publication always uses the deployed new template,
+   including when an earlier archive contains an old template.
+5. After old-image deletion was confirmed and no current stack/controller/image
+   version references the retired bucket, manually empty and delete that exact bucket. In the
+   S3 console choose **Empty**, deleting all object versions and delete markers.
+   `aws s3 rm --recursive` alone is insufficient for a versioned bucket. Verify
+   no versions/markers remain before deletion; complete or abort multipart
+   uploads if present.
+
+Useful operator checks, with bucket names resolved from saved old/current stack
+outputs rather than guessed:
+
+```sh
+# Never-enabled storage returns no Status; Suspended is not acceptable.
+aws s3api get-bucket-versioning --region eu-central-1 --bucket "$new_bucket"
+aws lambda-microvms list-microvm-image-versions --region eu-central-1 \
+  --image-identifier "$image_arn" --page-size 50 --output json
+aws s3api list-objects-v2 --region eu-central-1 --bucket "$new_bucket" \
+  --prefix agent/ --output json
+
+# After manual S3-console Empty, including every version and delete marker:
+aws s3api list-object-versions --region eu-central-1 --bucket "$old_bucket" \
+  --output json > "$reset_dir/old-versions-after-empty.json"
+jq -e '(.Versions//[]|length)==0 and (.DeleteMarkers//[]|length)==0 and
+  (.NextToken//.NextKeyMarker//null)==null' "$reset_dir/old-versions-after-empty.json"
+aws s3api list-multipart-uploads --region eu-central-1 --bucket "$old_bucket"
+# Review the exact bucket and absent references before this operator action:
+aws s3api delete-bucket --region eu-central-1 --bucket "$old_bucket"
+```
+
+AWS does not allow a versioning-enabled bucket to return to the unversioned
+state. Retained versions remain until explicitly removed, even after versioning
+is suspended. See [S3 versioning states](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html)
+and [emptying a bucket](https://docs.aws.amazon.com/AmazonS3/latest/userguide/empty-bucket.html).
+CloudFormation creates the replacement; deleting the old physical bucket first
+would leave an existing stack resource missing. No artifact migration, dual
+publishing or compatibility path is supplied.
 
 ## IAM, retained costs and base-image maintenance
 
@@ -193,6 +322,13 @@ device sessions use the separate execution role. Attachment permission remains
 separate and restricted to trusted humans as described in the replacement
 runbook. Keep TLS verification enabled.
 
+Retention additionally requires `s3:GetBucketVersioning`, `s3:ListBucket` and
+`s3:DeleteObject` on the discovered artifact bucket and
+`lambda:DeleteMicrovmImageVersion` on the dedicated image. Do not add publisher
+permissions to controller, witness or device execution roles. The one-time
+manual reset separately needs whole-image deletion, CloudFormation update,
+old-bucket object-version deletion and bucket deletion permissions.
+
 Monitor managed-base availability and AWS notifications. Current AWS guidance
 describes AVAILABLE, then DEPRECATED (60 days), EXPIRING (30 days, no new
 builds), EXPIRED (no builds/runs), and possible immediate RECALL. Rebuild and
@@ -202,14 +338,17 @@ dependencies for security fixes. A managed-base version and a Dockerfile
 container digest are distinct inputs. See
 [AWS image lifecycle and patching](https://docs.aws.amazon.com/lambda/latest/dg/microvms-images.html).
 
-S3 current/noncurrent versions, retained buckets, MicroVM images/snapshots,
+Retained buckets, MicroVM images/snapshots,
 build activity, CloudWatch logs, controller/watch calls, event delivery, traffic
 and attachment/API usage can remain billable at zero running agents. Logs have
-14-day stack retention; artifacts have no automatic deletion. Review usage and
-manually retire unreferenced releases/images only after inventory, according to
-the operator's retention policy. Do not remove objects referenced by current
-selection, running/reserved requests, acceptance evidence or retained images.
-No cleanup, rollback framework, NAT, ECR push or ECS task definition is added.
+14-day stack retention. Operator-run publication now prunes old image versions
+and their release bundles after selection, keeping the newest two successful
+builds. Retired versioned buckets and their noncurrent objects still incur
+storage until manual cleanup completes. Inactive image versions retain
+snapshots; changing `ACTIVE` to `INACTIVE` does not delete them. Minimum storage
+billing and service deletion latency can outlast a publication. Preserve
+GitHub/local acceptance evidence independently. No scheduled cleanup, rollback
+framework, NAT, ECR push or ECS task definition is added.
 
 ## Acceptance evidence and scope
 

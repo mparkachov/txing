@@ -126,6 +126,16 @@ arm-triggered QGroundControl designs; they are not a claim of implementation.
 - Document base-image rebuild requirements, provenance, packaging,
   repeatability, and storage costs. Immediate replacement requires explicit
   disarm-and-drain steps.
+- The 2026-11-05 #175 amendment uses a new, genuinely unversioned artifact
+  bucket. After verified selection, the same operator-run publication command
+  keeps the newest two successful image builds and their complete S3 release
+  bundles. Confirm retired images deleted before deleting their source objects.
+  Cleanup failure is distinct from selection failure and retries reuse the
+  existing successful build. At this stage only the currently selected image
+  is assumed to have running devices; handling older active versions is deferred.
+  Publication never drains or terminates runs. No new Python scripts or cleanup
+  service. The one-time disabled/drained reset and old versioned-bucket deletion
+  are manual; historical artifacts are not migrated.
 - No automatic commits, AWS mutations, flashing, or legacy-resource cleanup.
   Prepare operator commands and evidence requirements. Initial migration must
   disable old triggers and drain old tasks before enabling the replacement.

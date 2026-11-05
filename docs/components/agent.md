@@ -295,6 +295,15 @@ release. New publication does not interrupt existing runs. See
 [MicroVM image management](https://docs.aws.amazon.com/lambda/latest/dg/microvms-images.html).
 
 Separate initial CloudFormation deployment from ordinary application publication.
+After verified image/controller selection, the same operator-run command
+retains the newest two successful image builds and their complete release
+bundles in an unversioned S3 bucket. Retired images must be confirmed deleted
+before their source objects are removed. Cleanup failure can be retried without
+rebuilding the selected release. At this stage devices are assumed to run only
+the currently selected image when publication starts; handling older active
+versions is deferred. The [publication runbook](../agent-release-publication.md)
+defines the one-time manual reset from the old versioned bucket.
+
 Document managed base-image expiry/rebuild requirements, artifact provenance,
 repeatability, runtime dependency packaging, and retained storage costs.
 Publication must not introduce agent-owned Python tooling or a second

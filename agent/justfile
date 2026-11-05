@@ -289,6 +289,11 @@ publish version:
     output() { jq -er --arg name "$1" '.Stacks[0].Outputs[] | select(.OutputKey==$name) | .OutputValue' "$work/before.json"; }
     parameter() { jq -er --arg name "$1" '.Stacks[0].Parameters[] | select(.ParameterKey==$name) | .ParameterValue' "$work/before.json"; }
     bucket=$(output ArtifactBucket)
+    aws s3api get-bucket-versioning --region eu-central-1 --bucket "$bucket" > "$work/bucket-versioning.json"
+    if ! jq -e '.Status == null' "$work/bucket-versioning.json" >/dev/null; then
+        echo "Publication requires a new unversioned artifact bucket; follow docs/agent-release-publication.md before retrying." >&2
+        exit 1
+    fi
     role=$(output BuildRoleArn)
     logs=$(output LogGroup)
     image_name=$(parameter ImageName)
@@ -334,7 +339,7 @@ publish version:
         if aws lambda-microvms list-microvm-image-versions --region eu-central-1 \
             --image-identifier "$image_arn" --page-size 50 --output json \
             > "$work/image-versions.json" 2> "$work/inventory-error.txt"; then
-            jq -e '.items | type=="array"' "$work/image-versions.json" >/dev/null
+            jq -e '(.items|type)=="array" and (.nextToken//.NextToken//null)==null' "$work/image-versions.json" >/dev/null
         elif [ "$action" = create-microvm-image ] && grep -q 'ResourceNotFoundException' "$work/inventory-error.txt"; then
             printf '{"items":[]}\n' > "$work/image-versions.json"
         else
@@ -420,6 +425,115 @@ publish version:
     aws lambda get-function-configuration --region eu-central-1 --function-name "$controller" > "$work/controller.json"
     test "$(jq -er '.CodeSha256' "$work/controller.json")" = "$(openssl dgst -sha256 -binary controller.zip | openssl base64 -A)"
     printf 'Selected agent-v%s, image %s version %s for subsequent launches. Evidence: %s\n' "$version" "$image_arn" "$image_version" "$work"
+    # Selection is complete. Any later failure is retryable retention, not a failed build.
+    trap 'printf "Release selected, but retention is incomplete. Re-run just agent::publish %s with the same base version. Evidence: %s\n" "$version" "$work" >&2' 0
+    check_selection() {
+        aws cloudformation describe-stacks --region eu-central-1 --stack-name "$stack_name" > "$work/retention-current-stack.json"
+        jq -e --slurpfile selected "$work/selected.json" \
+            'def state: .Stacks[0] | {StackId,StackStatus,Parameters,LastUpdatedTime} | .Parameters |= sort_by(.ParameterKey);
+             state == ($selected[0] | state)' \
+            "$work/retention-current-stack.json" >/dev/null
+    }
+    inventory_versions() {
+        aws lambda-microvms list-microvm-image-versions --region eu-central-1 --image-identifier "$image_arn" \
+            --page-size 50 --output json > "$1"
+        jq -e '(.items|type)=="array" and (.nextToken//.NextToken//null)==null' "$1" >/dev/null
+    }
+    inventory_objects() {
+        aws s3api list-objects-v2 --region eu-central-1 --bucket "$bucket" --prefix agent/ --output json > "$1"
+        jq -e '(.NextToken//.NextContinuationToken//null)==null and (.IsTruncated//false)==false' "$1" >/dev/null
+    }
+    inventory_versions "$work/retention-before-versions.json"
+    jq --arg image "$image_arn" --arg current "$image_version" --arg base "s3://$bucket/" \
+        'def epoch:
+           if type=="number" then . else
+             (capture("^(?<date>[0-9T:-]{19})(?<fraction>\\.[0-9]+)?(?<zone>Z|[+-][0-9]{2}:[0-9]{2})$") // error("Invalid image creation timestamp")) as $t |
+             (($t.date+"Z"|fromdateiso8601) + (("0"+($t.fraction//""))|tonumber) -
+              (if $t.zone=="Z" then 0 else (($t.zone[1:3]|tonumber)*3600+($t.zone[4:6]|tonumber)*60) *
+               (if $t.zone[0:1]=="-" then -1 else 1 end) end)) end;
+         [.items[] | select(.state!="DELETED")] as $versions |
+         if all($versions[]; .imageArn==$image and
+              (.state=="SUCCESSFUL" or .state=="FAILED" or .state=="DELETING" or .state=="DELETE_FAILED") and
+              (.codeArtifact.uri | ltrimstr($base) | test("^agent/(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)/microvm\\.zip$"))) then
+           ([$versions[] | select(.state=="SUCCESSFUL")] | sort_by([(.createdAt|epoch),.imageVersion]) | reverse | .[:2]) as $keep |
+           if any($keep[]; .imageVersion==$current) then
+             {keep:$keep, remove:[$versions[] | .imageVersion as $v | select(all($keep[]; .imageVersion!=$v))],
+              prefixes:[$keep[].codeArtifact.uri | ltrimstr($base) | rtrimstr("microvm.zip")]}
+           else error("Selected image is outside the newest two successful builds; retention refused") end
+         else error("Incomplete, pending or foreign image inventory; retention refused") end' \
+        "$work/retention-before-versions.json" > "$work/retention-plan.json"
+    inventory_objects "$work/retention-before-objects.json"
+    # Complete retained bundles are required before any destructive operation.
+    jq -e --slurpfile plan "$work/retention-plan.json" \
+        '[(.Contents//[])[].Key] as $keys | all($plan[0].prefixes[]; . as $prefix |
+         all(["microvm.zip","controller.zip","provenance.zip","hooks.json","stack.yaml","release.json","SHA256SUMS","build-input.json","built.json"][];
+             . as $name | $keys | index($prefix+$name)!=null))' "$work/retention-before-objects.json" >/dev/null
+    check_selection
+    jq -r '.remove[].imageVersion' "$work/retention-plan.json" > "$work/retention-remove-versions.txt"
+    retire_index=0
+    while IFS= read -r retired; do
+        retire_index=$((retire_index+1))
+        printf 'Retiring image version %s.\n' "$retired"
+        aws lambda-microvms delete-microvm-image-version --region eu-central-1 --image-identifier "$image_arn" \
+            --image-version "$retired" > "$work/retire-$retire_index.json"
+        retire_polls=0
+        retire_deadline=$(($(date +%s) + 300))
+        while :; do
+            if aws lambda-microvms get-microvm-image-version --region eu-central-1 --image-identifier "$image_arn" \
+                --image-version "$retired" > "$work/retire-$retire_index-state.json" 2> "$work/retire-$retire_index-error.txt"; then
+                retired_state=$(jq -er '.state' "$work/retire-$retire_index-state.json")
+                case "$retired_state" in
+                    DELETED) break ;;
+                    DELETING|SUCCESSFUL|FAILED) ;;
+                    *) echo "Image deletion did not complete: $retired ($retired_state)" >&2; exit 1 ;;
+                esac
+            elif grep -q ResourceNotFoundException "$work/retire-$retire_index-error.txt"; then
+                break
+            else
+                cat "$work/retire-$retire_index-error.txt" >&2; exit 1
+            fi
+            retire_polls=$((retire_polls+1))
+            if [ "$retire_polls" -ge 60 ] || [ "$(date +%s)" -ge "$retire_deadline" ]; then
+                echo "Image deletion wait exceeded five minutes: $retired" >&2; exit 1
+            fi
+            sleep 5
+        done
+    done < "$work/retention-remove-versions.txt"
+    # Reconfirm all retired versions absent before touching any S3 source object.
+    inventory_versions "$work/retention-after-versions.json"
+    jq -e --slurpfile plan "$work/retention-plan.json" \
+        '([.items[] | select(.state!="DELETED") | {imageVersion,state,codeArtifact}] | sort_by(.imageVersion)) ==
+         ([$plan[0].keep[] | {imageVersion,state,codeArtifact}] | sort_by(.imageVersion))' \
+        "$work/retention-after-versions.json" >/dev/null
+    check_selection
+    # Derive stale keys from S3 as well: an earlier attempt may have deleted the image only.
+    jq --slurpfile plan "$work/retention-plan.json" \
+        '[(.Contents//[])[].Key | select(test("^agent/(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)/")) |
+          . as $key | select(all($plan[0].prefixes[]; . as $prefix | $key | startswith($prefix)|not)) | {Key:.}]' \
+        "$work/retention-before-objects.json" > "$work/retention-remove-objects.json"
+    jq -c '. as $objects | range(0;length;1000) | {Objects:$objects[.:.+1000],Quiet:false}' \
+        "$work/retention-remove-objects.json" > "$work/retention-object-batches.jsonl"
+    delete_index=0
+    while IFS= read -r batch; do
+        delete_index=$((delete_index+1))
+        printf '%s\n' "$batch" > "$work/delete-$delete_index-request.json"
+        aws s3api delete-objects --region eu-central-1 --bucket "$bucket" --delete "file://$work/delete-$delete_index-request.json" \
+            > "$work/delete-$delete_index-response.json"
+        if ! jq -e '(.Errors//[]|length)==0' "$work/delete-$delete_index-response.json" >/dev/null; then
+            cat "$work/delete-$delete_index-response.json" >&2; exit 1
+        fi
+    done < "$work/retention-object-batches.jsonl"
+    inventory_objects "$work/retention-after-objects.json"
+    jq -e --slurpfile removed "$work/retention-remove-objects.json" --slurpfile plan "$work/retention-plan.json" \
+        '[(.Contents//[])[].Key] as $keys |
+         all($removed[0][]; .Key as $key | $keys | index($key)==null) and
+         all($keys[] | select(test("^agent/(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)/"));
+             . as $key | any($plan[0].prefixes[]; . as $prefix | $key | startswith($prefix)))' \
+        "$work/retention-after-objects.json" >/dev/null
+    check_selection
+    trap - 0
+    jq -r '"Retained successful image versions: " + ([.keep[].imageVersion]|join(", "))' "$work/retention-plan.json"
+    printf 'Agent publication and artifact retention complete. Evidence: %s\n' "$work"
 
 # Operator-run initial CloudFormation deployment. Always starts disabled.
 deploy:
