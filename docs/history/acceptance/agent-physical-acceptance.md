@@ -1,5 +1,7 @@
 # Native physical acceptance — #167
 
+Historical record included in release provenance. See the [Agent guide](../../components/agent.md) for current procedures.
+
 Status, 2026-10-28: **closed at the user's explicit request, with the timeout
 limitation documented below**. Run 16 passes the complete manual flow; run 20
 verifies held-lease release on real credential expiry. Cases 25/26 pass camera
@@ -35,10 +37,9 @@ diagnosis but do not replace the physical evidence required by #167.
 - Preparation: `just agent::test` passes 3/3 native CTest targets and 19 Python
   checks. This establishes the local baseline, not physical acceptance.
 
-Evidence directory: `tmp/issue-167/`. Starting files include
-`source-host-preflight.json`, `preflight-tests.log`, `read-only-preflight.json`
-and the raw preflight shadow responses. These scratch files remain local.
-No credentials, session tokens, SDP or TURN secrets belong in the record.
+The preflight recorded source and host identity, local test results, and
+read-only lifecycle and board state. The findings below summarize those
+observations independently of the original working files.
 
 The 08:25 UTC preflight projection reports DBIRTH/REDCON 4 and unavailable
 board/MAVLink/video capabilities. The separate MAVLink shadow has cached domain
@@ -136,7 +137,7 @@ Evidence: `01-observation-{result,connected-summary}.json`,
 `02-control-interrupted-result.json`, both native logs, both
 `*-shadow-samples.jsonl` captures with raw field metadata,
 `02-loss-shadow-summary.json`, `02-final-agent-shadow-result.json` and
-`qgc-missing-rc-parameters.png` under `tmp/issue-167/`.
+a screenshot of QGC waiting for RC parameters.
 
 ## Recovered control run — interrupted again
 
@@ -214,7 +215,7 @@ has 64 samples and its final entry includes the native terminal reason.
 ## Later diagnosis and disarmed resumption
 
 The later operator-selected #171 investigation is recorded in
-[the Wi-Fi outage report](tbot-wifi-outage.md). The operator applied a 25 MHz
+[the Wi-Fi outage report](../../tbot-wifi-outage.md). The operator applied a 25 MHz
 SDIO-clock trial and later confirmed shared-battery power loss. #171 was closed
 at the operator's request for battery hardware follow-up outside this
 repository. Neither its closure nor the finite clock trial proves the cause of
@@ -384,8 +385,7 @@ per the [Raspberry Pi camera guide](https://www.raspberrypi.com/documentation/ac
 
 ## Real verification loss — interrupted earlier by malformed control data
 
-`tmp/issue-167/run-verification-expiry.py` is a local bounded test harness for
-the unchanged native executable. The operator creates a 900-second STS session
+A bounded test harness ran the unchanged native executable. The operator creates a 900-second STS session
 in a private ignored file. The harness passes that session only in the native
 child's environment, disables profile/metadata fallback, records expiry without
 secrets, and ends by expiry plus ninety seconds (at most twenty minutes).
@@ -556,8 +556,7 @@ reconnection, QGC traffic arrives and native control is acquired. Fresh MAVLink
 version 1111 confirms QGroundControl/session mavlink-2/epoch 1, disarmed Manual.
 The operator is then instructed to refresh parameters, select Manual and use
 ordinary Arm with force-arm off and sticks centered; driving is not yet
-requested. Raw preflight, release identity and live run evidence are retained
-under `tmp/issue-167/13-*`.
+requested. The run recorded preflight, release identity and live observations.
 
 Fresh parameter retrieval and ordinary Arm/Manual are confirmed by the operator
 and shadow version 1112. Before any drive, QGC reports Comms Lost and a failed
@@ -594,8 +593,7 @@ startup log lines: two `onSetStunServerIp` errors and one
 MAVLink data-channel-open marker. They report that the old failure log is lost
 on the read-only-root device. No remount or log-persistence configuration is
 changed. Instead, the operator confirms a filtered SSH log stream saved on the
-Mac as `tmp/issue-167/14-board-kvs-live.log`, keeping new evidence across a later
-board power-off. The old run-13 board log remains unavailable.
+Mac, preserving the streamed evidence across a later board power-off. The old run-13 board log remains unavailable.
 
 The pinned SDK defines this code as `STATUS_NULL_ARG`. The early-STUN function
 can emit it when its optional shared context is uninitialized; the incoming
@@ -836,11 +834,10 @@ node. The operator stops the capture and confirms actual 4, board/motor power
 off and tracks stopped. A new power cycle is required before the physical
 repeat; sysfs rebind is not recorded as a successful recovery.
 
-Raw `21-*` logs, triple-shadow samples, frozen board log, operator actions and
-result JSON are retained under `tmp/issue-167/`. Repair plan and validation
-are under `22-*`. The prepared KVS version is 0.18.4. Publish its immutable
+The capture correlated native, shadow and board logs with the operator's
+actions. The prepared KVS version was 0.18.4. Publish its immutable
 release only after an explicit operator commit/push, then use the coordinated
-[TBot maintenance procedure](components/board.md#maintenance). Repeat the
+[TBot maintenance procedure](../../components/board.md#maintenance). Repeat the
 camera-only fault while disarmed and verify stable actual 2, no video reconnect
 or new frames, continuing MAVLink and fresh parameter retrieval. Keep #167 open
 until real evidence supports those results.
@@ -901,8 +898,7 @@ The operator stops the capture, disconnects QGC and confirms actual 4,
 board/motor power off and tracks stopped; fresh Sparkplug 1776 agrees. No
 software camera recovery or additional motion is attempted.
 
-Evidence is frozen under `tmp/issue-167/23-*`; the correction plan, validation
-and manual rollout instructions are under `24-*`. The installed board remains
+The installed board remained
 0.18.4. The 0.18.5 source/artifact requires an explicit operator release and
 coordinated maintenance before another real camera-loss test. Earlier
 unrelated control-timeout causes remain unresolved. Criteria 4 and 6 stay open.
@@ -951,8 +947,7 @@ The operator then performs a real 4→1 power cycle and confirms restored live
 video/MAVLink, secured/lifted/disarmed/stopped conditions, Office View only and
 centered QGC sticks. Fresh actual 1 and ready streams independently confirm
 recovery. The operator reports no rights for packet capture; none is performed
-or requested again. Frozen case/result/provenance/board logs are under
-`tmp/issue-167/25-*` and `26-*`.
+or requested again.
 
 ## Recovered stability observation and remaining diagnosis — 2026-10-27
 
@@ -1022,8 +1017,7 @@ All **213 Office tests**, lint and the production build pass. The shared Office
 and component version files are aligned at 0.18.3. One existing unused-argument
 lint error is cleared without changing cmd_vel behavior.
 
-The source is uncommitted and not deployed. Rollout/retest steps are prepared
-in `tmp/issue-167/29-operator-office-takeover.md`: publish Office through its
+The source is uncommitted and not deployed. The planned retest was to publish Office through its
 existing Git/Cloudflare path, load the new client, then verify a real Office
 takeover from an active QGC lease without reloading Office, old-agent fencing,
 stopped tracks and safe release. The Office action ordinarily arms the vehicle,
@@ -1064,7 +1058,6 @@ The 79-sample recorder is terminal; fresh post-stop version 1314 is
 unowned/Disarmed/Hold. Board operation snapshots during this interval have
 zero reported failures and no sampled pending calls. These observations
 establish this handoff, not the cause or repair of earlier transport stalls.
-Raw and derived evidence is under `tmp/issue-167/30-*`.
 
 The grouped authority/handoff criterion is restored from real case 30 and
 the previously recorded loss cases. The overall #167 gate remains open for
@@ -1088,9 +1081,8 @@ remain available. Each native peer has 178 connected periodic SDK samples;
 SDK send failures and ICE status errors are zero. Maximum sampled last-receive
 ages are 194 ms for telemetry and 582 ms for video.
 
-The real KVS 0.18.6 operation samples are retained alongside the native SDK
-counters and raw shadows in `tmp/issue-167/31-*`, using the Mac capture begun
-for case 30. There are 361 operation snapshots across two local peer instances,
+The Mac capture begun for case 30 continued into case 31. It recorded 361
+KVS 0.18.6 operation snapshots across two local peer instances,
 with zero reported failures or nonzero SDK statuses. The maximum sampled
 pending age is 2 ms; the largest gap between samples for one instance is
 5,002 ms. These are approximate operation-boundary observations.
@@ -1180,11 +1172,9 @@ No malformed-JSON error is observed in runs 13/14. This record does not
 conflate these events with the earlier malformed-control case or with the
 REDCON 3/unreachable outages associated by the operator with #171.
 
-Local evidence under `tmp/issue-167/` comprises each run's `.log`,
-`-shadow-samples.jsonl` and `-result.json`, plus
-`14-board-kvs-run-snapshot.log` and `19-20-board-kvs-snapshot.log`.
-The full phase names are `13-repaired-manual-flow`,
-`14-disarmed-diagnostic` and `19-verification-expiry`.
+The comparison uses native logs and sampled shadows from the repaired manual
+flow, disarmed diagnostic and verification-expiry runs. Board KVS snapshots
+were available for the latter two windows.
 
 ### Office activation timeout
 
@@ -1239,44 +1229,14 @@ REDCON 4, board/motor power off and tracks stopped, corroborated by Sparkplug
 1865. No commit, runtime change, deployment or new Issue is part of this
 closeout; no further rollout is required for the documentation.
 
-## First foreground run
+## Native observation and control setup
 
-Use Office to select REDCON 1 and wait for actual 1 with available MAVLink/video.
-Configure QGC's link as above; avoid a duplicate UDP auto-connect link on 14550.
-Leave Office in View only and begin without `--control`.
-
-From the repository root, run this in a foreground terminal:
-
-```sh
-AWS_PROFILE=mayor just agent::run tbot-8yzfgj --region eu-central-1 \
-    > tmp/issue-167/01-observation.log 2>&1
-```
-
-The terminal stays occupied by the agent while the log is captured. The agent
-can follow the file; use Ctrl-C in that terminal to stop the run. Record the
-command start/end, actual QGC link settings, displayed vehicle/telemetry and
-increasing native telemetry/video counts. The first video observation must
-include H.264 bytes, presentation timestamp and receipt timestamp. Observation
-must leave board control unowned; no parameter-retrieval success is inferred
-from cached QGC values. Record the lack of an `agent` shadow before/after and
-the existing local code's read-only IoT API path.
-
-For later control cases, stop the observation run first. Only after the operator
-starts the explicit command and `control=1 acquired` is recorded may QGC send
-full MAVLink traffic:
-
-```sh
-AWS_PROFILE=mayor just agent::run tbot-8yzfgj --control --region eu-central-1 \
-    > tmp/issue-167/02-control.log 2>&1
-```
-
-These commands use existing IoT/KVS device resources. They do not deploy agent
-infrastructure, invoke a controller, or write an agent shadow. Physical inputs,
-Office ownership, REDCON/death changes and live fault induction remain manual.
-End each native session by fifty minutes under the
-[current-stage limit](constraints/agent-session-limit.md); existing board renewal
-can interrupt earlier. Record that interruption as a result, without bypassing
-the lifecycle rule or repairing the deferred credential-renewal/kernel issue.
+The operator woke TBot to actual REDCON 1, left Office in View only and
+started the native foreground agent with QGC configured for loopback.
+Observation recorded telemetry, H.264 frames and receipt timestamps while
+leaving board control unowned. For control cases the operator stopped that
+run, then started a fresh `--control` run and waited for a lease grant. Use
+the current Agent guide to reproduce the setup. [Native operation](../../components/agent.md#native-operation)
 
 ## Cases and required observations
 
@@ -1322,7 +1282,7 @@ unproved causes or unperformed fault methods into passing tests. Scope stops
 at #167 without starting later cloud work.
 
 Local execution uses the existing native build and
-[QGC settings](../agent/README.md#local-qgroundcontrol). Tested Office 0.18.3 and
+[QGC settings](../../components/agent.md#local-qgroundcontrol). Tested Office 0.18.3 and
 KVS 0.18.6 are already operator-deployed. These final documentation changes stay
 uncommitted and require no additional deployment, AWS resource mutation or
 firmware flashing. Scope ends at #167.

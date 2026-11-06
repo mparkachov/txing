@@ -1,7 +1,7 @@
 # TBot device
 
-`tbot` is a new Thread-first device type for the Unit-equivalent board,
-MAVLink, control, and video contract. Its XIAO nRF54LM20A Sense MCU uses the shared
+`tbot` is a Thread-first device with board video and MAVLink control.
+Its XIAO nRF54LM20A Sense MCU uses the shared
 stock Zephyr/OpenThread implementation with the `tbot` SRP service identity;
 it has no BLE or Matter/CHIP firmware path.
 
@@ -29,26 +29,30 @@ for the full public capability contract.
 
 ## Manual provisioning and flashing
 
-Do not commit Thread datasets: they are network credentials. Obtain the active
-dataset TLVs from the already configured colocated OTBR and store them in an
-ignored local file, for example `tmp/tbot-dataset.hex`.
+Thread datasets are network credentials. Obtain the active dataset TLVs from
+the configured OTBR and save them in private storage, such as the ignored
+`certs/thread-datasets/tbot.hex` on the operator's checkout.
 
 ```bash
+umask 077
+mkdir -p certs/thread-datasets
 sudo ot-ctl dataset active -x \
   | awk '{ gsub(/[[:space:]]/, ""); if ($0 ~ /^[[:xdigit:]]+$/) print }' \
-  > tmp/tbot-dataset.hex
+  > certs/thread-datasets/tbot.hex
 
 just mcu::install
 just mcu::check
-just tbot::mcu::nve tbot-001 tmp/tbot-dataset.hex
 just tbot::mcu::build-sed-debug
 just tbot::mcu::build
 ```
 
-The commands intentionally prepare artifacts only. The operator chooses and
-executes the manual programming step:
+The operator programs factory data manually and flashes the selected built
+image. `nve` writes factory data to the connected MCU.
 
 ```bash
+# Program factory data for the registered Thing.
+just tbot::mcu::nve <thing-name> certs/thread-datasets/tbot.hex
+
 # Diagnostic hardware-acceptance image
 just tbot::mcu::flash sed-debug
 
@@ -111,22 +115,18 @@ it before the MAVLink runtime cutover is verified, and no deploy or enlistment
 operation deletes it automatically.
 
 TBot declares the `agent` capability alongside MAVLink and video. Its
-[C++ agent](../../agent/README.md) owns the corresponding `agent` named shadow.
-The rig publishes agent availability for a born device at REDCON 1/2; cloud
-execution status does not gate physical device readiness. The
-[replacement contract](../../docs/contracts/agent-shadow.md) records cloud run
-identity, release, activation deadline, HTTPS attachment, and sampled runtime
-diagnostics; the controller alone writes operational status. The old Go/Fargate
-runtime and stack have been removed from the repository. The new runtime and
-lifecycle automation are still pending.
+[C++ controller](../../docs/components/agent.md#controller-and-authorization)
+owns operational writes to the corresponding `agent` named shadow. The rig
+publishes agent availability for a born device at REDCON 1/2. Cloud execution
+status is diagnostic, and physical readiness comes from device capabilities.
+The shadow records cloud run identity, release, activation deadline, HTTPS
+attachment, and sampled runtime status. [Agent shadow contract](../../docs/contracts/agent-shadow.md)
 
 After deploying the updated shared AWS catalog/enlistment code, re-enlist an
 existing TBot with the `aws::deploy-device` command above to create a missing
-`agent` shadow. Re-enlistment preserves an existing shadow, including the old
-format; follow the [manual replacement runbook](../../docs/constraints/agent-rollout.md)
-to retire old writers and reset only this capability shadow. Office Debug reads
-the JSON without interpreting the old task/UDP shape. Its absence or errors do
-not block normal device use. Office publication remains Git-driven.
+`agent` shadow. Re-enlistment preserves an existing shadow. For an old
+Go/Fargate shadow, follow the [legacy retirement procedure](../../docs/components/agent.md#legacy-retirement)
+before re-enlisting. Office Agent Debug reads the current shadow for diagnostics.
 
 TBot uses the shared board daemon and KVS master with TBot-derived MAVLink
 identities. ArduPilot exclusively owns the DRV8835; `txing-tbot-mavlink` owns
@@ -151,7 +151,7 @@ independent `tbot-v*` release stream:
 just release::build tbot
 ```
 
-The `tbot-v0.18.7` release publishes `txing-tbot-daemon`,
+The `tbot-v*` release stream publishes `txing-tbot-daemon`,
 `txing-tbot-mavlink`, and `txing-tbot-ardupilot` assets. The ArduPilot archive
 contains `txing-tbot-ardupilot` and
 `txing-tbot-ardupilot.defaults.parm` plus a diagnostic logging overlay
@@ -185,6 +185,9 @@ MAVLink after restart. Its OpenRC service binds `SERIAL1` only at
 `udpin:127.0.0.1:14550`, so no direct LAN/QGroundControl endpoint is exposed.
 The MAVLink cutover and exclusive motor ownership are covered by the
 [Board runbook](../../docs/components/board.md#tbot-mavlink-runtime).
+The current Pi sysfs PWM backend applies the temporary per-track envelope
+using three values in `daemon.env`. Changes take effect at ArduPilot startup.
+[Motor envelope configuration](../../docs/components/board.md#temporary-tbot-motor-envelope)
 
 Release publication never upgrades a board automatically. On the board, an
 operator installs TBot daemon, MAVLink, ArduPilot/defaults, and the shared KVS

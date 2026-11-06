@@ -38,8 +38,8 @@ stop. `local` rigs manage `mac` devices; see
 `txing-sparkplug-manager` owns all external AWS connectivity for the standalone
 rig host. It uses the rig certificate and IoT role alias to:
 
-- connect to AWS IoT MQTT with the rig Thing name `<rig>` as the Sparkplug node
-  client id, so AWS IoT connectivity indexing shows the rig as connected
+- connect to AWS IoT over MQTT 5 with the rig Thing name `<rig>` as the
+  Sparkplug node client ID for AWS IoT connectivity indexing
 - create per-device Sparkplug MQTT sessions using managed thing names as client
   ids
 - subscribe to Sparkplug `DCMD` messages and publish local IPC commands
@@ -125,9 +125,10 @@ poll. The first failure is logged immediately. Identical error text is then
 logged at most once per ten minutes, with each reminder reporting the number
 of duplicates suppressed since the previous warning. A different error is
 reported immediately. The first later successful discovery emits one recovery
-summary containing the outage duration and total suppressed count. Command
-failures are never throttled, and this logging policy does not change Thread
-discovery or polling intervals.
+summary containing the outage duration and total suppressed count. The
+adapter keeps one failure series in memory and clears it on recovery or
+process exit. Command failures are logged independently. Discovery and polling
+keep their existing intervals.
 
 ## Cost Posture
 
@@ -339,6 +340,10 @@ must replace that generated wrapper with the repository's native unit. The
 native unit runs `/usr/sbin/otbr-agent` directly, loads the existing
 `OTBR_AGENT_OPTS` from `/etc/default/otbr-agent`, and makes the real process the
 systemd `MainPID`.
+
+Systemd alone supervises the process. The Thread adapter uses `ot-ctl` for
+Thread operations and stays running through an OTBR outage. Recovery belongs
+to the systemd unit and the operator's maintenance procedure.
 
 Perform this as a manual writable-root maintenance operation. On the rig,
 verify and preserve the existing package configuration before copying any

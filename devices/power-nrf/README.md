@@ -59,24 +59,25 @@ antenna fits and the same behavior is validated in the enclosure.
    Thread-connectivity services.  Confirm both services and `otbr-agent` are
    active before flashing a device.
 3. Obtain the active dataset as raw TLVs on the OTBR.  The TLVs are credentials:
-   keep them in an ignored local file and never commit them.
+   keep them in private storage and never commit them.
 
    ```bash
-   mkdir -p tmp
+   umask 077
+   mkdir -p certs/thread-datasets
    sudo ot-ctl dataset active -x \
      | awk '{ gsub(/[[:space:]]/, ""); if ($0 ~ /^[[:xdigit:]]+$/) print }' \
-     > tmp/power-nrf-dataset.hex
+     > certs/thread-datasets/power-nrf.hex
    ```
 
-4. Prepare Zephyr and generate the `TXN1` factory Intel HEX.  Use `sed-debug`
-   for initial hardware acceptance or diagnostics.  After those checks pass,
-   build the production release with `build`; the release disables serial,
-   console, shell, and logging diagnostics.
+4. Prepare Zephyr, then use `nve` to program the `TXN1` factory data as the
+   operator. Use `sed-debug` for initial hardware acceptance or diagnostics.
+   After those checks pass, build the production release with `build`. The
+   release disables serial, console, shell, and logging diagnostics.
 
    ```bash
    just mcu::install
    just mcu::check
-   just power-nrf::mcu::nve power-nrf-001 tmp/power-nrf-dataset.hex
+   just power-nrf::mcu::nve power-nrf-001 certs/thread-datasets/power-nrf.hex
 
    # Diagnostic hardware-acceptance image
    just power-nrf::mcu::build-sed-debug

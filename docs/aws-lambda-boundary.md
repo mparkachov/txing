@@ -47,24 +47,16 @@ runtime/controller publication follows the approved `agent` release and
 `just agent::publish <version>` interface rather than adding a Go controller
 to the shared `lambda` release stream.
 
-The old
-`txing-tbot-companion-lambda` Go controller and Fargate paths have been removed
-from the repository; deployed-resource retirement remains a manual operator
-action. The replacement C++ controller and runtime integration passed #168's
-bounded source-build acceptance. Immutable publication tooling is prepared
-under completed #169: the clean `agent-v0.1.0` release passes ARM64 validation,
-and operator-run AWS publication selected image `3.0` and its matching
-controller. Launches remain disabled for #170 acceptance. See
-[Agent](components/agent.md) and [Agent constraints](constraints/agent.md).
+The C++ controller is deployed through the agent stack and published with the
+agent runtime. Legacy Go/Fargate companion resources in older environments
+require manual retirement. [Agent deployment](components/agent.md#deployment)
 
 Firmware uses the stock Zephyr C stack; standalone rig daemons and the existing
 shared runtime Lambdas remain Go. Existing admin Python functions are unchanged.
 Agent runtime, controller and publication code remain subject to the C++
 implementation boundary.
-The 2026-10-29 operator amendment adds one narrow exception: the independent
-stop-only [agent watch](constraints/agent-watch.md) runs in the existing Go
-witness function. It does not implement agent startup, assignment, shadow
-publication, device sessions, or the C++ controller's ordinary workflow.
+The existing Go witness function provides independent stop-only agent repair.
+[Witness shutdown watch](components/witness.md#agent-shutdown-watch)
 
 Within this repository, deploy actions are CloudFormation-backed AWS stack
 updates. Publish actions promote already-built release artifacts to existing

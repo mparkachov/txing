@@ -14,9 +14,8 @@ tags:
 
 # TBot cloud companion constraints
 
-> Superseded on 2026-10-18 by [Agent constraints](../../constraints/agent.md)
-> and the [Agent design](../../components/agent.md). The rules below describe
-> the historical implementation and do not govern the milestone 10 replacement.
+> Superseded on 2026-10-18 by the [Agent guide](../../components/agent.md).
+> The rules below describe the historical Go/Fargate implementation.
 
 These rules govern the TBot cloud companion described in
 `doc-47 - TBot-cloud-companion-for-QGroundControl-architecture.md`.

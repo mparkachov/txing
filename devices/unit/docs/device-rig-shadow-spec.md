@@ -21,8 +21,7 @@ Authoritative schema source:
 - `rig` is the source of truth for Sparkplug `NBIRTH`/`NDATA`/`NDEATH`/`DBIRTH`/`DDATA`/`DDEATH`.
 - Witness is the source of truth for the AWS-side `sparkplug` named shadow on rig and unit things.
 - `dev.txing.rig.BleConnectivity` is the source of truth for the `ble` and `power` named shadows.
-- `rig` is the source of truth for the `mcp` named shadow.
-- `board` is the source of truth for the `board` and `video` named shadows.
+- The board daemon writes the `board`, `mcp`, and `video` named shadows.
 - Sparkplug `DCMD.redcon` is the only lifecycle intent input.
 - No lifecycle flow uses shadow `desired`.
 

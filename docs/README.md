@@ -1,7 +1,9 @@
 # Documentation
 
-This repository documents the current implementation directly. Historical
-design notes have been folded into the owning component guides.
+The guides describe the current implementation. Each functionality has one
+owning guide, with shared contracts linked separately. Historical design and
+acceptance records belong in GitHub Issues or `docs/history/`. Use the owning
+guide for current constraints. [Historical constraints](./history/constraints/)
 
 ## Start Here
 
@@ -18,16 +20,9 @@ design notes have been folded into the owning component guides.
 - [Repository editing and operational boundaries](./agent-guidance/editing-boundaries.md)
 - [Board operating-system baseline](./components/board.md#operating-system-baseline)
 
-## Approved Designs Pending Implementation
-
-- [C++ AI operator on macOS and AWS](./components/agent.md)
-  ([constraints](./constraints/agent.md), [manual replacement rollout](./constraints/agent-rollout.md))
-- [TBot Thread device architecture](./history/architecture/tbot-thread-device-architecture.md)
-- [TBot prototype motor output envelope](./history/architecture/doc-43%20-%20TBot-prototype-motor-output-envelope-architecture.md)
-  ([constraints](./history/constraints/doc-44%20-%20Constraints-TBot-prototype-motor-output-envelope.md))
-
 ## Component Guides
 
+- [Agent](./components/agent.md)
 - [Rig](./components/rig.md)
 - [Board](./components/board.md)
 - [Board (Debian, frozen)](./components/board-debian-frozen.md)
@@ -35,6 +30,8 @@ design notes have been folded into the owning component guides.
 - [Office](./components/office.md)
 - [Public WWW](./components/www.md)
 - [Witness](./components/witness.md)
+- [TBot](../devices/tbot/README.md)
+- [Cyberbrick](../devices/cyberbrick/README.md)
 
 ## Contracts
 
@@ -58,7 +55,7 @@ capabilities for each AWS IoT ThingType:
 - `cloud`: `sparkplug`
 - `local`: `sparkplug`
 - `unit`: `sparkplug`, `ble`, `power`, `board`, `mcp`, `video`
-- `tbot`: `sparkplug`, `thread`, `power`, `board`, `mavlink`, `video`
+- `tbot`: `sparkplug`, `thread`, `power`, `board`, `mavlink`, `video`, `agent`
 - `cyberbrick`: `sparkplug`, `ble`, `power`, `board`, `mavlink`, `video`
 - `cloud-mcu`: `sparkplug`, `sqs`, `power`, `ecs`
 - `weather`: `sparkplug`, `ble`, `power`, `weather`

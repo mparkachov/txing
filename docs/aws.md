@@ -38,6 +38,19 @@ are initialized with `aws::deploy-init`; the type catalog root is always
 `/txing`. Recipes resolve operational stack values from SSM Parameter Store and
 AWS IoT registry values live.
 
+## IoT MQTT
+
+Repository-owned clients that connect directly to AWS IoT use MQTT 5. When a
+retained runtime signal has a freshness TTL, set the MQTT 5 Message Expiry
+Interval to that TTL. Discovery and configuration descriptors stay retained
+without expiry unless their publisher refreshes them before expiry. Retained
+messages on rig-local IPC are local state and follow the rig's own freshness
+rules. [Board retained topics](components/board.md#retained-aws-iot-topics) ·
+[Rig runtime contract](components/rig.md#runtime-contract)
+
+Runtime components own their MQTT sessions. The shared AWS Python admin
+package stays on control-plane APIs.
+
 ## Deploy And Publish
 
 In this project, **deploy** means creating or updating AWS infrastructure with

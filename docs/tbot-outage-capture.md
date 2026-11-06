@@ -1,9 +1,9 @@
 # Capture a TBot board outage across a restart
 
-Use this manual procedure for `tbot-8yzfgj` before retrying #165. It captures
-kernel/system messages, existing service stdout/stderr, installed versions and
-periodic machine state. The board's normal `/var/log` and `/var/tmp` are tmpfs;
-those logs disappear when board power is removed.
+Use this manual procedure to capture kernel and system messages, service
+output, installed versions and periodic machine state during a TBot outage.
+The board's normal `/var/log` and `/var/tmp` are tmpfs. Their contents disappear
+when board power is removed.
 
 If the board must stay read-only, use the
 [network capture and Wi-Fi fault guidance](tbot-wifi-outage.md#capture-while-the-board-stays-read-only)
@@ -28,14 +28,13 @@ while Linux boots and its services become ready.
 On the **Mac**, in the repository root:
 
 ```sh
-export BOARD_HOST=192.168.0.10
+: "${BOARD_HOST:?export the current TBot SSH address}"
 date -u
 ssh -o ConnectTimeout=5 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
   root@"$BOARD_HOST"
 ```
 
-`192.168.0.10` was the last reported board address. Check the router's current
-DHCP lease for `tbot` and replace it if it changed. Use the existing SSH key;
+Use the current DHCP lease for the board. Use the existing SSH key;
 do not disable host-key verification. If it still cannot connect after a normal
 boot, check wired access if available or obtain a local/serial console. Remount
 and logging commands cannot be run remotely until Linux is reachable. Do not
@@ -55,7 +54,10 @@ df -h / /var/log /var/tmp
 ip address show
 ip route show
 readlink /etc/resolv.conf
-getent hosts a28845zlj97ljp-ats.iot.eu-central-1.amazonaws.com
+iot_endpoint=$(sed -n 's/^TXING_IOT_ENDPOINT=//p' /root/.config/txing/tbot-daemon/daemon.env)
+if [ -n "$iot_endpoint" ]; then
+  getent hosts "$iot_endpoint"
+fi
 rc-service ntpd status
 ```
 
@@ -258,11 +260,14 @@ dump the complete environment, private key files or credential responses.
 In a **second Mac terminal**, use the current DHCP address and keep it open:
 
 ```sh
-export BOARD_HOST=192.168.0.10
-export TBOT_CAPTURE_DIR="$PWD/tmp/issue-165/board-$(date -u +%Y%m%dT%H%M%SZ)"
+ : "${BOARD_HOST:?export the current TBot SSH address}"
+: "${TBOT_CAPTURE_ROOT:?export a private diagnostics directory outside repository tmp}"
 umask 077
-mkdir -p "$TBOT_CAPTURE_DIR"
-date -u > "$TBOT_CAPTURE_DIR/mac-started-utc.txt"
+mkdir -p "$TBOT_CAPTURE_ROOT" &&
+TBOT_CAPTURE_DIR=$(mktemp -d "$TBOT_CAPTURE_ROOT/tbot-board.XXXXXX") &&
+export TBOT_CAPTURE_DIR &&
+printf 'Mac capture directory: %s\n' "$TBOT_CAPTURE_DIR" &&
+date -u > "$TBOT_CAPTURE_DIR/mac-started-utc.txt" &&
 caffeinate -i ssh -T -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
   root@"$BOARD_HOST" '
     capture=$(cat /root/tbot-capture/current-path)
@@ -280,7 +285,7 @@ if the installed applet rejects it, retain the error and resolve it before
 relying on this second copy. Stop this reader with Ctrl-C after capture.
 
 Back in the **first board terminal**, run this foreground sampler for up to
-ninety minutes while doing the retry. It writes a snapshot and flushes disk
+ninety minutes during diagnostics. It writes a snapshot and flushes disk
 every ten seconds; Ctrl-C stops only the sampler:
 
 ```sh
@@ -305,7 +310,7 @@ every ten seconds; Ctrl-C stops only the sampler:
     available_kb=$(df -Pk "$capture" | awk 'NR == 2 { print $4 }')
     printf '%s free KiB=%s\n' "$(date -u +%H:%M:%S)" "$available_kb"
     if [ "$available_kb" -lt 262144 ]; then
-      echo 'LOW SPACE: end the probe and stop the stack using step 7' >&2
+      echo 'LOW SPACE: stop the diagnostic and follow step 7' >&2
       break
     fi
     sample=$((sample + 1))
@@ -320,57 +325,39 @@ ext4 capture directory survive reboot. An abrupt power loss can still lose
 buffered application output and the latest unsynced writes; a hard hang or loss
 of power may leave no final error. This is why the Mac copy and boot ID matter.
 
-## 6. Retry the observation with logging already verified
+## 6. Observe with logging already verified
 
-Confirm in Office that actual REDCON is 1 and video is live; leave it active.
-Tell Codex **“Board capture is ready; retry #165”**, and include the capture
-directory and `baseline.txt`. Keep the sampler and Mac reader running.
+Use Office to confirm actual REDCON and availability before starting. Keep
+the board disarmed and use an observation-only client. For local observation,
+follow the native Agent guide. If observing an approved cloud run, use the
+current deployment and attachment procedure. Record the source/release and
+cloud run identity when applicable. Keep each agent session within the
+published duration ceiling. [Native operation](components/agent.md#native-operation) ·
+[Cloud attachment](components/agent.md#cloud-attachment) ·
+[Session duration](components/agent.md#session-duration)
 
-The next observation must be a **new** operator-launched MicroVM after review
-of the saved outage evidence. Recheck the current accepted image, source hashes,
-role, live capabilities and zero active probe runs first. As of 2026-10-22,
-`txing-agent-probe-165-c963a8c8a9df` version `1.0` contains the accepted
-telemetry-silence recovery correction; `5db8fe4d0334` is the earlier source.
-Reuse the corrected role, managed public connectors, no idle policy and the
-two-hour cap. No rebuild is needed unless packaged source changes.
+Confirm both logs advance before testing. If connectivity fails, record UTC,
+actual REDCON and requested REDCON. Preserve the Mac log and check whether the
+board remains reachable. When it is unreachable and you are ready to recover
+the disk capture, use the normal Office REDCON 4 → 1 flow. Use the next step
+to retrieve the previous boot's files before starting a new capture.
 
-All six recorded observers are terminated. The fifth/sixth launch blocks are
-historical and must not be reused for another run. The seventh #165 launch is prepared in
-`tmp/issue-165/operator-seventh-run.md`, reusing the accepted image without
-board changes. The separate #171 investigation was closed at the operator's
-request on 2026-10-25 after confirmed battery power loss and a REDCON 4
-transition; battery hardware follow-up is handled in another system. The
-sixth outage capture has been recovered and preserved.
-The historical retrieval commands are in
-`tmp/issue-165/operator-sixth-outage-retrieve.md`. Cloud launches, auth-token creation and final
-termination remain operator-run.
-
-Record the new cloud ID and UTC start time alongside the board capture. Budget
-roughly seventy minutes for real credential rotation and successful subsequent
-telemetry/video; initial and reopened attachment probes fit in the first
-thirty-minute ingress token. No control acquisition or motion is needed.
-
-If connectivity fails, record the exact Mac UTC time and the Office actual
-REDCON/target. Preserve logs first if the board is still reachable. If it is
-completely unreachable, recover through the normal REDCON 4 → 1 flow only when
-ready to retrieve the disk capture. Keep the Mac's partial live log.
-
-The 2026-10-22 sixth-run recovery validated this procedure: the Mac reader
-lost contact before the final kernel trace, while the disk archive retained a
-NULL-pointer Oops in the Wi-Fi SDIO/MMC DMA workqueue plus several more minutes
-of KVS network failures. Preserve both copies; an SSH timeout alone does not
-establish that the entire board stopped. The post-recovery boot ID and mount
-snapshot confirm the reboot restored read-only root/boot and tmpfs logging.
-The incident is recorded in `tmp/issue-165/board-wifi-kernel-oops-report.md`.
+The October 2026 incident showed why both captures matter. The Mac reader
+lost contact before the kernel trace, while the persistent board capture
+recorded a Wi-Fi SDIO/MMC DMA fault and later KVS network retries. Compare boot
+ID and uptime before attributing an SSH loss to a reboot. [Wi-Fi outage diagnosis](tbot-wifi-outage.md#captured-failure)
 
 ## 7. Retrieve evidence after restart and finish the maintenance window
 
 After the board boots again, **retrieve the old capture before creating another
 one**. Its pointer remains on persistent root even though `/var/log` is tmpfs
 again. No writable-root remount is needed just to read it. On the **Mac**, in
-the terminal where `TBOT_CAPTURE_DIR` was set:
+the terminal where `TBOT_CAPTURE_DIR` was set, or export the printed directory
+path in a new terminal.
 
 ```sh
+: "${BOARD_HOST:?export the current TBot SSH address}"
+: "${TBOT_CAPTURE_DIR:?export the printed Mac capture directory}"
 ssh root@"$BOARD_HOST" 'cat /root/tbot-capture/current-path'
 ssh root@"$BOARD_HOST" 'date -u; cat /proc/sys/kernel/random/boot_id; uptime' \
   > "$TBOT_CAPTURE_DIR/after-restart.txt"
@@ -388,8 +375,10 @@ suggests lost connectivity without a reboot. Neither alone proves the root
 cause. Preserve kernel MMC/I/O, Wi-Fi, OOM and thermal messages; correlate their
 times with service PID changes, clock jumps and the cloud log.
 
-If finishing **without a reboot**, first terminate the disposable cloud observer
-with its reviewed operator command and stop both foreground readers. Then, on
+If finishing **without a reboot**, end the observation and stop both
+foreground readers. For cloud diagnostics, use the current
+[drain procedure](components/agent.md#enable-and-drain) when the test requires
+ending the cloud run. Then, on
 the **board**, close the writers and restore normal logging/read-only root:
 
 ```sh
@@ -416,10 +405,11 @@ The root should be `ro` and `/var/log` should be tmpfs again. A busy unmount or
 failed read-only remount needs investigation; do not force it. Copy the now
 quiescent capture to the Mac with the archive block above. Then start the four
 existing TBot services again in step 4's ownership order, or perform a normal
-orderly reboot. No fstab or runlevel change needs undoing. Retain the capture
-until the outage is understood; do not enable another cloud run automatically.
+orderly reboot. No fstab or runlevel change needs undoing. Keep the raw capture
+in private storage if it is needed for follow-up. Record the verified findings
+in the owning Issue or guide so they survive cleanup.
 
 References: [board runtime and read-only root](components/board.md),
-[MicroVM evidence](agent-microvm-acceptance.md),
+[MicroVM feasibility evidence](https://github.com/mparkachov/txing/issues/165),
 [BusyBox mount/syslog/klogd/sync](https://busybox.net/downloads/BusyBox.html),
 [BusyBox tail options](https://github.com/mirror/busybox/blob/master/coreutils/tail.c).

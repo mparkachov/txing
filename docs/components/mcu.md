@@ -5,13 +5,14 @@ the XIAO MG24 Thread target (`power-si`), and the XIAO nRF54LM20A Thread targets
 (`power-nrf` and `tbot`). These are separate board and transport stacks that
 share the stock Zephyr workspace and MCU command surface.
 
-## nRF Shared Stack Invariant
+## Shared workspace and nRF54L15 stack
 
-The nRF MCU firmware targets are `devices/unit/mcu`, `devices/power/mcu`, and
-`devices/weather/mcu`. `devices/template/mcu` is only a scaffold and does not
-build firmware.
+Keep the stock Zephyr workspace, west environment, caches, and common
+toolchain helpers under `devices/common/mcu/`. The workspace defaults to
+`main` and accepts `TXING_ZEPHYR_VERSION` as an explicit revision override.
 
-All nRF MCU targets use the same shared stack:
+The XIAO nRF54L15 BLE firmware targets (`unit`, `power`, and `weather`) share
+one REDCON stack. `devices/template/mcu` is a scaffold. For these BLE targets:
 
 - each target's `zephyr/CMakeLists.txt` sets `TXING_XIAO_NRF54L15_DIR` to
   `devices/common/mcu/xiao_nrf54l15`
@@ -158,7 +159,9 @@ files; no local board or radio patch is introduced.
 
 ## Build Artifacts
 
-Run from the repo root:
+Run from the repo root. `mcu::check` is a non-programming preflight for the
+host toolchain, Zephyr checkout, stock OpenOCD configs, pyOCD target packs,
+and factory-data helpers.
 
 ```bash
 just mcu::install
@@ -188,8 +191,10 @@ just build
 
 ## Flashing
 
-Firmware flashing and NVE programming remain manual user actions. Firmware
-flashing is device-owned; factory/NVE programming is shared:
+Firmware flashing and NVE programming remain manual operator actions. Each
+device's flash recipe requires a firmware HEX already built for the selected
+profile. Build and verify the image before flashing. Factory/NVE commands
+use the shared helpers for the target's data format.
 
 ```bash
 just unit::mcu::flash

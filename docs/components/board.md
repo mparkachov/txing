@@ -34,10 +34,10 @@ the current and frozen board paths.
 
 ## Operating-system baseline
 
-Boards run Alpine Linux with OpenRC. Debian receives no further investment: do
-not add Debian or systemd build paths, packages, release artifacts, fixes,
-compatibility work, containers, or CI lanes. A board that remains on Debian is
-reimaged to Alpine rather than upgraded.
+Boards run Alpine Linux with OpenRC. Build and release board binaries on
+Alpine. Keep the existing Debian smoke check scoped to executing static
+artifacts. Debian and systemd build paths, packages, and compatibility work
+are frozen. To receive current releases, reimage a Debian board to Alpine.
 
 The KVS master is musl-dynamic against stock Alpine libcamera, so camera updates
 are Alpine-only. A Debian board stays pinned to its last Debian-built KVS master
@@ -174,7 +174,7 @@ available again.
 
 ## Retained AWS IoT Topics
 
-Board MQTT clients use MQTT 5 for AWS IoT retained service state. Dynamic
+Board MQTT clients follow the [AWS IoT MQTT policy](../aws.md#iot-mqtt). Dynamic
 freshness signals are retained with a MQTT 5 Message Expiry Interval equal to
 `TXING_CAPABILITY_TTL_SECONDS`, which defaults to `150` seconds:
 
@@ -421,6 +421,10 @@ Certificate paths are omitted by default; the daemon derives colocated paths
 from the loaded `daemon.env` directory. For manual shell export, use
 `set -a; . /root/.config/txing/<device>-daemon/daemon.env; set +a`.
 
+For daemon settings exposed as CLI flags, precedence is the explicit flag,
+process environment, `daemon.env`, then the default. Preserve that order when
+adding or changing settings.
+
 Default runtime inputs include:
 
 - `AWS_REGION`
@@ -485,9 +489,9 @@ exported only to `txing-tbot-ardupilot`.
 - Default Alpine stack: apk, ifupdown-ng + wpa_supplicant + udhcpc
   networking, busybox ntpd time sync, OpenRC init. No systemd and no
   NetworkManager on the board.
-- The daemon and hardware worker are fully static musl binaries that depend
-  only on the kernel: a healthy install shows no shared-library dependencies
-  for them (musl `ldd` refuses them or lists only the loader).
+- The Go daemon and MAVLink service build with `CGO_ENABLED=0`. The Unit
+  hardware worker and device ArduPilot executables link statically on Alpine.
+  Their aarch64 ELF files have no `PT_INTERP` and no shared-library dependency.
 - The KVS master is the only musl-dynamic binary: it shows the
   `/lib/ld-musl-aarch64.so.1` interpreter, fully resolved `ldd` output, and
   links Alpine's upstream libcamera (`libcamera.so.0.7` and
@@ -580,23 +584,26 @@ restarting an OpenRC service does not install or upgrade tools, invoke mise,
 or call GitHub. If a board needs new binaries, follow
 [Maintenance](#maintenance).
 
-TBot and Cyberbrick each publish the corresponding patched ArduPilot source
-archive for provenance; source archives are not installed on the board. TBot's
-current runtime installation and operational steps are in
+TBot and Cyberbrick each build ArduRover from the shared disposable upstream
+checkout at `devices/common/board/ardupilot/`, with initialized submodules and
+one device's hardware definition and patch stack. Use a clean checkout per
+device build. If patches drift or another device's changes remain applied,
+discard the checkout manually and clone again. Keep patches, defaults, and
+OpenRC services in the owning device tree.
+
+The executable, defaults and matching source archive ship in the same device
+release. Record the upstream commit and include the patched checkout,
+submodules, upstream license, and build instructions in the source archive.
+Install the binary and defaults on the board. TBot's current runtime steps are in
 [TBot MAVLink runtime](#tbot-mavlink-runtime). Cyberbrick's current runtime
 installation and operational steps are in
 [Cyberbrick runtime](#cyberbrick-runtime).
 
-The release gates bound what these artifacts prove. `assert-board-musl.sh`
-checks linkage kinds and `smoke-board-cross-distro.sh` runs each binary in
-`debian:trixie` and pinned Alpine containers asserting only `--version`.
-Neither performs a live AWS handshake (no credentials in CI) nor touches a
-camera, and the smoke container installs the same build-derived package set
-that omits `libcamera-raspberrypi` and a udev daemon. TLS trust-anchor faults
-and every camera-enumeration fault in
-[Camera Does Not Enumerate](#camera-does-not-enumerate) are therefore
-invisible to CI by construction and can only be caught on a physical board
-with a camera attached.
+`assert-board-musl.sh` checks linkage. The release smoke checks run the static
+daemon and worker/service with `--version` on Debian and pinned Alpine. The
+KVS master runs on Alpine, and ArduPilot gets an Alpine `--help` check. Verify
+AWS signaling and camera enumeration separately on the board with its camera
+attached. [Camera troubleshooting](#camera-does-not-enumerate)
 
 ## Fresh Board Install
 
@@ -1011,9 +1018,8 @@ rather than after. The hardware worker looks for `/sys/class/pwm/pwmchip0` at
 every start and the KVS master enumerates cameras at every start; if the
 services come up first, both fail on hardware that is merely not configured yet,
 and the logs from that first start have to be read past rather than trusted.
-With this step done first, [Install Runtime And OpenRC
-Services](#6-install-runtime-and-openrc-services) is verified against the
-hardware the board will actually run.
+Complete this step before [installing the device runtime and OpenRC services](#6-install-device-runtime-and-openrc-services)
+so you can verify the services against the board's configured hardware.
 
 After `setup-disk -m sys`, the boot FAT partition is mounted at `/boot` (the
 `/media/mmcblk0p1` mount only exists during the diskless boot in step 1).
@@ -1583,8 +1589,11 @@ TXING_MOTOR_CMD_RAW_MIN_SPEED=100
 TXING_MOTOR_CMD_RAW_MAX_SPEED=200
 ```
 
-With these values, neutral is zero duty and every nonneutral track output is
-limited to approximately 20.833%-41.667% duty. To make a temporary manual
+The sysfs PWM backend applies the envelope to each track after ArduRover
+mixing, including differential turns. Neutral is zero duty and every
+nonneutral output is limited to approximately 20.833%–41.667% duty. This
+reduces current demand by limiting the commanded duty. Its guarantee applies
+to commands handled by the PWM backend. To make a temporary manual
 override, disarm the rover, isolate motor power, make the board root writable,
 and edit only those three plain `KEY=value` lines. They must be nonnegative
 integers with `raw maximum > 0`, `command minimum < command maximum`, and

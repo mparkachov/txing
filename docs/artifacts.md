@@ -46,8 +46,8 @@ source/dependency/base provenance and checksums. `just agent::deploy` creates
 initial disabled infrastructure; the operator's `just agent::publish <version>`
 uploads an immutable S3 package, waits for a successful image build and selects
 it for later launches. It preserves running versions and existing activation
-gates. See [agent publication](agent-release-publication.md) for pending live
-acceptance, initial/manual rollout and retained-cost/base-image requirements.
+gates. Publication retains the two newest successful image versions and their
+S3 bundles. [Agent publication](components/agent.md#publish-a-release)
 
 Rig releases publish these Linux `aarch64` assets:
 

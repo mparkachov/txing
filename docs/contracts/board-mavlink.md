@@ -26,6 +26,11 @@ byte-for-byte: it does not select a dialect, validate a dialect-specific CRC,
 rewrite source or target IDs, or filter MAVLink message types. The flight
 controller is the protocol authority and validates the tunneled frames.
 
+The `<thing>-mavlink` signaling channel carries data only. The separate
+`<thing>-board-video` channel carries video. Telemetry fans out to observer
+peers through bounded queues so a slow peer does not stall the
+flight-controller reader or another observer.
+
 The worker serializes complete SDK data-channel sends for each MAVLink peer.
 Binary telemetry and text control replies originate on different threads; the
 pinned SDK shares mutable SCTP send metadata between calls. Closing a peer
@@ -90,8 +95,9 @@ Office presents two operator modes for every MAVLink-capable board:
   refreshing the page.
   After the lease grant, Office selects Manual mode and sends an ordinary Arm
   command as part of its Control action. It then sends `MANUAL_CONTROL` at 10 Hz,
-  including neutral frames while no arrow key
-  is held. Arm state and Manual/Hold selection are flight-controller details,
+  including neutral frames while no arrow key is held. ArduRover uses `y`
+  for steering and `z` for throttle. The client marks unused axes invalid.
+  Arm state and Manual/Hold selection are flight-controller details,
   not separate Office control modes.
 
 Office starts its observer peer only when the Sparkplug projection reports
@@ -137,7 +143,11 @@ not declare `mcp`; catalog validation rejects declaring both.
 
 MAVLink arm state is independent flight-safety state. It remains visible in the
 device's MAVLink status, but it neither gates REDCON nor changes board-video
-availability. REDCON 1 reflects ready MAVLink and video capabilities.
+availability. A healthy local transport, fresh flight-controller heartbeat,
+and ready MAVLink KVS master establish MAVLink availability. REDCON 1 requires
+ready MAVLink and video, and REDCON 2 can retain control while video is
+unavailable. Lifecycle requests change device availability. Arming follows the
+client's explicit control action and the flight controller's safety checks.
 
 The pinned MAVLink 2 `common` C/C++ and TypeScript generated bindings, their
 license, golden vector, and regeneration verifier are shared at

@@ -109,7 +109,7 @@ _image-package kind:
         ':(glob)agent/tests/*.cpp' ':(glob)agent/tests/test_*.py' \
         agent/probe/CMakeLists.txt agent/probe/Dockerfile \
         agent/probe/hooks.json agent/probe/stack.yaml agent/cloud/Dockerfile agent/cloud/Release.Dockerfile agent/stack.yaml \
-        release/versions/agent docs/agent-physical-acceptance.md \
+        release/versions/agent docs/history/acceptance/agent-physical-acceptance.md \
         devices/common/kvs/sdk.commit ':(glob)devices/common/kvs/cmake/*.cmake' \
         devices/common/board/kvs_master/include/kvs_master/serialized_data_channel.hpp \
         ':(glob)devices/common/board/mavlink/include/**/*.h' \
@@ -199,7 +199,7 @@ release-package: cloud-package
     done
     cp agent/cloud/Release.Dockerfile "$source_dir/Release.Dockerfile"
     cp agent/probe/hooks.json agent/stack.yaml "$source_dir/"
-    cp docs/agent-physical-acceptance.md "$source_dir/physical-acceptance.md"
+    cp docs/history/acceptance/agent-physical-acceptance.md "$source_dir/physical-acceptance.md"
     sed -n 's/^FROM \([^ ]*@sha256:[a-f0-9]*\).*/\1/p' agent/cloud/Release.Dockerfile > "$source_dir/container-base.txt"
     test "$(wc -l < "$source_dir/container-base.txt" | tr -d ' ')" = 1
     "$engine" build --platform linux/arm64 --progress plain --target release-export \
@@ -278,7 +278,13 @@ publish version:
     unzip -q "$work/txing-agent-release-linux-arm64.zip" -d "$work/release"
     cd "$work/release"
     shasum -a 256 -c SHA256SUMS
-    jq -e --arg version "$version" '.component == "agent" and .version == $version and .architecture == "linux/arm64" and .clean == true and (.localPhysicalAcceptance | startswith("docs/agent-physical-acceptance.md#"))' release.json >/dev/null
+    # Published archives still carry the original acceptance record path.
+    jq -e --arg version "$version" '
+        .component == "agent" and .version == $version and .architecture == "linux/arm64" and .clean == true and
+        (.localPhysicalAcceptance |
+            . == "docs/history/acceptance/agent-physical-acceptance.md#timeout-record-and-closure-decision--2026-10-28" or
+            startswith("docs/agent-physical-acceptance.md#"))
+    ' release.json >/dev/null
     for artifact in microvm.zip controller.zip provenance.zip hooks.json stack.yaml; do
         actual=$(shasum -a 256 "$artifact" | cut -d ' ' -f 1)
         test "$actual" = "$(jq -er --arg name "$artifact" '.files[$name]' release.json)"
@@ -293,7 +299,7 @@ publish version:
     aws s3api get-bucket-versioning --region eu-central-1 --bucket "$bucket" \
         --query '{Status: Status}' --output json > "$work/bucket-versioning.json"
     if ! jq -e '.Status == null' "$work/bucket-versioning.json" >/dev/null; then
-        echo "Publication requires a new unversioned artifact bucket; follow docs/agent-release-publication.md before retrying." >&2
+        echo "Publication requires a new unversioned artifact bucket. See docs/components/agent.md#migrate-a-versioned-artifact-bucket." >&2
         exit 1
     fi
     role=$(output BuildRoleArn)

@@ -1,115 +1,62 @@
 # Agent
 
-Status: approved replacement design, 2026-10-18. Implementation and acceptance
-are tracked in [milestone 10](https://github.com/mparkachov/txing/milestone/10).
-This document describes the approved architecture; implementation and acceptance
-status are distinguished below.
-The superseded Go/Fargate implementation has been removed. The C++ foreground
-observer and automated runtime checks are implemented under #164 in
-`agent/`; native macOS build/automated checks, active TBot observation,
-independent peer recovery and verification-timeout acceptance passed. The
-native QGroundControl UDP adapter is implemented under #166 with loopback,
-lease and real SDK integration checks. Local physical acceptance is recorded
-under #167 with its intermittent timeout limitation. The #168 cloud controller,
-host and attachment are implemented, with Linux ARM64 packaging and bounded
-operator-run source-build acceptance recorded in the
-[cloud evidence](../agent-cloud-build-validation.md). The unpublished diagnostic
-test build is not a production release. #169 immutable publication is accepted:
-the clean `agent-v0.1.0` release passed ARM64 checks, and operator-run AWS
-publication selected image `3.0` with its matching controller. Both launch
-switches remain false. See the
-[publication runbook](../agent-release-publication.md). Released-cloud physical
-acceptance remains #170. See the
-[native observation](../agent-native-acceptance.md) and
-[manual adapter acceptance](../agent-manual-acceptance.md) records.
+The agent is the AI counterpart of Office. It receives telemetry and encoded
+video and exposes authorized actions to an interchangeable operator. The
+current operator forwards MAVLink to QGroundControl and counts video frames.
+One C++ runtime runs on macOS and Linux ARM64 Lambda MicroVMs. TBot is the
+supported device type. Cloud operation can start automatically when a device
+is active and the operator has enabled launches.
 
-## Purpose
-
-The agent is the AI counterpart of Office. Office connects device observations
-and actions to a human; the agent connects them to an operator behavior that
-can later be supplied by an AI model. This milestone establishes the first
-working skeleton, using QGroundControl as its manual operator behavior.
-
-One C++ implementation runs natively on a development Mac and in AWS Lambda
-MicroVMs. The cloud starts an agent automatically for a supported active device,
-even when no human is attached. TBot is the only supported profile in this
-milestone. The agent receives video and telemetry, exposes explicit control
-authority, and sends actions through the existing device protocol.
-
-Video arrives at the operator as timestamped encoded frames and is counted and
-discarded there. Model selection, decoding, inference hosting, training, and
-autonomous motion are later work. The runtime must make that later substitution
-possible without rebuilding its transport or hosting.
-
-## Replacement boundary
-
-Build the replacement under top-level `agent/` from the committed baseline
-after the operator's reset. Replace milestone-specific agent implementation,
-Fargate infrastructure, worker IPC, and obsolete release paths directly.
-Do not retain parallel runtimes or compatibility wrappers.
-
-Preserve the independently committed board, rig, and Office connection fixes;
-the board's deployed MAVLink/video protocols; and the shared SDK pin and build
-resources already consumed by other components. Removing the old implementation
-does not authorize reverting whole historical commits. The existing capability-owned
-`agent` named shadow remains the cloud diagnostic entry point, but its
-ECS/public-UDP-specific schema is replaced.
+The current implementation provides observation and manual control. Model
+inference, video decoding and autonomous motion are outside its scope.
 
 ## Runtime responsibilities
 
 | Responsibility | Owns |
 | --- | --- |
-| Device session | Registered device profile, independent WebRTC connections, telemetry/video delivery, and the board control lease |
-| Operator behavior | Observations and actions; initially the manual QGroundControl behavior |
+| Device session | Registered device profile, independent WebRTC connections, telemetry and video delivery, and the board control lease |
+| Operator behavior | Observations and actions for the manual QGroundControl operator |
 | Hosting | Local startup or MicroVM lifecycle, credentials, execution authorization, and diagnostics |
 
-The production runtime is one `txing-agent` process. It links the pinned AWS
-KVS WebRTC C SDK directly; there is no Go supervisor, separate native viewer,
-credential pipe, or custom process protocol. Initialize the SDK once for the
-process and preserve that lifetime while either session exists.
+The `txing-agent` process links the pinned AWS KVS WebRTC C SDK directly. It
+initializes the SDK once and shares that lifetime across both sessions.
+Keep one C++ runtime for macOS and Linux ARM64 and one C++ controller. Build
+and publish through CMake, Just and minimal POSIX shell. The existing Go
+witness handles independent stop-only repair. [Lambda language boundary](../aws-lambda-boundary.md)
 
-Use the AWS SDK for C++ for AWS APIs and credential providers. Adapt its
-credentials to the KVS provider in process, including static and refreshable
-credentials. Use the SDK's signaling and reconnection facilities; application
-code owns bounded peer recovery and device lifecycle rather than a competing
-signaling implementation. Reuse libwebsockets for HTTP/WebSocket support.
-Build with CMake, Just, and minimal POSIX shell tooling. No new agent Go or
-Python production code, including controller or publication helpers, is in
-scope; tests may use other languages.
+The runtime uses the AWS SDK for C++ for API calls and static or refreshable
+credentials. It adapts those credentials to the KVS provider in process. The
+SDK handles signaling, while the application manages device lifecycle and
+bounded peer recovery. HTTP/WebSocket support uses libwebsockets.
 
 Transport receives explicit channel, region, media/data role, and data-channel
 label. It neither derives TBot names nor parses MAVLink nor manages cloud runs.
-Keep diagnostics actionable and free of secrets: retain SDK errors and
-operation context rather than replacing all failures with a generic exit.
+Diagnostics retain SDK errors and operation context while excluding secrets.
 Native transport diagnostics sample SDK ICE packet/byte/consent counters and
 adapter counts of successful SDK sends and receive callbacks every five seconds
 while connected, and once before teardown. Numeric sample time and the generated
-peer identity correlate with board logs; addresses, labels, peer payloads and
-authentication material are excluded. These best-effort snapshots do not change
-authority, lifecycle or retry decisions.
+peer identity correlate with board logs. Samples omit addresses, labels, peer
+payloads and authentication material.
 
 ### Operator interface
 
 The operator receives telemetry, encoded video, connection changes, and control
 loss. It can request control, send MAVLink, and release control. Video includes
-codec, presentation timestamp, and local receipt time; timestamps retain their
+codec, presentation timestamp, and local receipt time. Timestamps retain their
 respective clock meanings and do not imply cross-stream synchronization.
 
-Use bounded queues with explicit overload behavior. Slow video consumption
-cannot delay control or cause unbounded memory growth. SDK callbacks must not
-execute blocking operator work.
-
-The manual operator forwards QGroundControl traffic and counts/discards video.
-Discard happens at the operator boundary, not inside the transport callback.
-A test operator must consume both observation types and issue an authorized
-action through the same interface. Do not introduce a dynamic plugin system,
-generic robot-command language, or production placeholder AI framework.
+Operator callbacks run outside the SDK callback. Video has its own bounded
+queue of four frames and eight MiB. It drops the oldest frame on overload and
+rejects frames larger than two MiB. Telemetry and connection/control events
+have separate bounded queues. The manual operator counts and discards video
+at the operator boundary, and the test operator consumes both streams and
+issues an authorized action through the same interface.
 
 ### Profiles and lifecycle
 
-Resolve the registered AWS IoT Thing type before opening sessions. A small
-compiled-in TBot profile supplies channel templates and activation rules,
-validated against its manifest:
+The agent resolves the registered AWS IoT Thing type before opening sessions.
+Its compiled TBot profile uses the channel templates and activation rules in
+the device manifest.
 
 - `<thing-id>-mavlink`: ordered reliable data channel `txing.mavlink.v1`,
   active at born REDCON 2 or 1.
@@ -119,102 +66,178 @@ validated against its manifest:
 Unsupported registered types fail before session creation. A name prefix alone
 does not establish support. Rig and witness remain lifecycle authorities.
 
-Poll lifecycle every two seconds and stop after fifteen seconds without
-authoritative verification. Video and MAVLink recover independently; returning
-from REDCON 1 to 2 closes only video. A transient connection problem must not
-replace the entire cloud process or erase another connection's error.
-For MAVLink, fifteen seconds without a valid received telemetry frame also
-retires a nominally connected peer through the bounded recovery path. Count
-receipt per peer generation, independently of lifecycle verification and control
-replies. Release authority and fence queued sends before retirement; recovery
-must preserve healthy video and must not reacquire control automatically.
+The agent polls lifecycle every two seconds and stops after fifteen seconds
+without authoritative verification. Video and MAVLink recover independently.
+Returning from REDCON 1 to 2 closes only video. Fifteen seconds without a valid
+MAVLink telemetry frame triggers bounded peer recovery. The runtime measures
+receipt per peer generation, releases authority and fences queued sends before
+retiring the peer. Healthy video continues and control requires a fresh request.
 
 ### Control authority
 
 Follow the [board MAVLink contract](../contracts/board-mavlink.md).
 Observation is the default. Explicit manual control requests a free lease with
-`takeover=false`; busy ownership remains intact. After grant, the operator
+`takeover=false`. A busy owner keeps its lease. After grant, the operator
 can forward the full MAVLink protocol, including pre-arm parameter traffic.
 
-The operator session owns the lease. Arm and disarm are ordinary MAVLink
-commands; neither acquires nor releases control. Release on manual-client
-inactivity, disconnect, WebRTC loss, lease loss, lifecycle shutdown, or process
-shutdown. Never reacquire automatically after loss. Keep the existing
-five-second lease and manual-client inactivity boundary, epochs, operation
-names, one-frame-per-binary-message representation, and board safety behavior.
-Attempt graceful release before destroying a usable connection; board lease
-expiry remains the fallback when the link is lost.
+The operator session keeps the lease across arm and disarm. The agent releases
+on client inactivity, disconnect, WebRTC loss, lease loss, lifecycle shutdown
+or process exit. It attempts graceful release when the connection is usable.
+If the link is lost, the board's five-second lease expires. A fresh explicit
+request is required for another grant.
 
-Preserve complete MAVLink 2 frames byte-for-byte, including signatures and
-unfamiliar message types. Validate framing without turning the generated
-dialect bindings into a tunnel allowlist. Reuse the repository's pinned
-generated bindings where message interpretation is needed.
+The agent validates framing and forwards complete MAVLink 2 frames byte for
+byte, including signatures and unfamiliar message types.
 
 ## Native operation
 
-The table describes the complete target interface. Build/test, foreground
-observation and UDP/manual-control run arguments are implemented under
-#164/#166. #168 prepares attachment and initial disabled deployment; immutable
-publication remains #169.
+### Prerequisites
 
-| Command | Behavior |
-| --- | --- |
-| `just agent::build` | Build/cache the native executable under repository `tmp/` |
-| `just agent::run <thing-id> [udp-port] [--control]` | Build if needed and run the complete agent locally in the foreground |
-| `just agent::attach <thing-id> [udp-port] [--control]` | Build if needed and connect localhost QGroundControl to the existing cloud agent |
-| `just agent::test` | Run relevant automated checks |
-| `just agent::deploy` | Operator-run initial CloudFormation deployment |
-| `just agent::publish <version>` | Operator-run publication of an immutable agent release |
+On macOS install the Xcode command line tools, Just, Git, CMake, curl and these
+Homebrew formulas manually:
 
-Both manual commands bind `127.0.0.1:14551` by default. QGroundControl listens
-on UDP 14550 and sends to the chosen agent listener port. The optional positional
-port changes the agent listener. Report invalid or occupied ports clearly.
-`--qgc-port <port>` optionally changes the loopback QGC endpoint (and expected
-client source port); it must differ from the listener. Native
-[usage and QGC settings](../../agent/README.md#local-qgroundcontrol) describe the
-one-shot control request and UDP disconnect deadline.
+```sh
+brew install cmake just openssl@3 libwebsockets srtp libusrsctp log4cplus
+```
 
-Send available telemetry immediately to the configured QGroundControl endpoint;
-do not wait for an incoming MAVLink 2 heartbeat. Recognize initial MAVLink 1
-heartbeats for client presence and verify QGroundControl's negotiation to
-MAVLink 2. Recognition does not permit MAVLink 1 frames on the board's deployed
-MAVLink 2 data channel.
+Linux ARM64 builds use the same application source and require C/C++17 compilers,
+CMake 3.24+, Git, curl, OpenSSL, zlib, libcurl, libwebsockets, libsrtp2,
+libusrsctp, log4cplus, and their development headers. The production Linux ARM64 artifact is built through the release workflow below.
 
-Local execution uses the AWS SDK credential chain and configured region,
-including supported profiles and refreshable credentials. Document native
-macOS prerequisites and cache a verified TLS trust anchor under repository
-scratch space. Local execution uses existing device IoT/KVS resources but does
-not require agent infrastructure, invoke the controller, or write the cloud
-`agent` shadow. Status is logged locally.
+```sh
+just agent::build
+just agent::test
+just agent::run <registered-tbot-thing-id> --region eu-central-1
+```
+
+The foreground run observes and logs. Ctrl-C or SIGTERM releases authority and
+closes both sessions. The agent binds `127.0.0.1:14551` and sends telemetry to
+QGroundControl at `127.0.0.1:14550` immediately, even before QGC sends anything.
+
+### Local QGroundControl
+
+In QGroundControl **Application Settings → Comm Links**, use one UDP link with
+local/listening port **14550** and remote host **127.0.0.1:14551**. If configuring
+that link manually, disable the duplicate UDP auto-connect link. Keep heartbeat
+emission enabled under Telemetry/MAVLink settings. [QGC Comm Links](https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/comm_links.html) ·
+[QGC Telemetry settings](https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/telemetry.html)
+
+```sh
+# View telemetry without control.
+just agent::run <registered-tbot-thing-id> --region eu-central-1
+
+# Explicit full MAVLink control, including parameter retrieval/configuration.
+just agent::run <registered-tbot-thing-id> --control --region eu-central-1
+
+# Different agent listener; change QGC's remote host to 127.0.0.1:15551.
+just agent::run <registered-tbot-thing-id> 15551 --control --region eu-central-1
+
+# Different QGC listening port as well; configure its local port to 15550.
+just agent::run <registered-tbot-thing-id> 15551 --qgc-port 15550 --region eu-central-1
+```
+
+The configured loopback QGC source port establishes presence and sends uplink.
+Initial valid MAVLink 1 heartbeats establish presence locally. The board channel
+uses MAVLink 2, and telemetry initiates QGC negotiation. Each UDP datagram must
+contain complete frames. The flight controller validates MAVLink 2 CRCs and
+signatures.
+
+`--control` makes one `takeover=false` lease attempt after client presence and
+telemetry readiness. The agent drops pre-grant traffic, and QGC can retry
+after the grant. A busy Office or other peer remains owner. Once granted,
+parameter/configuration, arm, disarm and re-arm traffic use that same lease.
+Video counters are logged by the operator and QGC displays telemetry.
+
+Control releases after five seconds without valid client traffic, local socket
+failure, WebRTC/lease loss, lifecycle shutdown, or process exit. The same
+five-second deadline detects link disconnection or QGC exit. Only valid uplink
+traffic counts as client activity. Restart with `--control` after a busy, lost
+or released attempt.
+
+Ports must be distinct integers from 1 to 65535. If the agent listener is
+occupied, stop its other owner or choose another positional port. Diagnostics
+include individual connection errors, control changes, observation counts,
+rejected datagrams and dropped UDP/enqueue sends. Work is bounded to 32
+datagrams per poll, with limits of 16 KiB and 32 complete frames per datagram.
+The agent rejects malformed, truncated and excessive datagrams in full.
+
+The native command uses the existing board services and AWS IoT/KVS resources.
+End foreground sessions by the [fifty-minute ceiling](#session-duration).
+
+### Build cache
+
+Native builds cache objects and SDK sources under `tmp/agent-build/`. CMake
+pins the AWS SDK for C++ and reads the shared KVS pin from
+`devices/common/kvs/sdk.commit`. The agent applies its libwebsockets event-loop
+patch to its own SDK checkout. `TXING_AGENT_BUILD_JOBS` defaults to four.
+Pass options with `just agent::build <cmake-options>` and rebuild the cache
+after changing the native toolchain or dependency prefix.
+
+### Credentials and TLS
+
+The application uses the AWS SDK for C++ default provider chain for both IoT
+and KVS signing. Use `AWS_PROFILE` to select a configured local profile, and
+`AWS_CONFIG_FILE` / `AWS_SHARED_CREDENTIALS_FILE` for explicit file locations.
+Static profiles and environment credentials (`AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`) work. Temporary credentials also require
+`AWS_SESSION_TOKEN`. Manually exported temporary credentials expire.
+Use a refreshable SDK provider (profile role/process, SSO with its existing login,
+web identity, or execution-role/container credentials) for long runs. Authenticate
+that provider before startup. Expired or missing credentials cause
+errors and lifecycle expiry.
+
+The default SDK region/profile configuration is used unless `--region` overrides
+it. The adapter consults the provider again when KVS requests signing
+credentials and preserves expiration and session tokens.
+Tests isolate their SDK profiles in repository `tmp/agent-test/`.
+See the [AWS credential-provider documentation](https://docs.aws.amazon.com/sdk-for-cpp/v1/developer-guide/credproviders.html).
+
+`run` downloads the five public AWS trust roots from the
+[Amazon Trust Services repository](https://www.amazontrust.com/repository/),
+verifies their published SHA-256 DER hashes and expiry on every invocation, and
+assembles `tmp/agent-trust/aws-roots.pem`. It never disables TLS verification.
+For a direct binary invocation, run `just agent::trust` and provide its
+result via `--ca` or `TXING_AGENT_CA_PATH`. Investigate a failed verification
+with TLS verification enabled. SDK credential providers may also need their normal host trust
+store for external identity-provider endpoints.
+
+The identity needs read access to `iot:DescribeThing`, `iot:DescribeEndpoint`
+(the existing account-specific Data-ATS endpoint), and the Thing's
+`sparkplug` named shadow (`iot:GetThingShadow`), plus existing channel viewer
+permissions including `kinesisvideo:DescribeSignalingChannel`,
+`kinesisvideo:GetSignalingChannelEndpoint`, `kinesisvideo:GetIceServerConfig`,
+and `kinesisvideo:ConnectAsViewer`. A native run uses those device resources
+directly. It runs without the agent stack, logs status locally and leaves the
+controller-owned `agent` shadow alone. The transport vetoes the SDK's
+Create/Delete states.
 
 ## Cloud operation
 
-Use Lambda MicroVMs in `eu-central-1` with the same runtime source compiled for
-Linux ARM64. AWS documents Frankfurt support, an eight-hour maximum lifetime,
-and authenticated HTTPS/WebSocket ingress. Raw public UDP is not the cloud
-interface. See the [regional announcement](https://aws.amazon.com/about-aws/whats-new/2026/08/lambda-microvms-5-additional-regions/),
-[runtime documentation](https://docs.aws.amazon.com/lambda/latest/dg/microvms-launching.html),
-and [networking documentation](https://docs.aws.amazon.com/lambda/latest/dg/microvms-networking.html).
+The cloud runtime runs in Lambda MicroVMs in `eu-central-1`. Attachment uses
+authenticated HTTPS/WebSocket ingress. The run hook initializes unique
+device/run identity, execution-role credentials and WebRTC after snapshot
+restoration. Keep live sessions and credentials out of the snapshot. Automatic
+idle suspension and resumption are disabled so an active device can be
+observed before anyone attaches. The stack uses managed public networking.
+Drain inactive devices to zero running VMs and keep legacy ECS, ECR and
+dedicated VPC/NAT infrastructure out of the agent stack.
 
-Initialize unique device/run identity, runtime credentials, and WebRTC after
-snapshot restoration through the run hook. Never snapshot live device sessions.
-Disable automatic idle suspension and resumption: an active device can require
-an operator even when nobody is attached through the HTTPS endpoint.
+### Session duration
 
-### Current-stage duration limit
+`ActivationBudgetSeconds` defaults to 3000 and accepts 1–3000 seconds.
+The controller persists the absolute deadline for each activation, and
+replacement VMs receive only the remaining budget. A shorter setting applies
+to new activations. Retries, publication and configuration updates preserve
+existing activation IDs and deadlines. At expiry the agent releases control
+and stops. The controller can start another activation only after a verified
+inactive-to-active transition.
 
-The operator approved a **fifty-minute (3000-second) maximum** on 2026-10-23,
-replacing the earlier eight-hour project budget for this stage. The current
-board recreates KVS sessions during credential renewal about every fifty-five
-minutes, temporarily removing MAVLink capability and potentially causing
-lifecycle shutdown. A new agent can encounter that renewal earlier if the board
-is already running; fifty minutes is a ceiling, not a guaranteed uninterrupted
-window. Preserve the existing lifecycle and authority rules.
-
-New disposable MicroVM requests use a 3000-second maximum. Native sessions are
-operationally limited to fifty minutes and are ended by the operator; this
-decision does not add a native timer. The board renewal repair is deferred.
-See the [finding, evidence and acceptance limits](../constraints/agent-session-limit.md).
+Native sessions have the same fifty-minute operating ceiling and the operator
+ends them manually. Disposable MicroVM requests use a 3000-second hosting
+cap. TBot's board renews its IoT credentials about every fifty-five minutes
+and replaces the KVS sessions during renewal. MAVLink readiness can drop and
+cause REDCON 3 and agent shutdown. An already-running board can reach renewal
+before the agent deadline. Track the renewal issue separately. [Board credential renewal](https://github.com/mparkachov/txing/issues/174)
 
 ### Controller and authorization
 
@@ -224,138 +247,446 @@ starts at most one authorized agent per supported active device, and terminates
 inactive, failed, or superseded runs. Launches are idempotent and retries are
 bounded. Repair handles missed events, interrupted launches, and orphaned runs.
 
-Persist launch identity and the device activation deadline. An activation
-allows at most fifty minutes of cloud operation at this project stage, including replacement processes.
-Retries, new image versions, process replacements, and delayed events cannot
-reset that allowance. At expiry, release control and stop; permit another
-activation only after a subsequent inactive-to-active lifecycle transition.
-Do not implement automatic rollover.
-The operator accepted fail-closed recovery for missed inactive intervals on
-2026-10-28. The controller also requires an inactive observation before the
-first activation and measures its budget from the last verified inactive
-observation, so delayed observation can shorten or exhaust the budget. The
-[shadow contract](../contracts/agent-shadow.md) specifies the ordering and
-missing-projection rules.
+The controller requires an inactive observation before the first activation.
+When it misses an inactive interval, it retains the expired activation until
+it directly observes another verified inactive-to-active transition. It
+measures the budget from the last verified inactive observation, which can
+shorten the available time. The [agent shadow contract](../contracts/agent-shadow.md)
+defines ordering, missing projections and assignment fencing.
 
 The cloud runtime verifies its assignment in addition to device lifecycle.
 Stale assignments cannot retain control or advertise a usable attachment.
 Connection recovery belongs to the runtime: a temporary video/MAVLink
 interruption does not justify replacing a healthy MicroVM.
 
-The controller is the sole writer of the `agent` named shadow. Its replacement
-contract records cloud run identity, release, lifecycle/deadline, HTTPS endpoint,
-and sampled runtime status. Runtime status exposes individual connection state,
-video receipt, control state, and actionable errors for controller sampling.
-Separate cloud lifecycle from connection readiness and retain freshness and run
-identity when interpreting sampled status. Old generations cannot restore a
-usable endpoint. Local runs never participate in this ownership.
-The field definitions, default, examples, and writer/fencing rules are in the
-[agent shadow contract](../contracts/agent-shadow.md).
+The controller is the sole operational writer of the `agent` named shadow.
+It records run identity, release, lifecycle/deadline, HTTPS endpoint and
+sampled status. Use the run identity and freshness when interpreting the
+runtime's connection, video, control and error samples. [Agent shadow contract](../contracts/agent-shadow.md)
 
-The operator-approved [witness watch](../constraints/agent-watch.md) provides
+The [witness shutdown watch](witness.md#agent-shutdown-watch) provides
 independent delayed shutdown repair. It retains healthy assignments and checks
 off/expired runs and aged unassigned instances of the dedicated image. It has
 its own minute schedule and never writes agent shadows or launches agents.
 
-Device types declare `agent` in their capability list and provision its named
-shadow through the normal catalog path. TBot currently opts in; other types do
-not. The rig publishes `capability.agent=true` at born REDCON 1/2 and false when
-inactive. The registry declaration and current availability authorize execution;
-the agent shadow describes the actual run. Its readiness does not gate REDCON.
-Office shows Agent Debug for devices declaring the capability.
-Update its schema/default and relevant consumers directly during implementation;
-do not maintain an ECS-shaped shadow compatibility layer.
+TBot declares `agent` in the capability catalog. The rig publishes
+`capability.agent=true` at born REDCON 1/2 and false when inactive. Execution
+requires both the registry declaration and verified availability. Removing the
+declaration or reporting false revokes authorization. Missing or invalid
+evidence follows the verification cutoff. Office shows Agent Debug for devices
+declaring the capability. REDCON derives from device capabilities.
 
-### Manual attachment
+### Cloud attachment
 
-`attach` discovers the current cloud run, obtains a short-lived port-scoped
-AWS authentication token, and forwards localhost MAVLink over an authenticated
-WebSocket. It does not create another device WebRTC session or another board
-lease. Allow one manual attachment per agent. The cloud agent's manual behavior
-uses the same explicit-control and loss policy as local execution.
+With cloud launches enabled and a verified current assignment, use the same
+QGroundControl link configuration as a local run.
 
-Cloud startup remains useful with no attachment: it observes telemetry and
-delivers video to the operator. Token expiry, attachment loss, or client
-inactivity cannot leave manual control active indefinitely or silently reacquire
-it after reconnect.
+```sh
+just agent::attach <registered-tbot-thing-id>
+just agent::attach <registered-tbot-thing-id> 14551 --control
+```
 
-### Cost and release model
+Attachment discovers and verifies the current assignment, obtains a token for
+port 8081, and forwards through the existing agent's device session.
+Observation is the default. `--control` makes one free-lease
+attempt after QGroundControl presence and telemetry readiness. Only one manual
+attachment is accepted. Inactivity, connection loss, assignment loss, token
+cutoff or process exit releases manual control without reacquisition. The
+client requests a five-minute token and closes at four minutes. Start another
+explicit attachment to continue. While connected, it periodically checks the
+token with an authenticated status request and closes if that check fails.
+The cloud agent observes telemetry and video before any attachment.
 
-Use managed public networking, S3 artifacts, IAM, CloudWatch, the C++ controller,
-and lifecycle triggers. Remove dedicated VPC/NAT, public-IP management, ECR,
-and ECS task definitions. Inactive devices leave no running MicroVMs or
-always-on agent networking resources. Artifact storage, logs, snapshots, and
-usage-based service calls remain billable; this is not a zero-total-cost claim.
+## Deployment
 
-Keep immutable `agent` releases. AWS builds a MicroVM image from an S3 package
-containing a Dockerfile and application artifacts. The operator's publish command
-uploads the selected release, waits for a successful build, and selects that
-version for subsequent launches. A failed build preserves the previously selected
-release. New publication does not interrupt existing runs. See
-[MicroVM image management](https://docs.aws.amazon.com/lambda/latest/dg/microvms-images.html).
+CloudFormation deployment and publication are operator actions. Use the
+established environment prefix, AWS profile and Frankfurt region. Keep
+`AutomationEnabled` and `PrerequisitesConfirmed` false while preparing
+infrastructure, replacing image identity or validating a storage reset.
 
-Separate initial CloudFormation deployment from ordinary application publication.
-After verified image/controller selection, the same operator-run command
-retains the newest two successful image builds and their complete release
-bundles in an unversioned S3 bucket. Retired images must be confirmed deleted
-before their source objects are removed. Cleanup failure can be retried without
-rebuilding the selected release. At this stage devices are assumed to run only
-the currently selected image when publication starts; handling older active
-versions is deferred. The [publication runbook](../agent-release-publication.md)
-defines the one-time manual reset from the old versioned bucket.
+### Agent capability rollout
 
-Document managed base-image expiry/rebuild requirements, artifact provenance,
-repeatability, runtime dependency packaging, and retained storage costs.
-Publication must not introduce agent-owned Python tooling or a second
-application release implementation.
+Deploy the shared catalog with `just aws::deploy`. Re-enlist existing TBot
+devices with `just aws::deploy-device <rig-thing-id> tbot <registry-name>`.
+The registry name is the Thing's original `attributes.name`. Verify the
+existing Thing ID is retained, `created=false` and `agent` is declared.
+Re-enlistment initializes a missing shadow and preserves existing payloads.
 
-## Validation gates and rollout
+The installed rig runtime must publish `capability.agent` from the device's
+actual lifecycle state. Use the normal rig release and installation process for
+changes. Office is published from Git and reads the capability and shadow for
+Agent Debug. Deploy witness with the same dedicated image name to enable its
+independent schedule. [Witness deployment](witness.md#deploy)
 
-First prove native observation and operator substitution using real SDK peers.
-Then run the same C++ application in a disposable MicroVM before building full
-cloud automation. Prove both KVS sessions, real video frame delivery, MAVLink
-telemetry, execution-role credentials, authenticated WebSocket attachment,
-ICE/TURN behavior, and continuous operation beyond fifteen minutes.
+### Initial deployment
 
-The probe is operator-run and does not authorize production lifecycle
-automation. If feasibility fails, stop cloud implementation and revisit hosting;
-do not silently add Fargate, NAT, or another runtime. The service documentation
-does not prove this workload works in that environment.
+For an environment with legacy Go/Fargate companion resources, first follow
+[legacy retirement](#legacy-retirement). Then download the selected immutable
+GitHub release and verify its checksums and metadata. Upload `controller.zip`
+to an existing bootstrap bucket under an immutable key with conditional S3
+PutObject (`--if-none-match '*'`). From the repository root, set the
+reviewed bucket/key and run the operator deployment.
 
-Automated acceptance covers bounded queues, credentials/refresh, unsupported
-types, independent recovery, graceful shutdown, loopback/occupied ports,
-QGroundControl bootstrap, framing/signature preservation, explicit lease
-ownership, contention, inactivity, loss and stale epochs, current run fencing,
-duplicate/out-of-order lifecycle events, interrupted launches, orphan cleanup,
-and the activation cap without restart loops. Preserve error details after long
-healthy periods. Validate native macOS and Linux ARM64 artifacts and provenance.
+```sh
+export TXING_AGENT_CONTROLLER_BUCKET='<existing-bootstrap-bucket>'
+export TXING_AGENT_CONTROLLER_KEY='agent/<version>/controller.zip'
+just agent::deploy
+```
 
-Real local acceptance gates production cloud publication. Record the source
-revision, versions, QGroundControl settings, device, logs, and observations for
-telemetry, parameter retrieval, video receipt, arm/drive/disarm/re-arm, Office
-contention, client/WebRTC loss, and REDCON transitions on a secured, lifted TBot.
+The recipe checks regional Lambda concurrency headroom and creates a new stack
+with both launch gates false. The stack creates the unversioned release bucket,
+build and execution roles, logs, controller, and a managed policy for operator
+attachment. The controller reserves concurrency one to serialize reconciliation.
+If initial creation rolls back to `ROLLBACK_COMPLETE`, inventory resources and
+delete the failed stack manually before retrying. Review retained buckets
+separately and preserve the bucket containing the bootstrap controller.
 
-Final cloud acceptance repeats the physical flow through `attach`, proves
-automatic observation without a human attachment, and verifies zero running
-MicroVMs after inactivity. Exercise the fifty-minute boundary with an accelerated
-test configuration. Prepared commands, mocks, and cross-compilation do not
-substitute for recorded native, cloud, or physical acceptance.
+Grant the attachment policy only to trusted operator principals. Token creation
+is scoped to the dedicated image, so the caller must choose the attachment
+port. Keep tokens for internal hook ports private.
 
-For initial replacement, the operator disables old triggers, disarms/releases
-control, drains old tasks, and manually removes obsolete agent resources as
-needed before enabling the new deployment. Do not modify cloud MCU networking.
-Ordinary publication leaves existing runs on their current release; immediate
-adoption requires explicit disarm-and-drain replacement. No automatic commits,
-AWS mutations, firmware flashing, or legacy-resource cleanup are authorized.
-Use the [manual replacement runbook](../constraints/agent-rollout.md) to identify
-old triggers, tasks, retained artifacts, and resources before initial rollout.
+### Enable and drain
+
+Publish a verified release and check the controller digest, image/version,
+rig-projected availability and witness watch before enablement. The operator
+sets `PrerequisitesConfirmed=true` and `AutomationEnabled=true` on the
+existing stack when the environment is approved for cloud operation. Verify
+an inactive controller observation before activating a device. Keep the
+dedicated image name consistent between agent and witness.
+
+For a controlled drain, secure and lift the TBot, disarm, release control and
+disconnect the owning client. Set `AutomationEnabled=false` and confirm the
+lifecycle trigger is disabled. The controller's one-minute EventBridge Scheduler
+pass continues to terminate runs for the configured image. Witness keeps its
+independent schedule. Inspect all image versions and confirm each VM is
+terminal before changing image identity, retiring resources or replacing
+storage. If automatic drain fails, the operator terminates the identified
+nonterminal VMs and rechecks the complete inventory. Preserve the agent shadow
+and its activation history during the drain.
+
+### Legacy retirement
+
+Only environments still running the removed Go/Fargate companion need this
+procedure. Inventory the former dedicated `<environment>-tbot-companion`
+stack and actual resource names, task inventory, dependency references and
+retention policies.
+
+1. Disable the old Sparkplug IoT and EventBridge minute rules. Confirm the
+   old controller cannot restart tasks, including through queued retries.
+2. Disarm and release on the secured device. Disconnect clients and stop old
+   ECS tasks. Verify zero pending/running tasks and removal of their task ENIs.
+   Retire the old controller and invocation permissions.
+3. Remove the dedicated companion stack and review its retained ECR images,
+   logs, release assets and companion-only `/txing/stack/TBotCompanion*` SSM
+   parameters. Preserve shared Lambda artifacts, device Things and credentials,
+   signaling channels and the separate cloud MCU stack and networking.
+4. Once all old shadow writers are stopped, archive and delete only the old
+   `agent` named shadow. Re-enlist to create the current stopped default and
+   verify the schema and absent endpoint. A merge into the old shadow would
+   retain old ECS task/IP/UDP fields.
+
+## Immutable releases
+
+An `agent-vX.Y.Z` GitHub Release contains
+`txing-agent-release-linux-arm64.zip`. The archive holds `microvm.zip`,
+`controller.zip`, `provenance.zip`, the hooks and initial CloudFormation
+template, `release.json` and `SHA256SUMS`. The same component version covers
+the runtime and controller, independently of the shared Go `lambda` stream.
+
+`microvm.zip` contains a Dockerfile and the **prebuilt** ARM64 application and
+native libraries. AWS copies those bytes and validates linking and startup.
+The container base is
+pinned by digest. Snapshot-safe OpenSSL is packaged with the application, and
+the controller includes its non-glibc dependencies for `provided.al2023`.
+Packaging checks glibc compatibility in the exact runtime and tests controller
+startup in a recorded digest of `provided.al2023`.
+
+The provenance archive records source revision and file hashes, dependency
+pins, RPM inventories, ARM64 ELF checks, linker/startup checks, CTest results,
+and the historical local physical acceptance record. The container digest
+and the AWS managed MicroVM base version are independent build inputs.
+
+### Build a release
+
+Review changes and manually commit/push before creating a production release.
+No recipe commits, pushes, bumps versions, flashes hardware, or publishes to
+AWS as part of an artifact build. Bump `release/versions/agent` for changed
+artifacts, including dependency or base-image rebuilds.
+
+```sh
+just release::bump agent <new-version>
+# Review, commit and push manually, then dispatch the chosen branch.
+just release::build agent <branch>
+```
+
+GitHub requires `.github/workflows/release-agent.yml` on the default branch
+for `workflow_dispatch`, including dispatches that select another branch.
+[GitHub manual workflow requirements](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+
+The manual GitHub workflow uses native ARM64 and the same
+`just agent::release-package` recipe as local validation. CI explicitly selects
+Docker. Workstation builds use `nerdctl.lima` with the existing engine.
+The workflow checks the component's version/tag and creates one immutable
+GitHub archive. The operator publishes that archive separately.
+
+To validate packaging locally, use the existing Lima engine.
+
+```sh
+nerdctl.lima info
+just agent::release-package
+```
+
+Retain the printed SHA-256, work directory and its build/packaged-runtime logs.
+Packaging runs twice over a frozen tested build and requires identical archive
+bytes, with normalized order/timestamps and no host UID/GID ZIP fields. The
+exact packaged image is then built and run with networking disabled and no
+credentials. The help command and pre-snapshot ready hook must pass. RPM
+inventories capture inputs for future builds. A dirty tree produces a
+validation candidate under `tmp/agent-releases/candidates/` marked
+`clean=false`. Publication requires clean provenance.
+
+### Publish a release
+
+Use one publisher per environment at a time. Authenticate the AWS CLI and `gh`
+as the operator, with no credentials in the package. The root project AWS
+environment selects the established profile and stack. Publication uses
+`eu-central-1`. Review the available managed base versions before publishing.
+
+```sh
+aws lambda-microvms list-managed-microvm-image-versions --region eu-central-1 \
+  --image-identifier arn:aws:lambda:eu-central-1:aws:microvm-image:al2023-1
+export TXING_AGENT_BASE_IMAGE_VERSION='<reviewed-AVAILABLE-imageVersion>'
+just agent::publish <version>
+```
+
+The discovered artifact bucket must have **never** had versioning enabled.
+The publisher checks `GetBucketVersioning` before uploading and refuses both
+`Enabled` and `Suspended`. Immutable release-specific keys and conditional
+writes provide the required normal-publisher immutability without S3 object
+versions. Existing versioned environments require a fresh bucket. [Bucket migration](#migrate-a-versioned-artifact-bucket)
+
+The command downloads the exact GitHub release, checks hashes and clean source
+provenance, and conditionally uploads `agent/<version>/` objects to the stack's
+artifact bucket. Existing objects must match byte for byte. It persists the
+exact build input and derives its idempotency token from that input. Changing
+the managed base or any other input at an existing version is rejected.
+AWS's managed catalog can list base `2` while successful image metadata reports
+`2.0`. Verification compares those equivalent forms without rewriting the
+original request or its retry token. A different minor version is rejected.
+
+The first publication creates the dedicated image named after the agent stack.
+Later publications update that image. The build uses explicit ARM64,
+4-GiB baseline, snapshot hooks and Internet egress, with no device identity or
+live sessions in the snapshot. The dedicated image name scopes controller and
+witness inventory and permissions.
+
+Publication waits up to an hour for the **returned version** to be
+`SUCCESSFUL`/`ACTIVE`, verifies artifact/base identity and the parent image's
+runnable state, then writes an immutable successful-build receipt. Failed,
+inactive, uncertain or timed-out builds do not change selected stack parameters.
+A failed image update can still make the service's parent image unavailable
+for subsequent launches. Inspect the image state and publish a new version
+with the repair.
+
+Only after success does CloudFormation select the version and matching
+controller object using the existing template. All other parameters, including
+`AutomationEnabled` and `PrerequisitesConfirmed`, retain their previous values.
+Publication detects an intervening stack change and stops for a retry. The
+command waits for the stack update and compares deployed controller CodeSha256
+with the exact release ZIP. The retained work directory contains inputs,
+responses, selected parameters and artifact identities. It creates no device
+activation, token, attachment or VM and never changes agent shadows.
+
+#### Retention
+
+After verified selection, the same publication command inventories the dedicated
+image and keeps the **two newest successful builds by AWS creation timestamp**,
+normalized across time zones. The first publication keeps one and later
+publications keep two successful builds. Retention
+stops on pending/incomplete/foreign inventory, missing retained bundle objects
+or a selected image outside that pair. A changed selection aborts cleanup.
+
+The publisher deletes older successful or failed versions and confirms each
+version `DELETED` or absent before deleting their source objects. It then removes
+unretained `agent/<MAJOR.MINOR.PATCH>/` bundles, including partial/failed uploads
+and leftovers from interrupted cleanup. Each retained bundle includes
+`microvm.zip`, `controller.zip`, `provenance.zip`, `hooks.json`, `stack.yaml`,
+`release.json`, `SHA256SUMS`, `build-input.json` and `built.json`. Unrelated keys
+and other images are outside cleanup. S3 requests contain up to 1000 keys
+and per-key deletion errors cause failure. Inventories, the retention plan and
+deletion responses remain in the printed evidence directory.
+
+Build or selection failure does not start retention. After selection, a cleanup
+error exits nonzero with **“Release selected, but retention is incomplete”**.
+The selection is usable. Rerun the same `just agent::publish <version>` with
+the same managed base. The immutable receipt avoids another build, and current
+inventories resume deletion even if an old image or some objects are already
+gone. Deletion waits are bounded to five minutes per image version. A transient
+error can require a later retry.
+
+At this stage devices are assumed to run only the currently selected image
+when publication starts. Keeping that predecessor alongside the new image
+preserves those runs. If you need to retire a version in use, drain it before
+publishing. GitHub preserves the immutable release archives outside the AWS
+retention window.
+
+#### Retry
+
+An interrupted publication can be rerun with the same version/base: matching
+objects are retained and a successful receipt avoids another build. If the
+receipt is missing, the publisher first inventories the dedicated image's
+versions and finds one matching every saved request setting, including base,
+artifact, build role, hooks, memory, CPU and networking. It also rejects
+unrequested environment variables or elevated OS capabilities. One exact match
+is polled and revalidated without resubmitting an image-build request. Multiple
+matches, conflicting settings for the same artifact, or unreadable inventory
+stop selection. See [AWS version inventory](https://docs.aws.amazon.com/cli/latest/reference/lambda-microvms/list-microvm-image-versions.html).
+
+Only when no version exists for that artifact does the publisher submit a
+build, retaining the original request token. A missing image is accepted only
+on initial creation. After an ambiguous API result, retain the evidence and
+retry the same version and base. Use a new agent version to repair failed
+source or configuration. A later successful publication may retire the failed
+image and S3 bundle.
+
+Existing running agents keep their stored release, exact launch request and
+activation deadline. New launches use the selected release. Publication does
+not drain, restart, extend an activation or enable launches. For immediate
+adoption, follow [the drain procedure](#enable-and-drain) before publication,
+then restore the approved launch gates and observe inactive then active.
+
+### Migrate a versioned artifact bucket
+
+Use this one-time procedure only for an existing versioned or suspended
+artifact bucket. S3 requires a new bucket for storage with versioning never
+enabled. Keep both launch gates false and confirm all VMs terminal using
+[the drain procedure](#enable-and-drain).
+
+1. Save the current stack template, parameters, resources, controller
+   bucket/key and digest, image ARN, activation history and schedule state.
+   Build the new immutable GitHub release before modifying AWS storage.
+2. Update the existing stack with the reviewed `agent/stack.yaml`. Set
+   `ImageName=disabled`, `ImageVersion=''` and `Release=''`. Preserve the old
+   controller object and other parameters. CloudFormation creates
+   `ReleaseArtifacts` and retains the former `Artifacts` bucket. The controller
+   repair schedule pauses with no configured image. Witness keeps running.
+3. After confirming terminal VMs, delete the old dedicated image and wait for
+   `DELETED` or a confirmed `ResourceNotFoundException`. Keep the old bucket
+   until the controller has switched. Keep the dedicated image name the same
+   when recreating it so watch permissions still match.
+4. Verify that the new bucket has no versioning status and publish the selected
+   GitHub release. The first publication recreates the dedicated image and
+   restores its controller schedule. Verify the controller bucket/key and
+   digest, selected image, retained bundles, launch gates, activation budget
+   and history. Start fresh from the GitHub release archives.
+5. Once no stack, controller or image references the retired bucket, use the
+   S3 console **Empty** action to remove every object version and delete
+   marker. Confirm there are no versions, markers or incomplete multipart
+   uploads. Delete only that retired bucket.
+
+```sh
+aws s3api get-bucket-versioning --region eu-central-1 --bucket "$new_bucket" \
+  --query '{Status: Status}' --output json
+aws lambda-microvms list-microvm-image-versions --region eu-central-1 \
+  --image-identifier "$image_arn" --page-size 50 --output json
+aws s3api list-objects-v2 --region eu-central-1 --bucket "$new_bucket" \
+  --prefix agent/ --output json
+aws s3api list-object-versions --region eu-central-1 --bucket "$old_bucket" --output json
+aws s3api list-multipart-uploads --region eu-central-1 --bucket "$old_bucket"
+```
+
+The projected versioning status must be `null`. Check the full retired-bucket
+inventory before deleting it. [S3 versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html) ·
+[Emptying an S3 bucket](https://docs.aws.amazon.com/AmazonS3/latest/userguide/empty-bucket.html)
+
+### Permissions, base images and costs
+
+The publishing principal needs these permissions.
+
+- Read GitHub releases and describe or update the existing CloudFormation
+  stack using its template.
+- Read and conditionally upload objects in the discovered S3 bucket.
+- Create, update, get and list image versions and list managed base versions.
+- Read the controller configuration and pass the stack build role and managed
+  Internet egress connector.
+
+Initial deployment also needs permissions for the stack's S3, IAM, logs, IoT,
+Scheduler and Lambda resources. Resolve generated role ARNs from stack
+outputs. Image builds use the build role and device sessions use the execution
+role. Attachment permission is granted separately to trusted operators.
+
+Retention additionally requires `s3:GetBucketVersioning`, `s3:ListBucket` and
+`s3:DeleteObject` on the discovered artifact bucket and
+`lambda:DeleteMicrovmImageVersion` on the dedicated image. Do not add publisher
+permissions to controller, witness or device execution roles. The one-time
+manual reset separately needs whole-image deletion, CloudFormation update,
+old-bucket object-version deletion and bucket deletion permissions.
+
+Monitor managed-base availability and AWS notifications. Rebuild and publish a
+new component version on a supported managed base before expiry. Update and
+validate the pinned container base and packaged RPM/native dependencies for
+security fixes. [AWS image lifecycle and patching](https://docs.aws.amazon.com/lambda/latest/dg/microvms-images.html)
+
+Retained buckets, MicroVM images and snapshots, builds, CloudWatch logs,
+controller/watch calls, event delivery, traffic and attachment/API usage can
+remain billable at zero running agents. Logs have 14-day stack retention.
+Retired versioned buckets incur storage costs until emptied. Inactive image
+versions retain snapshots until deletion. Minimum storage billing and service
+deletion latency can outlast publication.
+
+## Validation and known limitations
+
+Run `just agent::test` for lifecycle, queue, control, credential, local SDK peer
+and shadow contract checks. Run `just agent::release-package` for native Linux
+ARM64 packaging and startup validation. The commands exercise different layers
+from a real device, AWS signaling/TURN and production lifecycle.
+
+The separate native live test uses AWS/KVS observation on an active TBot and
+injects peer loss, lifecycle overrides and verification failures inside its
+own process. It sends no control actions and writes no shadows.
+
+```sh
+just agent::build
+just agent::trust
+tmp/agent-build/agent-live-tests <thing-id> eu-central-1 "$PWD/tmp/agent-trust/aws-roots.pem"
+```
+
+Validate a new hosting path with an operator-run disposable MicroVM before
+enabling automation. Verify both device streams, role credentials, authenticated
+attachment, ICE/TURN and more than fifteen minutes of observation.
+`just agent::probe-package` prepares the probe. `just agent::cloud-package`
+prepares the production source image context.
+`just agent::controller-package` builds a local ARM64 controller candidate
+using Lima. Use the immutable release workflow for deployed production
+artifacts.
+
+For manual regression checks, record the tested release, device and QGC
+settings. Secure and lift the TBot before motion. Check telemetry and video,
+parameter retrieval under explicit control, arm/drive/disarm/re-arm, Office
+contention, and release on client, attachment or transport loss. Verify
+observation at actual REDCON 1/2, shutdown on inactivity/death, and no automatic
+control reacquisition. Validate local QGC operation on secured hardware before
+production rollout of changes to that path. Repeat the physical checks through
+cloud attachment for changes to cloud control. Verify startup before attachment,
+the persisted activation budget across replacements, expiry without rollover,
+and a terminal VM inventory. To test expiry sooner, set a shorter budget
+while inactive, then restore 3000 after the check. Use the [witness check](witness.md#verify-shutdown-repair)
+for independent shutdown repair.
+
+The acceptance records summarize the observed results and their limits.
+[Native physical acceptance](../history/acceptance/agent-physical-acceptance.md) ·
+[Cloud acceptance and retention](../history/acceptance/agent-cloud.md)
+
+Known limits include intermittent MAVLink/control stalls, camera cleanup hangs
+after capture loss, and board credential renewal interrupting device sessions.
+Each has its own follow-up. [MAVLink/control stalls](https://github.com/mparkachov/txing/issues/172) ·
+[Camera recovery](https://github.com/mparkachov/txing/issues/173) ·
+[Board renewal](https://github.com/mparkachov/txing/issues/174)
 
 ## References
 
-- [Agent constraints](../constraints/agent.md)
+- [Agent shadow contract](../contracts/agent-shadow.md)
 - [Board MAVLink contract](../contracts/board-mavlink.md)
-- [Board video](board-video.md)
 - [Sparkplug lifecycle](../sparkplug-lifecycle.md)
 - [TBot manifest](../../devices/tbot/manifest.toml)
 - [Lambda language boundary](../aws-lambda-boundary.md)
-- [Execution and release boundaries](../agent-guidance/editing-boundaries.md)

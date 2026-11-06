@@ -168,9 +168,8 @@ erase blocks and Zephyr NVS requires at least two sectors. This uses one erase
 block from the board's unused secondary image slot.
 
 Real Thread dataset TLVs are credentials. Do not commit them or store them
-under version control. Use a local ignored path
-such as `tmp/power-si-dataset.hex` or another operator-controlled secret
-location. Recording a short non-secret source label, timestamp, or OTBR/network
+under version control. Use private storage such as the ignored
+`certs/thread-datasets/power-si.hex` on the operator's checkout. Recording a short non-secret source label, timestamp, or OTBR/network
 name in acceptance notes is fine; recording the TLVs is not.
 
 On the OTBR, `ot-ctl dataset active` shows the active dataset in a
@@ -186,13 +185,14 @@ hex input file with `-x` and keep only the hex line, not the trailing `Done`
 line:
 
 ```bash
-mkdir -p tmp
+umask 077
+mkdir -p certs/thread-datasets
 sudo ot-ctl dataset active -x \
   | awk '{
       gsub(/[[:space:]]/, "");
       if ($0 ~ /^[[:xdigit:]]+$/) { print; found=1 }
     } END { exit(found ? 0 : 1) }' \
-  > tmp/power-si-dataset.hex
+  > certs/thread-datasets/power-si.hex
 ```
 
 Do not feed the human-readable `ot-ctl dataset active` output into the factory
@@ -210,13 +210,13 @@ Validate the dataset TLV file before programming factory data:
 ```bash
 python3 devices/common/mcu/xiao_mg24/scripts/thread_factory.py validate \
   power-si-001 \
-  --dataset-tlvs tmp/power-si-dataset.hex
+  --dataset-tlvs certs/thread-datasets/power-si.hex
 ```
 
 Program the `TXT1` factory record with the shared NVE command:
 
 ```bash
-just mcu::nve power-si-001 tmp/power-si-dataset.hex
+just mcu::nve power-si-001 certs/thread-datasets/power-si.hex
 ```
 
 ## Firmware Build
@@ -376,7 +376,7 @@ env \
 Program the `TXT1` factory record after generating the dataset TLV file:
 
 ```bash
-just mcu::nve power-si-001 tmp/power-si-dataset.hex
+just mcu::nve power-si-001 certs/thread-datasets/power-si.hex
 ```
 
 ## Production SRP Test
@@ -409,7 +409,7 @@ firmware so the final device state contains both images:
 ```bash
 just power-si::mcu::build
 just power-si::mcu::flash
-just mcu::nve power-si-001 tmp/power-si-dataset.hex
+just mcu::nve power-si-001 certs/thread-datasets/power-si.hex
 ```
 
 Wait for the device to attach and register, then run the same two OTBR commands.

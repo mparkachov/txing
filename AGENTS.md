@@ -21,8 +21,8 @@ Keep it short: durable technical details live in focused docs and subproject
 - `devices/unit/mcu/`: stock Zephyr C firmware for the current `unit` device type
   MCU.
 - `rig/`: Raspberry Pi 5 rig runtime for AWS IoT MQTT and BLE communication.
-- `agent/`: planned shared C++ AI operator skeleton for macOS and AWS
-  MicroVMs; see `docs/components/agent.md` for the replacement boundary.
+- `agent/`: shared C++ AI operator runtime for macOS and AWS MicroVMs. See
+  `docs/components/agent.md` for operation, deployment, and publication.
 - `devices/common/board/`: the single board-side implementation (Go daemon, KVS
   worker, hardware worker) shared by every board device type; the device type is
   a build input.
@@ -51,7 +51,6 @@ unless a shared contract or consistency issue requires coordinated updates.
 - MCU shared stack invariant and firmware reference: `docs/components/mcu.md`
 - AWS Lambda language boundary: `docs/aws-lambda-boundary.md`
 - Agent architecture and operational constraints: `docs/components/agent.md`
-  and `docs/constraints/agent.md`
 - Sparkplug lifecycle design: `docs/sparkplug-lifecycle.md`
 - Current rig-era shadow plus BLE compatibility contract:
   `devices/unit/docs/device-rig-shadow-spec.md`
@@ -123,8 +122,21 @@ unless a shared contract or consistency issue requires coordinated updates.
 ## Documentation placement
 
 - Keep root `AGENTS.md` limited to routing, workflow, and critical gates.
+- Keep documentation aligned with the current implementation. Update the
+  relevant guide and links in the same change when behavior, commands,
+  configuration, contracts, or rollout steps change.
+- Keep one canonical guide per functionality. Extend the owning guide and
+  link to it from related docs. Record test results and intermediate steps in
+  GitHub Issues, CI, or clearly marked history when retention is needed.
+- Treat `tmp/` as disposable. A fresh clone with an empty `tmp/` must be
+  enough to resume an open Issue using tracked files and its Issue record.
+  Before closing, preserve findings, required evidence, and reusable
+  procedures in durable locations.
 - Put durable technical contracts in `docs/contracts/`.
-- Put operational and tooling constraints in `docs/constraints/`.
+- Put operational constraints in the guide that owns the functionality. Use
+  `docs/agent-guidance/` for cross-repository tooling and editing rules.
+- Treat historical constraints as context. Verify them against current code,
+  configuration, and contracts before carrying them into an active guide.
 - Put durable planning artifacts in `docs/`; keep the approved plan overview in
   the GitHub Milestone description rather than duplicating it in a tracker doc.
 - Use nested `AGENTS.md` files only for local instructions an agent must know

@@ -15,9 +15,9 @@ code changes begin.
    high-level plan overview: one outcome, scope boundaries, dependencies,
    validation strategy, risks, non-goals, and exit criteria. Do not set a due
    date.
-4. Create or update a constraints/rules document. Keep durable constraints,
-   terminology, safety rules, and cross-cutting decisions there instead of
-   burying them in tasks.
+4. Identify the component guides and contracts that own the affected rules.
+   Record proposed changes in the design. Once implemented, update the owning
+   guides and contracts with the current behavior and durable constraints.
 5. End Plan Mode by materializing the plan into the undated GitHub Milestone
    and implementation-step GitHub Issues assigned to it. After the Issues
    exist, add their explicit dependency-ordered implementation sequence to the
@@ -163,10 +163,18 @@ When implementing an existing Issue:
    unattended within the selected goal. Do not wait for approval of the Issue's
    implementation plan.
 6. Implement and validate the Issue's acceptance criteria.
-7. Add progress comments as decisions, blockers, or
-   meaningful implementation steps occur.
+7. Add progress comments as decisions, blockers, or meaningful implementation
+   steps occur. Keep the current state, next step, and any commands needed to
+   recreate temporary artifacts available from the Issue or tracked docs. A
+   contributor must be able to resume from a fresh clone with an empty `tmp/`.
 8. Update acceptance criteria in the Issue description as they are satisfied.
-9. Add a PR-quality final summary as an Issue comment.
+9. Add a final Issue comment with the outcome, verification, and remaining
+   limits. During work, Issue comments may point to temporary scripts or
+   captures. Before closing, move reusable procedures into the owning guide
+   or tracked tooling. Record the facts needed to assess acceptance and link
+   any required artifacts from durable storage. Keep sensitive evidence in
+   approved private storage. Verify the closeout can be understood after
+   clearing `tmp/`.
 10. Close the Issue only after validation is complete. For a milestone goal,
     select the next Issue in dependency order and continue without asking for
     approval. For an Issue goal, stop after that Issue is complete.

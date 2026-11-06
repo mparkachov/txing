@@ -87,7 +87,7 @@ It does not commit or push version changes back to the selected branch.
 
 The C++ `agent` stream uses the same version/bump/dispatch interface and its
 own `just agent::publish <version>` operator workflow. See
-[immutable agent publication](agent-release-publication.md) for Linux ARM64
+[immutable agent publication](components/agent.md#immutable-releases) for Linux ARM64
 build checks and the separate initial deployment/live acceptance gates.
 
 After a release workflow finishes, the operator Mac deploys CloudFormation
@@ -176,6 +176,13 @@ Root modules:
 - `aws::...` -> `shared/aws/justfile`
 - `office::...` -> `office/justfile`
 - `witness::...` -> `witness/justfile`
+
+## Local scratch space
+
+Repository `tmp/` holds build caches, generated artifacts and working notes.
+It can be cleared between runs. Rebuild or download artifacts again when
+needed. Keep provisioning secrets in private storage and keep evidence that
+must outlive a run with the owning Issue, guide, or private archive.
 
 ## Current Named Shadows
 

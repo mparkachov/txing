@@ -9,7 +9,8 @@ The office app is the operator and admin SPA for browsing towns, rigs, and devic
 - configured Cognito User Pool membership as the office access boundary
 - Cognito Identity Pool exchange for temporary AWS credentials
 - direct AWS IoT reads for initial route metadata
-- MQTT/WSS for live named-shadow updates, Sparkplug commands, and MCP traffic
+- MQTT 5 over WebSocket for live named-shadow updates, Sparkplug commands and
+  MQTT MCP traffic. [AWS IoT MQTT policy](../aws.md#iot-mqtt)
 - AWS KVS WebRTC viewer for the `/<town>/<rig>/<device>/video` route
 
 ## Access Model
@@ -36,12 +37,13 @@ The video route is derived from the selected route and office origin. It is not 
 - live shadow updates: named Thing Shadow over MQTT/WSS
 - lifecycle commands: Sparkplug `DCMD.redcon` for devices and `NCMD.redcon` for
   rigs over MQTT/WSS
-- board control at REDCON `1`: MCP over the `txing.mcp.v1` WebRTC data channel
+- Unit control at REDCON `1`: MCP over the `txing.mcp.v1` WebRTC data channel
   on the board video KVS session
-- board control at REDCON `2`: MCP over MQTT/WSS when the daemon advertises
+- Unit control at REDCON `2`: MCP over MQTT/WSS when the daemon advertises
   MQTT-only MCP because video is unavailable/not ready
-- board active control: keyboard/drive input does not take over from another
-  active session; the unit panel exposes an explicit take-control action
+- TBot and Cyberbrick control at REDCON `1` and `2`: a separate MAVLink data
+  peer with View only and explicit Control. [Board MAVLink contract](../contracts/board-mavlink.md#office-operation-and-safety-semantics)
+- active control requires an explicit take-control action
 - board video: AWS KVS WebRTC
 
 The app expects `capabilities` to include `sparkplug` and uses it to decide which named shadows should exist for a selected thing.

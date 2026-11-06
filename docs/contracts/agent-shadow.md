@@ -1,12 +1,5 @@
 # Cloud agent shadow
 
-Status: replacement contract established by
-[Issue #163](https://github.com/mparkachov/txing/issues/163). The C++ runtime and
-controller are implemented under [milestone 10](https://github.com/mparkachov/txing/milestone/10);
-bounded source-build evidence is recorded in the
-[cloud acceptance history](../agent-cloud-build-validation.md).
-This contract replaces the old ECS task/public UDP status directly.
-
 The `agent` capability owns the `agent` named shadow for cloud operational
 diagnostics. Device types opt in through their manifest capability list; TBot
 is the current supported type. Provisioning and discharge use the same declared
@@ -20,7 +13,7 @@ authoritative field definitions. It has no desired state or command interface.
 
 The C++ controller is the sole operational writer. Provisioning may create a
 missing stopped default; re-enlistment preserves existing payloads. Manual
-initial replacement is described in the [rollout runbook](../constraints/agent-rollout.md).
+initial replacement is described in the [agent guide](../components/agent.md#legacy-retirement).
 Cloud runtimes expose status for controller sampling and verify current
 assignment/lifecycle themselves; they do not update the shadow or invoke an old
 readiness controller. Local runs log locally and never write this shadow.
@@ -75,16 +68,16 @@ run/sample may remain for diagnosis, explicitly tied to its original identity
 and timestamp; it cannot establish present control or connectivity. Expiry
 retains the activation record and deadline so a repair pass cannot restart the
 same activation. Total cloud execution is at most fifty minutes from activation
-at the current project stage (the [2026-10-23 duration decision](../constraints/agent-session-limit.md)),
+under the [session duration limit](../components/agent.md#session-duration),
 including retries, replacements, and publication. Only a subsequent verified
 inactive-to-active transition permits a fresh activation budget.
 
-For accelerated acceptance, the prepared 0.1.1 controller permits a shorter
-configured budget (1–3000 seconds, default 3000). It changes only newly created
+The controller accepts an activation budget of 1–3000 seconds, defaulting to
+3000. It changes only newly created
 activations; replacing a run, publishing or changing configuration leaves an
 existing activation's ID/start/deadline intact. The shadow requires no new
 configuration field: the saved absolute deadline remains authoritative. See the
-[released-cloud acceptance procedure](../agent-cloud-acceptance.md).
+[agent validation guide](../components/agent.md#validation-and-known-limitations).
 
 A fenced launch with no known MicroVM ID remains reserved for its activation.
 A later directly observed and unexpired activation may supersede that unknown
@@ -98,8 +91,7 @@ The controller must directly observe verified inactive and then active states
 to recognize a later transition. If the inactive interval is missed, it retains
 the expired activation and fails closed until another such transition is
 observed. An incomplete or unreadable projection is not evidence of inactivity.
-This limitation was accepted by the operator on 2026-10-28; witness does not
-retain an activation history for the repair pass to reconstruct.
+Witness retains no separate activation history for repair.
 An initially active projection without an earlier inactive observation also
 fails closed. The controller rejects missing, repeated or older Sparkplug
 source timestamps as transition evidence, including old last-will timestamps;
@@ -115,7 +107,7 @@ run identity clears the old endpoint and sample before publishing the new run.
 Late responses from superseded runs cannot restore either. Orphan termination
 and launch reconciliation remain controller responsibilities.
 
-The independent [witness shutdown watch](../constraints/agent-watch.md) is an
+The independent [witness shutdown watch](../components/witness.md#agent-shutdown-watch) is an
 operator-approved stop-only repair path. It reads this shadow and requests
 MicroVM termination after a grace period; it never writes agent status or
 creates activations. It also checks persisted deadlines when the controller

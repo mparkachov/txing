@@ -35,6 +35,12 @@ tooling, shell, infrastructure, or future-work implementation.
 - Justfiles export `TMPDIR` to the repository-local `./tmp` directory. Other
   repository scripts create and use `./tmp`; do not use host temporary
   directories as their default scratch location.
+- `tmp/` is disposable scratch space for temporary notes, scripts, manual
+  artifacts, and regenerable outputs. Assume it is empty or absent in a
+  fresh clone and create scratch directories when needed. Issue work must
+  be resumable without another checkout's scratch files. Store credentials
+  and sensitive evidence privately. Preserve reusable procedures and
+  non-sensitive findings in the owning guide, tracked tooling, or Issue record.
 - Local container builds on this workstation use `nerdctl.lima` with the
   existing Lima/containerd/BuildKit engine. Check `nerdctl.lima info` and use
   `nerdctl.lima build`, `pull`, `image inspect`, and `run`. Keep build contexts

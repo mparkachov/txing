@@ -15,11 +15,12 @@ semantics.
 
 ## Ownership boundaries
 
-- `rig` owns the `sparkplug`, `device`, and `mcu` named shadow contracts.
-- `txing-unit-daemon` owns the `board` named shadow contract for the `unit`
-  device type.
-- `txing-unit-daemon` remains the only publisher of `board.*` Thing Shadow
-  updates.
+- The rig publishes Sparkplug lifecycle and forwards BLE adapter state for the
+  `ble` and `power` shadows. Witness writes the `sparkplug` projection.
+- `txing-unit-daemon` writes the `board`, `mcp`, and `video` shadows. Preserve
+  their payloads and topic paths, the board video and hardware worker gRPC
+  contracts, and the public MCP tools and JSON-RPC errors when changing the
+  daemon implementation.
 - `txing-unit-hardware-worker` owns board-local motor hardware access and local
   failsafe neutralization only. It does not own MCP sessions, REDCON policy,
   cloud publication, Thing Shadow state, or actuator authorization.
@@ -66,12 +67,11 @@ Rig, MCU, board, and cloud-facing systems are correctness-critical.
 - `rig` consumes retained MQTT video service topics for REDCON derivation.
 - The browser operator path uses the AWS KVS viewer flow, not a board-local
   iframe page.
-- The repo ships the native sender in-tree. The sender and daemon run as
-  separate systemd services and communicate through the local BoardVideoBridge
-  contract.
-- The repo ships the native hardware worker in-tree. The worker and daemon run
-  as separate systemd services and communicate through the local hardware
-  worker gRPC contract documented in `docs/contracts/unit-hardware-worker.md`.
+- The sender and daemon run as separate OpenRC services on Alpine and use
+  the local BoardVideoBridge contract. Preserve the `<thing-id>-board-video`
+  signaling name and `TXING_BOARD_VIDEO_*` configuration surface.
+- The hardware worker runs as its own OpenRC service and exchanges messages
+  with the daemon through the [local hardware worker contract](unit-hardware-worker.md).
 - Browser-to-board motion control uses board MCP tools with a lease hard gate.
 - The legacy raw `<device_id>/board/cmd_vel` path is removed.
 

@@ -27,8 +27,10 @@ The captured #171 incident is a Linux fault in the onboard Wi-Fi SDIO DMA
 path. On 2026-10-22 the Raspberry Pi Zero 2 W running Alpine 3.24.1,
 `linux-rpi 6.18.44-r0`, faulted in `bcm2835_mmc_transfer_dma+0x88/0x248`
 on `brcmf_sdio_dataworker`. Kernel messages show repeated SDIO errors before
-the NULL-pointer Oops. KVS continued logging network retries for at least
-579 seconds afterward. This establishes broken board networking; it does
+the NULL-pointer Oops at address `0x38` at 12:01:48 UTC. KVS
+reported a send timeout in the same second, then logged network retries
+for at least 579 seconds. The rig projected actual REDCON 3 with target 1
+at 12:03:30 UTC. This establishes broken board networking; it does
 not establish that the whole board lost power or stopped executing.
 
 The later unpingable-board symptom during #167 is consistent with this fault,
@@ -48,7 +50,7 @@ Initial read-only SSH inspection on 2026-10-25, before the clock trial, confirms
 - BCM43430/2 firmware 9.88.4.77, `linux-firmware-brcm 20260519-r0`,
   `raspberrypi-bootloader 1.20260810-r0`.
 - TBot daemon/MAVLink/ArduPilot installation paths at 0.18.12; shared KVS
-  master 0.18.2. Resolved paths and binary hashes are retained locally.
+  master 0.18.2.
 - Initial temperature about 58 degrees C, about 278 MiB available memory,
   Wi-Fi signal about -39 dBm and current undervoltage alarm 0. These readings
   do not exclude an intermittent power, thermal or firmware trigger.
@@ -94,10 +96,9 @@ initiating hardware/firmware/timing trigger remains unresolved.
   establish causality or a permanent repair. Board credential renewal and
   QGroundControl parameter-write/control workload were not validated.
 
-Audited evidence is `tmp/issue-171/25mhz-validation-audit.json` with raw kernel,
-health, service and native logs in `25mhz-trial-01/` and `25mhz-trial-02/`.
-The active setting remains the operator-applied 25 MHz clock; no kernel,
-package, firmware, worker, protocol or service repair has been deployed.
+The audit covered two observation phases in the same boot. All health samples
+showed a 25 MHz clock and the captured kernel log showed no fault lines during
+that window. The last verified setting was the operator-applied 25 MHz clock.
 
 The exact Alpine 6.18.44 and 6.18.58 driver files previously captured, and a
 fresh GitHub API read of the Raspberry Pi `rpi-6.18.y` driver on 2026-10-25,
@@ -116,10 +117,10 @@ strengthens the NULL data-pointer explanation. A matching deployed
 repair remain outstanding. Adding another NULL check or saving a pointer
 alone would not establish correct request lifetime.
 
-Raw evidence stays in ignored workspace scratch directories:
-`tmp/issue-165/board-after-sixth-kernel-oops.log`, the original recovered
-archive referenced by #171, and `tmp/issue-171/`. Do not publish unreviewed
-service logs, credentials, SDP or signed URLs.
+The recovered board archive had 24 members and SHA-256
+`a037e5a6c22f12ef6324f55d01846522b1550e161d97879a97dec84109065e46`.
+Use the recorded fault, trial measurements and their limits when comparing a
+later incident. Keep any retained raw captures private. [Incident record](https://github.com/mparkachov/txing/issues/171)
 
 ### Battery and power evidence
 
@@ -162,9 +163,15 @@ MCU remain powered. No serial connection is required for these SSH checks.
 On the Mac, in the repository root:
 
 ```sh
-mkdir -p tmp/issue-171
+ : "${BOARD_HOST:?export the current TBot SSH address}"
+: "${TBOT_CAPTURE_ROOT:?export a private diagnostics directory outside repository tmp}"
+umask 077
+mkdir -p "$TBOT_CAPTURE_ROOT" &&
+TBOT_CAPTURE_DIR=$(mktemp -d "$TBOT_CAPTURE_ROOT/tbot-wifi.XXXXXX") &&
+export TBOT_CAPTURE_DIR &&
+printf 'Mac capture directory: %s\n' "$TBOT_CAPTURE_DIR" &&
 ssh -o BatchMode=yes -o ConnectTimeout=5 \
-  -o ServerAliveInterval=5 -o ServerAliveCountMax=2 root@192.168.0.10 '
+  -o ServerAliveInterval=5 -o ServerAliveCountMax=2 root@"$BOARD_HOST" '
   date -u
   uname -r
   cat /proc/sys/kernel/random/boot_id
@@ -172,18 +179,21 @@ ssh -o BatchMode=yes -o ConnectTimeout=5 \
   awk '\''$2 == "/" || $2 == "/boot" || $2 == "/var/log" { print }'\'' /proc/mounts
   cat /sys/kernel/debug/mmc1/ios
   dmesg
-' > tmp/issue-171/baseline-current.txt
+' > "$TBOT_CAPTURE_DIR/baseline-current.txt"
 ```
 
-Keep the following running in a second Mac terminal during a bounded test.
-Choose a new output filename for each boot/trial to preserve earlier evidence:
+In a second Mac terminal, export the same `BOARD_HOST` and the printed
+`TBOT_CAPTURE_DIR` before starting this bounded reader. Use a fresh capture
+directory for each boot or trial.
 
 ```sh
+: "${BOARD_HOST:?export the current TBot SSH address}"
+: "${TBOT_CAPTURE_DIR:?export the printed Mac capture directory}"
 ssh -o BatchMode=yes -o ConnectTimeout=5 \
-  -o ServerAliveInterval=5 -o ServerAliveCountMax=2 root@192.168.0.10 \
+  -o ServerAliveInterval=5 -o ServerAliveCountMax=2 root@"$BOARD_HOST" \
   'timeout 2700 cat /dev/kmsg' \
-  > tmp/issue-171/kernel-trial.log \
-  2> tmp/issue-171/kernel-trial.stderr
+  > "$TBOT_CAPTURE_DIR/kernel-trial.log" \
+  2> "$TBOT_CAPTURE_DIR/kernel-trial.stderr"
 ```
 
 The deployed BusyBox `dmesg` has no follow option. Reading `/dev/kmsg` uses a
@@ -269,7 +279,7 @@ recovery behavior to hide a failure.
 
 A 45-minute first window exercises the observed short-failure workload while
 remaining within the existing
-[50-minute agent-session limit](constraints/agent-session-limit.md). It is a
+[50-minute agent-session limit](components/agent.md#session-duration). It is a
 bounded acceptance observation, not proof of indefinite reliability. It does
 not validate the deferred board credential-renewal path. A fresh agent process
 does not reset board credential age, so renewal can interrupt an older board
@@ -304,9 +314,8 @@ host's `dma-names` property to an unused name. The exact deployed driver tries
 different host and need not lose DMA. `sd_force_pio` targets that SD-card host
 and is not the Wi-Fi workaround.
 
-The diagnostic source and compiled artifact are prepared locally at
-`tmp/issue-171/txing-wifi-pio.dts` and `txing-wifi-pio.dtbo`. Applying the
-overlay offline to the actual board's captured FDT succeeds and changes only
+The diagnostic overlay targeted the `mmcnr` symbol and set
+`dma-names = "unused"`. Applying it offline to the captured FDT changed only
 `/soc/mmcnr@7e300000/dma-names`, from `rx-tx` to `unused`. It does not alter
 Wi-Fi pins, SD-card configuration, PWM or the camera. This checks overlay
 targeting, not booting or runtime stability.

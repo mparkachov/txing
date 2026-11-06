@@ -70,5 +70,5 @@ foreach(path IN ITEMS microvm.zip controller.zip provenance.zip hooks.json stack
 endforeach()
 file(READ "${SOURCE_DIR}/container-base.txt" base)
 string(STRIP "${base}" base)
-file(WRITE "${PACKAGE_DIR}/release.json" "{\n  \"component\": \"agent\",\n  \"version\": \"${VERSION}\",\n  \"architecture\": \"linux/arm64\",\n  \"revision\": \"${revision}\",\n  \"buildId\": \"${build_id}\",\n  \"clean\": ${clean},\n  \"containerBase\": \"${base}\",\n  \"localPhysicalAcceptance\": \"docs/agent-physical-acceptance.md#timeout-record-and-closure-decision--2026-10-28\",\n  \"files\": {\n${files}\n  }\n}\n")
+file(WRITE "${PACKAGE_DIR}/release.json" "{\n  \"component\": \"agent\",\n  \"version\": \"${VERSION}\",\n  \"architecture\": \"linux/arm64\",\n  \"revision\": \"${revision}\",\n  \"buildId\": \"${build_id}\",\n  \"clean\": ${clean},\n  \"containerBase\": \"${base}\",\n  \"localPhysicalAcceptance\": \"docs/history/acceptance/agent-physical-acceptance.md#timeout-record-and-closure-decision--2026-10-28\",\n  \"files\": {\n${files}\n  }\n}\n")
 archive_tree("${PACKAGE_DIR}" "${PACKAGE_DIR}/../txing-agent-release-linux-arm64.zip")
