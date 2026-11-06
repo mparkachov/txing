@@ -2,10 +2,10 @@
 
 Status: #169's original publication was accepted on 2026-11-01; its historical
 evidence is retained below. Released-cloud acceptance on 0.1.1/image 4.0 is
-recorded in [#170's acceptance record](agent-cloud-acceptance.md). #175 prepares
-the unversioned bucket and two-build retention described here for agent 0.1.2.
-The one-time operator reset/publication still needs live verification. Keep
-launch gates disabled during that reset.
+recorded in [#170's acceptance record](agent-cloud-acceptance.md). The
+[#175 storage reset and retention](https://github.com/mparkachov/txing/issues/175)
+passed live verification on 2026-11-06. Release 0.1.2/image 3.0 was selected,
+with 0.1.1/image 2.0 retained. Both launch gates remained disabled.
 
 An `agent-vX.Y.Z` GitHub Release contains
 `txing-agent-release-linux-arm64.zip`. The archive holds `microvm.zip`,
@@ -351,6 +351,17 @@ GitHub/local acceptance evidence independently. No scheduled cleanup, rollback
 framework, NAT, ECR push or ECS task definition is added.
 
 ## Acceptance evidence and scope
+
+For #175, three operator publications of immutable releases retained one,
+then two, then two successful images. The third publication confirmed image
+1.0 was deleted before removing its 0.1.0 bundle. The final audit checked
+all 18 object checksums, the selected controller digest, and that the new
+bucket had no versioning status. The operator emptied and deleted the retired
+versioned bucket after all image and controller references were removed.
+Both repair schedules remained enabled, and no nonterminal VMs remained.
+The [release workflow](https://github.com/mparkachov/txing/actions/runs/42097748438)
+passed 36 publication tests, including build and selection failure and retry
+after partial cleanup. These failure cases used mocked AWS responses.
 
 The final record below maps #169 to native/ARM64 tests, packaged execution and
 repeatability, immutable GitHub/S3 identities, actual AWS image build and
