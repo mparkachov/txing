@@ -1,0 +1,277 @@
+import { KinesisVideoClient } from '@aws-sdk/client-kinesis-video'
+import { GetIceServerConfigCommand, KinesisVideoSignalingClient } from '@aws-sdk/client-kinesis-video-signaling'
+import { refreshTokensIfNeeded } from '../auth'
+import { createCredentialProvider } from '../aws-credentials'
+import { appConfig } from '../config'
+import { loadKvsWebRtcBrowserSdk } from '../kvs-webrtc-browser'
+import {
+  buildKinesisVideoClientConfig,
+  buildKinesisVideoSignalingClientConfig,
+  buildRtcIceServers,
+  resolveKvsSignalingMetadata,
+} from '../video-session-runtime'
+
+type Peer = { pc: RTCPeerConnection; close: () => void }
+type CandidateTypes = { local: string | null; remote: string | null }
+type Sample = {
+  at: string
+  join: number
+  seconds: number
+  forceTurn: boolean
+  video: CandidateTypes
+  mavlink: CandidateTypes
+  decodedFrames: number
+  decodedFps: number
+  mavlinkFrames: number
+  heartbeats: number
+  invalidMessages: number
+}
+type StatsEntry = {
+  type: string
+  kind?: string
+  mediaType?: string
+  framesDecoded?: number
+  selectedCandidatePairId?: string
+  localCandidateId?: string
+  remoteCandidateId?: string
+  candidateType?: string
+}
+
+const readStats = async (pc: RTCPeerConnection) => {
+  const stats = await pc.getStats()
+  let frames = 0
+  const candidates: CandidateTypes = { local: null, remote: null }
+  stats.forEach((entry: StatsEntry) => {
+    if (entry.type === 'inbound-rtp' && (entry.kind ?? entry.mediaType) === 'video') {
+      frames += entry.framesDecoded ?? 0
+    }
+    if (entry.type !== 'transport' || !entry.selectedCandidatePairId) return
+    const pair: StatsEntry | undefined = stats.get(entry.selectedCandidatePairId)
+    candidates.local = stats.get(pair?.localCandidateId ?? '')?.candidateType ?? null
+    candidates.remote = stats.get(pair?.remoteCandidateId ?? '')?.candidateType ?? null
+  })
+  return { frames, candidates }
+}
+
+const connect = async (
+  channelName: string,
+  credentials: ReturnType<typeof createCredentialProvider>,
+  forceTurn: boolean,
+  configure: (pc: RTCPeerConnection) => void,
+  signal: AbortSignal,
+): Promise<Peer> => {
+  const region = appConfig.awsRegion
+  const kinesisVideoClient = new KinesisVideoClient(buildKinesisVideoClientConfig({ region, credentials }))
+  const { channelArn, endpoints } = await resolveKvsSignalingMetadata({ channelName, region, kinesisVideoClient })
+  const clientId = crypto.randomUUID()
+  const api = new KinesisVideoSignalingClient(buildKinesisVideoSignalingClientConfig({
+    region,
+    endpoint: endpoints.HTTPS,
+    credentials,
+  }))
+  const config = await api.send(new GetIceServerConfigCommand({
+    ChannelARN: channelArn,
+    ClientId: clientId,
+  }), { abortSignal: signal })
+  const { Role, SignalingClient } = await loadKvsWebRtcBrowserSdk()
+  const { accessKeyId, secretAccessKey, sessionToken } = await credentials()
+  signal.throwIfAborted()
+  const pc = new RTCPeerConnection({
+    iceServers: buildRtcIceServers(region, config.IceServerList),
+    iceTransportPolicy: forceTurn ? 'relay' : 'all',
+  })
+  const signaling = new SignalingClient({
+    channelARN: channelArn, channelEndpoint: endpoints.WSS, role: Role.VIEWER,
+    region, clientId, credentials: { accessKeyId, secretAccessKey, sessionToken },
+  })
+  const close = () => {
+    signal.removeEventListener('abort', close)
+    signaling.removeAllListeners()
+    signaling.close()
+    pc.close()
+  }
+  const remoteCandidates: RTCIceCandidateInit[] = []
+  const localCandidates: RTCIceCandidate[] = []
+  let offered = false
+
+  try {
+    configure(pc)
+    signal.addEventListener('abort', close, { once: true })
+    pc.addEventListener('icecandidate', ({ candidate }) => {
+      if (!candidate) return
+      if (offered) signaling.sendIceCandidate(candidate)
+      else localCandidates.push(candidate)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => finish(new Error('KVS offer timed out')), 20_000)
+      const abort = () => finish(new Error('Viewer cancelled'))
+      const finish = (error?: Error) => {
+        window.clearTimeout(timer)
+        signal.removeEventListener('abort', abort)
+        if (error) reject(error)
+        else resolve()
+      }
+      signal.addEventListener('abort', abort, { once: true })
+      signaling.on('open', () => {
+        void pc.createOffer().then((offer) => pc.setLocalDescription(offer)).then(() => {
+          if (!pc.localDescription || signal.aborted) throw new Error('Viewer offer unavailable')
+          signaling.sendSdpOffer(pc.localDescription)
+          offered = true
+          for (const candidate of localCandidates.splice(0)) signaling.sendIceCandidate(candidate)
+        }).catch(() => finish(new Error('Viewer offer failed')))
+      })
+      signaling.on('sdpAnswer', (answer) => {
+        void pc.setRemoteDescription(answer).then(async () => {
+          for (const candidate of remoteCandidates.splice(0)) {
+            await pc.addIceCandidate(candidate).catch(() => undefined)
+          }
+          finish()
+        }).catch(() => finish(new Error('Viewer answer failed')))
+      })
+      signaling.on('iceCandidate', (candidate) => {
+        if (!pc.remoteDescription) remoteCandidates.push(candidate)
+        else void pc.addIceCandidate(candidate).catch(() => undefined)
+      })
+      signaling.on('error', () => finish(new Error('KVS signaling error')))
+      // After the answer, signaling can idle out while the established media continues.
+      signaling.on('close', () => finish(new Error('KVS signaling closed before answer')))
+      try { signaling.open() } catch { finish(new Error('Unable to open KVS signaling')) }
+    })
+    return { pc, close }
+  } catch (error) {
+    close()
+    throw error
+  }
+}
+
+const configurePage = () => {
+  const form = document.querySelector<HTMLFormElement>('form')!
+  const input = (id: string) => document.querySelector<HTMLInputElement>(id)!
+  const button = (id: string) => document.querySelector<HTMLButtonElement>(id)!
+  const preview = document.querySelector<HTMLVideoElement>('#preview')!
+  const status = document.querySelector<HTMLElement>('#status')!
+  const display = document.querySelector<HTMLElement>('#samples')!
+  let current: AbortController | undefined
+  let joins = 0
+  const samples: Sample[] = []
+  const events: { at: string; join: number; event: string; forceTurn?: boolean }[] = []
+  const event = (join: number, name: string, forceTurn?: boolean) =>
+    events.push({ at: new Date().toISOString(), join, event: name, forceTurn })
+
+  const leave = () => {
+    current?.abort()
+    current = undefined
+    preview.srcObject = null
+    button('#join').disabled = false
+    button('#leave').disabled = true
+  }
+  window.addEventListener('pagehide', leave)
+  button('#leave').addEventListener('click', () => {
+    event(joins, 'leave')
+    leave()
+    status.textContent = 'Left'
+  })
+  button('#save').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify({ events, samples }, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'virtual-quad-qualification.json'
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  })
+  form.addEventListener('submit', (submit) => {
+    submit.preventDefault()
+    leave()
+    const abort = new AbortController()
+    current = abort
+    const { signal } = abort
+    const join = ++joins
+    const forceTurn = input('#relay').checked
+    const videoChannel = input('#video-channel').value
+    const mavlinkChannel = input('#mavlink-channel').value
+    event(join, 'join', forceTurn)
+    status.textContent = 'Connecting…'
+    button('#join').disabled = true
+    button('#leave').disabled = false
+    void (async () => {
+      const tokens = await refreshTokensIfNeeded()
+      if (!tokens) throw new Error('Sign in through Office first')
+      const credentials = createCredentialProvider(tokens.idToken)
+      let mavlinkFrames = 0
+      let heartbeats = 0
+      let invalidMessages = 0
+      const [video, data] = await Promise.all([
+        connect(videoChannel, credentials, forceTurn, (pc) => {
+          pc.addTransceiver('video', { direction: 'recvonly' })
+          pc.addEventListener('track', ({ track }) => {
+            preview.srcObject = new MediaStream([track])
+          })
+        }, signal),
+        connect(mavlinkChannel, credentials, forceTurn, (pc) => {
+          const channel = pc.createDataChannel('txing.mavlink.v1', { ordered: true })
+          channel.binaryType = 'arraybuffer'
+          channel.addEventListener('open', () => event(join, 'data-open'))
+          channel.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
+            if (data instanceof ArrayBuffer) {
+              const bytes = new Uint8Array(data)
+              if (bytes.length >= 12 && bytes[0] === 0xfd && (bytes[2] & ~1) === 0 &&
+                bytes.length === 12 + bytes[1] + ((bytes[2] & 1) ? 13 : 0)) {
+                ++mavlinkFrames
+                if (bytes[5] === 1 && bytes[6] === 1 && bytes[7] === 0 && bytes[8] === 0 && bytes[9] === 0) {
+                  ++heartbeats
+                }
+                return
+              }
+            }
+            ++invalidMessages
+          })
+        }, signal),
+      ])
+      signal.throwIfAborted()
+      event(join, 'answers-received')
+      status.textContent = 'Connected to signaling; sampling decoded media and telemetry'
+      let previousAt = performance.now()
+      let previousDecoded = (await readStats(video.pc)).frames
+      let timer = 0
+      signal.addEventListener('abort', () => window.clearTimeout(timer), { once: true })
+      const sample = async () => {
+        if (signal.aborted) return
+        const [v, d] = await Promise.all([readStats(video.pc), readStats(data.pc)])
+        if (signal.aborted) return
+        const now = performance.now()
+        const seconds = (now - previousAt) / 1000
+        const decodedFrames = Math.max(0, v.frames - previousDecoded)
+        previousDecoded = v.frames
+        previousAt = now
+        const row = {
+          at: new Date().toISOString(), join, forceTurn, seconds,
+          video: v.candidates, mavlink: d.candidates, decodedFrames,
+          decodedFps: decodedFrames / seconds, mavlinkFrames, heartbeats, invalidMessages,
+        }
+        samples.push(row)
+        mavlinkFrames = heartbeats = invalidMessages = 0
+        display.textContent = JSON.stringify(samples.slice(-6), null, 2)
+        schedule()
+      }
+      const schedule = () => {
+        timer = window.setTimeout(() => {
+          void sample().catch(() => {
+            if (signal.aborted) return
+            event(join, 'stats-failed')
+            leave()
+            status.textContent = 'Unable to read WebRTC statistics'
+          })
+        }, 5000)
+      }
+      if (!signal.aborted) schedule()
+    })().catch((error: unknown) => {
+      if (signal.aborted) return
+      event(join, 'join-failed')
+      leave()
+      status.textContent = error instanceof Error ? error.message : 'Viewer failed'
+    })
+  })
+}
+
+if (import.meta.env.DEV) configurePage()

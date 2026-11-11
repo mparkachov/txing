@@ -1,0 +1,47 @@
+set shell := ["sh", "-eu", "-c"]
+
+quad_dir := source_directory()
+repo_dir := canonicalize(quad_dir + "/../..")
+tmp_dir := repo_dir + "/tmp"
+export TMPDIR := tmp_dir
+
+[positional-arguments]
+qualification-build payload_output='':
+    #!/bin/sh
+    set -eu
+    nerdctl.lima info > /dev/null
+    mkdir -p "{{ tmp_dir }}"
+    context="$(mktemp -d "{{ tmp_dir }}/quad-context.XXXXXXXX")"
+    trap 'rm -rf "$context"' 0
+    sender="{{ repo_dir }}/devices/common/board/kvs_master"
+    sender_context="$context/devices/common/board/kvs_master"
+    mkdir -p "$sender_context" "$context/devices/virtual-quad"
+    cp -R "$sender/CMakeLists.txt" "$sender/include" "$sender/src" "$sender_context/"
+    cp -R "{{ repo_dir }}/devices/common/kvs" "$context/devices/common/"
+    cp -R "{{ quad_dir }}/qualification" "$context/devices/virtual-quad/"
+    dockerfile="$context/devices/virtual-quad/qualification/Dockerfile"
+    if [ -n "${1:-}" ]; then
+      nerdctl.lima build --platform linux/arm64 --progress plain --file "$dockerfile" \
+        --target payload --output "type=local,dest=$1" "$context"
+    else
+      nerdctl.lima build --platform linux/arm64 --progress plain --file "$dockerfile" \
+        --tag txing-virtual-quad-qualification:local "$context"
+    fi
+
+microvm-package:
+    #!/bin/sh
+    set -eu
+    mkdir -p "{{ tmp_dir }}"
+    package="$(mktemp -d "{{ tmp_dir }}/quad-microvm.XXXXXXXX")"
+    context="$package/context"
+    mkdir -p "$context"
+    just --justfile "{{ repo_dir }}/justfile" virtual-quad::qualification-build "$context" >&2
+    cp "{{ quad_dir }}/qualification/MicroVM.Dockerfile" "$context/Dockerfile"
+    nerdctl.lima build --platform linux/arm64 --progress plain \
+      --tag txing-virtual-quad-microvm:local "$context" >&2
+    cd "$context"
+    zip -q -r "$package/bundle.zip" Dockerfile quad
+    cd "$package"
+    shasum -a 256 bundle.zip > SHA256SUMS
+    cat SHA256SUMS >&2
+    printf '%s\n' "$package/bundle.zip"

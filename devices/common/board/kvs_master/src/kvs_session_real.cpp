@@ -489,7 +489,11 @@ struct StreamingSession {
 
 class RealKvsSession final : public KvsSession {
   public:
-    RealKvsSession(const RuntimeConfig& config, const AwsCredentials& credentials)
+    RealKvsSession(
+        const RuntimeConfig& config,
+        const AwsCredentials& credentials,
+        std::unique_ptr<BoardMavlinkBridgeClient> bridge = nullptr
+    )
         : region_(config.region),
           channel_name_(config.channel_name),
           client_id_(config.client_id),
@@ -504,7 +508,8 @@ class RealKvsSession final : public KvsSession {
           mcp_data_channel_enabled_(config.mcp_data_channel_enabled),
           mavlink_bridge_socket_path_(config.mavlink_bridge_socket_path),
           mavlink_bridge_client_(
-              session_kind_ == KvsSessionKind::kMavlinkControl && mavlink_bridge_socket_path_.has_value()
+              bridge ? std::move(bridge)
+              : session_kind_ == KvsSessionKind::kMavlinkControl && mavlink_bridge_socket_path_.has_value()
                   ? CreateBoardMavlinkBridgeClient(*mavlink_bridge_socket_path_)
                   : nullptr
           ),
@@ -2017,6 +2022,17 @@ class RealKvsSession final : public KvsSession {
 
 std::unique_ptr<KvsSession> CreateKvsSession(const RuntimeConfig& config, const AwsCredentials& credentials) {
     return std::make_unique<RealKvsSession>(config, credentials);
+}
+
+std::unique_ptr<KvsSession> CreateKvsSessionWithMavlinkBridge(
+    const RuntimeConfig& config,
+    const AwsCredentials& credentials,
+    std::unique_ptr<BoardMavlinkBridgeClient> bridge
+) {
+    if (!bridge || config.session_kind != KvsSessionKind::kMavlinkControl || config.mavlink_bridge_socket_path) {
+        throw std::invalid_argument("an in-process bridge requires a MAVLink session without a bridge socket");
+    }
+    return std::make_unique<RealKvsSession>(config, credentials, std::move(bridge));
 }
 
 }  // namespace txing::board::kvs_master

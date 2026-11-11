@@ -44,6 +44,7 @@ option(
   "Build ${_txing_kvs_bin} with the daemon BoardVideoBridge gRPC client"
   OFF
 )
+option(TXING_KVS_HEADLESS "Build the sender without native camera capture" OFF)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../kvs/cmake/AwsKvsWebRtc.cmake")
 
@@ -199,7 +200,7 @@ else()
 endif()
 
 find_package(PkgConfig QUIET)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT TXING_KVS_HEADLESS)
   if(NOT PKG_CONFIG_FOUND)
     message(FATAL_ERROR "pkg-config is required to build ${_txing_kvs_bin} on Linux")
   endif()
@@ -209,7 +210,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(TXING_KVS_HEADLESS)
+  target_sources(${_txing_kvs_lib} PRIVATE src/video_capturer_stub.cpp)
+  target_compile_definitions(${_txing_kvs_lib} PRIVATE TXING_KVS_HAS_LIBCAMERA=0)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(${_txing_kvs_lib} PRIVATE src/video_capturer_libcamera.cpp)
   target_include_directories(${_txing_kvs_lib} PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
   target_compile_options(${_txing_kvs_lib} PRIVATE ${LIBCAMERA_CFLAGS_OTHER})

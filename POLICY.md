@@ -51,7 +51,29 @@ ask the user to repeat authorization already given.
 Goal selection does not override explicit operational prohibitions in
 `AGENTS.md` or `docs/agent-guidance/editing-boundaries.md`, including automatic
 commits, AWS resource mutations, and firmware flashing. Prepare the artifacts
-and manual operator steps required by those boundaries.
+required by those boundaries and give the user the next manual step in chat.
+
+---
+
+# Interactive work in chat
+
+Answer direct questions in chat. When the user is running commands, reporting
+results, or troubleshooting a live environment, work through one operator
+action at a time. This also applies during an active `/goal`.
+
+- Use the current shell and environment context. Reuse values already known
+  and discover missing values through available tools when possible.
+- When the next action requires the user, give it directly in chat. For a
+  shell action, provide a copy-pasteable command and briefly say which result
+  to report. Wait for that result before giving any dependent action. Continue
+  authorized work that can proceed independently.
+- Keep session-specific commands, diagnostics, and cleanup in chat. Create or
+  update durable documentation when the user requests it or a lasting change
+  affects a contract or repeatable procedure. Give the next command in chat
+  even when a guide exists.
+- When temporary resources or artifacts are no longer needed, clean them up
+  within the authorized scope or give the user the next manual cleanup action.
+  Preserve evidence required by the active Issue.
 
 ---
 

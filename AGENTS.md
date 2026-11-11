@@ -8,6 +8,9 @@ Keep it short: durable technical details live in focused docs and subproject
 
 - Follow `POLICY.md` for execution policy, ambiguity handling, escalation,
   approval gates, milestone discipline, and completion behavior.
+- For live troubleshooting and manual operator work, follow [Interactive work
+  in chat](POLICY.md#interactive-work-in-chat). Give the next action directly in
+  chat and use the user's result to choose the next step.
 - Read the nearest subproject `AGENTS.md` before editing under a subdirectory.
   The closer file carries the local build, test, and contract guidance for that
   area.
@@ -116,15 +119,16 @@ unless a shared contract or consistency issue requires coordinated updates.
 - Do not read from, copy from, execute from, or depend on files outside this
   repository unless the user explicitly provides the content or asks to vendor it
   into the repository.
-- After any code, firmware, infrastructure, or configuration change, include
-  deployment or rollout steps in the final response, including manual steps.
+- After a code, firmware, infrastructure, or configuration change, include
+  applicable deployment or rollout guidance in chat. During a live session,
+  give manual steps one at a time.
 
 ## Documentation placement
 
 - Keep root `AGENTS.md` limited to routing, workflow, and critical gates.
 - Keep documentation aligned with the current implementation. Update the
-  relevant guide and links in the same change when behavior, commands,
-  configuration, contracts, or rollout steps change.
+  owning guide and links when the change affects a durable contract or a
+  repeatable procedure. Keep session-specific troubleshooting in chat.
 - Keep one canonical guide per functionality. Extend the owning guide and
   link to it from related docs. Record test results and intermediate steps in
   GitHub Issues, CI, or clearly marked history when retention is needed.

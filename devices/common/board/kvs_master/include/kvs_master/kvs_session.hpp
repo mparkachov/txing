@@ -2,6 +2,7 @@
 #define TXING_BOARD_KVS_MASTER_KVS_SESSION_HPP
 
 #include "kvs_master/aws_env.hpp"
+#include "kvs_master/board_mavlink_bridge.hpp"
 #include "kvs_master/config.hpp"
 
 #include <cstddef>
@@ -28,6 +29,11 @@ class KvsSession {
 };
 
 std::unique_ptr<KvsSession> CreateKvsSession(const RuntimeConfig& config, const AwsCredentials& credentials);
+std::unique_ptr<KvsSession> CreateKvsSessionWithMavlinkBridge(
+    const RuntimeConfig& config,
+    const AwsCredentials& credentials,
+    std::unique_ptr<BoardMavlinkBridgeClient> bridge
+);
 
 }  // namespace txing::board::kvs_master
 

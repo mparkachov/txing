@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Disposable txing virtual quadcopter qualification task (issue 176).
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  ImageRepositoryName:
+    Type: String
+    AllowedPattern: '[a-z0-9]+([._/-][a-z0-9]+)*'
+  ImageDigest:
+    Type: String
+    Description: Immutable digest in the same-account and same-region ECR repository.
+    AllowedPattern: 'sha256:[0-9a-f]{64}'
+  VideoChannelName:
+    Type: String
+    AllowedPattern: 'quad-qualification-[A-Za-z0-9_.-]+-board-video'
+  MavlinkChannelName:
+    Type: String
+    AllowedPattern: 'quad-qualification-[A-Za-z0-9_.-]+-mavlink'
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 14
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Virtual quad qualification outbound signaling and ICE
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*
+      Policies:
+        - PolicyName: qualification-kvs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsMaster
+                Resource:
+                  - !Sub arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/${VideoChannelName}/*
+                  - !Sub arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/${MavlinkChannelName}/*
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*
+      Policies:
+        - PolicyName: qualification-image-and-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ImageRepositoryName}
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt LogGroup.Arn
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '2048'
+      Memory: '4096'
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: quad
+          Essential: true
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}/${ImageRepositoryName}@${ImageDigest}
+          StopTimeout: 30
+          User: '10001:10001'
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: QUAD_VIDEO_CHANNEL
+              Value: !Ref VideoChannelName
+            - Name: QUAD_MAVLINK_CHANNEL
+              Value: !Ref MavlinkChannelName
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: qualification
+
+Outputs:
+  Cluster:
+    Value: !GetAtt Cluster.Arn
+  TaskDefinition:
+    Value: !Ref TaskDefinition
+  SecurityGroup:
+    Value: !Ref TaskSecurityGroup
+  LogGroup:
+    Value: !Ref LogGroup

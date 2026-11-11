@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Virtual quadcopter qualification</title>
+  </head>
+  <body>
+    <h1>Virtual quadcopter qualification</h1>
+    <p><a href="/?signin=1">Sign in through Office</a>, then open this page again in the same tab.</p>
+    <form>
+      <label>Video channel <input id="video-channel" required pattern="quad-qualification-.*-board-video"></label>
+      <label>MAVLink channel <input id="mavlink-channel" required pattern="quad-qualification-.*-mavlink"></label>
+      <label><input id="relay" type="checkbox"> Force TURN</label>
+      <button id="join">Join</button>
+      <button id="leave" type="button" disabled>Leave</button>
+      <button id="save" type="button">Download samples</button>
+    </form>
+    <p id="status" role="status">Idle</p>
+    <video id="preview" width="640" height="360" muted autoplay playsinline></video>
+    <pre id="samples"></pre>
+    <script type="module" src="/src/dev/virtual-quad-qualification.ts"></script>
+  </body>
+</html>

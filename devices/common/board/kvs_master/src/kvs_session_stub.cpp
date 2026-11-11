@@ -42,4 +42,10 @@ std::unique_ptr<KvsSession> CreateKvsSession(const RuntimeConfig&, const AwsCred
     return std::make_unique<StubKvsSession>();
 }
 
+std::unique_ptr<KvsSession> CreateKvsSessionWithMavlinkBridge(
+    const RuntimeConfig&, const AwsCredentials&, std::unique_ptr<BoardMavlinkBridgeClient>
+) {
+    throw std::runtime_error("an in-process MAVLink bridge requires the real KVS SDK");
+}
+
 }  // namespace txing::board::kvs_master

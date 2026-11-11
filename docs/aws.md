@@ -62,6 +62,11 @@ runtime target. `just release::publish lambda` updates existing runtime Lambda
 functions from a `lambda-v*` GitHub Release; `just release::publish rig` updates
 physical rig host binaries from a `rig-v*` GitHub Release.
 
+The virtual quadcopter qualification targets a disposable ARM64 Lambda
+MicroVM in a separate test environment. The
+[qualification runbook](../devices/virtual-quad/qualification/README.md)
+covers the AWS measurements and retirement of the Fargate prototype resources.
+
 ## Bring-Up Order
 
 Run the setup in this order:
