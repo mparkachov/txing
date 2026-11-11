@@ -14,11 +14,13 @@ txing-cloud-mcu-lambda
 
 The cloud rig runtime Lambda is invoked once per minute by an EventBridge
 Scheduler schedule while the cloud rig is `NBIRTH redcon=1`. It publishes the
-cloud rig Sparkplug node as REDCON `1`, discovers registered `cloud-mcu`
-devices, and sends SQS watch-link ticks based on each device's desired REDCON:
+cloud rig Sparkplug node as REDCON `1` for rigs with registered `cloud-mcu` or
+[`virtual-quad`](../virtual-quad/README.md) devices. It sends SQS watch-link
+ticks for `cloud-mcu` based on each device's desired REDCON:
 sleeping/default devices receive one immediate tick per minute, while REDCON `3`
 devices keep ten ticks at offsets `0, 6, ..., 54` seconds for ECS task
-reconciliation.
+reconciliation. The census publishes a stopped `DBIRTH` when an enlisted
+virtual quad has an offline projection or moves to a different cloud rig.
 
 The same Lambda is also invoked by Sparkplug `NCMD.redcon` on
 `spBv1.0/<town>/NCMD/<cloud-rig>`. `NCMD.redcon=4` disables the recurring
@@ -86,7 +88,6 @@ updated CloudFormation stacks and Lambda artifacts are deployed:
 5. Ignore the cloud rig node `NBIRTH` refresh for this device count; that minute
    liveness publication is intentionally unchanged by this task.
 
-This is the supported AWS-hosted software device type for cloud rigs. The
-deprecated AWS-hosted cloud runtime package has been removed from the
-repository; any remaining deployed legacy cloud runtime resources are manual
+The deprecated AWS-hosted cloud runtime package has been removed from the
+repository. Any remaining deployed legacy cloud runtime resources are manual
 one-time account cleanup.

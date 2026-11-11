@@ -1,0 +1,416 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/virtual-quad/agent-shadow.schema.json",
+  "title": "Virtual Quadcopter cloud agent named shadow v2",
+  "description": "Controller-owned diagnostics for the declared agent capability. See docs/contracts/agent-shadow.md for freshness, authorization, and run fencing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "state"
+  ],
+  "properties": {
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reported"
+      ],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lifecycle"
+          ],
+          "properties": {
+            "controller": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "projectionVersion",
+                "sourceTimestampMs",
+                "inactiveObservedAt",
+                "observed",
+                "active"
+              ],
+              "properties": {
+                "projectionVersion": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "sourceTimestampMs": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "inactiveObservedAt": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "unverifiedSince": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "stopRequestedAt": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "observed": {
+                  "type": "boolean"
+                },
+                "active": {
+                  "type": "boolean"
+                },
+                "runActivationId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "runPhase": {
+                  "enum": [
+                    "reserved",
+                    "running",
+                    "stopping"
+                  ]
+                },
+                "launchRequest": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                }
+              },
+              "description": "Controller reconciliation state; launch request contains no credentials or authentication tokens."
+            },
+            "run": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "release"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "release": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+                },
+                "microvmId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1
+                }
+              }
+            },
+            "activation": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "startedAt",
+                "deadline"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "startedAt": {
+                  "$ref": "#/$defs/time"
+                },
+                "deadline": {
+                  "$ref": "#/$defs/time"
+                }
+              },
+              "description": "Persisted across replacement runs and expiry until a new inactive-to-active transition."
+            },
+            "lifecycle": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "stopped",
+                    "starting",
+                    "running",
+                    "stopping",
+                    "expired",
+                    "error"
+                  ]
+                },
+                "verifiedAt": {
+                  "$ref": "#/$defs/time"
+                }
+              }
+            },
+            "endpoint": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uri",
+              "pattern": "^https://[^/?#@\\s]+(?:/[^?#\\s]*)?$",
+              "description": "Authenticated HTTPS base URL. Never public UDP or an authentication token."
+            },
+            "runtime": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "runId",
+                "sampledAt",
+                "mavlink",
+                "video",
+                "control"
+              ],
+              "properties": {
+                "runId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sampledAt": {
+                  "$ref": "#/$defs/time"
+                },
+                "mavlink": {
+                  "$ref": "#/$defs/connection"
+                },
+                "video": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "state",
+                    "framesReceived"
+                  ],
+                  "properties": {
+                    "state": {
+                      "$ref": "#/$defs/connectionState"
+                    },
+                    "framesReceived": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "lastFrameAt": {
+                      "$ref": "#/$defs/nullableTime"
+                    },
+                    "lastError": {
+                      "$ref": "#/$defs/error"
+                    }
+                  }
+                },
+                "control": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "state"
+                  ],
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "observing",
+                        "acquiring",
+                        "held",
+                        "lost"
+                      ]
+                    },
+                    "lastError": {
+                      "$ref": "#/$defs/error"
+                    }
+                  }
+                }
+              }
+            },
+            "lastError": {
+              "$ref": "#/$defs/error",
+              "description": "Controller/lifecycle error. Independent runtime errors stay in their own fields."
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "lifecycle": {
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "starting",
+                          "running"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "run",
+                  "activation"
+                ],
+                "properties": {
+                  "run": {
+                    "type": "object"
+                  },
+                  "activation": {
+                    "type": "object"
+                  },
+                  "lifecycle": {
+                    "required": [
+                      "verifiedAt"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "endpoint"
+                ],
+                "properties": {
+                  "endpoint": {
+                    "type": "string"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "lifecycle": {
+                    "properties": {
+                      "state": {
+                        "const": "running"
+                      }
+                    }
+                  },
+                  "run": {
+                    "required": [
+                      "microvmId"
+                    ],
+                    "properties": {
+                      "microvmId": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "runtime"
+                ],
+                "properties": {
+                  "runtime": {
+                    "type": "object"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "run"
+                ],
+                "properties": {
+                  "run": {
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "lifecycle": {
+                    "properties": {
+                      "state": {
+                        "const": "expired"
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "activation"
+                ],
+                "properties": {
+                  "activation": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "clientToken": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "$ref": "#/$defs/time"
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix epoch seconds, UTC."
+    },
+    "nullableTime": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "connectionState": {
+      "enum": [
+        "disconnected",
+        "connecting",
+        "connected",
+        "error"
+      ]
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/connectionState"
+        },
+        "lastError": {
+          "$ref": "#/$defs/error"
+        }
+      }
+    }
+  }
+}

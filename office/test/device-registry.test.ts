@@ -63,6 +63,11 @@ describe('device web adapter registry', () => {
     expect(macAdapter?.canUseBoardVideo(2)).toBe(false)
     expect(macAdapter?.canUseDriveControl(1)).toBe(false)
     expect(macAdapter?.canUseDriveControl(2)).toBe(false)
+    const virtualQuadAdapter = getDeviceWebAdapter('virtual-quad')
+    expect(virtualQuadAdapter?.displayName).toBe('Virtual Quadcopter')
+    expect(virtualQuadAdapter?.buildVideoChannelName('virtual-quad-a1')).toBe('virtual-quad-a1-board-video')
+    expect(virtualQuadAdapter?.buildMavlinkChannelName?.('virtual-quad-a1')).toBe('virtual-quad-a1-mavlink')
+    expect(virtualQuadAdapter?.canUseDriveControl(1)).toBe(false)
     expect(getDeviceWebAdapter('sensor')).toBeNull()
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
       'cloud-mcu',
@@ -74,6 +79,7 @@ describe('device web adapter registry', () => {
       'power-si',
       'power-nrf',
       'mac',
+      'virtual-quad',
     ])
   })
 

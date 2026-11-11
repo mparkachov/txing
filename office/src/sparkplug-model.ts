@@ -124,6 +124,16 @@ export const extractSparkplugMessageType = (shadow: unknown): string | null => {
   return topic && typeof topic.messageType === 'string' ? topic.messageType : null
 }
 
+export const hasLiveSparkplugDeviceProjection = (
+  shadow: unknown,
+  target: { groupId: string; edgeNodeId: string; deviceId: string },
+): boolean => {
+  const topic = extractSparkplugTopic(shadow)
+  return topic?.groupId === target.groupId &&
+    topic.edgeNodeId === target.edgeNodeId && topic.deviceId === target.deviceId &&
+    (topic.messageType === 'DBIRTH' || topic.messageType === 'DDATA')
+}
+
 const extractSparkplugDeviceMessageType = (shadow: unknown): string | null => {
   const topic = extractSparkplugTopic(shadow)
   if (!topic || typeof topic.deviceId !== 'string' || topic.deviceId.length === 0) {

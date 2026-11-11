@@ -8,6 +8,7 @@ from aws.type_catalog import (
     SsmTypeCatalog,
     TYPE_CATALOG_ROOT,
     TypeCatalogError,
+    _flatten_record_parameters,
     build_type_records,
     device_type_path,
     normalize_catalog_path,
@@ -64,6 +65,28 @@ class TypeCatalogTests(unittest.TestCase):
         self.assertEqual(normalize_catalog_path("ssm:/txing/town/cloud"), "/txing/town/cloud")
         self.assertEqual(normalize_catalog_path("town/raspi/unit"), "/txing/town/raspi/unit")
 
+    def test_virtual_quad_cloudformation_matches_manifest_catalog(self) -> None:
+        path = device_type_path("cloud", "virtual-quad")
+        records = build_type_records(repo_root=REPO_ROOT)
+        expected = {
+            name.removeprefix(f"{path}/"): value
+            for name, value in _flatten_record_parameters(path, records[path]).items()
+        }
+        for name in ("updatedAt", "path"):
+            expected.pop(name)
+        source = (REPO_ROOT / "shared/aws/template.yaml").read_text(encoding="utf-8")
+        block = source.split("  VirtualQuadTypeCatalogV2:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn(f"CatalogBasePath: {path}", block)
+        deployed = {}
+        for line in block.split("CatalogParameters:\n", 1)[1].splitlines():
+            name, value = line.strip().split(": ", 1)
+            deployed[name] = value.removeprefix("'").removesuffix("'")
+        for name in expected:
+            if name.endswith("/defaultPayload"):
+                expected[name] = json.loads(expected[name])
+                deployed[name] = json.loads(deployed[name])
+        self.assertEqual(expected, deployed)
+
     def test_expected_records_contain_only_type_catalog_and_compatibility(self) -> None:
         records = build_type_records(repo_root=REPO_ROOT)
 
@@ -83,6 +106,7 @@ class TypeCatalogTests(unittest.TestCase):
                 "/txing/town/local/mac",
                 "/txing/town/cloud",
                 "/txing/town/cloud/cloud-mcu",
+                "/txing/town/cloud/virtual-quad",
             },
         )
         self.assertEqual(records["/txing/town/raspi"]["defaultName"], "server")
@@ -480,7 +504,7 @@ class TypeCatalogTests(unittest.TestCase):
 
         self.assertEqual(
             [path for path, _record in catalog.list_records("/txing/town/cloud")],
-            ["/txing/town/cloud", "/txing/town/cloud/cloud-mcu"],
+            ["/txing/town/cloud", "/txing/town/cloud/cloud-mcu", "/txing/town/cloud/virtual-quad"],
         )
         self.assertEqual(
             [path for path, _record in catalog.list_records("/txing/town/raspi")],

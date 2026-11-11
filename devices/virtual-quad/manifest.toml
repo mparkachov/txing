@@ -1,0 +1,41 @@
+type = "virtual-quad"
+device_name = "virtual-quad"
+display_name = "Virtual Quadcopter"
+capabilities = ["sparkplug", "simulation", "mavlink", "video", "agent"]
+compatible_rig_types = ["cloud"]
+redcon_command_levels = [4, 1]
+
+[redcon_rules]
+4 = ["sparkplug", "simulation"]
+3 = ["sparkplug", "simulation"]
+2 = ["sparkplug", "simulation", "mavlink"]
+1 = ["sparkplug", "simulation", "mavlink", "video"]
+
+[shadows.sparkplug]
+schema = "aws/sparkplug-shadow.schema.json"
+default = "aws/default-sparkplug-shadow.json"
+
+[shadows.simulation]
+schema = "aws/simulation-shadow.schema.json"
+default = "aws/default-simulation-shadow.json"
+
+[shadows.mavlink]
+schema = "aws/mavlink-shadow.schema.json"
+default = "aws/default-mavlink-shadow.json"
+
+[shadows.video]
+schema = "aws/video-shadow.schema.json"
+default = "aws/default-video-shadow.json"
+
+[shadows.agent]
+schema = "aws/agent-shadow.schema.json"
+default = "aws/default-agent-shadow.json"
+
+[resources.board_video]
+channel_name = "{device_id}-board-video"
+
+[resources.mavlink]
+channel_name = "{device_id}-mavlink"
+
+[web]
+adapter = "web/virtual-quad-adapter.tsx"

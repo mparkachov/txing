@@ -1,0 +1,16 @@
+{
+  "state": {
+    "reported": {
+      "topic": {
+        "namespace": "spBv1.0",
+        "groupId": "town",
+        "messageType": "DDEATH",
+        "edgeNodeId": "cloud-demo",
+        "deviceId": "virtual-quad-demo"
+      },
+      "payload": {
+        "metrics": {}
+      }
+    }
+  }
+}

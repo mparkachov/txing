@@ -1,0 +1,14 @@
+{
+  "state": {
+    "reported": {
+      "run": null,
+      "activation": null,
+      "lifecycle": {
+        "state": "stopped"
+      },
+      "endpoint": null,
+      "runtime": null,
+      "lastError": null
+    }
+  }
+}

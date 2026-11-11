@@ -1,0 +1,10 @@
+{
+  "state": {
+    "reported": {
+      "phase": "stopped",
+      "terminalRevision": 1,
+      "lastSessionId": "demo-session",
+      "lastOutcome": "stopped"
+    }
+  }
+}

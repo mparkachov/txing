@@ -1,0 +1,28 @@
+{
+  "state": {
+    "reported": {
+      "descriptor": {
+        "serviceId": "video",
+        "serverInfo": {
+          "name": "video",
+          "version": "0.1.0"
+        },
+        "topicRoot": "txings/virtual-quad-demo/video",
+        "descriptorTopic": "txings/virtual-quad-demo/video/descriptor",
+        "statusTopic": "txings/virtual-quad-demo/video/status",
+        "transport": "aws-webrtc",
+        "channelName": "virtual-quad-demo-board-video",
+        "region": "eu-central-1",
+        "serverVersion": "0.1.0"
+      },
+      "status": {
+        "serviceId": "video",
+        "available": false,
+        "ready": false,
+        "status": "unavailable",
+        "viewerConnected": false,
+        "lastError": null
+      }
+    }
+  }
+}

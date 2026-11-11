@@ -1,0 +1,27 @@
+{
+  "serviceId": "mavlink",
+  "protocolVersion": "1",
+  "mavlinkWireProtocolVersion": "2.0",
+  "dialect": "unfiltered",
+  "topicRoot": "txings/virtual-quad-demo/mavlink",
+  "descriptorTopic": "txings/virtual-quad-demo/mavlink/descriptor",
+  "statusTopic": "txings/virtual-quad-demo/mavlink/status",
+  "transport": "webrtc-datachannel",
+  "channelName": "virtual-quad-demo-mavlink",
+  "region": "eu-central-1",
+  "dataChannel": {
+    "label": "txing.mavlink.v1",
+    "ordered": true,
+    "reliable": true,
+    "binaryMessage": "mavlink2-frame-tunnel",
+    "textMessage": "cyberbrick-mavlink-control-json-v1"
+  },
+  "control": {
+    "sessionAuthority": "daemon",
+    "leaseTtlMs": 5000
+  },
+  "serverInfo": {
+    "name": "txing-virtual-quad",
+    "version": "0.1.0"
+  }
+}

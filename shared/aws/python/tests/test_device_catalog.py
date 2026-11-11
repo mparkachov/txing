@@ -25,7 +25,7 @@ class DeviceCatalogTests(unittest.TestCase):
     def test_lists_only_loadable_device_types(self) -> None:
         self.assertEqual(
             list_loadable_device_types(repo_root=REPO_ROOT),
-            ["cloud-mcu", "cyberbrick", "mac", "power", "power-nrf", "power-si", "tbot", "unit", "weather"],
+            ["cloud-mcu", "cyberbrick", "mac", "power", "power-nrf", "power-si", "tbot", "unit", "virtual-quad", "weather"],
         )
 
     def test_loads_unit_manifest(self) -> None:

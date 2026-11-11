@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/virtual-quad/video-shadow.schema.json",
+  "title": "Virtual Quadcopter Video Named Shadow",
+  "type": "object",
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "required": ["reported"],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "descriptor": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/descriptor"}]},
+            "status": {"$ref": "#/$defs/status"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "descriptor": {
+      "type": "object",
+      "required": ["serviceId", "transport", "channelName", "region", "topicRoot", "descriptorTopic", "statusTopic", "serverInfo", "serverVersion"],
+      "properties": {
+        "serviceId": {"const": "video"},
+        "transport": {"const": "aws-webrtc"},
+        "channelName": {"type": "string", "pattern": "^virtual-quad-.+-board-video$"},
+        "region": {"type": "string", "minLength": 1},
+        "topicRoot": {"type": "string", "pattern": "^txings/[^/]+/video$"},
+        "descriptorTopic": {"type": "string", "pattern": "^txings/[^/]+/video/descriptor$"},
+        "statusTopic": {"type": "string", "pattern": "^txings/[^/]+/video/status$"},
+        "serverInfo": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": {
+            "name": {"const": "video"},
+            "version": {"type": "string", "minLength": 1}
+          }
+        },
+        "serverVersion": {"type": "string", "minLength": 1}
+      }
+    },
+    "status": {
+      "type": "object",
+      "required": ["serviceId", "available", "ready", "status", "viewerConnected"],
+      "properties": {
+        "serviceId": {"const": "video"},
+        "available": {"type": "boolean"},
+        "ready": {"type": "boolean"},
+        "status": {"enum": ["starting", "ready", "error", "unavailable"]},
+        "viewerConnected": {"type": "boolean"},
+        "lastError": {"type": ["string", "null"]},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/virtual-quad/simulation-shadow.schema.json",
+  "title": "Virtual Quadcopter Simulation Named Shadow",
+  "type": "object",
+  "required": [
+    "state"
+  ],
+  "properties": {
+    "state": {
+      "type": "object",
+      "required": [
+        "reported"
+      ],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "phase",
+            "terminalRevision"
+          ],
+          "properties": {
+            "phase": {
+              "enum": [
+                "stopped",
+                "starting",
+                "operational",
+                "stopping",
+                "failed"
+              ]
+            },
+            "terminalRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sessionId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "lastSessionId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "lastOutcome": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "lastReason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "availabilityWatermarkMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "availabilityExpiresAtMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "startupDeadlineMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "flightDeadlineMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "shutdownDeadlineMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

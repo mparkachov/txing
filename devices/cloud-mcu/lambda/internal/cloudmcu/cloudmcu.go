@@ -25,24 +25,25 @@ import (
 )
 
 const (
-	CloudMcuThingType      = "cloud-mcu"
-	CloudRigThingType      = "cloud"
-	RigKindAttribute       = "rigType"
-	ThingIndexName         = "AWS_Things"
-	CloudMcuSearchQuery    = "thingTypeName:cloud-mcu"
-	CloudMcuSearchPageSize = int32(100)
-	SparkplugNamespace     = "spBv1.0"
-	CapabilitySparkplug    = "sparkplug"
-	CapabilitySQS          = "sqs"
-	CapabilityPower        = "power"
-	CapabilityECS          = "ecs"
-	RedconReady            = uint8(1)
-	RedconWakeup           = uint8(3)
-	RedconSleep            = uint8(4)
-	NodeBdSeq              = uint64(1)
-	CommandSucceeded       = "succeeded"
-	CommandFailed          = "failed"
-	ECSStartedByPrefix     = "txing-cloud-mcu"
+	CloudMcuThingType    = "cloud-mcu"
+	VirtualQuadThingType = "virtual-quad"
+	CloudRigThingType    = "cloud"
+	RigKindAttribute     = "rigType"
+	ThingIndexName       = "AWS_Things"
+	CloudDevicePageSize  = int32(100)
+	SparkplugNamespace   = "spBv1.0"
+	CapabilitySparkplug  = "sparkplug"
+	CapabilitySQS        = "sqs"
+	CapabilityPower      = "power"
+	CapabilityECS        = "ecs"
+	CapabilitySimulation = "simulation"
+	RedconReady          = uint8(1)
+	RedconWakeup         = uint8(3)
+	RedconSleep          = uint8(4)
+	NodeBdSeq            = uint64(1)
+	CommandSucceeded     = "succeeded"
+	CommandFailed        = "failed"
+	ECSStartedByPrefix   = "txing-cloud-mcu"
 )
 
 var (
@@ -50,14 +51,14 @@ var (
 	SleepingTickOffsetsSeconds = []int32{0}
 )
 
-type CloudMcuDevice struct {
+type CloudDevice struct {
 	ThingName string
 	TownID    string
 	RigID     string
 }
 
 type SearchPage struct {
-	Devices   []CloudMcuDevice
+	Devices   []CloudDevice
 	NextToken *string
 }
 
@@ -75,7 +76,7 @@ type CloudMcuTick struct {
 	ScheduledAtMs     int64  `json:"scheduledAtMs"`
 }
 
-func NewTick(device CloudMcuDevice, offset int32, scheduledAtMs int64) CloudMcuTick {
+func NewTick(device CloudDevice, offset int32, scheduledAtMs int64) CloudMcuTick {
 	return CloudMcuTick{
 		SchemaVersion:     "1.0",
 		ThingName:         device.ThingName,
@@ -120,7 +121,7 @@ func (s EcsTaskState) IsActive() bool {
 }
 
 type AWSClientAPI interface {
-	SearchCloudMcuDevices(ctx context.Context, nextToken *string) (SearchPage, error)
+	SearchCloudDevices(ctx context.Context, thingType string, nextToken *string) (SearchPage, error)
 	DescribeThing(ctx context.Context, thingName string) (ThingDescription, error)
 	Publish(ctx context.Context, topic string, payload []byte) error
 	SendTickBatch(ctx context.Context, ticks []CloudMcuTick) error
@@ -207,17 +208,17 @@ func (c *AWSClient) requiredECSTaskDefinition() (string, error) {
 	return c.ecsTaskDefinition, nil
 }
 
-func (c *AWSClient) SearchCloudMcuDevices(ctx context.Context, nextToken *string) (SearchPage, error) {
+func (c *AWSClient) SearchCloudDevices(ctx context.Context, thingType string, nextToken *string) (SearchPage, error) {
 	out, err := c.iot.SearchIndex(ctx, &iot.SearchIndexInput{
 		IndexName:   aws.String(ThingIndexName),
-		QueryString: aws.String(CloudMcuSearchQuery),
-		MaxResults:  aws.Int32(CloudMcuSearchPageSize),
+		QueryString: aws.String("thingTypeName:" + thingType),
+		MaxResults:  aws.Int32(CloudDevicePageSize),
 		NextToken:   nextToken,
 	})
 	if err != nil {
 		return SearchPage{}, err
 	}
-	var devices []CloudMcuDevice
+	var devices []CloudDevice
 	for _, thing := range out.Things {
 		if thing.ThingName == nil || strings.TrimSpace(*thing.ThingName) == "" {
 			continue
@@ -227,7 +228,7 @@ func (c *AWSClient) SearchCloudMcuDevices(ctx context.Context, nextToken *string
 		if townID == "" || rigID == "" {
 			continue
 		}
-		devices = append(devices, CloudMcuDevice{ThingName: strings.TrimSpace(*thing.ThingName), TownID: townID, RigID: rigID})
+		devices = append(devices, CloudDevice{ThingName: strings.TrimSpace(*thing.ThingName), TownID: townID, RigID: rigID})
 	}
 	return SearchPage{Devices: devices, NextToken: blankPtrToNil(out.NextToken)}, nil
 }
@@ -907,13 +908,16 @@ type RigScheduler struct{ aws AWSClientAPI }
 func NewRigScheduler(aws AWSClientAPI) RigScheduler { return RigScheduler{aws: aws} }
 
 func (s RigScheduler) HandleScheduleWithNow(ctx context.Context, nowMs int64) (map[string]any, error) {
-	devices, err := discoverCloudMcuDevices(ctx, s.aws)
+	devices, err := discoverCloudDevices(ctx, s.aws, CloudMcuThingType)
 	if err != nil {
 		return nil, err
 	}
-	rigSet := map[string]CloudMcuDevice{}
-	for _, device := range devices {
-		rigSet[device.TownID+"\x00"+device.RigID] = device
+	virtualQuads, virtualErr := discoverCloudDevices(ctx, s.aws, VirtualQuadThingType)
+	rigSet := map[string]CloudDevice{}
+	for _, group := range [][]CloudDevice{devices, virtualQuads} {
+		for _, device := range group {
+			rigSet[device.TownID+"\x00"+device.RigID] = device
+		}
 	}
 	var rigKeys []string
 	for key := range rigSet {
@@ -921,15 +925,15 @@ func (s RigScheduler) HandleScheduleWithNow(ctx context.Context, nowMs int64) (m
 	}
 	sort.Strings(rigKeys)
 	var publishedRigs []any
+	seq := uint64(0)
+	if nowMs > 0 {
+		seq = uint64(nowMs / 60000)
+	}
 	for _, key := range rigKeys {
 		device := rigSet[key]
 		topic, err := BuildNodeTopic(device.TownID, "NBIRTH", device.RigID)
 		if err != nil {
 			return nil, err
-		}
-		seq := uint64(0)
-		if nowMs > 0 {
-			seq = uint64(nowMs / 60000)
 		}
 		payload, err := BuildNodeBirthPayload(seq, nowMs)
 		if err != nil {
@@ -958,7 +962,96 @@ func (s RigScheduler) HandleScheduleWithNow(ctx context.Context, nowMs int64) (m
 		sentBatches++
 		sentTicks += len(ticks)
 	}
-	return map[string]any{"eventType": "schedule", "deviceCount": len(devices), "rigCount": len(rigKeys), "tickCount": sentTicks, "batchCount": sentBatches, "publishedRigs": publishedRigs}, nil
+	for _, device := range virtualQuads {
+		if err := s.publishInitialVirtualQuadBirth(ctx, device, seq, nowMs); err != nil {
+			virtualErr = errors.Join(virtualErr, fmt.Errorf("announce %s: %w", device.ThingName, err))
+		}
+	}
+	if virtualErr != nil {
+		return nil, virtualErr
+	}
+	return map[string]any{"eventType": "schedule", "deviceCount": len(devices) + len(virtualQuads), "rigCount": len(rigKeys), "tickCount": sentTicks, "batchCount": sentBatches, "publishedRigs": publishedRigs}, nil
+}
+
+func (s RigScheduler) publishInitialVirtualQuadBirth(ctx context.Context, device CloudDevice, seq uint64, nowMs int64) error {
+	shadow, exists, err := s.aws.GetThingShadow(ctx, device.ThingName, CapabilitySparkplug)
+	if err != nil || !exists {
+		// Enlistment seeds the offline projection before the first birth.
+		return err
+	}
+	var projection struct {
+		State struct {
+			Reported struct {
+				Topic struct {
+					MessageType string `json:"messageType"`
+					GroupID     string `json:"groupId"`
+					EdgeNodeID  string `json:"edgeNodeId"`
+					DeviceID    string `json:"deviceId"`
+				} `json:"topic"`
+			} `json:"reported"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(shadow, &projection); err != nil {
+		return err
+	}
+	projected := projection.State.Reported.Topic
+	if projected.DeviceID != device.ThingName {
+		return nil
+	}
+	switch projected.MessageType {
+	case "DBIRTH", "DDATA":
+		if projected.GroupID == device.TownID && projected.EdgeNodeID == device.RigID {
+			return nil
+		}
+	case "DDEATH":
+	default:
+		return nil
+	}
+	// Fleet Indexing can briefly retain the previous assignment after a move.
+	registration, err := s.aws.DescribeThing(ctx, device.ThingName)
+	if err != nil {
+		if errorIsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if registration.ThingTypeName == nil || *registration.ThingTypeName != VirtualQuadThingType ||
+		registration.Attributes["townId"] != device.TownID || registration.Attributes["rigId"] != device.RigID {
+		return nil
+	}
+	simulation, exists, err := s.aws.GetThingShadow(ctx, device.ThingName, CapabilitySimulation)
+	if err != nil || !exists {
+		return err
+	}
+	var state struct {
+		State struct {
+			Reported struct {
+				Phase     string `json:"phase"`
+				SessionID string `json:"sessionId"`
+			} `json:"reported"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(simulation, &state); err != nil {
+		return err
+	}
+	if state.State.Reported.Phase != "stopped" || state.State.Reported.SessionID != "" {
+		return nil
+	}
+	topic, err := BuildDeviceTopic(device.TownID, "DBIRTH", device.RigID, device.ThingName)
+	if err != nil {
+		return err
+	}
+	payload, err := buildDeviceReportPayload(RedconSleep, seq, nowMs, []metric{
+		boolMetric("capability.sparkplug", true),
+		boolMetric("capability."+CapabilitySimulation, true),
+		boolMetric("capability.mavlink", false),
+		boolMetric("capability.video", false),
+		boolMetric("capability.agent", false),
+	})
+	if err != nil {
+		return err
+	}
+	return s.aws.Publish(ctx, topic, payload)
 }
 
 func scheduledDevicePowerState(ctx context.Context, awsClient AWSClientAPI, thingName string) (powerState, error) {
@@ -976,13 +1069,13 @@ func tickOffsetsForPowerState(power powerState) []int32 {
 	return append([]int32(nil), SleepingTickOffsetsSeconds...)
 }
 
-func discoverCloudMcuDevices(ctx context.Context, awsClient AWSClientAPI) ([]CloudMcuDevice, error) {
-	var devices []CloudMcuDevice
+func discoverCloudDevices(ctx context.Context, awsClient AWSClientAPI, thingType string) ([]CloudDevice, error) {
+	var devices []CloudDevice
 	var next *string
 	for {
-		page, err := awsClient.SearchCloudMcuDevices(ctx, next)
+		page, err := awsClient.SearchCloudDevices(ctx, thingType, next)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("discover %s devices: %w", thingType, err)
 		}
 		devices = append(devices, page.Devices...)
 		next = page.NextToken
@@ -1246,7 +1339,7 @@ func (r Runtime) HandleDCMDWithNow(ctx context.Context, event map[string]any, no
 	if err := r.updatePowerShadow(ctx, thingName, power); err != nil {
 		return nil, err
 	}
-	tick := NewTick(CloudMcuDevice{ThingName: thingName, TownID: townID, RigID: rigID}, 0, nowMs)
+	tick := NewTick(CloudDevice{ThingName: thingName, TownID: townID, RigID: rigID}, 0, nowMs)
 	if err := r.aws.SendTickBatch(ctx, []CloudMcuTick{tick}); err != nil {
 		return nil, err
 	}

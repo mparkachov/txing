@@ -7,6 +7,7 @@ import powerDeviceAdapter from '../../devices/power/web/power-adapter'
 import powerSiDeviceAdapter from '../../devices/power-si/web/power-si-adapter'
 import powerNrfDeviceAdapter from '../../devices/power-nrf/web/power-nrf-adapter'
 import macDeviceAdapter from '../../devices/mac/web/mac-adapter'
+import virtualQuadAdapter from '../../devices/virtual-quad/web/virtual-quad-adapter'
 import type { DeviceWebAdapter } from './device-adapter'
 
 const installedDeviceAdapters: readonly DeviceWebAdapter[] = [
@@ -19,6 +20,7 @@ const installedDeviceAdapters: readonly DeviceWebAdapter[] = [
   powerSiDeviceAdapter,
   powerNrfDeviceAdapter,
   macDeviceAdapter,
+  virtualQuadAdapter,
 ]
 
 const adaptersByType = new Map(

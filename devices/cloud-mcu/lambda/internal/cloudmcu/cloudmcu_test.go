@@ -23,6 +23,7 @@ type sentTick struct {
 
 type fakeAWS struct {
 	pages           []SearchPage
+	virtualPages    []SearchPage
 	descriptions    map[string]ThingDescription
 	published       []publishedMessage
 	sentTickBatches [][]sentTick
@@ -71,15 +72,19 @@ func cloudShadowKey(thingName, shadowName string) string {
 	return thingName + "\x00" + shadowName
 }
 
-func (f *fakeAWS) SearchCloudMcuDevices(context.Context, *string) (SearchPage, error) {
+func (f *fakeAWS) SearchCloudDevices(_ context.Context, thingType string, _ *string) (SearchPage, error) {
 	if f.searchErr != nil {
 		return SearchPage{}, f.searchErr
 	}
-	if len(f.pages) == 0 {
+	pages := &f.pages
+	if thingType == VirtualQuadThingType {
+		pages = &f.virtualPages
+	}
+	if len(*pages) == 0 {
 		return SearchPage{}, nil
 	}
-	page := f.pages[0]
-	f.pages = f.pages[1:]
+	page := (*pages)[0]
+	*pages = (*pages)[1:]
 	return page, nil
 }
 
@@ -199,9 +204,112 @@ func redconCommand(redcon uint8, seq uint64) []byte {
 	return payload
 }
 
+func TestCensusAnnouncesStoppedVirtualQuadsWithoutCompute(t *testing.T) {
+	ctx := context.Background()
+	aws := newFakeAWS()
+	virtualOnly := CloudDevice{ThingName: "virtual-quad-1", TownID: "town-1", RigID: "rig-2"}
+	mixed := CloudDevice{ThingName: "virtual-quad-2", TownID: "town-1", RigID: "rig-1"}
+	mcu := CloudDevice{ThingName: "cloud-1", TownID: "town-1", RigID: "rig-1"}
+	quads := []CloudDevice{virtualOnly, mixed}
+	seed := func(device CloudDevice, messageType string) {
+		aws.shadows[cloudShadowKey(device.ThingName, "sparkplug")] = mustJSON(map[string]any{
+			"state": map[string]any{"reported": map[string]any{"topic": map[string]any{
+				"groupId": device.TownID, "edgeNodeId": device.RigID, "deviceId": device.ThingName, "messageType": messageType,
+			}}},
+		})
+	}
+	for _, quad := range quads {
+		seed(quad, "DDEATH")
+		thingType := VirtualQuadThingType
+		aws.descriptions[quad.ThingName] = ThingDescription{
+			ThingTypeName: &thingType,
+			Attributes:    map[string]string{"townId": quad.TownID, "rigId": quad.RigID},
+		}
+		aws.shadows[cloudShadowKey(quad.ThingName, CapabilitySimulation)] = []byte(`{"state":{"reported":{"phase":"stopped","terminalRevision":0}}}`)
+	}
+	for cycle := 0; cycle < 2; cycle++ {
+		aws.pages = []SearchPage{{Devices: []CloudDevice{mcu}}}
+		aws.virtualPages = []SearchPage{{Devices: quads}}
+		aws.published = nil
+		result, err := NewRigScheduler(aws).HandleScheduleWithNow(ctx, 1714380000000+int64(cycle)*60000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result["deviceCount"] != 3 || result["rigCount"] != 2 || result["tickCount"] != 1 {
+			t.Fatalf("bad mixed census: %#v", result)
+		}
+		if len(aws.published) != 4-2*cycle || aws.published[0].topic != "spBv1.0/town-1/NBIRTH/rig-1" || aws.published[1].topic != "spBv1.0/town-1/NBIRTH/rig-2" {
+			t.Fatalf("bad rig and device births: %#v", aws.published)
+		}
+		for index, message := range aws.published[2:] {
+			quad := quads[index]
+			wantTopic := "spBv1.0/" + quad.TownID + "/DBIRTH/" + quad.RigID + "/" + quad.ThingName
+			if message.topic != wantTopic {
+				t.Fatalf("topic = %q, want %q", message.topic, wantTopic)
+			}
+			metrics := decodePayloadMetrics(t, message.payload)
+			requireMetric(t, metrics, "redcon", int32(4))
+			for name, value := range map[string]bool{"sparkplug": true, "simulation": true, "mavlink": false, "video": false, "agent": false} {
+				requireMetric(t, metrics, "capability."+name, value)
+			}
+			seed(quad, "DBIRTH")
+		}
+		if batch := aws.sentTickBatches[cycle]; len(batch) != 1 || batch[0].tick.ThingName != mcu.ThingName {
+			t.Fatalf("unexpected tick batch: %#v", batch)
+		}
+	}
+	if aws.runTaskCount != 0 || len(aws.shadowUpdates) != 0 {
+		t.Fatalf("census started compute or wrote shadows: %#v", aws)
+	}
+}
+
+func TestVirtualQuadBirthUsesCurrentAssignmentAndStoppedState(t *testing.T) {
+	const thingName = "virtual-quad-1"
+	for _, tc := range []struct {
+		name       string
+		indexedRig string
+		projection string
+		phase      string
+		wantBirth  bool
+	}{
+		{name: "stopped quad moves to new rig", indexedRig: "rig-2", projection: "DBIRTH", phase: "stopped", wantBirth: true},
+		{name: "index still shows old rig", indexedRig: "rig-1", projection: "DDEATH", phase: "stopped"},
+		{name: "active quad projection is preserved", indexedRig: "rig-2", projection: "DBIRTH", phase: "operational"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			aws := newFakeAWS()
+			thingType := VirtualQuadThingType
+			aws.descriptions[thingName] = ThingDescription{
+				ThingTypeName: &thingType,
+				Attributes:    map[string]string{"townId": "town-1", "rigId": "rig-2"},
+			}
+			aws.shadows[cloudShadowKey(thingName, CapabilitySparkplug)] = mustJSON(map[string]any{
+				"state": map[string]any{"reported": map[string]any{"topic": map[string]any{
+					"deviceId": thingName, "messageType": tc.projection, "groupId": "town-1", "edgeNodeId": "rig-1",
+				}}},
+			})
+			aws.shadows[cloudShadowKey(thingName, CapabilitySimulation)] = mustJSON(map[string]any{
+				"state": map[string]any{"reported": map[string]any{"phase": tc.phase}},
+			})
+			device := CloudDevice{ThingName: thingName, TownID: "town-1", RigID: tc.indexedRig}
+			err := NewRigScheduler(aws).publishInitialVirtualQuadBirth(context.Background(), device, 1, 1714380000000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantBirth {
+				if len(aws.published) != 1 || aws.published[0].topic != "spBv1.0/town-1/DBIRTH/rig-2/"+thingName {
+					t.Fatalf("expected device birth on the current rig: %#v", aws.published)
+				}
+			} else if len(aws.published) != 0 {
+				t.Fatalf("unexpected device birth: %#v", aws.published)
+			}
+		})
+	}
+}
+
 func TestSchedulerPublishesRigBirthAndUsesRedconAwareTickCadence(t *testing.T) {
 	aws := newFakeAWS()
-	aws.pages = append(aws.pages, SearchPage{Devices: []CloudMcuDevice{
+	aws.pages = append(aws.pages, SearchPage{Devices: []CloudDevice{
 		{ThingName: "cloud-1", TownID: "town-1", RigID: "rig-1"},
 		{ThingName: "cloud-2", TownID: "town-1", RigID: "rig-1"},
 	}})
@@ -264,7 +372,7 @@ func TestRigNCMDRedconFourDisablesScheduleAndPublishesLowCostBirth(t *testing.T)
 
 func TestRigNCMDRedconOneEnablesScheduleAndRunsSchedulerOnce(t *testing.T) {
 	aws := newFakeAWS()
-	aws.pages = append(aws.pages, SearchPage{Devices: []CloudMcuDevice{
+	aws.pages = append(aws.pages, SearchPage{Devices: []CloudDevice{
 		{ThingName: "cloud-1", TownID: "town-1", RigID: "rig-1"},
 	}})
 	event := map[string]any{
@@ -417,7 +525,7 @@ func TestUnchangedSleepingTickSkipsShadowWritesAndSparkplugPublish(t *testing.T)
 
 func TestSleepingDeviceIdleWindowsSendOneTickAndNoRecurringWritesOrPublishes(t *testing.T) {
 	aws := newFakeAWS()
-	device := CloudMcuDevice{ThingName: "cloud-1", TownID: "town-1", RigID: "rig-1"}
+	device := CloudDevice{ThingName: "cloud-1", TownID: "town-1", RigID: "rig-1"}
 	scheduler := NewRigScheduler(aws)
 	runtime := NewRuntime(aws)
 	ctx := context.Background()
@@ -425,7 +533,7 @@ func TestSleepingDeviceIdleWindowsSendOneTickAndNoRecurringWritesOrPublishes(t *
 
 	for minute := 0; minute < 5; minute++ {
 		nowMs := startMs + int64(minute)*60000
-		aws.pages = []SearchPage{{Devices: []CloudMcuDevice{device}}}
+		aws.pages = []SearchPage{{Devices: []CloudDevice{device}}}
 		beforeBatches := len(aws.sentTickBatches)
 		scheduleResult, err := scheduler.HandleScheduleWithNow(ctx, nowMs)
 		if err != nil {

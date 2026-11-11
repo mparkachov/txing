@@ -80,7 +80,7 @@ describe('app route catalog source wiring', () => {
     expect(commandabilityMatch?.[1]).not.toMatch(
       /canUseDriveControl|isDriveControl|isDriveInputEnabled|isDriveControlOwnedByOther|robotState|mcp|Mcp/,
     )
-    expect(appSource).toContain('isInteractive={isSparkplugDeviceCommandAvailable}')
+    expect(appSource).toContain('isInteractive={isSparkplugDeviceCommandAvailable && !isVirtualQuad}')
     expect(appSource).toContain('sparkplugRedcon={reportedRedcon}')
   })
 

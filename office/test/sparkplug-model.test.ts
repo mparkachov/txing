@@ -4,11 +4,22 @@ import {
   extractReportedRedcon,
   extractSparkplugCapabilityAvailability,
   extractSparkplugRedconCommandStatus,
+  hasLiveSparkplugDeviceProjection,
   shouldClearPendingTargetRedcon,
 } from '../src/sparkplug-model'
 import agentShadowExample from '../../devices/tbot/aws/fixtures/agent-shadow.json'
+import virtualQuadBirth from '../../devices/virtual-quad/aws/fixtures/sparkplug-shadow.json'
 
 describe('sparkplug model helpers', () => {
+  test('recognizes a live device projection only on its current assignment', () => {
+    const target = { groupId: 'town', edgeNodeId: 'cloud-demo', deviceId: 'virtual-quad-demo' }
+    expect(hasLiveSparkplugDeviceProjection(virtualQuadBirth, target)).toBe(true)
+    expect(hasLiveSparkplugDeviceProjection(virtualQuadBirth, { ...target, edgeNodeId: 'cloud-new' })).toBe(false)
+
+    const offline = structuredClone(virtualQuadBirth)
+    offline.state.reported.topic.messageType = 'DDEATH'
+    expect(hasLiveSparkplugDeviceProjection(offline, target)).toBe(false)
+  })
   test('optional agent status cannot alter device REDCON or capability availability', () => {
     const sparkplug = {
       state: { reported: {

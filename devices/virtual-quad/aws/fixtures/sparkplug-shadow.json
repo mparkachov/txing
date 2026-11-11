@@ -1,0 +1,25 @@
+{
+  "state": {
+    "reported": {
+      "topic": {
+        "namespace": "spBv1.0",
+        "groupId": "town",
+        "messageType": "DBIRTH",
+        "edgeNodeId": "cloud-demo",
+        "deviceId": "virtual-quad-demo"
+      },
+      "payload": {
+        "metrics": {
+          "redcon": 4,
+          "capability": {
+            "sparkplug": true,
+            "simulation": true,
+            "mavlink": false,
+            "video": false,
+            "agent": false
+          }
+        }
+      }
+    }
+  }
+}

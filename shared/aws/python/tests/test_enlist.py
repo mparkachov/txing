@@ -359,6 +359,25 @@ class EnlistServiceTests(unittest.TestCase):
         self.assertTrue(board_video["created"])
         self.assertIn(board_video["channelName"], self.runtime.kinesisvideo.channels)
 
+    def test_enlist_virtual_quad_seeds_stopped_shadows_and_distinct_channels(self) -> None:
+        town = self._enlist_town()
+        raspi = self._enlist_rig(town["thingName"], "raspi", "server")
+        with self.assertRaisesRegex(enlist.EnlistError, "not compatible"):
+            self._enlist_device(raspi["thingName"], "virtual-quad", "virtual-quad")
+
+        rig = self._enlist_rig(town["thingName"], "cloud", "aws")
+        result = self._enlist_device(rig["thingName"], "virtual-quad", "virtual-quad")
+        thing = result["thingName"]
+        self.assertEqual(result["thingTypeName"], "virtual-quad")
+        self.assertEqual(result["attributes"]["rigId"], rig["thingName"])
+        self.assertEqual(result["attributes"]["redconCommandLevels"], "4,1")
+        self.assertEqual(result["initializedShadows"], ["sparkplug", "simulation", "mavlink", "video", "agent"])
+        sparkplug = json.loads(self.runtime.iot_data.shadows[(thing, "sparkplug")])
+        self.assertEqual(sparkplug["state"]["reported"]["topic"]["messageType"], "DDEATH")
+        simulation = json.loads(self.runtime.iot_data.shadows[(thing, "simulation")])
+        self.assertEqual(simulation["state"]["reported"], {"phase": "stopped", "terminalRevision": 0})
+        self.assertEqual(self.runtime.kinesisvideo.channels, {f"{thing}-board-video", f"{thing}-mavlink"})
+
     def test_enlist_tbot_creates_mavlink_shadow_and_independent_signaling_channels(self) -> None:
         town = self._enlist_town()
         raspi = self._enlist_rig(town["thingName"], "raspi", "server")

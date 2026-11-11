@@ -1,0 +1,8 @@
+{
+  "serviceId": "video",
+  "available": false,
+  "ready": false,
+  "status": "unavailable",
+  "viewerConnected": false,
+  "lastError": null
+}

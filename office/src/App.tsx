@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { extractCyberbrickMavlinkReportedState } from '../../devices/cyberbrick/web/app-model'
 import { MavlinkControlProvider } from '../../devices/cyberbrick/web/MavlinkControlPanel'
+import { VirtualQuadStartButton } from '../../devices/virtual-quad/web/virtual-quad-adapter'
 import {
   beginSignIn,
   clearAuthState,
@@ -95,6 +96,7 @@ import {
   extractSparkplugCapabilityAvailability,
   extractSparkplugRedconCommandStatus,
   getTxingRedconToneClass,
+  hasLiveSparkplugDeviceProjection,
   hasReachedTargetRedcon,
   shouldClearPendingTargetRedcon,
 } from './sparkplug-model'
@@ -166,6 +168,7 @@ const defaultMcpActiveTtlMs = 5_000
 const robotStatePollIntervalMs = 5_000
 const routeSparkplugPollIntervalMs = 2_000
 const catalogSparkplugPollIntervalMs = 5_000
+const cloudRigInventoryPollIntervalMs = 15_000
 const routeSparkplugRedconCommandTimeoutMs = 120_000
 const sparkplugRedconCommandSeqModulo = 2_147_000_000
 const appHomePath = '/'
@@ -385,6 +388,8 @@ function App({ initialAuthError = '' }: AppProps) {
     ? routeHeaderState.shadowWarning
     : ''
   const currentThingTypeName = routeHeaderMetadata?.thingTypeName ?? null
+  const isVirtualQuad = currentThingTypeName === 'virtual-quad'
+  const virtualQuadRigId = isVirtualQuad ? routeHeaderMetadata?.rigId ?? null : null
   const currentThingKind = routeHeaderMetadata?.kind ?? null
   const currentTownCatalogName =
     route.kind === 'town'
@@ -393,6 +398,7 @@ function App({ initialAuthError = '' }: AppProps) {
         ? routeHeaderMetadata?.townName ?? null
         : null
   const currentRigCatalogThingName = route.kind === 'rig' ? route.rig : null
+  const isCloudRigCatalog = route.kind === 'rig' && currentThingTypeName === 'cloud'
   const selectedDeviceEntry = useMemo(() => {
     if (!selectedDeviceRoute || deviceCatalog.status !== 'ready') {
       return null
@@ -449,6 +455,7 @@ function App({ initialAuthError = '' }: AppProps) {
       ? currentDeviceAdapter.buildMavlinkChannelName(selectedDeviceRoute.device)
       : ''
   const isMavlinkControlEnabled =
+    !isVirtualQuad &&
     mavlinkChannelName !== '' &&
     extractSparkplugCapabilityAvailability(displayShadowDocument, 'mavlink') === true
   const deviceDebugDiagnostics = currentDeviceAdapter?.renderDebug?.() ?? null
@@ -508,6 +515,11 @@ function App({ initialAuthError = '' }: AppProps) {
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow || isRedconCommandPending
   const isRedconSleepCommandDisabled =
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow
+  const isStoppedVirtualQuad =
+    isVirtualQuad && reportedRedcon === 4 && commandableRedconLevelSet.has(1) &&
+    currentThingSparkplugCommandTarget?.kind === 'device' &&
+    hasLiveSparkplugDeviceProjection(displayShadowDocument, currentThingSparkplugCommandTarget) &&
+    extractSparkplugCapabilityAvailability(displayShadowDocument, 'simulation') === true
   const canLoadShadow = !isLoadingShadow && isShadowConnected
   const canUseDriveControl = currentDeviceAdapter?.canUseDriveControl(reportedRedcon) ?? false
   const isDriveControlActive =
@@ -1159,6 +1171,8 @@ function App({ initialAuthError = '' }: AppProps) {
     let cancelled = false
     let deviceSparkplugRefreshInFlight = false
     let deviceSparkplugRefreshInterval: number | null = null
+    let catalogDevices: DeviceCatalogEntry[] = []
+    let catalogLoadedAtMs = 0
     setDeviceCatalog({
       status: 'loading',
       devices: [],
@@ -1194,32 +1208,33 @@ function App({ initialAuthError = '' }: AppProps) {
       }
     }
 
-    const refreshDeviceSparkplugStatus = async (
-      devicesToRefresh: readonly DeviceCatalogEntry[],
-    ): Promise<void> => {
+    const refreshDeviceSparkplugStatus = async (): Promise<void> => {
       if (deviceSparkplugRefreshInFlight) {
         return
       }
       deviceSparkplugRefreshInFlight = true
       try {
+        if (isCloudRigCatalog && Date.now() - catalogLoadedAtMs >= cloudRigInventoryPollIntervalMs) {
+          catalogLoadedAtMs = Date.now()
+          try {
+            catalogDevices = await listRigDevices(resolveSessionIdToken, currentRigCatalogThingName)
+          } catch {
+            // Retain the last inventory while Fleet Indexing is unavailable.
+          }
+        }
         const refreshedDevices = await Promise.all(
-          devicesToRefresh.map((device) => readDeviceSparkplugStatus(device)),
+          catalogDevices.map((device) => readDeviceSparkplugStatus(device)),
         )
         if (cancelled) {
           return
         }
-        const refreshedDeviceByThingName = new Map(
-          refreshedDevices.map((device) => [device.thingName, device]),
-        )
         setDeviceCatalog((currentCatalog) => {
           if (currentCatalog.status !== 'ready') {
             return currentCatalog
           }
           return {
             ...currentCatalog,
-            devices: currentCatalog.devices.map(
-              (device) => refreshedDeviceByThingName.get(device.thingName) ?? device,
-            ),
+            devices: refreshedDevices,
           }
         })
       } finally {
@@ -1233,16 +1248,18 @@ function App({ initialAuthError = '' }: AppProps) {
         if (cancelled) {
           return
         }
+        catalogDevices = devices
+        catalogLoadedAtMs = Date.now()
 
         setDeviceCatalog({
           status: 'ready',
           devices: createPendingCatalogItems(devices),
           error: '',
         })
-        if (devices.length > 0) {
-          void refreshDeviceSparkplugStatus(devices)
+        if (devices.length > 0 || isCloudRigCatalog) {
+          void refreshDeviceSparkplugStatus()
           deviceSparkplugRefreshInterval = window.setInterval(() => {
-            void refreshDeviceSparkplugStatus(devices)
+            void refreshDeviceSparkplugStatus()
           }, catalogSparkplugPollIntervalMs)
         }
       } catch (caughtError) {
@@ -1279,6 +1296,7 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [
     hasUnsupportedTown,
     currentRigCatalogThingName,
+    isCloudRigCatalog,
     navigationRigLabel,
     resolveSessionIdToken,
     route.kind,
@@ -2099,7 +2117,7 @@ function App({ initialAuthError = '' }: AppProps) {
               <SparkplugPanel
                 sparkplugRedcon={reportedRedcon}
                 targetRedcon={pendingTargetRedcon}
-                isInteractive={isSparkplugDeviceCommandAvailable}
+                isInteractive={isSparkplugDeviceCommandAvailable && !isVirtualQuad}
                 isRedconCommandDisabled={isRedconCommandDisabled}
                 isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
                 commandableRedconLevels={commandableRedconLevels}
@@ -2107,6 +2125,15 @@ function App({ initialAuthError = '' }: AppProps) {
                   void handleRedconSelect(redcon)
                 }}
               />
+              {virtualQuadRigId && isStoppedVirtualQuad ? (
+                <VirtualQuadStartButton
+                  key={virtualQuadRigId}
+                  rigId={virtualQuadRigId}
+                  resolveIdToken={resolveSessionIdToken}
+                  disabled={isRedconCommandDisabled}
+                  onStart={() => { void handleRedconSelect(1) }}
+                />
+              ) : null}
               {navigationCapabilities}
             </div>
           ) : null}

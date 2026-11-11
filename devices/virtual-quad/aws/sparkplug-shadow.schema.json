@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://txing.local/schemas/virtual-quad/sparkplug-shadow.schema.json",
+  "title": "Virtual Quadcopter Sparkplug Named Shadow",
+  "type": "object",
+  "required": [
+    "state"
+  ],
+  "properties": {
+    "state": {
+      "type": "object",
+      "required": [
+        "reported"
+      ],
+      "properties": {
+        "reported": {
+          "type": "object",
+          "required": [
+            "topic",
+            "payload"
+          ],
+          "properties": {
+            "topic": {
+              "type": "object",
+              "properties": {
+                "messageType": {
+                  "enum": [
+                    "DBIRTH",
+                    "DDATA",
+                    "DDEATH"
+                  ]
+                }
+              }
+            },
+            "payload": {
+              "type": "object",
+              "properties": {
+                "timestamp": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "metrics": {
+                  "type": "object",
+                  "properties": {
+                    "redcon": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 4
+                    },
+                    "capability": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
