@@ -2264,7 +2264,7 @@ function App({ initialAuthError = '' }: AppProps) {
       </section>
     )
   } else if (virtualQuadTarget && selectedDeviceRoute) {
-    content = virtualQuad.fresh && virtualQuad.session?.sessionId ? (
+    content = virtualQuad.fresh && virtualQuad.session?.phase === 'operational' && virtualQuad.session.sessionId ? (
       <VirtualQuadLiveView
         key={`${virtualQuadTarget.deviceId}/${virtualQuad.session.sessionId}`}
         deviceId={virtualQuadTarget.deviceId}

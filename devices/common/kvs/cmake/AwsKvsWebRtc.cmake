@@ -89,6 +89,14 @@ function(txing_link_kvs_sdk target)
     )
   endif()
 
+  if(TXING_KVS_PATCH_WSS_WRITE)
+    set(_txing_kvs_patch_step PATCH_COMMAND "${CMAKE_COMMAND}"
+      "-DTXING_KVS_SOURCE_DIR=<SOURCE_DIR>"
+      "-DTXING_KVS_PATCH=${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../patches/signaling-wss-write.patch"
+      -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ApplyAwsKvsPatch.cmake"
+    )
+  endif()
+
   ExternalProject_Add(
     txing_aws_kvs_webrtc_sdk
     GIT_REPOSITORY "${TXING_AWS_KVS_WEBRTC_SDK_GIT_REPOSITORY}"
@@ -99,6 +107,7 @@ function(txing_link_kvs_sdk target)
     SOURCE_DIR "${TXING_AWS_KVS_WEBRTC_SDK_SOURCE_DIR}"
     BINARY_DIR "${TXING_AWS_KVS_WEBRTC_SDK_BUILD_DIR}"
     INSTALL_DIR "${TXING_AWS_KVS_WEBRTC_SDK_INSTALL_DIR}"
+    ${_txing_kvs_patch_step}
     CONFIGURE_COMMAND
       "${CMAKE_COMMAND}" -E rm -rf "${TXING_AWS_KVS_WEBRTC_SDK_SYSTEM_DEPS_DIR}"
       COMMAND "${CMAKE_COMMAND}"

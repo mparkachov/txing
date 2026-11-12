@@ -869,8 +869,8 @@ void TestMasterAnswerPreparationOrder() {
     );
     Expect(non_trickle_status == 0, "non-trickle answer preparation should succeed");
     Expect(
-        calls == std::vector<std::string>({"create", "set-local"}),
-        "non-trickle negotiation must defer sending until ICE gathering completes"
+        calls == std::vector<std::string>({"set-local"}),
+        "non-trickle negotiation must defer creating and sending the answer until ICE gathering completes"
     );
 
     calls.clear();

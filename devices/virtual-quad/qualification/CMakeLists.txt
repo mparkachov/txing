@@ -3,6 +3,7 @@ project(txing_virtual_quad_qualification LANGUAGES CXX)
 
 set(TXING_KVS_HEADLESS ON)
 set(TXING_KVS_GRPC_BRIDGE OFF)
+set(TXING_KVS_PATCH_WSS_WRITE ON)
 set(BUILD_TESTING OFF)
 add_subdirectory(../../common/board/kvs_master kvs-master EXCLUDE_FROM_ALL)
 

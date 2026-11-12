@@ -394,12 +394,14 @@ void Run(bool local, bool camera) {
         config.client_id = "virtual-quad-qualification";
         config.camera.bitrate = 800'000;
         config.isolate_video_peers = camera;
+        config.defer_ice_candidate_signaling = camera;
         const auto credentials = kvs::ResolveAwsCredentials();
         video = kvs::CreateKvsSession(config, credentials);
         video->Start();
         std::puts("QUAD_VIDEO_MASTER_STARTED");
 
         config.session_kind = kvs::KvsSessionKind::kMavlinkControl;
+        config.gather_ice_before_answer = camera;
         config.channel_name = RequireEnv("QUAD_MAVLINK_CHANNEL");
         data = kvs::CreateKvsSessionWithMavlinkBridge(
             config, credentials, std::make_unique<ObservationBridge>(telemetry));

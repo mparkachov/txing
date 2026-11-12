@@ -198,6 +198,18 @@ func TestStopDuringDispatchFencesWorkerAndRestart(t *testing.T) {
 	if err != nil || receipt.Status != Succeeded || replay.Session.ID != next.Session.ID || replay.Version != next.Version {
 		t.Fatalf("old stop replay lost its receipt: %#v %v", receipt, err)
 	}
+
+	prepare(t, ledger, next.Session.ID, stopAt+3000)
+	currentWorker := claim(t, ledger, next, stopAt+4000)
+	at := stopAt + 5000
+	late := Health{Sequence: 1, ObservedAtMS: at, Heartbeat: true, Navigation: true, Mavlink: true, Video: true}
+	if _, err := ledger.ReportHealth(t.Context(), target.DeviceID, worker, late, at); !errors.Is(err, ErrGrantDenied) {
+		t.Fatalf("retired worker reported readiness after restart: %v", err)
+	}
+	current, err := ledger.WorkerGrant(t.Context(), target.DeviceID, currentWorker, at)
+	if err != nil || current.Session.Phase != Starting || current.Availability(at).REDCON != 3 {
+		t.Fatalf("retired health changed replacement availability: %v", err)
+	}
 }
 
 func TestReadinessUsesFreshEvidenceAndBoundedDeadlines(t *testing.T) {

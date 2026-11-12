@@ -16,6 +16,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cinttypes>
@@ -55,6 +56,7 @@ namespace {
 #endif
 
 constexpr UINT32 kMaxConcurrentStreamingSessions = 10;
+constexpr std::size_t kMaxPendingLocalIceCandidates = 32;
 constexpr UINT64 kCleanupWaitPeriod100ns = 5 * HUNDREDS_OF_NANOS_IN_A_SECOND;
 constexpr UINT64 kPendingMessageCleanupDuration100ns = 20 * HUNDREDS_OF_NANOS_IN_A_SECOND;
 constexpr DOUBLE kVideoRollingBufferDurationSec = 3.0;
@@ -479,6 +481,8 @@ struct StreamingSession {
     std::atomic_bool first_frame{true};
     bool connected = false;
     bool remote_can_trickle = false;
+    bool gathered_answer_pending = false;
+    std::deque<std::string> local_ice_candidates;
     int mcp_ipc_fd = -1;
     std::mutex mcp_ipc_lock;
     std::unique_ptr<BoardMavlinkPeer> mavlink_peer;
@@ -522,7 +526,9 @@ class RealKvsSession final : public KvsSession {
               config.mavlink_data_channel_label.empty() ? kDefaultMavlinkDataChannelLabel : config.mavlink_data_channel_label
           ),
           video_bitrate_bps_(config.camera.bitrate),
-          isolate_video_peers_(config.isolate_video_peers) {
+          isolate_video_peers_(config.isolate_video_peers),
+          defer_ice_candidate_signaling_(config.defer_ice_candidate_signaling),
+          gather_ice_before_answer_(config.gather_ice_before_answer) {
         try {
             if (session_kind_ == KvsSessionKind::kMavlinkControl && mavlink_bridge_client_ == nullptr) {
                 throw std::runtime_error("MAVLink KVS session requires a MAVLink bridge socket");
@@ -868,6 +874,9 @@ class RealKvsSession final : public KvsSession {
 
         std::memset(configuration, 0, sizeof(RtcConfiguration));
         configuration->iceTransportPolicy = ICE_TRANSPORT_POLICY_ALL;
+        if (gather_ice_before_answer_) {
+            configuration->kvsRtcConfiguration.iceConnectionCheckTimeout = 25 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+        }
 
         if (const char* policy = std::getenv(kIceTransportPolicyEnvVar);
             policy != nullptr && std::strcmp(policy, "relay") == 0) {
@@ -1306,7 +1315,7 @@ class RealKvsSession final : public KvsSession {
         if (NULLABLE_CHECK_EMPTY(can_trickle)) {
             return STATUS_INTERNAL_ERROR;
         }
-        session->remote_can_trickle = can_trickle.value;
+        session->remote_can_trickle = can_trickle.value && !gather_ice_before_answer_;
 
         return PrepareMasterAnswer<STATUS>(
             session->remote_can_trickle,
@@ -1572,6 +1581,7 @@ class RealKvsSession final : public KvsSession {
                     return post_insert_status;
                 }
 
+                if (!session->remote_can_trickle || defer_ice_candidate_signaling_) wake_condition_.notify_all();
                 status = SubmitPendingIceCandidates(session.get(), pending_messages);
                 if (STATUS_FAILED(status)) {
                     session->terminate_requested.store(true);
@@ -1625,25 +1635,75 @@ class RealKvsSession final : public KvsSession {
             return;
         }
 
-        if (candidate_json == nullptr) {
-            if (!session->remote_can_trickle) {
-                ThrowIfFailed(SendAnswer(session), "send answer");
-            }
+        if ((candidate_json && !session->remote_can_trickle) || (!candidate_json && session->remote_can_trickle)) return;
+        if (candidate_json && !defer_ice_candidate_signaling_) {
+            SendLocalIceCandidate(*session, candidate_json);
             return;
         }
-
-        if (session->remote_can_trickle) {
-            const STATUS status = SendIceCandidate(session, candidate_json);
-            if (STATUS_FAILED(status)) {
-                std::fprintf(
-                    stderr,
-                    "WARN kvs_session_real: send ICE candidate failed with status %s for peer %s; keeping session alive\n",
-                    FormatStatus(status).c_str(),
-                    session->peer_id.c_str()
-                );
-                RequestSignalingRecreate();
+        // Gathering and connectivity checks share an SDK timer queue. Keep
+        // synchronous WebSocket writes off that queue.
+        {
+            std::lock_guard lock(state_lock_);
+            if (stopping_ || session->terminate_requested.load()) return;
+            if (candidate_json == nullptr) {
+                session->gathered_answer_pending = true;
+            } else if (session->local_ice_candidates.size() < kMaxPendingLocalIceCandidates) {
+                session->local_ice_candidates.emplace_back(candidate_json);
             }
         }
+        wake_condition_.notify_all();
+    }
+
+    void SendLocalIceCandidate(StreamingSession& session, const char* candidate_json) {
+        const STATUS status = SendIceCandidate(&session, candidate_json);
+        if (STATUS_SUCCEEDED(status)) return;
+        std::fprintf(stderr, "WARN kvs_session_real: send ICE candidate failed with status %s for peer %s; keeping session alive\n",
+            FormatStatus(status).c_str(), session.peer_id.c_str());
+        if (!defer_ice_candidate_signaling_ || status != STATUS_OPERATION_TIMED_OUT) RequestSignalingRecreate();
+    }
+
+    auto FindPeerWithPendingIceSignal() {
+        return std::find_if(sessions_by_peer_.begin(), sessions_by_peer_.end(), [](const auto& entry) {
+            const auto& session = *entry.second;
+            return !session.terminate_requested.load() &&
+                (session.gathered_answer_pending || !session.local_ice_candidates.empty());
+        });
+    }
+
+    void SendGatheredAnswer(StreamingSession& session) {
+        STATUS status;
+        {
+            std::lock_guard lock(session.peer_connection_lock);
+            if (session.terminate_requested.load() || session.peer_connection == nullptr) return;
+            status = createAnswer(session.peer_connection, &session.answer_description);
+        }
+        if (session.terminate_requested.load()) return;
+        if (STATUS_SUCCEEDED(status)) status = SendAnswer(&session);
+        if (STATUS_FAILED(status)) {
+            std::fprintf(stderr, "WARN kvs_session_real: send gathered answer failed with status %s for peer %s\n",
+                FormatStatus(status).c_str(), session.peer_id.c_str());
+            session.terminate_requested.store(true);
+        }
+    }
+
+    void SendNextIceSignal() {
+        std::shared_ptr<StreamingSession> session;
+        std::string candidate;
+        bool send_answer;
+        {
+            std::lock_guard lock(state_lock_);
+            const auto pending = FindPeerWithPendingIceSignal();
+            if (stopping_ || pending == sessions_by_peer_.end()) return;
+            session = pending->second;
+            send_answer = std::exchange(session->gathered_answer_pending, false);
+            if (!send_answer) {
+                candidate = std::move(session->local_ice_candidates.front());
+                session->local_ice_candidates.pop_front();
+            }
+        }
+        if (session->terminate_requested.load()) return;
+        if (send_answer) SendGatheredAnswer(*session);
+        else SendLocalIceCandidate(*session, candidate.c_str());
     }
 
     void SetSessionConnected(StreamingSession* session, bool connected) {
@@ -1822,7 +1882,10 @@ class RealKvsSession final : public KvsSession {
                 }
             }
 
+            SendNextIceSignal();
+
             std::unique_lock<std::mutex> lock(state_lock_);
+            if (stopping_ || FindPeerWithPendingIceSignal() != sessions_by_peer_.end()) continue;
             wake_condition_.wait_for(
                 lock,
                 std::chrono::nanoseconds(kCleanupWaitPeriod100ns * 100)
@@ -2053,6 +2116,8 @@ class RealKvsSession final : public KvsSession {
     std::string mavlink_data_channel_label_;
     UINT32 video_bitrate_bps_ = 0;
     bool isolate_video_peers_ = false;
+    bool defer_ice_candidate_signaling_ = false;
+    bool gather_ice_before_answer_ = false;
 
     std::optional<std::string> control_plane_url_;
 

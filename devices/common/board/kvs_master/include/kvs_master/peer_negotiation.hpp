@@ -5,10 +5,9 @@
 
 namespace txing::board::kvs_master {
 
-// The WebRTC answer must be created before it is installed as the local
-// description. Non-trickle peers receive that completed answer only after ICE
-// gathering reports its terminal candidate; trickle peers receive it now and
-// receive candidates independently.
+// The KVS SDK starts gathering in setLocalDescription and consumes the remote
+// description in createAnswer. Defer creating a non-trickle answer until the
+// gathered candidates can be included in it.
 template <typename Status, typename CreateAnswer, typename SetLocalDescription, typename SendAnswer, typename IsFailure>
 Status PrepareMasterAnswer(
     bool remote_can_trickle,
@@ -17,13 +16,15 @@ Status PrepareMasterAnswer(
     SendAnswer&& send_answer,
     IsFailure&& is_failure
 ) {
+    if (!remote_can_trickle) return std::forward<SetLocalDescription>(set_local_description)();
+
     Status status = std::forward<CreateAnswer>(create_answer)();
     if (std::forward<IsFailure>(is_failure)(status)) {
         return status;
     }
 
     status = std::forward<SetLocalDescription>(set_local_description)();
-    if (std::forward<IsFailure>(is_failure)(status) || !remote_can_trickle) {
+    if (std::forward<IsFailure>(is_failure)(status)) {
         return status;
     }
 

@@ -40,6 +40,8 @@ struct RuntimeConfig {
     bool prefer_ipv6 = true;
     bool disable_ipv4_turn = false;
     bool isolate_video_peers = false;
+    bool defer_ice_candidate_signaling = false;
+    bool gather_ice_before_answer = false;
     CameraConfig camera;
 };
 

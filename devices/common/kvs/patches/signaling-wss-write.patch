@@ -1,0 +1,39 @@
+--- a/src/source/Signaling/LwsApiCalls.c
++++ b/src/source/Signaling/LwsApiCalls.c
+@@ -303,6 +303,12 @@
+ 
+     DLOGV("WSS callback with reason %d", reason);
+ 
++    if (reason == LWS_CALLBACK_EVENT_WAIT_CANCELLED) {
++        // The event is dispatched by the service thread, including for a synthetic wsi.
++        lws_callback_on_writable_all_protocol(lws_get_context(wsi), lws_get_protocol(wsi));
++        return 0;
++    }
++
+     // Early check before accessing custom field to see if we are interested in the message
+     switch (reason) {
+         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
+@@ -495,9 +501,11 @@
+ 
+             if (size == writeSize) {
+                 // Notify the listener
++                MUTEX_LOCK(pSignalingClient->sendLock);
+                 ATOMIC_STORE(&pLwsCallInfo->sendOffset, 0);
+                 ATOMIC_STORE(&pLwsCallInfo->sendBufferSize, 0);
+-                CVAR_BROADCAST(pLwsCallInfo->pSignalingClient->sendCvar);
++                CVAR_BROADCAST(pSignalingClient->sendCvar);
++                MUTEX_UNLOCK(pSignalingClient->sendLock);
+             } else {
+                 // Partial write
+                 DLOGV("Failed to write out the data entirely. Wrote %d out of %d", size, writeSize);
+@@ -2008,8 +2016,8 @@
+     // Initialize the send result to none
+     ATOMIC_STORE(&pSignalingClient->messageResult, (SIZE_T) SERVICE_CALL_RESULT_NOT_SET);
+ 
+-    // Wake up the service event loop
+-    CHK_STATUS(wakeLwsServiceEventLoop(pSignalingClient, PROTOCOL_INDEX_WSS));
++    // This write can be submitted from outside the libwebsockets service thread.
++    lws_cancel_service(pSignalingClient->pWebsocketContext);
+ 
+     MUTEX_LOCK(pSignalingClient->sendLock);
+     sendLocked = TRUE;

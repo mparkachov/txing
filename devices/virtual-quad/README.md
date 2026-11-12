@@ -50,9 +50,11 @@ device on an awake cloud rig and use Start or Stop in the device header.
 ## Live media
 
 The onboard camera uses the current SITL truth pose to render a 640 × 360
-view at 15 fps. Office opens separate read-only video and MAVLink peers when
-the current session reports each capability as available. Session changes
-and readiness expiry close those peers.
+view at 15 fps. During startup, REDCON 2 indicates that the worker has a
+fresh SITL heartbeat and a MAVLink signaling master. Once the session is
+operational, Office opens separate read-only video and MAVLink peers as each
+capability becomes available. Session changes and readiness expiry close
+those peers.
 
 If a KVS master disconnects, Office withdraws the affected capability. The
 controller gives the masters up to 30 seconds to reconnect while the worker
