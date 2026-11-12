@@ -25,6 +25,9 @@ type Sample = {
   mavlinkFrames: number
   heartbeats: number
   invalidMessages: number
+  width: number
+  height: number
+  poseToDisplayMs: number[]
 }
 type StatsEntry = {
   type: string
@@ -151,6 +154,14 @@ const configurePage = () => {
   const preview = document.querySelector<HTMLVideoElement>('#preview')!
   const status = document.querySelector<HTMLElement>('#status')!
   const display = document.querySelector<HTMLElement>('#samples')!
+  const query = new URLSearchParams(window.location.search)
+  const device = query.get('device')
+  if (device && /^virtual-quad-[a-z0-9]+$/.test(device)) {
+    input('#video-channel').value = `${device}-board-video`
+    input('#mavlink-channel').value = `${device}-mavlink`
+  }
+  input('#rtp-epoch').value = query.get('rtpEpochMs') ?? ''
+  input('#relay').checked = query.get('relay') === '1'
   let current: AbortController | undefined
   let joins = 0
   const samples: Sample[] = []
@@ -190,6 +201,7 @@ const configurePage = () => {
     const forceTurn = input('#relay').checked
     const videoChannel = input('#video-channel').value
     const mavlinkChannel = input('#mavlink-channel').value
+    const rtpEpochMs = input('#rtp-epoch').valueAsNumber
     event(join, 'join', forceTurn)
     status.textContent = 'Connecting…'
     button('#join').disabled = true
@@ -201,6 +213,7 @@ const configurePage = () => {
       let mavlinkFrames = 0
       let heartbeats = 0
       let invalidMessages = 0
+      let poseToDisplayMs: number[] = []
       const [video, data] = await Promise.all([
         connect(videoChannel, credentials, forceTurn, (pc) => {
           pc.addTransceiver('video', { direction: 'recvonly' })
@@ -229,6 +242,21 @@ const configurePage = () => {
         }, signal),
       ])
       signal.throwIfAborted()
+      if (Number.isFinite(rtpEpochMs) && typeof preview.requestVideoFrameCallback === 'function') {
+        const recordFrame: VideoFrameRequestCallback = (_now, frame) => {
+          if (signal.aborted) return
+          if (frame.rtpTimestamp !== undefined) {
+            // The pinned KVS sender uses 90 kHz H.264 RTP with zero random
+            // offset. The native log maps tick zero to the first pose's UTC time.
+            const poseTime = rtpEpochMs + frame.rtpTimestamp / 90
+            const displayTime = performance.timeOrigin + frame.expectedDisplayTime
+            poseToDisplayMs.push(Math.round((displayTime - poseTime) * 10) / 10)
+          }
+          callback = preview.requestVideoFrameCallback(recordFrame)
+        }
+        let callback = preview.requestVideoFrameCallback(recordFrame)
+        signal.addEventListener('abort', () => preview.cancelVideoFrameCallback(callback), { once: true })
+      }
       event(join, 'answers-received')
       status.textContent = 'Connected to signaling; sampling decoded media and telemetry'
       let previousAt = performance.now()
@@ -248,10 +276,16 @@ const configurePage = () => {
           at: new Date().toISOString(), join, forceTurn, seconds,
           video: v.candidates, mavlink: d.candidates, decodedFrames,
           decodedFps: decodedFrames / seconds, mavlinkFrames, heartbeats, invalidMessages,
+          width: preview.videoWidth, height: preview.videoHeight, poseToDisplayMs,
         }
         samples.push(row)
         mavlinkFrames = heartbeats = invalidMessages = 0
-        display.textContent = JSON.stringify(samples.slice(-6), null, 2)
+        poseToDisplayMs = []
+        const recent = samples.slice(-6).map(({ poseToDisplayMs, ...sample }) => {
+          const sorted = [...poseToDisplayMs].sort((a, b) => a - b)
+          return { ...sample, measuredFrames: sorted.length, poseToDisplayP95Ms: sorted[Math.ceil(sorted.length * 0.95) - 1] ?? null }
+        })
+        display.textContent = JSON.stringify(recent, null, 2)
         schedule()
       }
       const schedule = () => {

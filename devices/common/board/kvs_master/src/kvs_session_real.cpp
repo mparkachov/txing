@@ -6,6 +6,7 @@
 #include "kvs_master/mavlink_diagnostics.hpp"
 #include "kvs_master/peer_negotiation.hpp"
 #include "kvs_master/serialized_data_channel.hpp"
+#include "kvs_master/video_peer_queue.hpp"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -35,6 +36,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -483,6 +485,9 @@ struct StreamingSession {
     std::uint64_t mavlink_epoch = 0;
     std::mutex mavlink_lock;
     std::mutex peer_connection_lock;
+    VideoPeerQueue video_queue;
+    std::mutex video_sender_join_lock;
+    std::thread video_sender;
     UINT64 frame_index = 0;
     UINT64 correlation_id_postfix = 0;
 };
@@ -516,7 +521,8 @@ class RealKvsSession final : public KvsSession {
           mavlink_data_channel_label_(
               config.mavlink_data_channel_label.empty() ? kDefaultMavlinkDataChannelLabel : config.mavlink_data_channel_label
           ),
-          video_bitrate_bps_(config.camera.bitrate) {
+          video_bitrate_bps_(config.camera.bitrate),
+          isolate_video_peers_(config.isolate_video_peers) {
         try {
             if (session_kind_ == KvsSessionKind::kMavlinkControl && mavlink_bridge_client_ == nullptr) {
                 throw std::runtime_error("MAVLink KVS session requires a MAVLink bridge socket");
@@ -584,35 +590,29 @@ class RealKvsSession final : public KvsSession {
         if (sessions.empty()) {
             return;
         }
+        if (isolate_video_peers_) {
+            const auto buffered = std::make_shared<const H264AccessUnit>(H264AccessUnit{
+                std::vector<std::uint8_t>(data, data + len), presentation_ts_100ns, duration_100ns, is_keyframe,
+            });
+            for (const auto& session : sessions) session->video_queue.Push(buffered);
+            return;
+        }
 
-        Frame frame{};
-        frame.version = FRAME_CURRENT_VERSION;
-        frame.trackId = 1;
-        frame.duration = duration_100ns;
-        frame.decodingTs = presentation_ts_100ns;
-        frame.presentationTs = presentation_ts_100ns;
-        frame.size = static_cast<UINT32>(len);
-        frame.frameData = const_cast<PBYTE>(data);
-        frame.flags = is_keyframe ? FRAME_FLAG_KEY_FRAME : FRAME_FLAG_NONE;
+        const auto frame = VideoFrame(data, len, presentation_ts_100ns, duration_100ns, is_keyframe);
 
         STATUS first_failure = STATUS_SUCCESS;
         bool wrote_frame = false;
         bool srtp_pending = false;
 
         for (const auto& session : sessions) {
-            std::lock_guard<std::mutex> peer_lock(session->peer_connection_lock);
-            if (session->terminate_requested.load() || session->video_transceiver == nullptr) {
-                continue;
-            }
-            frame.index = static_cast<UINT32>(++session->frame_index);
-            const STATUS status = writeFrame(session->video_transceiver, &frame);
-            if (status == STATUS_SUCCESS) {
+            const auto status = WriteVideoFrame(*session, frame);
+            if (!status) continue;
+            if (*status == STATUS_SUCCESS) {
                 wrote_frame = true;
-                session->first_frame.store(false);
-            } else if (status == STATUS_SRTP_NOT_READY_YET) {
+            } else if (*status == STATUS_SRTP_NOT_READY_YET) {
                 srtp_pending = true;
             } else if (first_failure == STATUS_SUCCESS) {
-                first_failure = status;
+                first_failure = *status;
             }
         }
 
@@ -665,6 +665,46 @@ class RealKvsSession final : public KvsSession {
     }
 
   private:
+    static Frame VideoFrame(const std::uint8_t* data, std::size_t size,
+        std::uint64_t pts, std::uint64_t duration, bool keyframe) {
+        Frame frame{};
+        frame.version = FRAME_CURRENT_VERSION;
+        frame.trackId = 1;
+        frame.duration = duration;
+        frame.decodingTs = pts;
+        frame.presentationTs = pts;
+        frame.size = static_cast<UINT32>(size);
+        frame.frameData = const_cast<PBYTE>(data);
+        frame.flags = keyframe ? FRAME_FLAG_KEY_FRAME : FRAME_FLAG_NONE;
+        return frame;
+    }
+
+    static std::optional<STATUS> WriteVideoFrame(StreamingSession& session, Frame frame) {
+        std::lock_guard lock(session.peer_connection_lock);
+        if (session.terminate_requested.load() || session.video_transceiver == nullptr) return std::nullopt;
+        frame.index = static_cast<UINT32>(++session.frame_index);
+        const STATUS status = writeFrame(session.video_transceiver, &frame);
+        if (status == STATUS_SUCCESS) session.first_frame.store(false);
+        return status;
+    }
+
+    void SendQueuedVideo(StreamingSession& session) {
+        while (const auto packet = session.video_queue.Take()) {
+            const auto frame = VideoFrame(packet->bytes.data(), packet->bytes.size(),
+                packet->presentation_ts_100ns, packet->duration_100ns, packet->keyframe);
+            const auto status = WriteVideoFrame(session, frame);
+            if (!status) return;
+            if (*status == STATUS_SRTP_NOT_READY_YET) {
+                session.video_queue.RequireKeyframe();
+            } else if (*status != STATUS_SUCCESS) {
+                std::fprintf(stderr, "video peer send failed (status=0x%08x)\n", static_cast<unsigned>(*status));
+                session.terminate_requested.store(true);
+                wake_condition_.notify_all();
+                return;
+            }
+        }
+    }
+
     void CleanupConstruction() noexcept {
         if (credential_provider_ != nullptr) {
             freeStaticCredentialProvider(&credential_provider_);
@@ -1226,6 +1266,14 @@ class RealKvsSession final : public KvsSession {
                 DestroySession(session);
                 return status;
             }
+            if (isolate_video_peers_) {
+                try {
+                    session->video_sender = std::thread([this, peer = session.get()] { SendQueuedVideo(*peer); });
+                } catch (const std::system_error&) {
+                    DestroySession(session);
+                    return STATUS_INVALID_OPERATION;
+                }
+            }
         }
 
         *session_out = std::move(session);
@@ -1646,6 +1694,11 @@ class RealKvsSession final : public KvsSession {
 
         SetSessionConnected(session.get(), false);
         session->terminate_requested.store(true);
+        session->video_queue.Close();
+        {
+            std::lock_guard lock(session->video_sender_join_lock);
+            if (session->video_sender.joinable()) session->video_sender.join();
+        }
         if (session_kind_ == KvsSessionKind::kMavlinkControl) {
             EmitMavlinkDiagnostics(*session, true);
             CloseMavlinkDataChannel(session.get(), "MAVLink WebRTC peer session destroyed");
@@ -1999,6 +2052,7 @@ class RealKvsSession final : public KvsSession {
     std::unique_ptr<BoardMavlinkBridgeClient> mavlink_bridge_client_;
     std::string mavlink_data_channel_label_;
     UINT32 video_bitrate_bps_ = 0;
+    bool isolate_video_peers_ = false;
 
     std::optional<std::string> control_plane_url_;
 

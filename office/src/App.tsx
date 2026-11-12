@@ -12,6 +12,7 @@ import { extractCyberbrickMavlinkReportedState } from '../../devices/cyberbrick/
 import { MavlinkControlProvider } from '../../devices/cyberbrick/web/MavlinkControlPanel'
 import { VirtualQuadSessionControls } from '../../devices/virtual-quad/web/virtual-quad-adapter'
 import { useVirtualQuadSession } from '../../devices/virtual-quad/web/virtual-quad-session'
+import { VirtualQuadLiveView } from '../../devices/virtual-quad/web/VirtualQuadLiveView'
 import {
   beginSignIn,
   clearAuthState,
@@ -2262,6 +2263,17 @@ function App({ initialAuthError = '' }: AppProps) {
         </p>
       </section>
     )
+  } else if (virtualQuadTarget && selectedDeviceRoute) {
+    content = virtualQuad.fresh && virtualQuad.session?.sessionId ? (
+      <VirtualQuadLiveView
+        key={`${virtualQuadTarget.deviceId}/${virtualQuad.session.sessionId}`}
+        deviceId={virtualQuadTarget.deviceId}
+        videoAvailable={extractSparkplugCapabilityAvailability(virtualQuad.sparkplug, 'video') === true}
+        mavlinkAvailable={extractSparkplugCapabilityAvailability(virtualQuad.sparkplug, 'mavlink') === true}
+        resolveIdToken={resolveSessionIdToken}
+        debugEnabled={isDebugEnabled}
+      />
+    ) : <></>
   } else if (
     isDeviceThingType &&
     currentDeviceAdapter !== null &&

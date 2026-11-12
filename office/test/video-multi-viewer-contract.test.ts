@@ -31,7 +31,9 @@ describe('video multi-viewer contract', () => {
     expect(kvsMasterSource).toContain('sessions.reserve(sessions_by_peer_.size())')
     expect(kvsMasterSource).toContain('sessions.push_back(session)')
     expect(kvsMasterSource).toContain('for (const auto& session : sessions)')
-    expect(kvsMasterSource).toContain('writeFrame(session->video_transceiver, &frame)')
+    expect(kvsMasterSource).toContain('WriteVideoFrame(*session, frame)')
+    expect(kvsMasterSource).toContain('writeFrame(session.video_transceiver, &frame)')
+    expect(kvsMasterSource).toContain('session->video_queue.Push(buffered)')
     expect(kvsMasterSource).toContain('sessions_by_peer_.emplace(peer_id, session)')
   })
 

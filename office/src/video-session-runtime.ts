@@ -36,6 +36,8 @@ export type StartVideoViewerOptions = {
   onUiEvent: (event: ViewerUiEvent) => void
   debugEnabled?: boolean
   isDebugEnabled?: () => boolean
+  videoOnly?: boolean
+  signal?: AbortSignal
 }
 
 export type VideoViewerHandle = {
@@ -326,6 +328,8 @@ type SharedBoardRtcSessionOptions = {
   resolveIdToken: () => Promise<string>
   debugEnabled?: boolean
   isDebugEnabled?: () => boolean
+  videoOnly?: boolean
+  signal?: AbortSignal
 }
 
 const sharedBoardRtcSessions = new Map<string, Promise<SharedBoardRtcSession>>()
@@ -351,10 +355,14 @@ const createSharedBoardRtcSession = async (
     console.info('[device-rtc]', message, details)
   }
 
+  options.signal?.throwIfAborted()
   const kvsWebRtcBrowserSdkPromise = loadKvsWebRtcBrowserSdk()
+  void kvsWebRtcBrowserSdkPromise.catch(() => undefined)
   const idToken = await options.resolveIdToken()
+  options.signal?.throwIfAborted()
   const credentialProvider = createCredentialProvider(idToken)
   const credentials = await credentialProvider()
+  options.signal?.throwIfAborted()
   const kinesisVideoClient = new KinesisVideoClient(buildKinesisVideoClientConfig({
     region: options.region,
     credentials: credentialProvider,
@@ -364,6 +372,7 @@ const createSharedBoardRtcSession = async (
     region: options.region,
     kinesisVideoClient,
   })
+  options.signal?.throwIfAborted()
   const signalingApiClient = new KinesisVideoSignalingClient(buildKinesisVideoSignalingClientConfig({
     region: options.region,
     endpoint: endpoints.HTTPS,
@@ -374,14 +383,16 @@ const createSharedBoardRtcSession = async (
     new GetIceServerConfigCommand({
       ChannelARN: channelArn,
       ClientId: clientId,
-    }),
+    }), { abortSignal: options.signal },
   )
+  const { Role, SignalingClient } = await kvsWebRtcBrowserSdkPromise
+  options.signal?.throwIfAborted()
 
   const peerConnection = new RTCPeerConnection({
     iceServers: buildRtcIceServers(options.region, iceConfigResponse.IceServerList),
   })
   peerConnection.addTransceiver('video', { direction: 'recvonly' })
-  const dataChannel = peerConnection.createDataChannel(options.label)
+  const dataChannel = options.videoOnly ? null : peerConnection.createDataChannel(options.label)
   const videoConsumers = new Set<BoardRtcVideoConsumer>()
   const pendingRequests = new Map<
     number,
@@ -438,12 +449,13 @@ const createSharedBoardRtcSession = async (
       return
     }
     closed = true
+    options.signal?.removeEventListener('abort', abort)
     sharedBoardRtcSessions.delete(key)
     rejectPending(new Error('MCP WebRTC data channel closed'))
     rejectMcpOpenOnce(new Error(errorMessage))
     signalingClient?.removeAllListeners()
     signalingClient?.close()
-    dataChannel.close()
+    dataChannel?.close()
     peerConnection.getReceivers().forEach((receiver) => {
       receiver.track?.stop()
     })
@@ -456,6 +468,7 @@ const createSharedBoardRtcSession = async (
     videoConsumers.clear()
     logDebug('shared RTC session closed', { clientId, errorMessage, cause })
   }
+  const abort = (): void => closePeer(false)
 
   const closeIfUnused = (): void => {
     if (videoConsumers.size === 0 && mcpConsumerCount === 0) {
@@ -519,7 +532,7 @@ const createSharedBoardRtcSession = async (
       }
     },
     acquireMcpHandle: () => {
-      if (closed || !dataChannelOpened || dataChannel.readyState !== 'open') {
+      if (closed || !dataChannel || !dataChannelOpened || dataChannel.readyState !== 'open') {
         throw new Error('MCP WebRTC data channel is not open')
       }
       let released = false
@@ -566,7 +579,7 @@ const createSharedBoardRtcSession = async (
       }
     },
     waitForMcpOpen: async (timeoutMs) => {
-      if (closed) {
+      if (closed || !dataChannel) {
         throw new Error('Board RTC session is closed')
       }
       if (dataChannelOpened && dataChannel.readyState === 'open') {
@@ -599,6 +612,7 @@ const createSharedBoardRtcSession = async (
   }
 
   peerConnection.addEventListener('track', (event) => {
+    if (closed) return
     const stream = event.streams[0]
     if (!stream) {
       logDebug('remote track received without stream', {
@@ -639,23 +653,22 @@ const createSharedBoardRtcSession = async (
       closePeer(true, `Board RTC connection ${peerConnection.connectionState}`)
     }
   })
-  dataChannel.addEventListener('message', handleDataChannelMessage)
-  dataChannel.addEventListener('open', () => {
+  dataChannel?.addEventListener('message', handleDataChannelMessage)
+  dataChannel?.addEventListener('open', () => {
     dataChannelOpened = true
     logDebug('MCP data channel open', { clientId })
     resolveMcpOpenOnce()
   })
-  dataChannel.addEventListener('close', () => {
+  dataChannel?.addEventListener('close', () => {
     // A clean remote close is the expected shape of a commanded REDCON
     // transition or a supervised worker stop, not a viewer failure;
     // unclean transport loss surfaces via connectionstatechange instead.
     closePeer(true, 'MCP WebRTC data channel closed', 'ended')
   })
-  dataChannel.addEventListener('error', () => {
+  dataChannel?.addEventListener('error', () => {
     closePeer(true, 'MCP WebRTC data channel error')
   })
 
-  const { Role, SignalingClient } = await kvsWebRtcBrowserSdkPromise
   signalingClient = new SignalingClient({
     channelARN: channelArn,
     channelEndpoint: endpoints.WSS,
@@ -668,7 +681,9 @@ const createSharedBoardRtcSession = async (
   signalingClient.on('open', () => {
     void (async () => {
       const offer = await peerConnection.createOffer()
+      if (closed) return
       await peerConnection.setLocalDescription(offer)
+      if (closed) return
       if (!peerConnection.localDescription) {
         throw new Error('Board RTC local description was not created')
       }
@@ -687,17 +702,27 @@ const createSharedBoardRtcSession = async (
   })
   signalingClient.on('error', (error) => {
     logDebug('signaling error', error)
-    if (!dataChannelOpened) {
+    if (options.videoOnly ? !remoteStream : !dataChannelOpened) {
       closePeer(true, getErrorMessage(error, 'Board RTC signaling failed'))
     }
   })
   signalingClient.on('close', () => {
     logDebug('signaling close')
-    if (!dataChannelOpened) {
+    if (options.videoOnly ? !remoteStream : !dataChannelOpened) {
       closePeer(true, 'Board RTC signaling closed')
     }
   })
-  signalingClient.open()
+  options.signal?.addEventListener('abort', abort, { once: true })
+  if (options.signal?.aborted) {
+    abort()
+    options.signal.throwIfAborted()
+  }
+  try {
+    signalingClient.open()
+  } catch (error) {
+    closePeer(false)
+    throw error
+  }
 
   return session
 }
@@ -725,14 +750,17 @@ const startSharedBoardVideoViewerRuntime = async (
   options: StartVideoViewerOptions,
 ): Promise<VideoViewerHandle> => {
   options.onUiEvent({ type: 'connecting' })
-  const session = await getSharedBoardRtcSession({
+  const sessionOptions = {
     channelName: options.channelName,
     region: options.region,
     label: 'txing.mcp.v1',
     resolveIdToken: options.resolveIdToken,
     debugEnabled: options.debugEnabled,
     isDebugEnabled: options.isDebugEnabled,
-  })
+  }
+  const session = options.videoOnly
+    ? await createSharedBoardRtcSession(crypto.randomUUID(), { ...sessionOptions, videoOnly: true, signal: options.signal })
+    : await getSharedBoardRtcSession(sessionOptions)
   const release = session.addVideoConsumer({
     onRemoteStream: options.onRemoteStream,
     onUiEvent: options.onUiEvent,

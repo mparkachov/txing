@@ -34,7 +34,7 @@ RUN test "$(uname -m)" = aarch64 \
          test -r "$source" && ln -s "$source" /opt/quad/plugins/ || exit 1; \
        done
 USER 10001:10001
-RUN for plugin in videotestsrc x264enc h264parse appsink; do gst-inspect-1.0 "$plugin" >/dev/null || exit 1; done
+RUN for plugin in videotestsrc x264enc h264parse appsink appsrc; do gst-inspect-1.0 "$plugin" >/dev/null || exit 1; done
 EXPOSE 8080
 ENTRYPOINT ["/opt/quad/bin/virtual-quad-qualification"]
 CMD ["microvm"]

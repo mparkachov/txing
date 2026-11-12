@@ -9,14 +9,15 @@ import (
 )
 
 const (
-	StartupTimeout  = 90 * time.Second
-	FlightLimit     = 12 * time.Minute
-	CleanupTimeout  = 30 * time.Second
-	SessionLimit    = StartupTimeout + FlightLimit + CleanupTimeout
-	HealthTimeout   = 15 * time.Second
-	HealthInterval  = 5 * time.Second
-	GrantInterval   = 2 * time.Second
-	DispatchTimeout = 5 * time.Second
+	StartupTimeout       = 90 * time.Second
+	FlightLimit          = 12 * time.Minute
+	CleanupTimeout       = 30 * time.Second
+	SessionLimit         = StartupTimeout + FlightLimit + CleanupTimeout
+	HealthTimeout        = 15 * time.Second
+	MediaRecoveryTimeout = 30 * time.Second
+	HealthInterval       = 5 * time.Second
+	GrantInterval        = 2 * time.Second
+	DispatchTimeout      = 5 * time.Second
 )
 
 type Phase string
@@ -200,7 +201,7 @@ func (r Record) Availability(nowMS int64) Availability {
 	}
 	result.ExpiresMS = min(s.Health.ObservedAtMS+HealthTimeout.Milliseconds(), s.authorityDeadline())
 	if s.ReadinessLostAtMS != 0 {
-		result.ExpiresMS = min(result.ExpiresMS, s.ReadinessLostAtMS+HealthTimeout.Milliseconds())
+		result.ExpiresMS = min(result.ExpiresMS, s.readinessDeadline())
 	}
 	if nowMS >= result.ExpiresMS {
 		return Availability{REDCON: 3}
@@ -223,6 +224,15 @@ func (s Session) authorityDeadline() int64 {
 	return s.StartupDeadlineMS
 }
 
+func (s Session) readinessDeadline() int64 {
+	// Reconnecting a KVS master can take longer than one worker health window.
+	// Allow time to reconnect while SITL still reports heartbeat and navigation.
+	if s.Health.Heartbeat && s.Health.Navigation {
+		return s.ReadinessLostAtMS + MediaRecoveryTimeout.Milliseconds()
+	}
+	return s.ReadinessLostAtMS + HealthTimeout.Milliseconds()
+}
+
 func (s Session) deadlineReason(nowMS int64) string {
 	if s.Phase == Starting && nowMS >= s.StartupDeadlineMS {
 		return ReasonStartup
@@ -234,7 +244,7 @@ func (s Session) deadlineReason(nowMS int64) string {
 		if nowMS >= s.Health.ObservedAtMS+HealthTimeout.Milliseconds() {
 			return ReasonHealth
 		}
-		if s.ReadinessLostAtMS != 0 && nowMS >= s.ReadinessLostAtMS+HealthTimeout.Milliseconds() {
+		if s.ReadinessLostAtMS != 0 && nowMS >= s.readinessDeadline() {
 			return ReasonHealth
 		}
 	}

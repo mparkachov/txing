@@ -30,9 +30,10 @@ RUN ./waf configure --board sitl && ./waf copter -j "${BUILD_JOBS}" \
 WORKDIR /src
 COPY devices/common/board/kvs_master devices/common/board/kvs_master
 COPY devices/common/kvs devices/common/kvs
-COPY devices/virtual-quad/qualification/CMakeLists.txt devices/virtual-quad/qualification/media.cpp devices/virtual-quad/qualification/
+COPY devices/virtual-quad/qualification/CMakeLists.txt devices/virtual-quad/qualification/*.cpp devices/virtual-quad/qualification/*.hpp devices/virtual-quad/qualification/
 RUN cmake -S devices/virtual-quad/qualification -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTXING_KVS_REAL_SDK=ON \
-    && CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" cmake --build /build --target virtual-quad-media \
+    && CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" cmake --build /build --target virtual-quad-media virtual-quad-camera-test \
+    && /build/virtual-quad-camera-test \
     && strip -o /out/virtual-quad-media /build/virtual-quad-media
 
 FROM docker.io/library/debian:trixie-slim@sha256:24a01011d10eba3a023bc8585b9650b8b29021240d4217c05b905e09ef4a5232 AS qualification-runtime
@@ -53,7 +54,7 @@ RUN test "$(uname -m)" = aarch64 \
     && test -r /etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem \
     && ldd /opt/quad/bin/arducopter /opt/quad/bin/virtual-quad-media > /tmp/dependencies.txt \
     && if grep -q 'not found' /tmp/dependencies.txt; then cat /tmp/dependencies.txt; exit 1; fi \
-    && for plugin in videotestsrc x264enc h264parse appsink; do gst-inspect-1.0 "$plugin" >/dev/null || exit 1; done \
+    && for plugin in videotestsrc x264enc h264parse appsink appsrc; do gst-inspect-1.0 "$plugin" >/dev/null || exit 1; done \
     && cat /tmp/dependencies.txt \
     && rm -f /tmp/dependencies.txt /tmp/gstreamer-1.0/registry.*
 ENTRYPOINT ["/opt/quad/bin/virtual-quad-qualification"]

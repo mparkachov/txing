@@ -7,6 +7,7 @@
 #include "kvs_master/runtime.hpp"
 #include "kvs_master/version.hpp"
 #include "kvs_master/video_capturer.hpp"
+#include "kvs_master/video_peer_queue.hpp"
 
 #include <chrono>
 #include <atomic>
@@ -1171,9 +1172,33 @@ void TestMavlinkDiagnosticsConcurrentCountsAndConfidentiality() {
            "exception messages and private contents must never enter numeric diagnostics");
 }
 
+void TestVideoPeerQueueIsolatesBacklogAndRecoversAtKeyframe() {
+    using txing::board::kvs_master::H264AccessUnit;
+    using txing::board::kvs_master::VideoPeerQueue;
+    VideoPeerQueue slow;
+    VideoPeerQueue fast;
+    const auto take = [](VideoPeerQueue& queue) {
+        auto frame = std::async(std::launch::async, [&] { return queue.Take(); });
+        if (frame.wait_for(std::chrono::seconds(1)) == std::future_status::timeout) queue.Close();
+        return frame.get();
+    };
+    for (std::uint64_t i = 0; i < 5; ++i) {
+        auto frame = std::make_shared<const H264AccessUnit>(H264AccessUnit{{0x01}, i, 1, i == 0});
+        slow.Push(frame);
+        fast.Push(frame);
+        Expect(take(fast) == frame, "a slow peer must not delay the fast peer");
+    }
+    auto keyframe = std::make_shared<const H264AccessUnit>(H264AccessUnit{{0x05}, 5, 1, true});
+    slow.Push(keyframe);
+    Expect(take(slow) == keyframe, "an overflowed peer must skip the old GOP and resume at the next IDR");
+    slow.Close();
+    Expect(!take(slow), "closing a video peer must release its sender");
+}
+
 }  // namespace
 
 int main() {
+    TestVideoPeerQueueIsolatesBacklogAndRecoversAtKeyframe();
     TestMavlinkDiagnosticsObserveBlockedCall();
     TestMavlinkDiagnosticsConcurrentCountsAndConfidentiality();
     TestMavlinkSendTypesUnderConcurrency();

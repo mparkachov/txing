@@ -46,3 +46,35 @@ Once the image version is successful and active, run
 `just virtual-quad::deploy <image-version>` to pin it and enable the
 controller, device command rule and repair schedule. In Office, open the
 device on an awake cloud rig and use Start or Stop in the device header.
+
+## Live media
+
+The onboard camera uses the current SITL truth pose to render a 640 × 360
+view at 15 fps. Office opens separate read-only video and MAVLink peers when
+the current session reports each capability as available. Session changes
+and readiness expiry close those peers.
+
+If a KVS master disconnects, Office withdraws the affected capability. The
+controller gives the masters up to 30 seconds to reconnect while the worker
+continues to report fresh SITL heartbeat and navigation. Missing worker
+health or unhealthy SITL retains the 15-second cutoff.
+
+To verify the pose camera and encoder in the local ARM64 image, run
+`just virtual-quad::microvm-package microvm-session`, then run the image
+without network access.
+
+```sh
+nerdctl.lima run --rm --platform linux/arm64 --network none \
+  txing-virtual-quad-microvm-session:local local-camera
+```
+
+Check for `QUAD_READY mode=local camera=pose` and the following
+`QUAD_MEDIA_SAMPLE` records. They report SITL speed, encoder output and
+the count of valid truth-pose samples.
+
+The local Office development page at `/virtual-quad-qualification.html`
+records decoded frame counts, ICE candidate types and MAVLink frames in
+five-second windows. For pose-to-display timing, use the session's
+`QUAD_CAMERA_RTP_EPOCH` value as the RTP time base and a browser with a
+synchronized clock that exposes RTP timestamps in video-frame callbacks.
+Download the samples to retain the per-frame timing measurements.

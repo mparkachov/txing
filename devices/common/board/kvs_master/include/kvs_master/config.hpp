@@ -39,6 +39,7 @@ struct RuntimeConfig {
     bool mcp_data_channel_enabled = false;
     bool prefer_ipv6 = true;
     bool disable_ipv4_turn = false;
+    bool isolate_video_peers = false;
     CameraConfig camera;
 };
 

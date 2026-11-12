@@ -18,6 +18,8 @@ export type StartVideoViewerOptions = {
   onUiEvent: (event: ViewerUiEvent) => void
   debugEnabled?: boolean
   isDebugEnabled?: () => boolean
+  videoOnly?: boolean
+  signal?: AbortSignal
 }
 
 export type VideoViewerHandle = {

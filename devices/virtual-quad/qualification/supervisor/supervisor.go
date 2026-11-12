@@ -186,9 +186,9 @@ func shutdown(children []*exec.Cmd, pending int, exit <-chan childResult) {
 func run(mode string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	local, hang := mode == "local", mode == "hang-on-stop"
+	local, hang := mode == "local" || mode == "local-camera", mode == "hang-on-stop"
 	if !local && !hang && mode != "kvs" {
-		return errors.New("usage: virtual-quad-qualification [kvs|local|hang-on-stop]")
+		return errors.New("usage: virtual-quad-qualification [kvs|local|local-camera|hang-on-stop]")
 	}
 	log.Printf("QUAD_SUPERVISOR_START mode=%s", mode)
 
@@ -234,9 +234,13 @@ func runWorkload(ctx context.Context, mode string, mediaEnv, mediaArgs []string,
 	healthPath := filepath.Join(scratch, "health.json")
 	if monitor != nil {
 		mediaEnv = append(mediaEnv, "QUAD_HEALTH_FILE="+healthPath)
-		// Ask the pinned ArduCopter build to emit EKF_STATUS_REPORT at 2 Hz.
+	}
+	if mode == "microvm-session" || mode == "local-camera" {
+		mediaArgs = append(mediaArgs, "--camera")
+		// The pinned build reads message IDs and intervals in milliseconds.
+		// SIM_STATE feeds the camera at 30 Hz and EKF_STATUS_REPORT gates navigation at 2 Hz.
 		intervals := filepath.Join(scratch, "message-intervals-chan0.txt")
-		if err := os.WriteFile(intervals, []byte("193 500\n"), 0600); err != nil {
+		if err := os.WriteFile(intervals, []byte("108 33\n193 500\n"), 0600); err != nil {
 			return fmt.Errorf("configure SITL health telemetry: %w", err)
 		}
 	}

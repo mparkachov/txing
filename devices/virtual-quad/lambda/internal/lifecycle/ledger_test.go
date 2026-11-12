@@ -236,6 +236,49 @@ func TestReadinessUsesFreshEvidenceAndBoundedDeadlines(t *testing.T) {
 	}
 }
 
+func TestMediaReconnectKeepsSessionWhileSITLIsHealthy(t *testing.T) {
+	ledger := NewLedger(&memoryStore{})
+	start := reserve(t, ledger, 0, testNow)
+	prepare(t, ledger, start.Session.ID, testNow)
+	worker := claim(t, ledger, start, testNow+1000)
+	at := testNow + 45000
+	var sequence uint64
+	report := func(heartbeat, navigation, media bool) Record {
+		t.Helper()
+		sequence++
+		sample := Health{
+			Sequence: sequence, ObservedAtMS: at, Heartbeat: heartbeat,
+			Navigation: navigation, Mavlink: media, Video: media,
+		}
+		record, err := ledger.ReportHealth(t.Context(), target.DeviceID, worker, sample, at)
+		if err != nil {
+			t.Fatalf("report health at %d: %v", at, err)
+		}
+		at += HealthInterval.Milliseconds()
+		return record
+	}
+	operational := report(true, true, true)
+	for range 4 {
+		degraded := report(true, true, false)
+		availability := degraded.Availability(at - HealthInterval.Milliseconds())
+		if availability.REDCON != 3 || availability.Mavlink || availability.Video || degraded.Session.Phase != Operational {
+			t.Fatalf("KVS loss did not withdraw readiness during recovery: %+v", availability)
+		}
+	}
+	recovered := report(true, true, true)
+	if recovered.Availability(at-HealthInterval.Milliseconds()).REDCON != 1 ||
+		recovered.Session.ID != operational.Session.ID || recovered.Session.FlightDeadlineMS != operational.Session.FlightDeadlineMS {
+		t.Fatal("KVS recovery did not restore readiness for the same session and deadline")
+	}
+
+	for range MediaRecoveryTimeout / HealthInterval {
+		report(true, true, false)
+	}
+	if _, err := ledger.WorkerGrant(t.Context(), target.DeviceID, worker, at); !errors.Is(err, ErrGrantDenied) {
+		t.Fatalf("persistent KVS outage retained the grant: %v", err)
+	}
+}
+
 func TestStartupDeadlineAndRigSleep(t *testing.T) {
 	ledger := NewLedger(&memoryStore{})
 	if _, _, err := ledger.Reserve(t.Context(), target, CommandRequest{ID: requestID(1)}, 0, false, testNow); !errors.Is(err, ErrRigAsleep) {

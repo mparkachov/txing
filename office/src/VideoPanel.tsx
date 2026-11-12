@@ -12,6 +12,7 @@ type VideoPanelProps = {
   debugEnabled?: boolean
   onRuntimeError?: (message: string) => void
   overlay?: ReactNode
+  videoOnly?: boolean
 }
 type VideoElementWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback?: (callback: VideoFrameRequestCallback) => number
@@ -55,6 +56,7 @@ function VideoPanel({
   debugEnabled = false,
   onRuntimeError,
   overlay = null,
+  videoOnly = false,
 }: VideoPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -184,6 +186,7 @@ function VideoPanel({
 
   useEffect(() => {
     let cancelled = false
+    const abort = new AbortController()
     let viewerHandle: { close: () => void } | null = null
     let activeFrameCallbackHandle: number | null = null
     let activeTrackProcessorReader: ReadableStreamDefaultReader<VideoFrameLike> | null = null
@@ -262,7 +265,13 @@ function VideoPanel({
       region: appConfig.awsRegion,
       resolveIdToken: resolveIdTokenForViewer,
       isDebugEnabled: isVideoDebugEnabled,
+      videoOnly,
+      signal: abort.signal,
       onRemoteStream: (stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
         logVideoUiDebug('remote stream attached', {
           streamId: stream.id,
           trackIds: stream.getTracks().map((track) => track.id),
@@ -377,7 +386,7 @@ function VideoPanel({
 
         void playVideo()
       },
-      onUiEvent: dispatchViewerUiEvent,
+      onUiEvent: (event) => { if (!cancelled) dispatchViewerUiEvent(event) },
     })
       .then((handle) => {
         if (cancelled) {
@@ -387,6 +396,7 @@ function VideoPanel({
         viewerHandle = handle
       })
       .catch((caughtError) => {
+        if (cancelled) return
         dispatchViewerUiEvent({
           type: 'error',
           message:
@@ -396,6 +406,7 @@ function VideoPanel({
 
     return () => {
       cancelled = true
+      abort.abort()
       viewerHandle?.close()
       if (activeTrackProcessorReader !== null) {
         void activeTrackProcessorReader.cancel().catch(() => undefined)
@@ -421,7 +432,7 @@ function VideoPanel({
       }
       logVideoUiDebug('viewer panel effect cleanup', { channelName })
     }
-  }, [channelName])
+  }, [channelName, videoOnly])
 
   return (
     <div className="status-video-panel">
