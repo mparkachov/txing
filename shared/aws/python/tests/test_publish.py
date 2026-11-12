@@ -110,6 +110,7 @@ class PublishTests(unittest.TestCase):
                 "txing-witness-lambda-linux-aarch64.zip",
                 "txing-cloud-rig-lambda-linux-aarch64.zip",
                 "txing-cloud-mcu-lambda-linux-aarch64.zip",
+                "txing-virtual-quad-lambda-linux-aarch64.zip",
             ],
         )
 

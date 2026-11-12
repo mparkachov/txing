@@ -48,7 +48,7 @@ const redconDescriptors: Record<1 | 2 | 3 | 4, RedconDescriptor> = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
-const extractReportedState = (shadow: unknown): Record<string, unknown> | null => {
+export const extractReportedState = (shadow: unknown): Record<string, unknown> | null => {
   if (!isRecord(shadow)) {
     return null
   }
@@ -95,6 +95,9 @@ const extractSparkplugPayload = (shadow: unknown): Record<string, unknown> | nul
   const payload = reported.payload
   return isRecord(payload) ? payload : null
 }
+
+export const extractSparkplugPayloadTimestamp = (shadow: unknown): number | null =>
+  coerceNonNegativeInteger(extractSparkplugPayload(shadow)?.timestamp)
 
 export const extractSparkplugMetrics = (shadow: unknown): Record<string, unknown> | null => {
   const payload = extractSparkplugPayload(shadow)

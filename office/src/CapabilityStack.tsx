@@ -10,6 +10,7 @@ type CapabilityStackProps = {
   capabilities: readonly ShadowName[]
   sparkplugShadow: unknown | null
   sparkplugShadowStatus: CapabilityStackStatus
+  inactiveCapabilities?: readonly ShadowName[]
   className?: string
 }
 
@@ -26,6 +27,7 @@ function CapabilityStack({
   capabilities,
   sparkplugShadow,
   sparkplugShadowStatus,
+  inactiveCapabilities,
   className,
 }: CapabilityStackProps): ReactElement | null {
   const displayCapabilities = [...capabilities].filter(isCapabilityVisible).reverse()
@@ -40,7 +42,7 @@ function CapabilityStack({
     <span className={classes} aria-label={`Capability status for ${label}`}>
       {displayCapabilities.map((capability) => {
         const availability =
-          sparkplugShadowStatus === 'ready'
+          sparkplugShadowStatus === 'ready' && !inactiveCapabilities?.includes(capability)
             ? extractSparkplugCapabilityAvailability(sparkplugShadow, capability)
             : null
         const isActive = availability === true

@@ -553,6 +553,8 @@ class RealKvsSession final : public KvsSession {
         }
     }
 
+    bool SignalingConnected() const noexcept override { return signaling_connected_.load(); }
+
     void PushH264AccessUnit(
         const std::uint8_t* data,
         std::size_t len,
@@ -763,6 +765,7 @@ class RealKvsSession final : public KvsSession {
             UNUSED_PARAM(freeSignalingClient(&signaling_client_handle_));
             signaling_client_handle_ = INVALID_SIGNALING_CLIENT_HANDLE_VALUE;
         }
+        signaling_connected_.store(false);
     }
 
     STATUS EnsureSignalingConnected() {
@@ -1694,6 +1697,7 @@ class RealKvsSession final : public KvsSession {
     }
 
     void RequestSignalingRecreate() {
+        signaling_connected_.store(false);
         {
             std::lock_guard<std::mutex> lock(state_lock_);
             recreate_signaling_client_ = true;
@@ -1790,8 +1794,10 @@ class RealKvsSession final : public KvsSession {
     }
 
     static STATUS SignalingStateChanged(UINT64 custom_data, SIGNALING_CLIENT_STATE state) {
-        UNUSED_PARAM(custom_data);
-        UNUSED_PARAM(state);
+        auto* self = reinterpret_cast<RealKvsSession*>(custom_data);
+        if (self != nullptr) {
+            self->signaling_connected_.store(state == SIGNALING_CLIENT_STATE_CONNECTED);
+        }
         return STATUS_SUCCESS;
     }
 
@@ -1998,6 +2004,7 @@ class RealKvsSession final : public KvsSession {
 
     PAwsCredentialProvider credential_provider_ = nullptr;
     SIGNALING_CLIENT_HANDLE signaling_client_handle_ = INVALID_SIGNALING_CLIENT_HANDLE_VALUE;
+    std::atomic_bool signaling_connected_{false};
     ChannelInfo channel_info_{};
     SignalingClientInfo client_info_{};
     SignalingClientCallbacks signaling_client_callbacks_{};

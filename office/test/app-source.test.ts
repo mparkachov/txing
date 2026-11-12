@@ -59,7 +59,7 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('const commandSequence = createSparkplugRedconCommandSeq(')
     expect(appSource).toContain('commandStatus.seq === commandSequence')
     expect(appSource).toContain('setPendingTargetRedcon(redcon)')
-    expect(appSource).toContain('sparkplugRedcon={reportedRedcon}')
+    expect(appSource).toContain('sparkplugRedcon={navigationRedcon}')
     expect(appSource).toContain('reportedRedcon,')
     expect(appSource).not.toContain("commandStatus?.status === 'succeeded'")
     expect(appSource).not.toContain('effectiveReportedRedcon')
@@ -81,7 +81,7 @@ describe('app route catalog source wiring', () => {
       /canUseDriveControl|isDriveControl|isDriveInputEnabled|isDriveControlOwnedByOther|robotState|mcp|Mcp/,
     )
     expect(appSource).toContain('isInteractive={isSparkplugDeviceCommandAvailable && !isVirtualQuad}')
-    expect(appSource).toContain('sparkplugRedcon={reportedRedcon}')
+    expect(appSource).toContain('sparkplugRedcon={navigationRedcon}')
   })
 
   test('route transitions use busy navigation styling instead of transient loading copy', () => {

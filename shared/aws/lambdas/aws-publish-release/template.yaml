@@ -104,6 +104,7 @@ Resources:
                   - !Ref WitnessFunctionArn
                   - !Ref CloudRigRuntimeFunctionArn
                   - !Ref CloudMcuRuntimeFunctionArn
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-virtual-quad
 
   PublishReleaseFunction:
     Type: AWS::Lambda::Function
@@ -124,7 +125,7 @@ Resources:
         Variables:
           TXING_GITHUB_REPOSITORY: !Ref GithubRepository
           TXING_LAMBDA_ARTIFACT_BUCKET: !Ref LambdaArtifactsBucketName
-          TXING_LAMBDA_FUNCTIONS_JSON: !Sub '{"txing-witness-lambda":"${WitnessFunctionName}","txing-cloud-rig-lambda":"${CloudRigRuntimeFunctionName}","txing-cloud-mcu-lambda":"${CloudMcuRuntimeFunctionName}"}'
+          TXING_LAMBDA_FUNCTIONS_JSON: !Sub '{"txing-witness-lambda":"${WitnessFunctionName}","txing-cloud-rig-lambda":"${CloudRigRuntimeFunctionName}","txing-cloud-mcu-lambda":"${CloudMcuRuntimeFunctionName}","txing-virtual-quad-lambda":"${EnvironmentStackName}-virtual-quad"}'
 
   StackParameterReleasePublisherFunctionName:
     Type: AWS::SSM::Parameter

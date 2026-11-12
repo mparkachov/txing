@@ -17,6 +17,7 @@ class KvsSession {
     virtual ~KvsSession() = default;
 
     virtual void Start() = 0;
+    virtual bool SignalingConnected() const noexcept = 0;
     virtual void PushH264AccessUnit(
         const std::uint8_t* data,
         std::size_t len,

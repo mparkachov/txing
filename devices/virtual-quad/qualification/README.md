@@ -89,7 +89,7 @@ quad_image_inputs() {
   base_version=$(printf '%s\n' "$base_catalog" | jq -er '
     [.items[] | select(.status == "AVAILABLE" and
       any(.supportedCpuConfigurations[]; .architecture == "ARM_64"))]
-    | sort_by(.createdAt) | last | .imageVersion') || return 1
+    | map(.imageVersion | split(".")[0] | tonumber) | max // error("No available ARM64 base version")') || return 1
   checksum_line=$(shasum -a 256 "$bundle") || return 1
   bundle_sha=${checksum_line%% *}
   key="qualification/$bundle_sha/bundle.zip"

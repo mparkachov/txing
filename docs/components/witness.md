@@ -126,8 +126,8 @@ just release::publish lambda
 seeds a placeholder `lambda/txing-witness-lambda/current/bootstrap.zip` object
 before creating the function. CloudFormation uses this placeholder for bootstrap. Production code comes
 from GitHub release assets.
-`release::publish lambda` publishes already-built artifacts to all three
-existing Go runtime Lambda functions together.
+`release::publish lambda` publishes the release's Go runtime Lambda artifacts
+together.
 
 The deeper projection semantics are documented in:
 

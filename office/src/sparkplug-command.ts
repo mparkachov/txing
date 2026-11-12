@@ -12,6 +12,9 @@ import {
   buildSparkplugNodeTopics,
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
+  buildVirtualQuadCommandPacket,
+  type SparkplugPublishPacket,
+  type VirtualQuadCommand,
 } from './sparkplug-protocol'
 import type { ShadowSession } from './shadow-api'
 
@@ -95,35 +98,51 @@ export const publishDirectSparkplugRedconCommandWithClient = async (
         redcon,
         seq,
       )
-  await client.send(
-    new PublishCommand({
-      topic: packet.topicName,
-      qos: packet.qos,
-      payload: packet.payload,
-    }),
-  )
+  await publishPacket(client, packet)
 }
 
-export const publishDirectSparkplugRedconCommand = async (
-  resolveIdToken: ResolveIdToken,
-  target: SparkplugRedconCommandTarget,
-  redcon: 1 | 2 | 3 | 4,
-  seq = 0,
-): Promise<void> => {
-  const publishOnce = async (): Promise<void> => {
-    const client = await createIotDataClient(resolveIdToken)
-    await publishDirectSparkplugRedconCommandWithClient(client, target, redcon, seq)
-  }
+const publishPacket = async (client: IotDataClient, packet: SparkplugPublishPacket): Promise<void> => {
+  await client.send(new PublishCommand({
+    topic: packet.topicName,
+    qos: packet.qos,
+    payload: packet.payload,
+  }))
+}
 
+const publishWithFreshCredentials = async (
+  resolveIdToken: ResolveIdToken,
+  send: (client: IotDataClient) => Promise<void>,
+): Promise<void> => {
   try {
-    await publishOnce()
+    await send(await createIotDataClient(resolveIdToken))
   } catch (caughtError) {
     if (!isThingShadowReadForbiddenError(caughtError)) {
       throw caughtError
     }
     clearCredentialProviderCache()
-    await publishOnce()
+    await send(await createIotDataClient(resolveIdToken))
   }
+}
+
+export const publishDirectSparkplugRedconCommand = (
+  resolveIdToken: ResolveIdToken,
+  target: SparkplugRedconCommandTarget,
+  redcon: 1 | 2 | 3 | 4,
+  seq = 0,
+): Promise<void> => publishWithFreshCredentials(resolveIdToken, (client) =>
+  publishDirectSparkplugRedconCommandWithClient(client, target, redcon, seq),
+)
+
+export const publishVirtualQuadCommand = (
+  resolveIdToken: ResolveIdToken,
+  target: Extract<SparkplugRedconCommandTarget, { kind: 'device' }>,
+  command: VirtualQuadCommand,
+  seq: number,
+): Promise<void> => {
+  const packet = buildVirtualQuadCommandPacket(
+    buildSparkplugTopics(target.groupId, target.edgeNodeId, target.deviceId), command, seq,
+  )
+  return publishWithFreshCredentials(resolveIdToken, (client) => publishPacket(client, packet))
 }
 
 export const publishSparkplugRedconCommandWithAck = async (

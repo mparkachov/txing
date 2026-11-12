@@ -66,6 +66,8 @@ The virtual quadcopter qualification targets a disposable ARM64 Lambda
 MicroVM in a separate test environment. The
 [qualification runbook](../devices/virtual-quad/qualification/README.md)
 covers the AWS measurements and retirement of the Fargate prototype resources.
+The [virtual quadcopter guide](../devices/virtual-quad/README.md#session-image)
+covers the managed session stack and image.
 
 ## Bring-Up Order
 

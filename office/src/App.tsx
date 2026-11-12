@@ -10,7 +10,8 @@ import {
 } from 'react'
 import { extractCyberbrickMavlinkReportedState } from '../../devices/cyberbrick/web/app-model'
 import { MavlinkControlProvider } from '../../devices/cyberbrick/web/MavlinkControlPanel'
-import { VirtualQuadStartButton } from '../../devices/virtual-quad/web/virtual-quad-adapter'
+import { VirtualQuadSessionControls } from '../../devices/virtual-quad/web/virtual-quad-adapter'
+import { useVirtualQuadSession } from '../../devices/virtual-quad/web/virtual-quad-session'
 import {
   beginSignIn,
   clearAuthState,
@@ -96,7 +97,6 @@ import {
   extractSparkplugCapabilityAvailability,
   extractSparkplugRedconCommandStatus,
   getTxingRedconToneClass,
-  hasLiveSparkplugDeviceProjection,
   hasReachedTargetRedcon,
   shouldClearPendingTargetRedcon,
 } from './sparkplug-model'
@@ -389,7 +389,6 @@ function App({ initialAuthError = '' }: AppProps) {
     : ''
   const currentThingTypeName = routeHeaderMetadata?.thingTypeName ?? null
   const isVirtualQuad = currentThingTypeName === 'virtual-quad'
-  const virtualQuadRigId = isVirtualQuad ? routeHeaderMetadata?.rigId ?? null : null
   const currentThingKind = routeHeaderMetadata?.kind ?? null
   const currentTownCatalogName =
     route.kind === 'town'
@@ -482,6 +481,8 @@ function App({ initialAuthError = '' }: AppProps) {
     () => resolveThingSparkplugRedconCommandTarget(routeHeaderMetadata),
     [routeHeaderMetadata],
   )
+  const virtualQuadTarget = isVirtualQuad && currentThingSparkplugCommandTarget?.kind === 'device'
+    ? currentThingSparkplugCommandTarget : null
   const commandableRedconLevels = useMemo(
     () => routeHeaderMetadata?.redconCommandLevels ?? [],
     [routeHeaderMetadata?.redconCommandLevels],
@@ -515,11 +516,6 @@ function App({ initialAuthError = '' }: AppProps) {
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow || isRedconCommandPending
   const isRedconSleepCommandDisabled =
     !isSparkplugDeviceCommandAvailable || isUpdatingShadow
-  const isStoppedVirtualQuad =
-    isVirtualQuad && reportedRedcon === 4 && commandableRedconLevelSet.has(1) &&
-    currentThingSparkplugCommandTarget?.kind === 'device' &&
-    hasLiveSparkplugDeviceProjection(displayShadowDocument, currentThingSparkplugCommandTarget) &&
-    extractSparkplugCapabilityAvailability(displayShadowDocument, 'simulation') === true
   const canLoadShadow = !isLoadingShadow && isShadowConnected
   const canUseDriveControl = currentDeviceAdapter?.canUseDriveControl(reportedRedcon) ?? false
   const isDriveControlActive =
@@ -662,6 +658,7 @@ function App({ initialAuthError = '' }: AppProps) {
     setAuthUser(getAuthUser(refreshedTokens))
     return refreshedTokens.idToken
   }, [])
+  const virtualQuad = useVirtualQuadSession(virtualQuadTarget, resolveSessionIdToken)
 
   useEffect(() => {
     const thingName = activeShadowTarget?.thingName
@@ -1818,7 +1815,7 @@ function App({ initialAuthError = '' }: AppProps) {
   }
 
   const handleRedconSelect = async (redcon: 1 | 2 | 3 | 4): Promise<void> => {
-    if (!commandableRedconLevelSet.has(redcon)) {
+    if (isVirtualQuad || !commandableRedconLevelSet.has(redcon)) {
       return
     }
     if (redcon === 4) {
@@ -2055,11 +2052,16 @@ function App({ initialAuthError = '' }: AppProps) {
         : route.kind === 'device' || route.kind === 'device_video'
           ? selectedDeviceLabel ?? route.device
           : ''
-  const navigationCapabilityShadow =
+  const routeCapabilityShadow =
     currentRouteThingName !== null &&
     activeShadowTarget?.thingName === currentRouteThingName
       ? displayShadowDocument
       : routeSparkplugShadow
+  const navigationCapabilityShadow = virtualQuadTarget ? virtualQuad.sparkplug ?? routeCapabilityShadow : routeCapabilityShadow
+  const quadRedcon = extractReportedRedcon(navigationCapabilityShadow)
+  const navigationRedcon = virtualQuadTarget
+    ? (quadRedcon !== null && quadRedcon < 3 && !virtualQuad.fresh ? 3 : quadRedcon)
+    : reportedRedcon
   const navigationCapabilityStatus: CapabilityStackStatus =
     routeHeaderState.status !== 'ready'
       ? 'loading'
@@ -2076,6 +2078,7 @@ function App({ initialAuthError = '' }: AppProps) {
         capabilities={routeHeaderMetadata.capabilities}
         sparkplugShadow={navigationCapabilityShadow}
         sparkplugShadowStatus={navigationCapabilityStatus}
+        inactiveCapabilities={virtualQuadTarget && !virtualQuad.fresh ? ['agent', 'mavlink', 'video'] : undefined}
         className="navigation-capabilities"
       />
     ) : null
@@ -2115,7 +2118,7 @@ function App({ initialAuthError = '' }: AppProps) {
           {currentRouteThingName !== null && routeHeaderMetadata !== null ? (
             <div className="navigation-status">
               <SparkplugPanel
-                sparkplugRedcon={reportedRedcon}
+                sparkplugRedcon={navigationRedcon}
                 targetRedcon={pendingTargetRedcon}
                 isInteractive={isSparkplugDeviceCommandAvailable && !isVirtualQuad}
                 isRedconCommandDisabled={isRedconCommandDisabled}
@@ -2125,13 +2128,12 @@ function App({ initialAuthError = '' }: AppProps) {
                   void handleRedconSelect(redcon)
                 }}
               />
-              {virtualQuadRigId && isStoppedVirtualQuad ? (
-                <VirtualQuadStartButton
-                  key={virtualQuadRigId}
-                  rigId={virtualQuadRigId}
+              {virtualQuadTarget ? (
+                <VirtualQuadSessionControls
+                  key={`${virtualQuadTarget.edgeNodeId}/${virtualQuadTarget.deviceId}`}
+                  target={virtualQuadTarget}
                   resolveIdToken={resolveSessionIdToken}
-                  disabled={isRedconCommandDisabled}
-                  onStart={() => { void handleRedconSelect(1) }}
+                  sessionView={virtualQuad}
                 />
               ) : null}
               {navigationCapabilities}

@@ -21,6 +21,10 @@
             "terminalRevision"
           ],
           "properties": {
+            "controllerRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
             "phase": {
               "enum": [
                 "stopped",

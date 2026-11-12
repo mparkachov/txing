@@ -605,6 +605,9 @@ func ProjectSparkplugMessage(ctx context.Context, message *SparkplugMessage, obs
 		return "", err
 	}
 	reported := BuildReportedPayload(message, observedAt)
+	if message.DeviceID != nil && strings.HasPrefix(thingName, "virtual-quad-") {
+		return thingName, projectVirtualQuad(ctx, message, reported, awsClient)
+	}
 	if replaceMetricsMessageTypes[message.MessageType] || clearMetricsMessageTypes[message.MessageType] {
 		return thingName, replaceMetrics(ctx, thingName, reported, awsClient)
 	}

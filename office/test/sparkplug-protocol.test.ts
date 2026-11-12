@@ -4,12 +4,34 @@ import {
   buildSparkplugNodeTopics,
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
+  buildVirtualQuadCommandPacket,
   decodeSparkplugPayload,
   encodeSparkplugPayload,
   SparkplugDataType,
 } from '../src/sparkplug-protocol'
 
 describe('sparkplug protocol helpers', () => {
+  test('encodes virtual quad commands for the controller without rounding the revision', () => {
+    const topics = buildSparkplugTopics('town-test', 'cloud-test', 'virtual-quad-test')
+    const start = buildVirtualQuadCommandPacket(topics, {
+      requestId: '00000000-0000-4000-8000-000000000001',
+      redcon: 1,
+      terminalRevision: Number.MAX_SAFE_INTEGER,
+    }, 25, 1000)
+    const stop = buildVirtualQuadCommandPacket(topics, {
+      requestId: '00000000-0000-4000-8000-000000000002',
+      redcon: 4,
+      sessionId: 'SESSION_TEST',
+    }, 25, 1000)
+    expect(start.topicName).toBe(topics.dcmd)
+    expect(Buffer.from(start.payload).toString('base64')).toBe(
+      'COgHEgwKBnJlZGNvbiADUAESPwoVdmlydHVhbFF1YWQucmVxdWVzdElkIAx6JDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMRIyChx2aXJ0dWFsUXVhZC50ZXJtaW5hbFJldmlzaW9uIAx6EDkwMDcxOTkyNTQ3NDA5OTEYGQ==',
+    )
+    expect(Buffer.from(stop.payload).toString('base64')).toBe(
+      'COgHEgwKBnJlZGNvbiADUAQSPwoVdmlydHVhbFF1YWQucmVxdWVzdElkIAx6JDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMhInChV2aXJ0dWFsUXVhZC5zZXNzaW9uSWQgDHoMU0VTU0lPTl9URVNUGBk=',
+    )
+  })
+
   test('builds the expected sparkplug topics', () => {
     expect(buildSparkplugTopics('town', 'rig', 'txing')).toEqual({
       nbirth: 'spBv1.0/town/NBIRTH/rig',

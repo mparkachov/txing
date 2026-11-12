@@ -8,11 +8,13 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -161,12 +163,7 @@ class SitlTelemetry {
                     break;
                 }
                 if (bytes[5] == 1 && bytes[6] == 1 && bytes[8] == 0 && bytes[9] == 0) {
-                    if (bytes[7] == 0 && bytes[1] >= 9) heartbeat = Clock::now();
-                    if (bytes[7] == 30 && bytes[1] >= 4) {
-                        attitude = Clock::now();
-                        boot_ms = 0;
-                        for (unsigned j = 0; j < 4; ++j) boot_ms |= std::uint32_t(bytes[10 + j]) << (8 * j);
-                    }
+                    Observe(bytes[7], bytes[1], bytes + 10);
                 }
                 telemetry.Publish(Frame(bytes, bytes + frame_size));
                 ++frames;
@@ -180,10 +177,83 @@ class SitlTelemetry {
     Clock::time_point heartbeat{};
     Clock::time_point attitude{};
     std::uint32_t boot_ms = 0;
+    bool armed = false;
+
+    bool NavigationReady(Clock::time_point now) const {
+        return now - attitude < 1s && now - position_ < 1s && now - ekf_ < 1500ms && ekf_ready_;
+    }
 
   private:
+    static std::uint32_t U32(const std::uint8_t* bytes) {
+        std::uint32_t result = 0;
+        for (unsigned j = 0; j < 4; ++j) result |= std::uint32_t(bytes[j]) << (8 * j);
+        return result;
+    }
+
+    template<typename T>
+    static T Decode32(const std::uint8_t* bytes) {
+        const auto raw = U32(bytes);
+        T value;
+        static_assert(sizeof(value) == sizeof(raw));
+        std::memcpy(&value, &raw, sizeof(value));
+        return value;
+    }
+
+    void Observe(unsigned message, unsigned length, const std::uint8_t* payload) {
+        const auto now = Clock::now();
+        if (message == 0 && length >= 9) { // HEARTBEAT
+            heartbeat = now;
+            armed = (payload[6] & 128) != 0; // MAV_MODE_FLAG_SAFETY_ARMED
+        } else if (message == 30 && length >= 4) { // ATTITUDE
+            boot_ms = U32(payload);
+            // MAVLink 2 may trim trailing zeros, including zero attitude fields.
+            std::array<std::uint8_t, 16> pose{};
+            for (unsigned i = 4; i < pose.size() && i < length; ++i) pose[i] = payload[i];
+            if (std::isfinite(Decode32<float>(&pose[4])) &&
+                std::isfinite(Decode32<float>(&pose[8])) &&
+                std::isfinite(Decode32<float>(&pose[12]))) {
+                attitude = now;
+            }
+        } else if (message == 33 && length >= 12) { // GLOBAL_POSITION_INT
+            const auto lat = Decode32<std::int32_t>(payload + 4);
+            const auto lon = Decode32<std::int32_t>(payload + 8);
+            if ((lat != 0 || lon != 0) && lat >= -900000000 && lat <= 900000000 &&
+                lon >= -1800000000 && lon <= 1800000000) {
+                position_ = now;
+            }
+        } else if (message == 193 && length >= 21) { // EKF_STATUS_REPORT
+            const unsigned flags = payload[20] | (length >= 22 ? unsigned(payload[21]) << 8 : 0);
+            constexpr unsigned required = 1 | 16 | 32; // Attitude and absolute horizontal/vertical position.
+            constexpr unsigned unhealthy = 128 | 1024; // Constant position or GPS glitch.
+            ekf_ready_ = (flags & required) == required && (flags & unhealthy) == 0;
+            ekf_ = now;
+        }
+    }
+
     int socket_;
+    Clock::time_point position_{};
+    Clock::time_point ekf_{};
+    bool ekf_ready_ = false;
 };
+
+long long UnixMilliseconds() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+void WriteHealth(const std::string& path, bool heartbeat, bool navigation, bool mavlink, bool video) {
+    const auto pending = path + ".new";
+    auto* file = std::fopen(pending.c_str(), "w");
+    if (!file) throw std::runtime_error("open managed health sample failed");
+    const int written = std::fprintf(file,
+        "{\"observedAtMs\":%lld,\"heartbeat\":%s,\"navigation\":%s,\"mavlink\":%s,\"video\":%s}\n",
+        UnixMilliseconds(), heartbeat ? "true" : "false", navigation ? "true" : "false",
+        mavlink ? "true" : "false", video ? "true" : "false");
+    const int closed = std::fclose(file);
+    if (written < 0 || closed != 0 || std::rename(pending.c_str(), path.c_str()) != 0) {
+        throw std::runtime_error("write managed health sample failed");
+    }
+}
 
 void DeletePipeline(GstElement* element) {
     gst_element_set_state(element, GST_STATE_NULL);
@@ -192,6 +262,7 @@ void DeletePipeline(GstElement* element) {
 
 void Run(bool local) {
     const auto start = Clock::now();
+    const auto* health_path = std::getenv("QUAD_HEALTH_FILE");
     SitlTelemetry sitl;
     Telemetry telemetry;
     std::unique_ptr<kvs::KvsSession> video;
@@ -242,12 +313,14 @@ void Run(bool local) {
 
     auto sample_start = Clock::now();
     auto last_frame = sample_start;
+    auto next_health = sample_start;
     auto last_boot = sitl.boot_ms;
     unsigned encoded = 0;
     unsigned keyframes = 0;
     std::uint64_t encoded_bytes = 0;
     GstClockTime first_pts = GST_CLOCK_TIME_NONE;
     bool ready = false;
+    bool produced_keyframe = false;
     while (!stopping) {
         const std::unique_ptr<GstMessage, decltype(&gst_message_unref)> failure(
             gst_bus_pop_filtered(bus.get(), GST_MESSAGE_ERROR), gst_message_unref);
@@ -287,7 +360,10 @@ void Run(bool local) {
             }
             gst_buffer_unmap(buffer, &bytes);
             ++encoded;
-            if (keyframe) ++keyframes;
+            if (keyframe) {
+                ++keyframes;
+                produced_keyframe = true;
+            }
             last_frame = Clock::now();
         }
         sitl.Drain(telemetry);
@@ -298,15 +374,21 @@ void Run(bool local) {
         }
 
         const auto now = Clock::now();
+        if (health_path && now >= next_health) {
+            if (sitl.armed) throw std::runtime_error("read-only simulator unexpectedly armed");
+            const bool heartbeat = now - sitl.heartbeat < 2s;
+            WriteHealth(health_path, heartbeat, sitl.NavigationReady(now),
+                heartbeat && data && data->SignalingConnected(),
+                produced_keyframe && now - last_frame < 1s && video && video->SignalingConnected());
+            next_health = now + 1s;
+        }
         if (now - last_frame > 3s) throw std::runtime_error("encoder stopped producing access units");
         if (!ready && now - start >= 80s) throw std::runtime_error("qualification startup exceeded 80 seconds");
         if (!ready && keyframes && sitl.boot_ms && sitl.heartbeat != Clock::time_point{} &&
             now - sitl.heartbeat < 2s && now - sitl.attitude < 1s) {
-            const auto unix_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
             std::printf("QUAD_READY mode=%s unix_ms=%lld media_elapsed_ms=%lld boot_ms=%u\n",
                 local ? "local" : "kvs",
-                static_cast<long long>(unix_ms),
+                UnixMilliseconds(),
                 static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count()),
                 sitl.boot_ms);
             ready = true;

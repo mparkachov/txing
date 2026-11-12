@@ -17,6 +17,7 @@ env:
   WITNESS_LAMBDA_ASSET: txing-witness-lambda-linux-aarch64.zip
   CLOUD_RIG_LAMBDA_ASSET: txing-cloud-rig-lambda-linux-aarch64.zip
   CLOUD_MCU_LAMBDA_ASSET: txing-cloud-mcu-lambda-linux-aarch64.zip
+  VIRTUAL_QUAD_LAMBDA_ASSET: txing-virtual-quad-lambda-linux-aarch64.zip
 
 jobs:
   metadata:
@@ -150,6 +151,11 @@ jobs:
             package_path: ./cmd/txing-cloud-mcu-lambda
             version_package: txing.dev/cloud-mcu-lambda/internal/version
             asset_name: txing-cloud-mcu-lambda-linux-aarch64.zip
+          - function_name: txing-virtual-quad-lambda
+            working_directory: devices/virtual-quad/lambda
+            package_path: ./cmd/txing-virtual-quad-lambda
+            version_package: txing.dev/virtual-quad-lambda/internal/version
+            asset_name: txing-virtual-quad-lambda-linux-aarch64.zip
 
     steps:
       - name: Check out repository
@@ -200,7 +206,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('witness/go.mod', 'witness/go.sum', 'devices/cloud-mcu/lambda/go.mod', 'devices/cloud-mcu/lambda/go.sum') }}
+          key: go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/go.mod', matrix.working_directory), format('{0}/go.sum', matrix.working_directory)) }}
           restore-keys: |
             go-lambda-${{ matrix.function_name }}-${{ runner.os }}-${{ runner.arch }}-
             go-lambda-${{ runner.os }}-${{ runner.arch }}-
@@ -286,6 +292,7 @@ jobs:
             "$WITNESS_LAMBDA_ASSET"
             "$CLOUD_RIG_LAMBDA_ASSET"
             "$CLOUD_MCU_LAMBDA_ASSET"
+            "$VIRTUAL_QUAD_LAMBDA_ASSET"
           )
 
           release_asset_paths=()

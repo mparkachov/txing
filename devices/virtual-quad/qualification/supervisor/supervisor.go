@@ -214,10 +214,10 @@ func run(mode string) error {
 		metadataPath = metadata.EscapedPath()
 	}
 
-	return runWorkload(ctx, mode, mediaEnv, mediaArgs, metadataPath, false)
+	return runWorkload(ctx, mode, mediaEnv, mediaArgs, metadataPath, false, nil)
 }
 
-func runWorkload(ctx context.Context, mode string, mediaEnv, mediaArgs []string, metadataPath string, vm bool) error {
+func runWorkload(ctx context.Context, mode string, mediaEnv, mediaArgs []string, metadataPath string, vm bool, monitor func(context.Context, string)) error {
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -231,6 +231,15 @@ func runWorkload(ctx context.Context, mode string, mediaEnv, mediaArgs []string,
 	go recordResources(scratch, metadataPath, vm, done)
 	defer close(done)
 
+	healthPath := filepath.Join(scratch, "health.json")
+	if monitor != nil {
+		mediaEnv = append(mediaEnv, "QUAD_HEALTH_FILE="+healthPath)
+		// Ask the pinned ArduCopter build to emit EKF_STATUS_REPORT at 2 Hz.
+		intervals := filepath.Join(scratch, "message-intervals-chan0.txt")
+		if err := os.WriteFile(intervals, []byte("193 500\n"), 0600); err != nil {
+			return fmt.Errorf("configure SITL health telemetry: %w", err)
+		}
+	}
 	exit := make(chan childResult, 2)
 	children := make([]*exec.Cmd, 0, 2)
 	pending := 0
@@ -250,6 +259,19 @@ func runWorkload(ctx context.Context, mode string, mediaEnv, mediaArgs []string,
 	}
 	children = append(children, sitl)
 	pending++
+
+	if monitor != nil {
+		monitorCtx, cancel := context.WithCancel(ctx)
+		monitored := make(chan struct{})
+		go func() {
+			defer close(monitored)
+			monitor(monitorCtx, healthPath)
+		}()
+		defer func() {
+			cancel()
+			<-monitored
+		}()
+	}
 
 	timer := time.NewTimer(time.Until(start.Add(runLimit)))
 	defer timer.Stop()
@@ -284,8 +306,8 @@ func main() {
 		log.Fatal("expected at most one run mode")
 	}
 	var err error
-	if mode == "microvm" || mode == "microvm-local" {
-		err = serveMicroVM(mode == "microvm-local")
+	if mode == "microvm" || mode == "microvm-local" || mode == "microvm-session" {
+		err = serveMicroVM(mode)
 	} else {
 		err = run(mode)
 	}

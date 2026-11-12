@@ -116,6 +116,8 @@ class FakeKvsSession final : public KvsSession {
         state_->started = true;
     }
 
+    bool SignalingConnected() const noexcept override { return state_->started && !state_->stopped; }
+
     void PushH264AccessUnit(
         const std::uint8_t* data,
         std::size_t len,

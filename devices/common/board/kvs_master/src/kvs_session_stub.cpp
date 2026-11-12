@@ -12,6 +12,8 @@ class StubKvsSession final : public KvsSession {
         started_ = true;
     }
 
+    bool SignalingConnected() const noexcept override { return false; }
+
     void PushH264AccessUnit(
         const std::uint8_t* data,
         std::size_t len,

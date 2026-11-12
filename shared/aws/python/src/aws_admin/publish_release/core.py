@@ -32,6 +32,7 @@ class PublishError(RuntimeError):
 class LambdaAsset:
     artifact_id: str
     asset_name: str
+    first_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,11 @@ LAMBDA_ASSETS: tuple[LambdaAsset, ...] = (
     LambdaAsset(
         "txing-cloud-mcu-lambda",
         "txing-cloud-mcu-lambda-linux-aarch64.zip",
+    ),
+    LambdaAsset(
+        "txing-virtual-quad-lambda",
+        "txing-virtual-quad-lambda-linux-aarch64.zip",
+        first_version="0.15.9",
     ),
 )
 
@@ -283,6 +289,13 @@ def publish_lambdas(
         work_dir = Path(work_dir_raw)
         for asset in LAMBDA_ASSETS:
             if function_filter is not None and asset.artifact_id not in function_filter:
+                continue
+            if (
+                function_filter is None
+                and asset.first_version is not None
+                and asset.asset_name not in release.assets
+                and _semver_key(release.version) < _semver_key(asset.first_version)
+            ):
                 continue
             asset_path = work_dir / asset.asset_name
             github.download_asset(release, asset.asset_name, asset_path)

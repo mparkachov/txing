@@ -1,0 +1,275 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: On-demand virtual quadcopter session controller and ARM64 MicroVM image support.
+
+Parameters:
+  EnvironmentStackName:
+    Type: String
+    AllowedPattern: '[A-Za-z][A-Za-z0-9-]{0,40}'
+  LambdaArtifactsBucketName:
+    Type: String
+  ImageVersion:
+    Type: String
+    Default: ""
+    AllowedPattern: '([0-9]+\.[0-9]+)?'
+    Description: Pin a successful MicroVM image version. An empty value prepares image publication.
+
+Rules:
+  Frankfurt:
+    Assertions:
+      - Assert: !Equals [!Ref AWS::Region, eu-central-1]
+        AssertDescription: The virtual quadcopter runtime uses eu-central-1.
+
+Conditions:
+  ImageConfigured: !Not [!Equals [!Ref ImageVersion, ""]]
+
+Resources:
+  MicrovmLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda-microvms/${EnvironmentStackName}-virtual-quad
+      RetentionInDays: 14
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: virtual-quad-image-build
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${LambdaArtifactsBucketName}/virtual-quad/${EnvironmentStackName}/*'
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt MicrovmLogs.Arn
+
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Condition: ImageConfigured
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: virtual-quad-session-worker
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunctionUrl
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-virtual-quad
+                Condition:
+                  StringEquals: {lambda:FunctionUrlAuthType: AWS_IAM}
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-virtual-quad
+                Condition:
+                  Bool: {lambda:InvokedViaFunctionUrl: 'true'}
+              - Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsMaster
+                Resource:
+                  - !Sub arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/virtual-quad-*-board-video/*
+                  - !Sub arn:${AWS::Partition}:kinesisvideo:${AWS::Region}:${AWS::AccountId}:channel/virtual-quad-*-mavlink/*
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt MicrovmLogs.Arn
+
+  SessionTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub ${EnvironmentStackName}-virtual-quad-sessions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: deviceId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: deviceId
+          KeyType: HASH
+
+  ControllerLogs:
+    Type: AWS::Logs::LogGroup
+    Condition: ImageConfigured
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-virtual-quad
+      RetentionInDays: 14
+
+  ControllerRole:
+    Type: AWS::IAM::Role
+    Condition: ImageConfigured
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: virtual-quad-lifecycle
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ControllerLogs.Arn
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:Scan]
+                Resource: !GetAtt SessionTable.Arn
+              - Effect: Allow
+                Action: [iot:DescribeEndpoint, lambda:ListMicrovms]
+                Resource: '*'
+              - Effect: Allow
+                Action: [iot:DescribeThing, iot:GetThingShadow]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/cloud-*
+                  - !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/virtual-quad-*
+              - Effect: Allow
+                Action: iot:UpdateThingShadow
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/virtual-quad-*
+              - Effect: Allow
+                Action: iot:Publish
+                Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/*/DDATA/cloud-*/virtual-quad-*
+              - Effect: Allow
+                Action: lambda:GetFunctionUrlConfig
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${EnvironmentStackName}-virtual-quad
+              - Effect: Allow
+                Action: [lambda:RunMicrovm, lambda:GetMicrovm, lambda:TerminateMicrovm]
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${EnvironmentStackName}-virtual-quad
+              - Effect: Allow
+                Action: lambda:PassNetworkConnector
+                Resource:
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:NO_INGRESS
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:aws:network-connector:aws-network-connector:INTERNET_EGRESS
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt WorkerRole.Arn
+                Condition:
+                  StringEquals: {iam:PassedToService: lambda.amazonaws.com}
+
+  Controller:
+    Type: AWS::Lambda::Function
+    Condition: ImageConfigured
+    Properties:
+      FunctionName: !Sub ${EnvironmentStackName}-virtual-quad
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      Handler: bootstrap
+      Role: !GetAtt ControllerRole.Arn
+      Timeout: 45
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaArtifactsBucketName
+        S3Key: lambda/txing-virtual-quad-lambda/current/bootstrap.zip
+      Environment:
+        Variables:
+          VIRTUAL_QUAD_SESSION_TABLE: !Ref SessionTable
+          VIRTUAL_QUAD_IMAGE_ARN: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${EnvironmentStackName}-virtual-quad
+          VIRTUAL_QUAD_IMAGE_VERSION: !Ref ImageVersion
+          VIRTUAL_QUAD_WORKER_ROLE_ARN: !GetAtt WorkerRole.Arn
+          VIRTUAL_QUAD_WORKER_LOG_GROUP: !Ref MicrovmLogs
+
+  WorkerUrl:
+    Type: AWS::Lambda::Url
+    Condition: ImageConfigured
+    Properties:
+      AuthType: AWS_IAM
+      TargetFunctionArn: !GetAtt Controller.Arn
+
+  DeviceCommandRule:
+    Type: AWS::IoT::TopicRule
+    Condition: ImageConfigured
+    DependsOn: WorkerUrl
+    Properties:
+      RuleName: !Join ["_", [!Join ["_", !Split ["-", !Ref EnvironmentStackName]], virtual_quad_dcmd]]
+      TopicRulePayload:
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        Sql: >-
+          SELECT topic() AS mqttTopic, encode(*, 'base64') AS payloadBase64
+          FROM 'spBv1.0/+/DCMD/+/+'
+          WHERE startswith(topic(4), 'cloud-') AND startswith(topic(5), 'virtual-quad-')
+        Actions:
+          - Lambda: {FunctionArn: !GetAtt Controller.Arn}
+
+  DeviceCommandPermission:
+    Type: AWS::Lambda::Permission
+    Condition: ImageConfigured
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Controller
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt DeviceCommandRule.Arn
+
+  RepairGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Condition: ImageConfigured
+    Properties:
+      Name: !Sub ${EnvironmentStackName}-virtual-quad
+
+  RepairRole:
+    Type: AWS::IAM::Role
+    Condition: ImageConfigured
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {aws:SourceAccount: !Ref AWS::AccountId}
+              ArnEquals: {aws:SourceArn: !GetAtt RepairGroup.Arn}
+      Policies:
+        - PolicyName: virtual-quad-repair
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt Controller.Arn
+
+  RepairSchedule:
+    Type: AWS::Scheduler::Schedule
+    Condition: ImageConfigured
+    DependsOn: WorkerUrl
+    Properties:
+      Name: repair
+      GroupName: !Ref RepairGroup
+      ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow: {Mode: "OFF"}
+      Target:
+        Arn: !GetAtt Controller.Arn
+        RoleArn: !GetAtt RepairRole.Arn
+        Input: '{"action":"repair"}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 60
+          MaximumRetryAttempts: 0
+
+Outputs:
+  ArtifactBucket:
+    Value: !Ref LambdaArtifactsBucketName
+  BuildRoleArn:
+    Value: !GetAtt BuildRole.Arn
+  ImageName:
+    Value: !Sub ${EnvironmentStackName}-virtual-quad
+  MicrovmLogGroup:
+    Value: !Ref MicrovmLogs
+  ControllerFunction:
+    Condition: ImageConfigured
+    Value: !Ref Controller

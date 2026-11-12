@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 )
 
@@ -28,15 +29,17 @@ var vmID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 
 type microVM struct {
 	local    bool
+	managed  bool
 	mu       sync.Mutex
 	id, mode string
 	stopping bool
 	cancel   context.CancelFunc
 	done     chan struct{}
+	session  *sessionActivation
 }
 
-func serveMicroVM(local bool) error {
-	vm := &microVM{local: local}
+func serveMicroVM(mode string) error {
+	vm := &microVM{local: mode == "microvm-local", managed: mode == "microvm-session"}
 	server := &http.Server{
 		Addr: ":8080", Handler: vm,
 		ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
@@ -95,12 +98,19 @@ func (vm *microVM) launch(w http.ResponseWriter, r *http.Request) {
 		ID      string `json:"microvmId"`
 		Payload string `json:"runHookPayload"`
 	}
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&request)
+	if err != nil || !vmID.MatchString(request.ID) {
+		http.Error(w, "invalid MicroVM run payload", http.StatusBadRequest)
+		return
+	}
+	if vm.managed {
+		vm.launchSession(w, r, request.ID, request.Payload)
+		return
+	}
 	var payload struct {
 		Mode string `json:"mode"`
 	}
-	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&request)
-	if err != nil || !vmID.MatchString(request.ID) ||
-		json.Unmarshal([]byte(request.Payload), &payload) != nil ||
+	if json.Unmarshal([]byte(request.Payload), &payload) != nil ||
 		(payload.Mode != "kvs" && payload.Mode != "hang-on-stop") {
 		http.Error(w, "invalid MicroVM run payload", http.StatusBadRequest)
 		return
@@ -128,7 +138,7 @@ func (vm *microVM) work(ctx context.Context, id, mode string, done chan struct{}
 		mediaArgs = []string{"--local"}
 	} else {
 		credentialsCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		env, err := microVMCredentials(credentialsCtx)
+		creds, err := microVMCredentials(credentialsCtx, time.Now().Add(runLimit))
 		cancel()
 		if err != nil {
 			if ctx.Err() == nil {
@@ -136,33 +146,37 @@ func (vm *microVM) work(ctx context.Context, id, mode string, done chan struct{}
 			}
 			return
 		}
-		mediaEnv = append(env,
+		mediaEnv = append(mediaCredentials(creds),
 			"AWS_REGION="+probeRegion,
 			"QUAD_VIDEO_CHANNEL=quad-qualification-176-board-video",
 			"QUAD_MAVLINK_CHANNEL=quad-qualification-176-mavlink")
 	}
-	if err := runWorkload(ctx, mode, mediaEnv, mediaArgs, "", !vm.local); err != nil {
+	if err := runWorkload(ctx, mode, mediaEnv, mediaArgs, "", !vm.local, nil); err != nil {
 		log.Printf("QUAD_SUPERVISOR_ERROR %v", err)
 	}
 }
 
-func microVMCredentials(ctx context.Context) ([]string, error) {
+func microVMCredentials(ctx context.Context, deadline time.Time) (aws.Credentials, error) {
 	// Resolve the execution role only after restore, through the standard AWS
 	// provider chain. The native KVS sender needs credentials valid for one run.
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(probeRegion))
 	if err != nil {
-		return nil, errors.New("could not configure the MicroVM credential provider")
+		return aws.Credentials{}, errors.New("could not configure the MicroVM credential provider")
 	}
 	creds, err := cfg.Credentials.Retrieve(ctx)
 	if err != nil || !creds.HasKeys() || creds.SessionToken == "" {
-		return nil, errors.New("temporary MicroVM execution-role credentials unavailable")
+		return aws.Credentials{}, errors.New("temporary MicroVM execution-role credentials unavailable")
 	}
-	if creds.CanExpire && time.Until(creds.Expires) < runLimit+time.Minute {
-		return nil, errors.New("MicroVM execution-role credentials expire before the probe deadline")
+	if creds.CanExpire && creds.Expires.Before(deadline.Add(time.Minute)) {
+		return aws.Credentials{}, errors.New("MicroVM execution-role credentials expire before the run deadline")
 	}
 	log.Printf("QUAD_ROLE_CREDENTIALS temporary=true expiry_known=%t", creds.CanExpire)
+	return creds, nil
+}
+
+func mediaCredentials(creds aws.Credentials) []string {
 	return []string{"AWS_ACCESS_KEY_ID=" + creds.AccessKeyID, "AWS_SECRET_ACCESS_KEY=" + creds.SecretAccessKey,
-		"AWS_SESSION_TOKEN=" + creds.SessionToken}, nil
+		"AWS_SESSION_TOKEN=" + creds.SessionToken}
 }
 
 func (vm *microVM) terminate(ctx context.Context) bool {

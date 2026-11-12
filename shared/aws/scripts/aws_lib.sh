@@ -675,10 +675,12 @@ lambda_release_targets_json() {
     --arg witness "$(stack_parameter WitnessFunctionName)" \
     --arg cloud_rig "$(stack_parameter CloudRigRuntimeFunctionName)" \
     --arg cloud_mcu "$(stack_parameter CloudMcuRuntimeFunctionName)" \
+    --arg virtual_quad "$(lambda_stack_name virtual-quad)" \
     '{
       "txing-witness-lambda": $witness,
       "txing-cloud-rig-lambda": $cloud_rig,
-      "txing-cloud-mcu-lambda": $cloud_mcu
+      "txing-cloud-mcu-lambda": $cloud_mcu,
+      "txing-virtual-quad-lambda": $virtual_quad
     }'
 }
 

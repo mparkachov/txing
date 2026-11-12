@@ -1,9 +1,12 @@
 set shell := ["sh", "-eu", "-c"]
 
 quad_dir := source_directory()
-repo_dir := canonicalize(quad_dir + "/../..")
-tmp_dir := repo_dir + "/tmp"
+project_root := canonicalize(quad_dir + "/../..")
+tmp_dir := project_root + "/tmp"
 export TMPDIR := tmp_dir
+root_justfile := project_root + "/justfile"
+aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
+session_template := quad_dir + "/lambda/cmd/txing-virtual-quad-lambda/template.yaml"
 
 [positional-arguments]
 qualification-build payload_output='':
@@ -13,11 +16,11 @@ qualification-build payload_output='':
     mkdir -p "{{ tmp_dir }}"
     context="$(mktemp -d "{{ tmp_dir }}/quad-context.XXXXXXXX")"
     trap 'rm -rf "$context"' 0
-    sender="{{ repo_dir }}/devices/common/board/kvs_master"
+    sender="{{ project_root }}/devices/common/board/kvs_master"
     sender_context="$context/devices/common/board/kvs_master"
     mkdir -p "$sender_context" "$context/devices/virtual-quad"
     cp -R "$sender/CMakeLists.txt" "$sender/include" "$sender/src" "$sender_context/"
-    cp -R "{{ repo_dir }}/devices/common/kvs" "$context/devices/common/"
+    cp -R "{{ project_root }}/devices/common/kvs" "$context/devices/common/"
     cp -R "{{ quad_dir }}/qualification" "$context/devices/virtual-quad/"
     dockerfile="$context/devices/virtual-quad/qualification/Dockerfile"
     if [ -n "${1:-}" ]; then
@@ -28,20 +31,146 @@ qualification-build payload_output='':
         --tag txing-virtual-quad-qualification:local "$context"
     fi
 
-microvm-package:
+[positional-arguments]
+microvm-package mode='microvm':
     #!/bin/sh
     set -eu
+    mode=$1
+    case "$mode" in
+      microvm|microvm-session) ;;
+      *) printf '%s\n' 'Expected microvm or microvm-session.' >&2; exit 1 ;;
+    esac
     mkdir -p "{{ tmp_dir }}"
     package="$(mktemp -d "{{ tmp_dir }}/quad-microvm.XXXXXXXX")"
     context="$package/context"
     mkdir -p "$context"
-    just --justfile "{{ repo_dir }}/justfile" virtual-quad::qualification-build "$context" >&2
-    cp "{{ quad_dir }}/qualification/MicroVM.Dockerfile" "$context/Dockerfile"
+    just --justfile "{{ root_justfile }}" virtual-quad::qualification-build "$context" >&2
+    dockerfile="{{ quad_dir }}/qualification/MicroVM.Dockerfile"
+    if [ "$mode" = microvm-session ]; then
+      sed 's/^CMD \["microvm"\]$/CMD ["microvm-session"]/' "$dockerfile" > "$context/Dockerfile"
+      grep -Fxq 'CMD ["microvm-session"]' "$context/Dockerfile"
+    else
+      cp "$dockerfile" "$context/Dockerfile"
+    fi
     nerdctl.lima build --platform linux/arm64 --progress plain \
-      --tag txing-virtual-quad-microvm:local "$context" >&2
+      --tag "txing-virtual-quad-$mode:local" "$context" >&2
     cd "$context"
     zip -q -r "$package/bundle.zip" Dockerfile quad
     cd "$package"
     shasum -a 256 bundle.zip > SHA256SUMS
     cat SHA256SUMS >&2
     printf '%s\n' "$package/bundle.zip"
+
+[positional-arguments]
+deploy image_version='' stack_name='':
+    #!/bin/sh
+    set -eu
+    . "{{ aws_lib }}"
+    aws_env=$(just --justfile "{{ root_justfile }}" _project-aws-env aws "$2")
+    eval "$aws_env"
+    txing_aws_init
+    if [ "$TXING_AWS_REGION" != eu-central-1 ]; then
+      printf '%s\n' 'Virtual quad sessions require eu-central-1.' >&2
+      exit 1
+    fi
+    stack="$(lambda_stack_name virtual-quad)"
+    image_version="$1"
+    set -- "EnvironmentStackName=$TXING_AWS_STACK"
+    if [ -n "$image_version" ]; then
+      caller=$(aws sts get-caller-identity --output json)
+      partition=$(printf '%s\n' "$caller" | jq -er '.Arn | split(":")[1]')
+      account=$(printf '%s\n' "$caller" | jq -er .Account)
+      image="arn:$partition:lambda:$TXING_AWS_REGION:$account:microvm-image:$stack"
+      selected=$(aws lambda-microvms get-microvm-image-version \
+        --image-identifier "$image" --image-version "$image_version" --output json)
+      if ! printf '%s\n' "$selected" | jq -e '.state == "SUCCESSFUL" and .status == "ACTIVE" and
+        any(.cpuConfigurations[]; .architecture == "ARM_64")' > /dev/null; then
+        printf '%s\n' "Image version $image_version must be successful, active, and support ARM64." >&2
+        exit 1
+      fi
+      set -- "$@" "ImageVersion=$image_version"
+    fi
+    deploy_template "$stack" "{{ session_template }}" "$@"
+    aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].Outputs' --output json
+
+[positional-arguments]
+publish-image bundle stack_name='':
+    #!/bin/sh
+    set -eu
+    bundle=$1
+    case "$bundle" in
+      /*) ;;
+      *) bundle="{{ invocation_directory() }}/$bundle" ;;
+    esac
+    if [ ! -f "$bundle" ] || ! unzip -p "$bundle" Dockerfile | grep -Fxq 'CMD ["microvm-session"]'; then
+      printf '%s\n' 'Pass the ZIP from just virtual-quad::microvm-package microvm-session.' >&2
+      exit 1
+    fi
+    . "{{ aws_lib }}"
+    aws_env=$(just --justfile "{{ root_justfile }}" _project-aws-env aws "$2")
+    eval "$aws_env"
+    txing_aws_init
+    if [ "$TXING_AWS_REGION" != eu-central-1 ]; then
+      printf '%s\n' 'Virtual quad sessions require eu-central-1.' >&2
+      exit 1
+    fi
+    aws_quad() { aws --region "$TXING_AWS_REGION" --no-cli-pager --output json "$@"; }
+    stack=$(aws_quad cloudformation describe-stacks --stack-name "$(lambda_stack_name virtual-quad)" --query 'Stacks[0]')
+    output() { printf '%s\n' "$stack" | jq -er --arg key "$1" '.Outputs[] | select(.OutputKey == $key).OutputValue'; }
+    bucket=$(output ArtifactBucket)
+    role=$(output BuildRoleArn)
+    name=$(output ImageName)
+    logs=$(output MicrovmLogGroup)
+    partition=$(printf '%s\n' "$stack" | jq -er '.StackId | split(":")[1]')
+    account=$(printf '%s\n' "$stack" | jq -er '.StackId | split(":")[4]')
+    image_arn="arn:$partition:lambda:$TXING_AWS_REGION:$account:microvm-image:$name"
+    base="arn:$partition:lambda:$TXING_AWS_REGION:aws:microvm-image:al2023-1"
+    connector="arn:$partition:lambda:$TXING_AWS_REGION:aws:network-connector:aws-network-connector:INTERNET_EGRESS"
+    catalog=$(aws_quad lambda-microvms list-managed-microvm-image-versions --image-identifier "$base")
+    base_version=$(printf '%s\n' "$catalog" | jq -er '
+      [.items[] | select(.status == "AVAILABLE" and any(.supportedCpuConfigurations[]; .architecture == "ARM_64"))
+      | .imageVersion | split(".")[0] | select(test("^[0-9]+$")) | tonumber] | max // error("No available ARM64 base version")')
+    checksum=$(shasum -a 256 "$bundle")
+    key="virtual-quad/$TXING_AWS_STACK/${checksum%% *}/bundle.zip"
+    input=$(jq -cnS --arg base "$base" --arg version "$base_version" --arg role "$role" \
+      --arg uri "s3://$bucket/$key" --arg logs "$logs" --arg connector "$connector" \
+      --slurpfile hooks "{{ quad_dir }}/qualification/microvm-hooks.json" \
+      '{baseImageArn:$base,baseImageVersion:$version,buildRoleArn:$role,codeArtifact:{uri:$uri},
+        logging:{cloudWatch:{logGroup:$logs}},egressNetworkConnectors:[$connector],
+        cpuConfigurations:[{architecture:"ARM_64"}],resources:[{minimumMemoryInMiB:4096}],hooks:$hooks[0]}')
+    identity=$(printf '%s\n%s\n' "$image_arn" "$input" | shasum -a 256)
+    token=${identity%% *}
+    description="txing virtual quad $token"
+    error_file=$(mktemp "{{ tmp_dir }}/quad-image-error.XXXXXXXX")
+    trap 'rm -f "$error_file"' 0
+    if image=$(aws_quad lambda-microvms get-microvm-image --image-identifier "$image_arn" 2>"$error_file"); then
+      versions=$(aws_quad lambda-microvms list-microvm-image-versions --image-identifier "$image_arn")
+      existing=$(printf '%s\n' "$versions" | jq -c --arg description "$description" '
+        [.items[] | select(.description == $description)] | sort_by(.createdAt) | last // empty
+        | {imageArn,imageVersion,state,status,stateReason}')
+      if [ -n "$existing" ]; then
+        printf '%s\n' "$existing" | jq .
+        exit 0
+      fi
+      case "$(printf '%s\n' "$image" | jq -er .state)" in
+        CREATING|UPDATING) printf '%s\n' 'The image already has a build in progress.' >&2; exit 1 ;;
+      esac
+      set -- update-microvm-image --image-identifier "$image_arn"
+    elif grep -Fq ResourceNotFoundException "$error_file"; then
+      set -- create-microvm-image --name "$name"
+    else
+      cat "$error_file" >&2
+      exit 1
+    fi
+    checksum_b64=$(openssl dgst -sha256 -binary "$bundle" | openssl base64 -A)
+    test "${#checksum_b64}" -eq 44
+    if ! aws_quad s3api put-object --bucket "$bucket" --key "$key" --body "$bundle" \
+      --if-none-match '*' --checksum-algorithm SHA256 --checksum-sha256 "$checksum_b64" > /dev/null; then
+      uploaded=$(aws_quad s3api head-object --bucket "$bucket" --key "$key" --checksum-mode ENABLED --query ChecksumSHA256 | jq -er .)
+      if [ "$uploaded" != "$checksum_b64" ]; then
+        printf 'Existing object failed checksum verification for s3://%s/%s\n' "$bucket" "$key" >&2
+        exit 1
+      fi
+    fi
+    aws_quad lambda-microvms "$@" --cli-input-json "$input" --description "$description" --client-token "$token" \
+      --query '{imageArn:imageArn,imageVersion:imageVersion,state:state,status:status,stateReason:stateReason}'
