@@ -116,4 +116,21 @@ describe('sparkplug panel', () => {
     expect(markup).not.toContain('sparkplug-device-button')
     expect(markup).not.toContain('Hide bot device details')
   })
+
+  test('allows virtual quad REDCON 4 during a pending REDCON 1', () => {
+    const markup = renderToStaticMarkup(<SparkplugPanel
+      sparkplugRedcon={2}
+      targetRedcon={1}
+      isInteractive={true}
+      isRedconCommandDisabled={true}
+      isRedconSleepCommandDisabled={false}
+      commandableRedconLevels={[1, 4]}
+      onRedconSelect={() => {}}
+    />)
+    expect(markup).toMatch(/aria-label="Set REDCON 1[^"]*"[^>]*disabled/)
+    expect(markup).toMatch(/aria-label="REDCON 2[^"]*"[^>]*aria-pressed="true"[^>]*disabled/)
+    const stop = markup.match(/<button[^>]+aria-label="Set REDCON 4[^"]*"[^>]*>/)?.[0]
+    expect(stop).toBeDefined()
+    expect(stop).not.toContain('disabled')
+  })
 })

@@ -1,4 +1,6 @@
 import type { ReactElement } from 'react'
+import type { QuadMavlinkStatus } from '../../devices/virtual-quad/web/virtual-quad-media-status'
+import type { VirtualQuadAgentStatus } from './agent-shadow-status'
 import type { ShadowName } from './shadow-protocol'
 import { extractSparkplugCapabilityAvailability } from './sparkplug-model'
 
@@ -11,6 +13,8 @@ type CapabilityStackProps = {
   sparkplugShadow: unknown | null
   sparkplugShadowStatus: CapabilityStackStatus
   inactiveCapabilities?: readonly ShadowName[]
+  agentStatus?: VirtualQuadAgentStatus
+  mavlinkStatus?: QuadMavlinkStatus
   className?: string
 }
 
@@ -28,6 +32,8 @@ function CapabilityStack({
   sparkplugShadow,
   sparkplugShadowStatus,
   inactiveCapabilities,
+  agentStatus,
+  mavlinkStatus,
   className,
 }: CapabilityStackProps): ReactElement | null {
   const displayCapabilities = [...capabilities].filter(isCapabilityVisible).reverse()
@@ -45,8 +51,11 @@ function CapabilityStack({
           sparkplugShadowStatus === 'ready' && !inactiveCapabilities?.includes(capability)
             ? extractSparkplugCapabilityAvailability(sparkplugShadow, capability)
             : null
-        const isActive = availability === true
-        const statusLabel = isActive ? 'active' : 'inactive'
+        const observedAgentStatus = capability === 'agent' ? agentStatus : undefined
+        const browserMavlinkStatus = capability === 'mavlink' ? mavlinkStatus : undefined
+        const isActive = observedAgentStatus !== undefined ? observedAgentStatus === 'running'
+          : browserMavlinkStatus !== undefined ? browserMavlinkStatus === 'live' : availability === true
+        const statusLabel = observedAgentStatus ?? browserMavlinkStatus ?? (isActive ? 'active' : 'inactive')
         return (
           <span
             key={`${thingName}:${capability}`}

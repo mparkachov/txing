@@ -17,6 +17,7 @@ type Session = {
   phase: Phase
   terminalRevision: number
   sessionId: string | null
+  lastSessionId: string | null
   lastOutcome: string | null
   lastReason: string | null
   availabilityWatermarkMs: number | null
@@ -41,7 +42,7 @@ export const readVirtualQuadSession = (shadow: unknown): Session | null => {
   const terminal = phase === 'stopped' || phase === 'failed'
   if (terminal ? sessionId !== null : sessionId === null) return null
   return {
-    phase, terminalRevision, sessionId,
+    phase, terminalRevision, sessionId, lastSessionId: text(reported.lastSessionId),
     lastOutcome: text(reported.lastOutcome),
     lastReason: text(reported.lastReason),
     availabilityWatermarkMs: integer(reported.availabilityWatermarkMs),

@@ -80,8 +80,16 @@ describe('app route catalog source wiring', () => {
     expect(commandabilityMatch?.[1]).not.toMatch(
       /canUseDriveControl|isDriveControl|isDriveInputEnabled|isDriveControlOwnedByOther|robotState|mcp|Mcp/,
     )
-    expect(appSource).toContain('isInteractive={isSparkplugDeviceCommandAvailable && !isVirtualQuad}')
+    expect(appSource).toContain('isInteractive={isVirtualQuad ? virtualQuadTarget !== null : isSparkplugDeviceCommandAvailable}')
     expect(appSource).toContain('sparkplugRedcon={navigationRedcon}')
+  })
+
+  test('virtual quad uses the shared selector and notification stream with correlated session commands', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
+    expect(appSource).toContain('targetRedcon={isVirtualQuad ? quadRedconControl.pendingRedcon : pendingTargetRedcon}')
+    expect(appSource).toContain('await quadRedconControl.select(redcon)')
+    expect(appSource).toContain('virtualQuadTarget, virtualQuad, resolveSessionIdToken, enqueueNotification, appendSessionLogEntry')
+    expect(appSource).not.toContain('VirtualQuadSessionControls')
   })
 
   test('route transitions use busy navigation styling instead of transient loading copy', () => {

@@ -10,9 +10,11 @@ import {
 } from 'react'
 import { extractCyberbrickMavlinkReportedState } from '../../devices/cyberbrick/web/app-model'
 import { MavlinkControlProvider } from '../../devices/cyberbrick/web/MavlinkControlPanel'
-import { VirtualQuadSessionControls } from '../../devices/virtual-quad/web/virtual-quad-adapter'
-import { useVirtualQuadSession } from '../../devices/virtual-quad/web/virtual-quad-session'
+import { useVirtualQuadRedcon } from '../../devices/virtual-quad/web/virtual-quad-redcon'
+import { readVirtualQuadSession, useVirtualQuadSession } from '../../devices/virtual-quad/web/virtual-quad-session'
 import { VirtualQuadLiveView } from '../../devices/virtual-quad/web/VirtualQuadLiveView'
+import { readQuadMediaAvailability, type QuadMavlinkStatus } from '../../devices/virtual-quad/web/virtual-quad-media-status'
+import { readVirtualQuadAgentStatus } from './agent-shadow-status'
 import {
   beginSignIn,
   clearAuthState,
@@ -116,6 +118,7 @@ type AgentShadowView = {
   status: 'loading' | 'ready' | 'missing' | 'error'
   json: string
   error: string
+  shadow?: unknown
 }
 type RigCatalogState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
@@ -135,10 +138,13 @@ type CatalogSparkplugFields = {
 }
 type SparkplugCatalogItem = {
   thingName: string
+  thingTypeName?: string | null
   capabilities: readonly ShadowName[]
+  agentShadow?: unknown
+  simulationShadow?: unknown
 } & CatalogSparkplugFields
 type RigCatalogItem = RigCatalogEntry & CatalogSparkplugFields
-type DeviceCatalogItem = DeviceCatalogEntry & CatalogSparkplugFields
+type DeviceCatalogItem = DeviceCatalogEntry & SparkplugCatalogItem
 type DeviceRoute = {
   town: string
   rig: string
@@ -305,6 +311,7 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
   const [agentShadowView, setAgentShadowView] = useState<AgentShadowView | null>(null)
+  const [quadMavlink, setQuadMavlink] = useState<{ sessionId: string; status: QuadMavlinkStatus } | null>(null)
   const [isTakingMcpControl, setIsTakingMcpControl] = useState(false)
   const [isTownPanelOpen, setIsTownPanelOpen] = useState(false)
   const [isRigPanelOpen, setIsRigPanelOpen] = useState(false)
@@ -660,10 +667,21 @@ function App({ initialAuthError = '' }: AppProps) {
     return refreshedTokens.idToken
   }, [])
   const virtualQuad = useVirtualQuadSession(virtualQuadTarget, resolveSessionIdToken)
+  const quadRedconControl = useVirtualQuadRedcon(
+    virtualQuadTarget, virtualQuad, resolveSessionIdToken, enqueueNotification, appendSessionLogEntry,
+  )
+  const quadSessionId = virtualQuad.session?.sessionId ?? null
+  const onQuadMavlinkStatus = useCallback((status: QuadMavlinkStatus) => {
+    if (quadSessionId) setQuadMavlink({ sessionId: quadSessionId, status })
+  }, [quadSessionId])
+
+  const shouldReadAgentShadow = hasAgentCapability && (isDebugEnabled || isVirtualQuad)
+  const agentShadowThing = activeShadowTarget?.thingName
+  const currentAgentShadow = agentShadowView?.thingName === agentShadowThing ? agentShadowView : null
 
   useEffect(() => {
-    const thingName = activeShadowTarget?.thingName
-    if (!isDebugEnabled || !hasAgentCapability || !thingName) {
+    const thingName = agentShadowThing
+    if (!shouldReadAgentShadow || !thingName) {
       return
     }
     let cancelled = false
@@ -680,6 +698,7 @@ function App({ initialAuthError = '' }: AppProps) {
             status: 'ready',
             json: JSON.stringify(shadow, null, 2),
             error: '',
+            shadow,
           })
         }
       } catch (error) {
@@ -701,7 +720,7 @@ function App({ initialAuthError = '' }: AppProps) {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [activeShadowTarget?.thingName, hasAgentCapability, isDebugEnabled, resolveSessionIdToken])
+  }, [agentShadowThing, shouldReadAgentShadow, resolveSessionIdToken])
 
   const refreshRouteSparkplugShadow = useCallback(
     async (thingName: string): Promise<unknown | null> => {
@@ -1180,29 +1199,32 @@ function App({ initialAuthError = '' }: AppProps) {
     const readDeviceSparkplugStatus = async (
       device: DeviceCatalogEntry,
     ): Promise<DeviceCatalogItem> => {
-      try {
-        const sparkplugShadow = await getThingNamedShadow(
-          resolveSessionIdToken,
-          device.thingName,
-          'sparkplug',
-        )
+      const read = (name: ShadowName) => getThingNamedShadow(resolveSessionIdToken, device.thingName, name)
+      const observesVirtualQuad = device.thingTypeName === 'virtual-quad' && device.capabilities.includes('agent')
+      const [sparkplug, agent, simulation] = await Promise.allSettled([
+        read('sparkplug'),
+        observesVirtualQuad ? read('agent') : undefined,
+        observesVirtualQuad ? read('simulation') : undefined,
+      ])
+      const agentFields = {
+        agentShadow: agent.status === 'fulfilled' ? agent.value : undefined,
+        simulationShadow: simulation.status === 'fulfilled' ? simulation.value : undefined,
+      }
+      if (sparkplug.status === 'fulfilled') {
         return {
           ...device,
-          sparkplugShadow,
+          ...agentFields,
+          sparkplugShadow: sparkplug.value,
           sparkplugShadowStatus: 'ready',
           sparkplugShadowError: '',
         }
-      } catch (caughtError) {
-        return {
-          ...device,
-          sparkplugShadow: null,
-          sparkplugShadowStatus: 'error',
-          sparkplugShadowError: formatThingShadowReadError(
-            caughtError,
-            device.thingName,
-            'sparkplug',
-          ),
-        }
+      }
+      return {
+        ...device,
+        ...agentFields,
+        sparkplugShadow: null,
+        sparkplugShadowStatus: 'error',
+        sparkplugShadowError: formatThingShadowReadError(sparkplug.reason, device.thingName, 'sparkplug'),
       }
     }
 
@@ -1816,7 +1838,11 @@ function App({ initialAuthError = '' }: AppProps) {
   }
 
   const handleRedconSelect = async (redcon: 1 | 2 | 3 | 4): Promise<void> => {
-    if (isVirtualQuad || !commandableRedconLevelSet.has(redcon)) {
+    if (!commandableRedconLevelSet.has(redcon)) {
+      return
+    }
+    if (isVirtualQuad) {
+      await quadRedconControl.select(redcon)
       return
     }
     if (redcon === 4) {
@@ -1875,6 +1901,11 @@ function App({ initialAuthError = '' }: AppProps) {
         : item.sparkplugShadowStatus === 'error'
           ? item.sparkplugShadowError
           : describeRedcon(redcon)
+    const simulation = item.thingTypeName === 'virtual-quad' ? readVirtualQuadSession(item.simulationShadow) : null
+    const now = Date.now()
+    const activeSessionId = simulation?.phase === 'operational' && (simulation.availabilityExpiresAtMs ?? 0) > now
+      ? simulation.sessionId
+      : null
 
     return (
       <a
@@ -1900,6 +1931,9 @@ function App({ initialAuthError = '' }: AppProps) {
           capabilities={item.capabilities}
           sparkplugShadow={item.sparkplugShadow}
           sparkplugShadowStatus={item.sparkplugShadowStatus}
+          agentStatus={item.thingTypeName === 'virtual-quad'
+            ? readVirtualQuadAgentStatus(item.agentShadow, activeSessionId, now)
+            : undefined}
         />
       </a>
     )
@@ -2060,9 +2094,18 @@ function App({ initialAuthError = '' }: AppProps) {
       : routeSparkplugShadow
   const navigationCapabilityShadow = virtualQuadTarget ? virtualQuad.sparkplug ?? routeCapabilityShadow : routeCapabilityShadow
   const quadRedcon = extractReportedRedcon(navigationCapabilityShadow)
+  const quadMedia = readQuadMediaAvailability(virtualQuad.fresh, virtualQuad.session?.phase, quadRedcon, virtualQuad.sparkplug)
+  const quadMavlinkStatus = !quadMedia.mavlink ? 'inactive'
+    : quadMavlink?.sessionId === quadSessionId && quadMavlink.status !== 'inactive' ? quadMavlink.status
+      : 'connecting'
   const navigationRedcon = virtualQuadTarget
     ? (quadRedcon !== null && quadRedcon < 3 && !virtualQuad.fresh ? 3 : quadRedcon)
     : reportedRedcon
+  const quadSessionDeadline = virtualQuad.session?.phase === 'starting' ? virtualQuad.session.startupDeadlineMs
+    : virtualQuad.session?.phase === 'operational' ? virtualQuad.session.flightDeadlineMs
+      : virtualQuad.session?.phase === 'stopping' ? virtualQuad.session.shutdownDeadlineMs : null
+  const quadSecondsRemaining = quadSessionDeadline === null
+    ? null : Math.max(0, Math.ceil((quadSessionDeadline - virtualQuad.now) / 1_000))
   const navigationCapabilityStatus: CapabilityStackStatus =
     routeHeaderState.status !== 'ready'
       ? 'loading'
@@ -2071,6 +2114,13 @@ function App({ initialAuthError = '' }: AppProps) {
         : routeHeaderShadowWarning
           ? 'error'
           : 'loading'
+  const quadAgentStatus = virtualQuadTarget
+    ? readVirtualQuadAgentStatus(
+      currentAgentShadow?.shadow,
+      virtualQuad.fresh && virtualQuad.session?.phase === 'operational' ? virtualQuad.session.sessionId : null,
+      virtualQuad.now,
+    )
+    : undefined
   const navigationCapabilities =
     currentRouteThingName !== null && routeHeaderMetadata !== null ? (
       <CapabilityStack
@@ -2079,7 +2129,9 @@ function App({ initialAuthError = '' }: AppProps) {
         capabilities={routeHeaderMetadata.capabilities}
         sparkplugShadow={navigationCapabilityShadow}
         sparkplugShadowStatus={navigationCapabilityStatus}
-        inactiveCapabilities={virtualQuadTarget && !virtualQuad.fresh ? ['agent', 'mavlink', 'video'] : undefined}
+        inactiveCapabilities={virtualQuadTarget && !quadMedia.video ? ['video'] : undefined}
+        agentStatus={quadAgentStatus}
+        mavlinkStatus={virtualQuadTarget ? quadMavlinkStatus : undefined}
         className="navigation-capabilities"
       />
     ) : null
@@ -2120,31 +2172,32 @@ function App({ initialAuthError = '' }: AppProps) {
             <div className="navigation-status">
               <SparkplugPanel
                 sparkplugRedcon={navigationRedcon}
-                targetRedcon={pendingTargetRedcon}
-                isInteractive={isSparkplugDeviceCommandAvailable && !isVirtualQuad}
-                isRedconCommandDisabled={isRedconCommandDisabled}
-                isRedconSleepCommandDisabled={isRedconSleepCommandDisabled}
+                targetRedcon={isVirtualQuad ? quadRedconControl.pendingRedcon : pendingTargetRedcon}
+                isInteractive={isVirtualQuad ? virtualQuadTarget !== null : isSparkplugDeviceCommandAvailable}
+                isRedconCommandDisabled={isVirtualQuad ? !quadRedconControl.canStart : isRedconCommandDisabled}
+                isRedconSleepCommandDisabled={isVirtualQuad ? !quadRedconControl.canStop : isRedconSleepCommandDisabled}
                 commandableRedconLevels={commandableRedconLevels}
                 onRedconSelect={(redcon) => {
                   void handleRedconSelect(redcon)
                 }}
               />
-              {virtualQuadTarget ? (
-                <VirtualQuadSessionControls
-                  key={`${virtualQuadTarget.edgeNodeId}/${virtualQuadTarget.deviceId}`}
-                  target={virtualQuadTarget}
-                  resolveIdToken={resolveSessionIdToken}
-                  sessionView={virtualQuad}
-                />
-              ) : null}
+              {virtualQuadTarget && quadSecondsRemaining !== null && (
+                <span aria-label="Session time remaining">
+                  {Math.floor(quadSecondsRemaining / 60)}:{String(quadSecondsRemaining % 60).padStart(2, '0')}
+                </span>
+              )}
               {navigationCapabilities}
             </div>
           ) : null}
           <NavigationUserMenu
             authUser={authUser}
             txingVersion={appConfig.txingVersion}
+            isDebugEnabled={isDebugEnabled}
             isSessionLogVisible={isSessionLogVisible}
             onSignOff={handleSignOff}
+            onToggleDebug={virtualQuadTarget && hasAgentCapability ? () => {
+              setIsDebugEnabled((currentValue) => !currentValue)
+            } : undefined}
             onToggleSessionLog={() => {
               setIsSessionLogVisible((currentValue) => !currentValue)
             }}
@@ -2264,15 +2317,16 @@ function App({ initialAuthError = '' }: AppProps) {
       </section>
     )
   } else if (virtualQuadTarget && selectedDeviceRoute) {
-    content = virtualQuad.fresh && virtualQuad.session?.phase === 'operational' && virtualQuad.session.sessionId ? (
+    content = quadSessionId && (quadMedia.mavlink || quadMedia.video) ? (
       <VirtualQuadLiveView
-        key={`${virtualQuadTarget.deviceId}/${virtualQuad.session.sessionId}`}
+        key={`${virtualQuadTarget.deviceId}/${quadSessionId}`}
         deviceId={virtualQuadTarget.deviceId}
         actor={mcpActor}
-        videoAvailable={extractSparkplugCapabilityAvailability(virtualQuad.sparkplug, 'video') === true}
-        mavlinkAvailable={extractSparkplugCapabilityAvailability(virtualQuad.sparkplug, 'mavlink') === true}
+        videoAvailable={quadMedia.video}
+        mavlinkAvailable={quadMedia.mavlink}
         resolveIdToken={resolveSessionIdToken}
         debugEnabled={isDebugEnabled}
+        onMavlinkStatus={onQuadMavlinkStatus}
       />
     ) : <></>
   } else if (
@@ -2423,11 +2477,9 @@ function App({ initialAuthError = '' }: AppProps) {
 
         {isDebugEnabled && activeShadowTarget !== null && (
           <DebugPanel
-            agentShadow={hasAgentCapability && agentShadowView?.thingName === activeShadowTarget.thingName
-              ? agentShadowView
-              : hasAgentCapability
-                ? { status: 'loading', json: '', error: '' }
-                : undefined}
+            agentShadow={hasAgentCapability
+              ? currentAgentShadow ?? { status: 'loading', json: '', error: '' }
+              : undefined}
             canLoadShadow={canLoadShadow}
             deviceDiagnostics={deviceDebugDiagnostics}
             lastShadowUpdateLabel={lastShadowUpdateLabel}

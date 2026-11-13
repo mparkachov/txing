@@ -256,18 +256,21 @@ describe('catalog api helpers', () => {
     await expect(listRigDevicesWithClient(client, 'raspi-a1')).resolves.toEqual([
       {
         thingName: 'unit-a1',
+        thingTypeName: 'unit',
         name: 'bot',
         shortId: 'a1',
         capabilities: ['sparkplug', 'ble', 'power', 'board', 'mcp', 'video'],
       },
       {
         thingName: 'unit-b3',
+        thingTypeName: 'unit',
         name: 'crawler',
         shortId: 'b3',
         capabilities: ['sparkplug', 'ble', 'power', 'board', 'mcp', 'video'],
       },
       {
         thingName: 'unit-z9',
+        thingTypeName: 'unit',
         name: 'zeta',
         shortId: 'z9',
         capabilities: ['sparkplug', 'ble', 'power', 'board', 'mcp', 'video'],
@@ -319,6 +322,7 @@ describe('catalog api helpers', () => {
 
     await expect(describeDeviceMetadataWithClient(client, 'unit-kiv3mj')).resolves.toEqual({
       thingName: 'unit-kiv3mj',
+      thingTypeName: 'unit',
       name: 'bot',
       shortId: 'kiv3mj',
       capabilities: ['sparkplug', 'ble', 'power', 'board', 'mcp', 'video'],

@@ -160,9 +160,12 @@ publishes it for virtual quad at fresh operational REDCON 1. The `agent` shadow
 records actual cloud execution and errors. The device's REDCON and flight
 authority derive from device readiness. Missing or invalid availability is
 unverified. Explicit false or registry capability removal revokes execution.
-Office discovers and reads this shadow from declared capabilities, independently
-of the device type name, and isolates missing/read-error states. It does not use this diagnostic
-sample to grant control, determine REDCON, or block normal device operation.
+Office Debug reads this shadow for devices declaring `agent`. The virtual-quad
+agent indicator also reads it and shows a running observer only with a current
+simulator session, matching run sample, unexpired deadline and both streams
+connected. Office treats samples aged 75 seconds or more as unavailable to
+account for the controller's one-minute sampling interval. The sample is
+diagnostic and leaves REDCON and flight authority to the device.
 
 Virtual quad supports receive-only MAVLink and video, including over cloud
 attachment. Observation remains the TBot operator default. Explicit TBot control acquires a free

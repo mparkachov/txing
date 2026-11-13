@@ -45,15 +45,18 @@ Deploy the updated AWS release publisher and run
 Once the image version is successful and active, run
 `just virtual-quad::deploy <image-version>` to pin it and enable the
 controller, device command rule and repair schedule. In Office, open the
-device on an awake cloud rig and use Start or Stop in the device header.
+device on an awake cloud rig. Select **REDCON 1** in the device header to
+start the simulator or **REDCON 4** to stop it. REDCON 2 and 3 show
+readiness as the simulator starts, runs, or shuts down. Office sends
+lifecycle updates and failures to the notification tray and Session Log.
 
 ## Live media
 
 The onboard camera uses the current SITL truth pose to render a 640 × 360
-view at 15 fps. During startup, REDCON 2 indicates that the worker has a
-fresh SITL heartbeat and a MAVLink signaling master. Once the session is
-operational, Office opens separate video and MAVLink peers as each capability
-becomes available. Session changes and readiness expiry close those peers.
+view at 15 fps. REDCON 2 indicates that the worker has a fresh SITL heartbeat
+and a MAVLink signaling master. Office can open its MAVLink peer at REDCON 2
+and opens its video peer at operational REDCON 1. Session changes and readiness
+expiry close both peers.
 
 If a KVS master disconnects, Office withdraws the affected capability. The
 controller gives the masters up to 30 seconds to reconnect while the worker
@@ -83,6 +86,11 @@ The download also includes timestamped simulator positions, arm and mode
 heartbeats, and landed-state changes for flight measurements.
 
 ## Flight in Office
+
+At REDCON 2, Office can connect to MAVLink in **View only**. The MAVLink dot
+and telemetry panel report the browser peer's connection and heartbeat
+status. At REDCON 1, Office also opens the camera and enables flight actions
+as soon as the browser receives fresh telemetry and video.
 
 Each connection starts in **View only**. With live camera and MAVLink telemetry,
 select **Acquire control** to reserve the free lease. **Take off** selects

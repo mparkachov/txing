@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useRef, useState, type RefObject } from 'rea
 import { mavlinkDriveRefreshMs, mavlinkWebRtcDataChannelLabel } from '../../../office/src/mavlink-control'
 import VideoPanel from '../../../office/src/VideoPanel'
 import { VirtualQuadFlight, type Direction, type QuadFlightView } from './virtual-quad-flight'
+import { readQuadMavlinkStatus, type QuadMavlinkStatus } from './virtual-quad-media-status'
 
 const directionButtons: { direction: Direction; key: string; label: string }[] = [
   { direction: 'forward', key: 'w', label: 'Forward' },
@@ -17,18 +18,25 @@ const directionByKey = new Map(directionButtons.map(({ key, direction }) => [key
 const landedLabel: Record<number, string> = { 1: 'Landed', 2: 'Airborne', 3: 'Taking off', 4: 'Landing' }
 
 function VirtualQuadTelemetry({
-  deviceId, actor, resolveIdToken, videoAvailable, videoFrameAt,
+  deviceId, actor, resolveIdToken, videoAvailable, videoFrameAt, onMavlinkStatus,
 }: {
   deviceId: string
   actor: string
   resolveIdToken: () => Promise<string>
   videoAvailable: boolean
   videoFrameAt: RefObject<number>
+  onMavlinkStatus: (status: QuadMavlinkStatus) => void
 }) {
   const flight = useRef<VirtualQuadFlight | null>(null)
   const [view, setView] = useState<QuadFlightView | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const readVideoTime = useEffectEvent(() => videoAvailable ? videoFrameAt.current : -Infinity)
+  const mavlinkStatus = readQuadMavlinkStatus(view, connectionError)
+
+  useEffect(() => {
+    onMavlinkStatus(mavlinkStatus)
+  }, [mavlinkStatus, onMavlinkStatus])
+  useEffect(() => () => onMavlinkStatus('inactive'), [onMavlinkStatus])
 
   useEffect(() => {
     const lifetime = new AbortController()
@@ -158,10 +166,10 @@ function VirtualQuadTelemetry({
     <div className="virtual-quad-flight-controls" aria-label="Virtual quadcopter flight controls">
       <div className="status-video-overlay-metrics" aria-label="MAVLink telemetry">
         <span role="status">
-          {view?.heartbeat ? 'MAVLink live' : view?.connected ? 'Waiting for heartbeat'
-            : connectionError ? `Reconnecting MAVLink · ${connectionError}` : 'Connecting MAVLink'}
+          {mavlinkStatus === 'live' ? 'MAVLink live' : mavlinkStatus === 'waiting for heartbeat' ? 'Waiting for heartbeat'
+            : mavlinkStatus === 'reconnecting' ? `Reconnecting MAVLink · ${connectionError}` : 'Connecting MAVLink'}
         </span>
-        <span>{view?.camera ? 'Camera live' : 'Waiting for camera'}</span>
+        {videoAvailable && <span>{view?.camera ? 'Camera live' : 'Waiting for camera'}</span>}
         {view?.mode && <span>Mode {view.mode}</span>}
         {view?.armed !== null && view?.armed !== undefined && <span>{view.armed ? 'Armed' : 'Disarmed'}</span>}
         {view?.landed && <span>{landedLabel[view.landed]}</span>}
@@ -176,13 +184,13 @@ function VirtualQuadTelemetry({
       <div className="virtual-quad-flight-actions">
         <span>{view?.held ? 'Control' : 'View only'}</span>
         {view?.owner && <span>Controller {view.owner}</span>}
-        {view?.supported === false && <span>Flight controls unavailable</span>}
-        {view?.supported && (
+        {videoAvailable && view?.supported === false && <span>Flight controls unavailable</span>}
+        {videoAvailable && view?.supported && (
           view.held
             ? <button type="button" onClick={() => { void flight.current?.release() }}>Release control</button>
             : <button type="button" disabled={!view.canAcquire} onClick={() => { void flight.current?.acquire() }}>Acquire control</button>
         )}
-        {view?.held && (
+        {videoAvailable && view?.held && (
           <>
             <button type="button" disabled={!view.canTakeOff} onClick={() => { void flight.current?.takeOff() }}>Take off</button>
             <button type="button" disabled={!view.canLand} onClick={() => { void flight.current?.land() }}>Land</button>
@@ -190,7 +198,7 @@ function VirtualQuadTelemetry({
         )}
         {view?.pending && <span role="status">{view.pending}</span>}
       </div>
-      {view?.held && <div className="virtual-quad-flight-actions" aria-label="Movement">
+      {videoAvailable && view?.held && <div className="virtual-quad-flight-actions" aria-label="Movement">
         {directionButtons.map(({ direction, key, label }) => (
           <button key={direction} type="button" disabled={!view.canMove} aria-keyshortcuts={key.toUpperCase()}
             onPointerDown={(event) => {
@@ -220,7 +228,7 @@ function VirtualQuadTelemetry({
 }
 
 export function VirtualQuadLiveView({
-  deviceId, actor, videoAvailable, mavlinkAvailable, resolveIdToken, debugEnabled,
+  deviceId, actor, videoAvailable, mavlinkAvailable, resolveIdToken, debugEnabled, onMavlinkStatus,
 }: {
   deviceId: string
   actor: string
@@ -228,6 +236,7 @@ export function VirtualQuadLiveView({
   mavlinkAvailable: boolean
   resolveIdToken: () => Promise<string>
   debugEnabled: boolean
+  onMavlinkStatus: (status: QuadMavlinkStatus) => void
 }) {
   const videoFrameAt = useRef(-Infinity)
   useEffect(() => {
@@ -242,7 +251,7 @@ export function VirtualQuadLiveView({
       )}
       {mavlinkAvailable && (
         <VirtualQuadTelemetry deviceId={deviceId} actor={actor} resolveIdToken={resolveIdToken}
-          videoAvailable={videoAvailable} videoFrameAt={videoFrameAt} />
+          videoAvailable={videoAvailable} videoFrameAt={videoFrameAt} onMavlinkStatus={onMavlinkStatus} />
       )}
     </section>
   )

@@ -27,6 +27,7 @@ export type RigCatalogEntry = {
 }
 export type DeviceCatalogEntry = {
   thingName: string
+  thingTypeName: string | null
   name: string | null
   shortId: string | null
   capabilities: readonly ShadowName[]
@@ -430,6 +431,7 @@ export const listRigDevicesWithClient = async (
       const metadata = await describeThingMetadataWithClient(client, thingName)
       return {
         thingName,
+        thingTypeName: metadata.thingTypeName,
         name: metadata.name,
         shortId: metadata.shortId,
         capabilities: metadata.capabilities,
@@ -459,6 +461,7 @@ export const describeDeviceMetadataWithClient = async (
   const metadata = await describeThingMetadataWithClient(client, thingName)
   return {
     thingName,
+    thingTypeName: metadata.thingTypeName,
     name: metadata.name,
     shortId: metadata.shortId,
     capabilities: metadata.capabilities,

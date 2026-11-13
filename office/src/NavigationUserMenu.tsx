@@ -5,8 +5,10 @@ type NavigationUserMenuProps = {
   authUser: AuthUser | null
   txingVersion: string
   defaultOpen?: boolean
+  isDebugEnabled?: boolean
   isSessionLogVisible: boolean
   onSignOff: () => void
+  onToggleDebug?: () => void
   onToggleSessionLog: () => void
 }
 
@@ -14,8 +16,10 @@ function NavigationUserMenu({
   authUser,
   txingVersion,
   defaultOpen = false,
+  isDebugEnabled,
   isSessionLogVisible,
   onSignOff,
+  onToggleDebug,
   onToggleSessionLog,
 }: NavigationUserMenuProps) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(defaultOpen)
@@ -79,6 +83,20 @@ function NavigationUserMenu({
             <span>About</span>
             <code>{txingVersion}</code>
           </div>
+          {onToggleDebug && (
+            <button
+              type="button"
+              className="user-menu-item"
+              role="menuitemcheckbox"
+              aria-checked={isDebugEnabled === true}
+              onClick={() => {
+                onToggleDebug()
+                setIsUserMenuOpen(false)
+              }}
+            >
+              Debug
+            </button>
+          )}
           <button
             type="button"
             className="user-menu-item"
