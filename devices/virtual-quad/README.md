@@ -22,7 +22,7 @@ in [fixtures](aws/fixtures/).
 
 The next awake cloud rig census announces the device at REDCON 4 with
 Sparkplug and simulation available. Office lists it under the assigned rig
-and shows Start while the rig reports awake. Enlistment and the stopped
+and enables REDCON 1 while the rig reports awake. Enlistment and the stopped
 census use neither simulator nor observer compute. Session launch is tracked
 in [#178](https://github.com/mparkachov/txing/issues/178).
 
@@ -33,8 +33,9 @@ root to build the ARM64 bundle for managed sessions. The supervisor claims its
 assigned session before starting SITL or connecting the device's signaling
 channels. The recipe prints the archive path to stdout.
 
-In the Frankfurt environment, `just virtual-quad::deploy` prepares the
+For a new stack in Frankfurt, `just virtual-quad::deploy` prepares the
 build role, logs, and session table and prints the CloudFormation outputs.
+On an existing stack, omitting the image version keeps the current pin.
 Run `just virtual-quad::publish-image <bundle-path>` to upload the archive
 and submit the ARM64 MicroVM image build. The recipe looks up the image
 name, artifact bucket, build role, log group and supported base version.
@@ -49,6 +50,31 @@ device on an awake cloud rig. Select **REDCON 1** in the device header to
 start the simulator or **REDCON 4** to stop it. REDCON 2 and 3 show
 readiness as the simulator starts, runs, or shuts down. Office sends
 lifecycle updates and failures to the notification tray and Session Log.
+
+## Drain and rollback
+
+Pause new starts during maintenance. Select REDCON 4 for each active virtual
+quad, including any still starting. Wait until the simulation shadow clears
+its session ID and the agent shadow clears its run and endpoint. Confirm both
+MicroVMs are `TERMINATED` in the image inventories. Keep the command rule,
+controller and repair schedule enabled while sessions drain.
+
+For an image rollback, use `just virtual-quad::deploy <previous-image-version>`
+with the retained successful ARM64 version. For a controller rollback, use
+`just release::publish lambda <previous-release>` only when rolling back the
+shared Lambda release is intended, since it also updates the other targets.
+Check the controller's code digest against the selected release. Roll back
+the Office deployment through Cloudflare Pages. Follow the
+[agent drain and release procedure](../../docs/components/agent.md#enable-and-drain)
+when rolling back the shared observer.
+
+To disable simulator launches after draining, set `ImageVersion` to an empty
+string in the existing virtual-quad CloudFormation stack and preserve the other
+parameter values. This removes the controller, command rule and repair schedule
+while retaining the build resources and session table. Re-enable the stack
+with the reviewed image version and republish the selected controller release
+if needed. The registered Thing and signaling channels can be retained for
+re-enablement.
 
 ## Live media
 
