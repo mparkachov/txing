@@ -115,7 +115,8 @@ private:
         if (stopping_) return;
         check_kvs(signalingClientFetchSync(signaling_), "signalingClientFetchSync");
         if (stopping_) return;
-        RtcConfiguration rtc{}; rtc.iceTransportPolicy = ICE_TRANSPORT_POLICY_ALL;
+        RtcConfiguration rtc{};
+        rtc.iceTransportPolicy = config_.force_relay ? ICE_TRANSPORT_POLICY_RELAY : ICE_TRANSPORT_POLICY_ALL;
         const auto stun = "stun:stun.kinesisvideo." + config_.region + ".amazonaws.com:443";
         copy(rtc.iceServers[0].urls, stun);
         UINT32 count = 0, next = 1;

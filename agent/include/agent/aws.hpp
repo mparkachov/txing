@@ -20,16 +20,20 @@ Lifecycle parse_lifecycle(const std::string& json, const std::string& thing);
 // A complete current projection and its IoT shadow version, for the
 // controller's fail-closed activation bookkeeping.
 ProjectionObservation parse_projection_observation(const std::string& json, const std::string& thing);
+ProjectionObservation parse_simulation_projection(const std::string& sparkplug, const std::string& simulation,
+                                                  const std::string& thing, std::int64_t now_ms);
+Lifecycle observing_simulation(const ProjectionObservation&, std::string& session_id);
 class AwsDevice {
 public:
     AwsDevice(std::shared_ptr<Aws::Auth::AWSCredentialsProvider>, Aws::Client::ClientConfiguration);
     std::string registered_type(const std::string& thing);
     bool has_capability(const std::string& thing, const std::string& capability);
+    std::string agent_device_type(const std::string& thing);
     // Include Things whose capability was removed, so existing assignments
     // remain discoverable for shutdown. Missing agent shadows are skipped.
     std::vector<std::string> registered_things();
     Lifecycle lifecycle(const std::string& thing);
-    ProjectionObservation projection(const std::string& thing);
+    ProjectionObservation projection(const std::string& thing, const std::string& type);
     std::string agent_shadow(const std::string& thing);
     // False is a version conflict: discard the snapshot and read again.
     bool update_agent_shadow(const std::string& thing, const std::string& conditional_patch);

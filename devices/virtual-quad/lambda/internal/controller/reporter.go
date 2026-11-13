@@ -165,7 +165,7 @@ func encodeProjection(p lifecycle.Projection) []byte {
 	boolean("simulation", true)
 	boolean("mavlink", p.Mavlink)
 	boolean("video", p.Video)
-	boolean("agent", false)
+	boolean("agent", p.Agent)
 	text(sessionMetric, p.SessionID)
 	if p.Receipt.RequestID != "" {
 		text("redconCommandId", p.Receipt.RequestID)

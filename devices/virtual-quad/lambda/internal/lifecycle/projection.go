@@ -11,6 +11,7 @@ type Projection struct {
 	REDCON         uint8   `json:"redcon"`
 	Mavlink        bool    `json:"mavlink"`
 	Video          bool    `json:"video"`
+	Agent          bool    `json:"agent"`
 	Receipt        Receipt `json:"receipt"`
 	SessionReceipt Receipt `json:"sessionReceipt"`
 }
@@ -33,6 +34,7 @@ func (l Ledger) PrepareProjection(ctx context.Context, deviceID string, requeste
 		next := Projection{
 			Phase: record.Phase(), SessionID: sessionID, REDCON: availability.REDCON,
 			Mavlink: availability.Mavlink, Video: availability.Video,
+			Agent:   availability.REDCON == 1,
 			Receipt: receipt, SessionReceipt: receipt,
 		}
 		if previous != nil && previous.SessionReceipt == receipt && previous.SessionID == sessionID {

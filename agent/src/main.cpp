@@ -67,15 +67,18 @@ int main(int argc, char** argv) {
         config.caFile = ca.c_str(); config.connectTimeoutMs = 2000; config.requestTimeoutMs = 2000;
         config.retryStrategy = Aws::MakeShared<Aws::Client::DefaultRetryStrategy>("txing-agent", 0);
         txing::agent::AwsDevice device(credentials, config);
-        const auto registered_type = device.registered_type(thing);
-        if (!device.has_capability(thing, "agent"))
-            throw std::runtime_error("Thing does not declare the agent capability");
+        const auto registered_type = device.agent_device_type(thing);
+        if (registered_type.empty()) throw std::runtime_error("Thing does not declare a supported agent profile");
         auto profile = txing::agent::profile(registered_type, thing, config.region.c_str(), ca);
+        if (manual.control && !profile.allows_control)
+            throw std::runtime_error("the registered device profile supports observation only");
         std::cerr << "observing Thing=" << thing << " registeredType=" << registered_type
                   << " region=" << config.region << '\n';
         txing::agent::KvsRuntime sdk;
-        txing::agent::LifecyclePoller lifecycle([&] {
-            if (!device.has_capability(thing, "agent")) return txing::agent::Lifecycle{false, 4};
+        txing::agent::LifecyclePoller lifecycle([&, simulator = std::string{}]() mutable {
+            if (device.agent_device_type(thing) != registered_type) return txing::agent::Lifecycle{false, 4};
+            if (registered_type == "virtual-quad")
+                return txing::agent::observing_simulation(device.projection(thing, registered_type), simulator);
             return device.lifecycle(thing);
         });
         txing::agent::Session session(std::move(profile), [credentials] {

@@ -9,6 +9,7 @@ struct MicrovmRun {
     std::string id, thing, region;
     std::string run_id, activation_id;
     std::int64_t deadline = 0;
+    bool simulation_bound = false;
 };
 struct ProjectionObservation;
 struct ControllerState;
@@ -49,7 +50,7 @@ public:
     void wake_with(std::function<void()>);
     bool stopping() const { return stopping_; }
     void stop();
-    void actions(Actions*);
+    void actions(Actions*, bool allows_control = true);
     void authorized(bool, Time verified_at = Time{});
     void credential_status(std::string);
     void stopped(std::string);
@@ -75,6 +76,7 @@ private:
     std::array<Connection, 2> connections_{Connection::stopped, Connection::stopped};
     std::array<std::string, 2> errors_;
     Actions* actions_ = nullptr;
+    bool allows_control_ = false;
     bool attached_ = false, held_ = false, prepared_ = false, control_attempted_ = false;
     const bool require_assignment_;
     bool authorized_ = false;

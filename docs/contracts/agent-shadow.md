@@ -1,8 +1,8 @@
 # Cloud agent shadow
 
 The `agent` capability owns the `agent` named shadow for cloud operational
-diagnostics. Device types opt in through their manifest capability list; TBot
-is the current supported type. Provisioning and discharge use the same declared
+diagnostics. TBot and virtual quad opt in through their manifest capability
+lists. Provisioning and discharge use the same declared
 capability-to-shadow mapping as other capabilities. Its
 [schema](../../devices/tbot/aws/agent-shadow.schema.json),
 [stopped default](../../devices/tbot/aws/default-agent-shadow.json), and
@@ -69,8 +69,10 @@ and timestamp; it cannot establish present control or connectivity. Expiry
 retains the activation record and deadline so a repair pass cannot restart the
 same activation. Total cloud execution is at most fifty minutes from activation
 under the [session duration limit](../components/agent.md#session-duration),
-including retries, replacements, and publication. Only a subsequent verified
-inactive-to-active transition permits a fresh activation budget.
+including retries, replacements, and publication. A new TBot budget requires
+a verified inactive-to-active transition. A new virtual-quad budget requires
+a verified new simulator session ID and is capped by that session's flight
+deadline.
 
 The controller accepts an activation budget of 1–3000 seconds, defaulting to
 3000. It changes only newly created
@@ -80,14 +82,18 @@ configuration field: the saved absolute deadline remains authoritative. See the
 [agent validation guide](../components/agent.md#validation-and-known-limitations).
 
 A fenced launch with no known MicroVM ID remains reserved for its activation.
-A later directly observed and unexpired activation may supersede that unknown
+A later directly observed and unexpired TBot activation may supersede that unknown
 reservation with a conditionally persisted new run. The old request is never
 retried; late results cannot alter the replacement, and leftover instances are
 handled as orphans by the controller/watch. This is assignment revocation, not
 proof that compute is off. Runs with a known MicroVM ID retain that identity
-until terminal state is confirmed.
+until terminal state is confirmed. Virtual quad also retains an unidentified
+reservation across session changes. The controller binds an identifiable orphan
+to its fenced reservation before termination. If no VM identity becomes known,
+the repair pass waits for the pinned hosting lifetime to elapse and checks for
+unassigned live VMs in the saved image before clearing the reservation.
 
-The controller must directly observe verified inactive and then active states
+For TBot, the controller must directly observe verified inactive and then active states
 to recognize a later transition. If the inactive interval is missed, it retains
 the expired activation and fails closed until another such transition is
 observed. An incomplete or unreadable projection is not evidence of inactivity.
@@ -99,6 +105,14 @@ the shadow's own version alone cannot rule out a replayed source message. The
 budget begins at the last verified inactive observation, a conservative lower
 bound on the transition time. Long controller outages or clock irregularities
 can therefore shorten the remaining budget or require another transition.
+
+For virtual quad, the controller and runtime use the verified operational
+simulation shadow together with the matching REDCON 1 Sparkplug projection.
+Both sources must identify the same simulation session, and the Sparkplug
+payload timestamp must meet the readiness watermark. The runtime stops at
+the readiness expiry even if another shadow read fails. Readiness expiry can
+revoke a previously verified projection without a new Sparkplug version.
+A rapid restart establishes a new activation through its matching session ID.
 
 The controller must compare the current run and activation before every write,
 use version-conditional shadow updates, and resample after conflicts. Samples
@@ -140,18 +154,18 @@ edge. A clock reversal across a persisted failure interval fences the run.
 
 ## Device and Office boundaries
 
-Rig/witness remain device lifecycle authorities. The registry declares `agent`
-for supported device types, and the rig publishes `capability.agent` availability
-when the device is born at REDCON 1 or 2. This authorizes cloud agent execution;
-the `agent` shadow records actual cloud execution and errors. Agent readiness
-does not gate device REDCON, avoiding a dependency cycle at startup. Missing or
-invalid availability is unverified; explicit false revokes execution. Registry
-capability removal also revokes execution.
+The registry declares `agent` for supported device types. The rig publishes
+`capability.agent` for TBot at born REDCON 1 or 2. The simulator controller
+publishes it for virtual quad at fresh operational REDCON 1. The `agent` shadow
+records actual cloud execution and errors. The device's REDCON and flight
+authority derive from device readiness. Missing or invalid availability is
+unverified. Explicit false or registry capability removal revokes execution.
 Office discovers and reads this shadow from declared capabilities, independently
 of the device type name, and isolates missing/read-error states. It does not use this diagnostic
 sample to grant control, determine REDCON, or block normal device operation.
 
-Observation remains the operator default. Explicit control acquires a free
+Virtual quad supports receive-only MAVLink and video, including over cloud
+attachment. Observation remains the TBot operator default. Explicit TBot control acquires a free
 board lease with `takeover=false` and permits full MAVLink, including pre-arm
 traffic. The session retains control across arm/disarm/re-arm; client inactivity,
 disconnect, WebRTC/lease loss, lifecycle shutdown, or process shutdown releases

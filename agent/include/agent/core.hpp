@@ -24,11 +24,16 @@ struct TransportConfig {
     std::string channel, region, label, ca_path;
     Media media = Media::data;
     Role role = Role::viewer;
+    bool force_relay = false;
 };
-struct Profile { TransportConfig telemetry, video; };
+struct Profile {
+    TransportConfig telemetry, video;
+    bool allows_control = true;
+    int highest_redcon = 2;
+};
 Profile profile(const std::string& registered_type, const std::string& thing,
                 const std::string& region, const std::string& ca_path);
-struct Lifecycle { bool born = false; int redcon = 4; };
+struct Lifecycle { bool born = false; int redcon = 4; Time expires_at = Time::max(); };
 struct EncodedVideo {
     Bytes bytes;
     std::string codec;

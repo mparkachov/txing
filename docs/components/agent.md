@@ -3,9 +3,10 @@
 The agent is the AI counterpart of Office. It receives telemetry and encoded
 video and exposes authorized actions to an interchangeable operator. The
 current operator forwards MAVLink to QGroundControl and counts video frames.
-One C++ runtime runs on macOS and Linux ARM64 Lambda MicroVMs. TBot is the
-supported device type. Cloud operation can start automatically when a device
-is active and the operator has enabled launches.
+One C++ runtime runs on macOS and Linux ARM64 Lambda MicroVMs. TBot supports
+observation and manual control. Virtual quad supports receive-only observation.
+Cloud operation can start automatically when a device is ready and the operator
+has enabled launches.
 
 The current implementation provides observation and manual control. Model
 inference, video decoding and autonomous motion are outside its scope.
@@ -62,6 +63,13 @@ the device manifest.
   active at born REDCON 2 or 1.
 - `<thing-id>-board-video`: receive-only video, active at born REDCON 1.
 - REDCON 3/4, device death, or expired execution authorization initiates shutdown.
+
+The virtual-quad profile receives the same two channels through KVS TURN. It opens them at
+operational REDCON 1 once the Sparkplug projection matches the current simulation
+session ID and readiness watermark. Readiness loss, readiness expiry or a new
+simulation session closes both peers. The native command and cloud attachment
+reject `--control` for virtual quad, and the cloud runtime rejects lease and
+MAVLink sends from an attached observer.
 
 Unsupported registered types fail before session creation. A name prefix alone
 does not establish support. Rig and witness remain lifecycle authorities.
@@ -229,8 +237,10 @@ The controller persists the absolute deadline for each activation, and
 replacement VMs receive only the remaining budget. A shorter setting applies
 to new activations. Retries, publication and configuration updates preserve
 existing activation IDs and deadlines. At expiry the agent releases control
-and stops. The controller can start another activation only after a verified
-inactive-to-active transition.
+and stops. A new TBot activation requires a verified inactive-to-active
+transition. A virtual-quad activation uses the simulator's session ID and ends
+by the earlier of the simulator's flight deadline and the configured agent
+budget. A replacement observer for that session retains the original cutoff.
 
 Native sessions have the same fifty-minute operating ceiling and the operator
 ends them manually. Disposable MicroVM requests use a 3000-second hosting
@@ -247,7 +257,7 @@ starts at most one authorized agent per supported active device, and terminates
 inactive, failed, or superseded runs. Launches are idempotent and retries are
 bounded. Repair handles missed events, interrupted launches, and orphaned runs.
 
-The controller requires an inactive observation before the first activation.
+For TBot, the controller requires an inactive observation before the first activation.
 When it misses an inactive interval, it retains the expired activation until
 it directly observes another verified inactive-to-active transition. It
 measures the budget from the last verified inactive observation, which can
@@ -270,11 +280,12 @@ off/expired runs and aged unassigned instances of the dedicated image. It has
 its own minute schedule and never writes agent shadows or launches agents.
 
 TBot declares `agent` in the capability catalog. The rig publishes
-`capability.agent=true` at born REDCON 1/2 and false when inactive. Execution
-requires both the registry declaration and verified availability. Removing the
-declaration or reporting false revokes authorization. Missing or invalid
-evidence follows the verification cutoff. Office shows Agent Debug for devices
-declaring the capability. REDCON derives from device capabilities.
+`capability.agent=true` at born REDCON 1/2 and false when inactive. The virtual
+quad controller publishes it only for an operational simulator with fresh
+MAVLink and video readiness. Execution requires the registry declaration and
+verified availability. Removing the declaration or reporting false revokes
+authorization. Office shows the agent shadow in Debug for devices declaring
+the capability. The simulator controls its own readiness and flight authority.
 
 ### Cloud attachment
 

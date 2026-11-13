@@ -18,9 +18,9 @@ struct MutableCredentials : Aws::Auth::AWSCredentialsProvider {
     Aws::Auth::AWSCredentials GetAWSCredentials() override { return value; }
 };
 struct ActivityActions : Actions {
-    unsigned activities = 0, releases = 0, acquisitions = 0;
+    unsigned activities = 0, releases = 0, acquisitions = 0, sends = 0;
     bool acquire(std::string) override { ++acquisitions; return true; }
-    bool send(Bytes) override { return false; }
+    bool send(Bytes) override { ++sends; return false; }
     void release() override { ++releases; }
     void client_activity() override { ++activities; }
 };
@@ -71,6 +71,21 @@ void tests() {
     while (app.outgoing()) ++queued;
     require(queued == 128, "attachment queue unbounded");
     app.detach(); require(actions.releases == 1, "detaching did not release control");
+    ActivityActions read_only;
+    app.actions(&read_only, false);
+    require(app.attach(), "read-only attachment denied");
+    app.message(Bytes(acquire.begin(), acquire.end()), false);
+    response = app.outgoing();
+    require(response && std::string(response->bytes.begin(), response->bytes.end()).find("false") != std::string::npos,
+            "read-only attachment queued lease acquisition");
+    app.message(frame(), true);
+    response = app.outgoing();
+    require(response && std::string(response->bytes.begin(), response->bytes.end()).find("false") != std::string::npos,
+            "read-only attachment queued MAVLink");
+    app.message(Bytes(activity.begin(), activity.end()), false);
+    app.detach();
+    require(read_only.acquisitions == 0 && read_only.sends == 0 && read_only.activities == 0 && read_only.releases == 0,
+            "read-only attachment reached control actions");
     app.actions(nullptr); app.telemetry(frame());
     require(!app.outgoing(), "unattached observations retained");
     require(app.hook("/terminate", "").status == 200 && starts == 1 && prepares == 1, "termination/idempotent start failed");
@@ -129,6 +144,18 @@ void tests() {
             "assignment loss did not release and fence attachment");
     cloud.actions(nullptr);
     cloud.stop();
+
+    auto observer_run = cloud_run;
+    observer_run.insert(observer_run.find(R"(\"thingId\")"), R"(\"deviceType\":\"virtual-quad\",)");
+    std::atomic<bool> observer_profile{false};
+    MicrovmApplication observer([&](const MicrovmRun& run, MicrovmApplication& host) {
+        observer_profile = run.simulation_bound;
+        while (!host.stopping()) std::this_thread::sleep_for(1ms);
+    }, {}, true);
+    require(observer.hook("/run", observer_run).status == 200 && observer.hook("/run", cloud_run).status == 409,
+            "cloud run hook lost or changed the pinned device profile");
+    observer.stop();
+    require(observer_profile, "runtime did not receive the pinned observer profile");
 
     auto source = Aws::MakeShared<MutableCredentials>("credential-test");
     AuditedCredentials credentials(source);

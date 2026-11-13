@@ -1,5 +1,6 @@
 #include "agent/activation.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 
@@ -9,19 +10,39 @@ ActivationChange observe_activation(ActivationState& state, const ProjectionObse
                                     const std::function<std::string()>& new_id) {
     if (!observation.active || !observation.version || observation.source_timestamp_ms <= 0 || now < 0)
         return ActivationChange::unverified;
-    if (state.observed && observation.version <= state.projection_version) {
-        if (observation.version != state.projection_version || *observation.active != state.active ||
-            observation.source_timestamp_ms != state.source_timestamp_ms) return ActivationChange::stale;
-        if (!state.active && now > state.inactive_observed_at) state.inactive_observed_at = now;
-        return ActivationChange::unchanged;
-    }
-    if (state.observed && observation.source_timestamp_ms <= state.source_timestamp_ms)
-        return ActivationChange::stale;
-
     const bool active = *observation.active;
-    const bool allocate = active && state.observed && !state.active;
+    if (observation.simulation_bound && active && !observation.simulation)
+        return ActivationChange::unverified;
+    if (observation.simulation && state.activation && state.activation->id == observation.simulation->session_id &&
+        state.activation->deadline > observation.simulation->flight_deadline)
+        return ActivationChange::unverified;
+    if (state.observed && observation.version <= state.projection_version) {
+        if (observation.version != state.projection_version ||
+            observation.source_timestamp_ms != state.source_timestamp_ms) return ActivationChange::stale;
+        if (active == state.active) {
+            if (active && observation.simulation && (!state.activation || state.activation->id != observation.simulation->session_id))
+                return ActivationChange::stale;
+            if (!active && now > state.inactive_observed_at) state.inactive_observed_at = now;
+            return ActivationChange::unchanged;
+        }
+        if (!observation.simulation_bound) return ActivationChange::stale;
+    } else if (state.observed && observation.source_timestamp_ms <= state.source_timestamp_ms) {
+        return ActivationChange::stale;
+    }
+
+    const bool allocate = active && (observation.simulation
+        ? !state.activation || state.activation->id != observation.simulation->session_id
+        : state.observed && !state.active);
     std::optional<Activation> next;
-    if (allocate) {
+    if (allocate && observation.simulation) {
+        const auto& simulation = *observation.simulation;
+        if (simulation.session_id.empty() || simulation.session_id.size() > 128 ||
+            simulation.session_id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-:.") != std::string::npos ||
+            simulation.flight_deadline <= now || budget_seconds <= 0 || budget_seconds > 3000 ||
+            now > std::numeric_limits<std::int64_t>::max() - budget_seconds)
+            return ActivationChange::unverified;
+        next = Activation{simulation.session_id, now, std::min(simulation.flight_deadline, now + budget_seconds)};
+    } else if (allocate) {
         const auto started = state.inactive_observed_at;
         if (started <= 0 || started > now || budget_seconds <= 0 || budget_seconds > 3000 ||
             started > std::numeric_limits<std::int64_t>::max() - budget_seconds || !new_id)
@@ -52,6 +73,9 @@ bool activation_authorized(const ActivationState& state, std::int64_t now) {
 bool projection_matches_active(const ActivationState& state, const ProjectionObservation& observation) {
     if (!state.observed || !state.active || !state.activation || !observation.active || !*observation.active ||
         !observation.version || observation.source_timestamp_ms <= 0) return false;
+    if (observation.simulation_bound && !observation.simulation) return false;
+    if (observation.simulation && (state.activation->id != observation.simulation->session_id ||
+        state.activation->deadline > observation.simulation->flight_deadline)) return false;
     if (observation.version == state.projection_version)
         return observation.source_timestamp_ms == state.source_timestamp_ms;
     return observation.version > state.projection_version && observation.source_timestamp_ms > state.source_timestamp_ms;

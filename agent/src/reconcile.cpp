@@ -23,14 +23,18 @@ ReconcileResult reconcile(ReconcileBackend& io, std::int64_t now, const std::str
     };
     auto snapshot = io.read();
     auto current = CurrentLifecycle::unavailable;
+    bool simulation_bound = false;
+    auto readiness_expires_at = std::chrono::steady_clock::time_point::max();
     const auto supported = io.supported();
     if (supported && !*supported) current = CurrentLifecycle::inactive;
     if (supported && *supported) {
         const auto projection = io.projection();
         if (projection && projection->active) {
+            simulation_bound = projection->simulation_bound;
             const auto change = observe_activation(snapshot.state.activation, *projection, now, activation_budget_seconds, [&] { return io.identity(); });
             if (change != ActivationChange::unverified && change != ActivationChange::stale) {
                 current = *projection->active ? CurrentLifecycle::active : CurrentLifecycle::inactive;
+                if (projection->simulation) readiness_expires_at = projection->simulation->expires_at;
                 snapshot.verified_at = now;
             }
         }
@@ -60,7 +64,7 @@ ReconcileResult reconcile(ReconcileBackend& io, std::int64_t now, const std::str
         snapshot.verified_at = 0;
     }
     fence_run(snapshot.state, current, decision_time);
-    if (snapshot.state.run && snapshot.state.run->phase == RunPhase::stopping &&
+    if (!simulation_bound && snapshot.state.run && snapshot.state.run->phase == RunPhase::stopping &&
         snapshot.state.run->microvm_id.empty() && current == CurrentLifecycle::active &&
         activation_authorized(snapshot.state.activation, decision_time) &&
         snapshot.state.run->activation_id != snapshot.state.activation.activation->id) {
@@ -71,7 +75,9 @@ ReconcileResult reconcile(ReconcileBackend& io, std::int64_t now, const std::str
         snapshot.state.run.reset();
         snapshot.stop_requested_at = 0;
     }
-    if (!snapshot.state.run && current == CurrentLifecycle::active && activation_authorized(snapshot.state.activation, decision_time)) {
+    if (!snapshot.state.run && current == CurrentLifecycle::active &&
+        activation_authorized(snapshot.state.activation, decision_time) &&
+        std::chrono::steady_clock::now() < readiness_expires_at) {
         const auto run_id = io.identity();
         auto exact = io.request(run_id, *snapshot.state.activation.activation, decision_time);
         reserve_run(snapshot.state, current, decision_time, run_id, release, std::move(exact));
@@ -88,6 +94,9 @@ ReconcileResult reconcile(ReconcileBackend& io, std::int64_t now, const std::str
         if (saved_run.phase == RunPhase::stopping || current != CurrentLifecycle::active)
             return ReconcileResult::settled;
         const auto before_launch = current_time();
+        // A fresh read on the next pass can still authorize the reservation.
+        // No launch is dispatched on this pass once its readiness expires.
+        if (std::chrono::steady_clock::now() >= readiness_expires_at) return ReconcileResult::again;
         if (!activation_authorized(snapshot.state.activation, before_launch)) {
             auto latest = io.read();
             if (!latest.state.run || latest.state.run->run_id != saved_run.run_id) return ReconcileResult::again;
@@ -147,9 +156,9 @@ ReconcileResult reconcile(ReconcileBackend& io, std::int64_t now, const std::str
     if (saved_run.phase == RunPhase::reserved && host.state == "RUNNING" && current == CurrentLifecycle::active) {
         const auto still_supported = io.supported();
         const auto fresh = io.projection();
-        if (!still_supported || !*still_supported || !fresh || !fresh->active || !*fresh->active ||
-            fresh->version != snapshot.state.activation.projection_version ||
-            fresh->source_timestamp_ms != snapshot.state.activation.source_timestamp_ms)
+        if (!still_supported || !*still_supported || !fresh ||
+            !projection_matches_active(snapshot.state.activation, *fresh) ||
+            fresh->version != snapshot.state.activation.projection_version)
             return ReconcileResult::again;
         const auto verified_at = current_time();
         auto latest = io.read();
@@ -158,6 +167,8 @@ ReconcileResult reconcile(ReconcileBackend& io, std::int64_t now, const std::str
             latest.state.activation.projection_version != snapshot.state.activation.projection_version)
             return ReconcileResult::again;
         const auto assigned_at = current_time();
+        if (fresh->simulation && std::chrono::steady_clock::now() >= fresh->simulation->expires_at)
+            return ReconcileResult::again;
         // Do not turn an old lifecycle read into a freshly authorized run
         // after a slow shadow read. An expired budget is still fenced below.
         if (assigned_at - verified_at >= 15 && activation_authorized(latest.state.activation, assigned_at))

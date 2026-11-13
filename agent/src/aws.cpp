@@ -5,6 +5,7 @@
 #include <aws/iot/model/ListThingsRequest.h>
 #include <aws/iot-data/model/GetThingShadowRequest.h>
 #include <aws/iot-data/model/UpdateThingShadowRequest.h>
+#include <algorithm>
 #include <sstream>
 #include <set>
 #include <stdexcept>
@@ -69,6 +70,67 @@ ProjectionObservation parse_projection_observation(const std::string& json, cons
             lifecycle.born && lifecycle.redcon <= 2, view.GetInt64("timestamp"), lifecycle.redcon};
 }
 
+ProjectionObservation parse_simulation_projection(const std::string& sparkplug, const std::string& simulation,
+                                                  const std::string& thing, std::int64_t now_ms) {
+    auto observation = parse_projection_observation(sparkplug, thing);
+    observation.simulation_bound = true;
+    const bool ready = observation.active.value_or(false) && observation.redcon == 1;
+    observation.active = false;
+    if (!ready) return observation;
+
+    using Aws::Utils::Json::JsonValue;
+    const JsonValue document(Aws::String(simulation.c_str()));
+    if (!document.WasParseSuccessful()) throw std::runtime_error("simulation shadow: invalid JSON");
+    auto reported = document.View();
+    for (const auto* field : {"state", "reported"}) {
+        if (!reported.ValueExists(field) || !reported.GetObject(field).IsObject())
+            throw std::runtime_error("simulation shadow: missing reported state");
+        reported = reported.GetObject(field);
+    }
+    if (!reported.ValueExists("phase") || !reported.GetObject("phase").IsString())
+        throw std::runtime_error("simulation shadow: missing phase");
+    const auto phase = reported.GetString("phase");
+    if (phase == "starting" || phase == "stopping" || phase == "stopped" || phase == "failed") return observation;
+    if (phase != "operational" || !reported.ValueExists("sessionId") || !reported.GetObject("sessionId").IsString())
+        throw std::runtime_error("simulation shadow: invalid operational session");
+    const std::string session_id = reported.GetString("sessionId").c_str();
+    if (session_id.empty() || session_id.size() > 128 ||
+        session_id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-:.") != std::string::npos)
+        throw std::runtime_error("simulation shadow: invalid session ID");
+    const auto positive_time = [&](const char* field) {
+        if (!reported.ValueExists(field) || !reported.GetObject(field).IsIntegerType() || reported.GetInt64(field) <= 0)
+            throw std::runtime_error(std::string("simulation shadow: invalid ") + field);
+        return reported.GetInt64(field);
+    };
+    const auto deadline = positive_time("flightDeadlineMs");
+    const auto watermark = positive_time("availabilityWatermarkMs");
+    if (now_ms <= 0) throw std::runtime_error("simulation lifecycle clock unavailable");
+    if (now_ms >= deadline || observation.source_timestamp_ms < watermark) return observation;
+    if (!reported.ValueExists("availabilityExpiresAtMs")) return observation;
+    const auto expires_ms = std::min(positive_time("availabilityExpiresAtMs"), (deadline / 1000) * 1000);
+    if (now_ms >= expires_ms) return observation;
+
+    const JsonValue projection(Aws::String(sparkplug.c_str()));
+    const auto metrics = projection.View().GetObject("state").GetObject("reported").GetObject("payload").GetObject("metrics");
+    if (!metrics.ValueExists("virtualQuad") || !metrics.GetObject("virtualQuad").IsObject()) return observation;
+    const auto quad = metrics.GetObject("virtualQuad");
+    if (!quad.ValueExists("sessionId") || !quad.GetObject("sessionId").IsString() ||
+        quad.GetString("sessionId") != session_id.c_str()) return observation;
+    observation.active = true;
+    const auto remaining = std::min<std::int64_t>(expires_ms - now_ms, 15000);
+    observation.simulation = SimulationActivation{
+        session_id, deadline / 1000, std::chrono::steady_clock::now() + std::chrono::milliseconds(remaining)};
+    return observation;
+}
+
+Lifecycle observing_simulation(const ProjectionObservation& projection, std::string& session_id) {
+    if (!projection.active.value_or(false) || !projection.simulation) return {false, 4};
+    const auto& simulation = *projection.simulation;
+    if (session_id.empty()) session_id = simulation.session_id;
+    if (session_id != simulation.session_id) return {false, 4};
+    return {true, projection.redcon, simulation.expires_at};
+}
+
 AwsDevice::AwsDevice(std::shared_ptr<Aws::Auth::AWSCredentialsProvider> credentials,
                      Aws::Client::ClientConfiguration config)
     : registry_(credentials, config), shadows_(credentials, config) {}
@@ -86,12 +148,7 @@ Aws::IoT::Model::DescribeThingResult describe_thing(Aws::IoT::IoTClient& registr
     }
     return result.GetResult();
 }
-}
-std::string AwsDevice::registered_type(const std::string& thing) {
-    return describe_thing(registry_, thing).GetThingTypeName().c_str();
-}
-bool AwsDevice::has_capability(const std::string& thing, const std::string& capability) {
-    const auto result = describe_thing(registry_, thing);
+bool declares_capability(const Aws::IoT::Model::DescribeThingResult& result, const std::string& capability) {
     const auto& attributes = result.GetAttributes();
     const auto entry = attributes.find("capabilities");
     if (entry == attributes.end()) return false;
@@ -105,6 +162,19 @@ bool AwsDevice::has_capability(const std::string& thing, const std::string& capa
     if (declared.empty() || entry->second.back() == ',' || !declared.count("sparkplug"))
         throw std::runtime_error("iot:DescribeThing: malformed capabilities");
     return declared.count(capability) != 0;
+}
+}
+std::string AwsDevice::registered_type(const std::string& thing) {
+    return describe_thing(registry_, thing).GetThingTypeName().c_str();
+}
+bool AwsDevice::has_capability(const std::string& thing, const std::string& capability) {
+    return declares_capability(describe_thing(registry_, thing), capability);
+}
+std::string AwsDevice::agent_device_type(const std::string& thing) {
+    const auto result = describe_thing(registry_, thing);
+    const auto& type = result.GetThingTypeName();
+    if ((type == "tbot" || type == "virtual-quad") && declares_capability(result, "agent")) return type.c_str();
+    return {};
 }
 std::vector<std::string> AwsDevice::registered_things() {
     Aws::IoT::Model::ListThingsRequest request;
@@ -156,8 +226,14 @@ std::string AwsDevice::shadow(const std::string& thing, const char* name) {
     return payload.str();
 }
 Lifecycle AwsDevice::lifecycle(const std::string& thing) { return parse_lifecycle(shadow(thing, "sparkplug"), thing); }
-ProjectionObservation AwsDevice::projection(const std::string& thing) {
-    return parse_projection_observation(shadow(thing, "sparkplug"), thing);
+ProjectionObservation AwsDevice::projection(const std::string& thing, const std::string& type) {
+    const auto sparkplug = shadow(thing, "sparkplug");
+    if (type == "tbot") return parse_projection_observation(sparkplug, thing);
+    if (type != "virtual-quad") throw std::invalid_argument("unsupported agent projection type");
+    const auto simulation = shadow(thing, "simulation");
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    return parse_simulation_projection(sparkplug, simulation, thing, now_ms);
 }
 std::string AwsDevice::agent_shadow(const std::string& thing) { return shadow(thing, "agent"); }
 bool AwsDevice::update_agent_shadow(const std::string& thing, const std::string& patch) {

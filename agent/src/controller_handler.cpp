@@ -4,6 +4,7 @@
 #include "agent/runtime_sample.hpp"
 #include <aws/core/utils/UUID.h>
 #include <aws/core/utils/json/JsonSerializer.h>
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <iostream>
@@ -27,11 +28,11 @@ public:
         return device_.update_agent_shadow(thing_, controller_shadow_patch(snapshot, now, verified));
     }
     std::optional<bool> supported() override {
-        try { return device_.has_capability(thing_, "agent"); }
+        try { type_ = device_.agent_device_type(thing_); return !type_.empty(); }
         catch (...) { return {}; }
     }
     std::optional<ProjectionObservation> projection() override {
-        try { return device_.projection(thing_); }
+        try { return device_.projection(thing_, type_); }
         catch (...) { return {}; }
     }
     std::optional<bool> runtime_verified(const ControllerSnapshot& snapshot) override {
@@ -52,7 +53,8 @@ public:
         const Aws::String id = Aws::Utils::UUID::RandomUUID(); return id.c_str();
     }
     std::string request(const std::string& run_id, const Activation& activation, std::int64_t now) override {
-        return make_cloud_request(config_.cloud, thing_, run_id, activation.id, activation.deadline, now);
+        return make_cloud_request(config_.cloud, thing_, run_id, activation.id, activation.deadline, now,
+                                  type_ == "virtual-quad");
     }
     CloudRun launch(const RunReservation& run) override { return cloud_.launch(run.request, run.run_id); }
     CloudRun get(const std::string& id) override { return cloud_.get(id); }
@@ -62,6 +64,7 @@ private:
     CloudMicrovms& cloud_;
     const ControllerConfig& config_;
     const std::string thing_;
+    std::string type_;
 };
 std::size_t status_body(char* data, std::size_t size, std::size_t count, void* opaque) {
     auto& body = *static_cast<std::string*>(opaque);
@@ -111,10 +114,12 @@ void sample_thing(AwsDevice& device, CloudMicrovms& cloud, const std::string& th
     if (stop_only) return;
     // Only publishing a healthy endpoint requires current type and lifecycle.
     // A stopped report above cannot grant authority or refresh the budget.
-    if (!activation_authorized(latest.state.activation, now_seconds()) || !device.has_capability(thing, "agent")) return;
-    const auto fresh = device.projection(thing);
-    if (!fresh.active || !*fresh.active || fresh.version != latest.state.activation.projection_version ||
-        fresh.source_timestamp_ms != latest.state.activation.source_timestamp_ms) return;
+    if (!activation_authorized(latest.state.activation, now_seconds())) return;
+    const auto type = device.agent_device_type(thing);
+    if (type.empty()) return;
+    const auto fresh = device.projection(thing, type);
+    if (!projection_matches_active(latest.state.activation, fresh) ||
+        fresh.version != latest.state.activation.projection_version) return;
     // The sample parser also checks both identities, the activation deadline,
     // running state and the runtime's fresh assignment verification.
     const auto patch = runtime_sample_patch(latest, host.endpoint, status, now_seconds());
@@ -147,15 +152,17 @@ void terminate_confirmed_orphan(AwsDevice& device, CloudMicrovms& cloud, const s
     std::optional<bool> supported;
     std::optional<ControllerSnapshot> snapshot;
     bool missing = false;
+    std::string type;
     try {
-        supported = device.has_capability(thing, "agent");
+        type = device.agent_device_type(thing);
+        supported = !type.empty();
         try { snapshot = parse_controller_shadow(device.agent_shadow(thing)); }
         catch (const ShadowNotFound&) { missing = true; }
     } catch (const ThingNotFound&) { supported = false; missing = true; }
     const auto now = now_seconds();
     if (supported && *supported && snapshot && snapshot->state.run && snapshot->state.run->run_id == run_id &&
         (snapshot->state.run->microvm_id.empty() || snapshot->state.run->microvm_id == id)) {
-        try { observe_orphan_inactive(*snapshot, device.projection(thing), now); }
+        try { observe_orphan_inactive(*snapshot, device.projection(thing, type), now); }
         catch (const std::exception&) {
             // An unreadable projection is not inactivity. Other independent
             // stop evidence, such as the saved deadline, remains valid.
@@ -349,7 +356,7 @@ void handle_controller_event(const std::string& event, const ControllerConfig& c
             throw std::invalid_argument("invalid Thing identity in controller event");
         bool skip = false;
         controller_event_repair([&] {
-            if (!device.has_capability(thing, "agent")) {
+            if (device.agent_device_type(thing).empty()) {
                 try { device.agent_shadow(thing); }
                 catch (const ShadowNotFound&) { skip = true; return; }
             }
@@ -409,9 +416,30 @@ void handle_controller_event(const std::string& event, const ControllerConfig& c
     // Recheck all hosts individually in that case, including assigned ones.
     const std::set<std::string> no_exclusions;
     const auto& exclusions = complete ? assigned : no_exclusions;
-    for (const auto& id : orphan_candidates(cloud.list(config.cloud.image), exclusions)) {
+    const auto inventory = cloud.list(config.cloud.image);
+    for (const auto& id : orphan_candidates(inventory, exclusions)) {
         try { terminate_confirmed_orphan(device, cloud, id); }
         catch (const std::exception& error) { std::cerr << "controller orphan verification: " << error.what() << '\n'; }
+    }
+    // An unidentified observer stays fenced until its pinned hosting lifetime
+    // has elapsed and a complete inventory contains no unassigned live VM.
+    // This also clears requests that never reached the service.
+    if (complete && std::all_of(inventory.begin(), inventory.end(), [&](const auto& host) {
+        return !host.id.empty() && (host.state == "TERMINATED" || assigned.count(host.id));
+    })) {
+        controller_sweep_each(things, "unidentified observer", [&](const auto& thing) {
+            auto snapshot = parse_controller_shadow(device.agent_shadow(thing));
+            const auto& run = snapshot.state.run;
+            if (!run || run->phase != RunPhase::stopping || !run->microvm_id.empty() ||
+                device.registered_type(thing) != "virtual-quad" ||
+                saved_launch_image(run->request, run->run_id, thing, run->activation_id) != config.cloud.image)
+                return;
+            const auto now = now_seconds();
+            if (now <= saved_launch_lifetime_end(run->request, run->run_id)) return;
+            snapshot.state.run.reset();
+            snapshot.stop_requested_at = 0;
+            device.update_agent_shadow(thing, controller_shadow_patch(snapshot, now, snapshot.verified_at));
+        });
     }
 }
 }

@@ -223,11 +223,19 @@ func TestReadinessUsesFreshEvidenceAndBoundedDeadlines(t *testing.T) {
 	if err != nil || step.Session.Phase != Starting || step.Availability(at).REDCON != 2 || step.Availability(at).Video {
 		t.Fatalf("bad partial readiness: %v", err)
 	}
+	projected, err := ledger.PrepareProjection(t.Context(), target.DeviceID, nil, at, 0)
+	if err != nil || projected.Projection.Agent {
+		t.Fatalf("partial readiness enabled the observer: %v", err)
+	}
 	at += 5000
 	full := Health{Sequence: 2, ObservedAtMS: at, Heartbeat: true, Navigation: true, Mavlink: true, Video: true}
 	step, err = ledger.ReportHealth(t.Context(), target.DeviceID, worker, full, at)
 	if err != nil || step.Session.Phase != Operational || step.Availability(at).REDCON != 1 || step.Session.Start.Status != Succeeded {
 		t.Fatalf("bad full readiness: %v", err)
+	}
+	projected, err = ledger.PrepareProjection(t.Context(), target.DeviceID, nil, at, 0)
+	if err != nil || !projected.Projection.Agent {
+		t.Fatalf("full readiness did not enable the observer: %v", err)
 	}
 	if step.Session.FlightDeadlineMS != at+FlightLimit.Milliseconds() || step.Session.ShutdownDeadlineMS != testNow+SessionLimit.Milliseconds() {
 		t.Fatal("flight or absolute deadline changed unexpectedly")
@@ -245,6 +253,10 @@ func TestReadinessUsesFreshEvidenceAndBoundedDeadlines(t *testing.T) {
 	stopped, err := ledger.RevokeIfDue(t.Context(), target.DeviceID, start.Session.ID, target, true, expiry)
 	if err != nil || stopped.Session.Phase != Stopping || stopped.Session.Stop.Reason != ReasonHealth || stopped.AvailabilityWatermarkMS != expiry {
 		t.Fatalf("repair did not revoke expired readiness: %v", err)
+	}
+	projected, err = ledger.PrepareProjection(t.Context(), target.DeviceID, nil, expiry, 0)
+	if err != nil || projected.Projection.Agent {
+		t.Fatalf("expired readiness enabled the observer: %v", err)
 	}
 }
 

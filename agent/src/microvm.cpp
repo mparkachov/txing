@@ -127,17 +127,22 @@ void device_run(const MicrovmRun& run, MicrovmApplication& application, const st
     config.connectTimeoutMs = 2000; config.requestTimeoutMs = 2000;
     config.retryStrategy = Aws::MakeShared<Aws::Client::DefaultRetryStrategy>("microvm-run", 0);
     AwsDevice device(credentials, config);
-    auto selected = profile(device.registered_type(run.thing), run.thing, run.region, ca);
+    const auto type = device.agent_device_type(run.thing);
+    if (!run.run_id.empty() && run.simulation_bound != (type == "virtual-quad"))
+        throw std::runtime_error("registered profile does not match the assigned run");
+    auto selected = profile(type, run.thing, run.region, ca);
     KvsRuntime sdk;
-    LifecyclePoller lifecycle([&] {
-        if (run.run_id.empty()) return device.lifecycle(run.thing);
-        const auto projection = device.projection(run.thing);
-        if (!device.has_capability(run.thing, "agent")) return Lifecycle{false, 4};
+    LifecyclePoller lifecycle([&, simulator = std::string{}]() mutable {
+        if (device.agent_device_type(run.thing) != type) return Lifecycle{false, 4};
+        if (run.run_id.empty() && type == "tbot") return device.lifecycle(run.thing);
+        const auto projection = device.projection(run.thing, type);
+        if (run.run_id.empty()) return observing_simulation(projection, simulator);
         return assigned_run_lifecycle(run, projection, parse_controller_shadow(device.agent_shadow(run.thing)).state);
     });
+    const bool allows_control = selected.allows_control;
     Session session(std::move(selected), [credentials] { return make_kvs_transport(credentials); },
                     application, std::chrono::steady_clock::now());
-    application.actions(&session);
+    application.actions(&session, allows_control);
     try {
         auto report_at = std::chrono::steady_clock::now();
         bool expired = false;
@@ -149,7 +154,8 @@ void device_run(const MicrovmRun& run, MicrovmApplication& application, const st
             const auto state = lifecycle.latest();
             if (state) session.verified(state->first, state->second);
             if (!run.run_id.empty()) application.authorized(state && state->first.born && state->first.redcon <= 2 &&
-                now >= state->second && now - state->second < 15s, state ? state->second : Time{});
+                now >= state->second && now - state->second < 15s && now < state->first.expires_at,
+                state ? state->second : Time{});
             if (!session.tick(now)) break;
             if (now >= report_at) {
                 // Lifecycle API signing and KVS consult the provider on their
@@ -182,11 +188,14 @@ Lifecycle assigned_run_lifecycle(const MicrovmRun& run, const ProjectionObservat
         assignment.run->microvm_id == run.id)) throw std::runtime_error("agent assignment pending");
     if (assignment.run->phase != RunPhase::running || assignment.run->microvm_id != run.id)
         return {false, 4};
-    if (!projection.active || !*projection.active || projection.redcon < 1 || projection.redcon > 2)
+    if (run.simulation_bound != projection.simulation_bound || !projection.active || !*projection.active ||
+        projection.redcon < 1 || projection.redcon > 2)
+        return {false, 4};
+    if (projection.simulation && projection.simulation->session_id != run.activation_id)
         return {false, 4};
     if (!projection_matches_active(assignment.activation, projection))
         throw std::runtime_error("stale or inconsistent lifecycle projection");
-    return {true, projection.redcon};
+    return {true, projection.redcon, projection.simulation ? projection.simulation->expires_at : Time::max()};
 }
 
 AuditedCredentials::AuditedCredentials(std::shared_ptr<Aws::Auth::AWSCredentialsProvider> source)
@@ -240,7 +249,10 @@ HookReply MicrovmApplication::hook(const std::string& path, const std::string& b
         if (envelope.size() != 2) throw std::invalid_argument("unexpected envelope fields");
         next.id = envelope.at("microvmId");
         auto payload = string_fields(envelope.at("runHookPayload"));
-        if (payload.size() != (require_assignment_ ? 5u : 2u)) throw std::invalid_argument("unexpected run fields");
+        next.simulation_bound = require_assignment_ && payload.count("deviceType");
+        if (payload.size() != (require_assignment_ ? (next.simulation_bound ? 6u : 5u) : 2u) ||
+            (next.simulation_bound && payload.at("deviceType") != "virtual-quad"))
+            throw std::invalid_argument("unexpected run fields");
         next.thing = payload.at("thingId");
         next.region = payload.at("region");
         if (require_assignment_) {
@@ -273,6 +285,7 @@ HookReply MicrovmApplication::hook(const std::string& path, const std::string& b
     if (phase_ != "waiting-for-run") {
         return reply(run_.id == next.id && run_.thing == next.thing && run_.region == next.region &&
                      run_.run_id == next.run_id && run_.activation_id == next.activation_id && run_.deadline == next.deadline &&
+                     run_.simulation_bound == next.simulation_bound &&
                      phase_ == "running" ? 200 : 409, "run already initialized");
     }
     try {
@@ -340,7 +353,7 @@ bool MicrovmApplication::attached() const { std::lock_guard<std::mutex> lock(mut
 void MicrovmApplication::detach() {
     std::lock_guard<std::mutex> lock(mutex_);
     attached_ = false;
-    if (actions_) actions_->release();
+    if (allows_control_ && actions_) actions_->release();
     while (outgoing_.pop()) {}
 }
 void MicrovmApplication::message(Bytes bytes, bool binary) {
@@ -351,15 +364,15 @@ void MicrovmApplication::message(Bytes bytes, bool binary) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!attached_) return;
         if (!assignment_fresh(std::chrono::steady_clock::now())) {
-            if (actions_) actions_->release();
+            if (allows_control_ && actions_) actions_->release();
             attached_ = false;
             while (outgoing_.pop()) {}
             return;
         }
         if (binary) {
             const bool valid = valid_mavlink2(bytes);
-            if (valid && actions_) actions_->client_activity();
-            const bool accepted = actions_ && valid && actions_->send(std::move(bytes));
+            if (allows_control_ && valid && actions_) actions_->client_activity();
+            const bool accepted = allows_control_ && actions_ && valid && actions_->send(std::move(bytes));
             response.WithString("type", "send.result").WithBool("accepted", accepted);
         } else {
             try {
@@ -368,16 +381,16 @@ void MicrovmApplication::message(Bytes bytes, bool binary) {
                 if (type == "ping") response.WithString("type", "pong");
                 else if (type == "status") status_requested = true;
                 else if (type == "activity") {
-                    if (actions_) actions_->client_activity();
+                    if (allows_control_ && actions_) actions_->client_activity();
                     response.WithString("type", "activity.queued");
                 }
                 else if (type == "acquire") {
                     const auto actor = field(command.View(), "actor");
-                    const bool queued = actions_ && !control_attempted_ && actor.size() <= 128 && actions_->acquire(actor);
+                    const bool queued = allows_control_ && actions_ && !control_attempted_ && actor.size() <= 128 && actions_->acquire(actor);
                     if (queued) { control_attempted_ = true; control_state_ = "acquiring"; control_error_.clear(); }
                     response.WithString("type", "acquire.queued").WithBool("queued", queued);
                 } else if (type == "release") {
-                    if (actions_) actions_->release();
+                    if (allows_control_ && actions_) actions_->release();
                     response.WithString("type", "release.queued");
                 } else throw std::invalid_argument("unknown attachment command");
             } catch (...) { response.WithString("type", "error").WithString("message", "invalid attachment command"); }
@@ -393,11 +406,15 @@ void MicrovmApplication::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     phase_ = "stopped"; attached_ = false;
 }
-void MicrovmApplication::actions(Actions* actions) { std::lock_guard<std::mutex> lock(mutex_); actions_ = actions; }
+void MicrovmApplication::actions(Actions* actions, bool allows_control) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    actions_ = actions;
+    allows_control_ = actions && allows_control;
+}
 void MicrovmApplication::authorized(bool value, Time verified_at) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (authorized_ && !value) {
-        if (actions_) actions_->release();
+        if (allows_control_ && actions_) actions_->release();
         attached_ = false;
         while (outgoing_.pop()) {}
     }

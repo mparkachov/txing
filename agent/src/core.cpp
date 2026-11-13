@@ -9,10 +9,12 @@ using Aws::Utils::Json::JsonValue;
 
 Profile profile(const std::string& type, const std::string& thing,
                 const std::string& region, const std::string& ca) {
-    if (type != "tbot") throw std::runtime_error("unsupported registered Thing type: " + type);
+    const bool virtual_quad = type == "virtual-quad";
+    if (type != "tbot" && !virtual_quad) throw std::runtime_error("unsupported registered Thing type: " + type);
     if (thing.empty() || region.empty() || ca.empty()) throw std::invalid_argument("Thing, region and CA path are required");
-    return {{thing + "-mavlink", region, "txing.mavlink.v1", ca, Media::data, Role::viewer},
-            {thing + "-board-video", region, "", ca, Media::h264, Role::viewer}};
+    return {{thing + "-mavlink", region, "txing.mavlink.v1", ca, Media::data, Role::viewer, virtual_quad},
+            {thing + "-board-video", region, "", ca, Media::h264, Role::viewer, virtual_quad},
+            !virtual_quad, virtual_quad ? 1 : 2};
 }
 
 bool valid_mavlink2(const Bytes& b) {
@@ -73,19 +75,21 @@ bool Session::enqueue(Command command) {
     commands_.push_back(std::move(command)); return true;
 }
 bool Session::acquire(std::string actor) {
-    if (actor.empty() || actor.size() > 256) return false;
+    if (!profile_.allows_control || actor.empty() || actor.size() > 256) return false;
     return enqueue({Command::acquire, {}, std::move(actor)});
 }
 bool Session::send(Bytes bytes) {
-    if (!valid_mavlink2(bytes)) return false;
+    if (!profile_.allows_control || !valid_mavlink2(bytes)) return false;
     const auto generation = authorized_generation_.load();
     if (!generation) return false;
     return enqueue({Command::send, std::move(bytes), {}, generation});
 }
 void Session::release() {
+    if (!profile_.allows_control) return;
     if (!enqueue({Command::release, {}, {}})) response_overflow_ = true;
 }
 void Session::client_activity() {
+    if (!profile_.allows_control) return;
     if (!enqueue({Command::activity, {}, {}})) response_overflow_ = true;
 }
 
@@ -221,6 +225,8 @@ void Session::update(Link& link, Stream stream, bool wanted, Time now) {
                 const auto size = bytes.size();
                 Observation e{}; e.kind = Observation::telemetry; e.bytes = std::move(bytes);
                 observations_.push(std::move(e), size + 64);
+            } else if (!profile_.allows_control) {
+                return;
             } else if (bytes.size() <= 4096) {
                 const auto before = responses_.dropped();
                 responses_.push(std::string(bytes.begin(), bytes.end()), bytes.size());
@@ -252,7 +258,8 @@ void Session::update(Link& link, Stream stream, bool wanted, Time now) {
 bool Session::tick(Time now) {
     if (stopped_) return false;
     if (now - last_verified_ >= 15s) { shutdown("lifecycle unverified for 15 seconds"); return false; }
-    if (has_verification_ && (!lifecycle_.born || lifecycle_.redcon < 1 || lifecycle_.redcon > 2)) {
+    if (now >= lifecycle_.expires_at) { shutdown("simulation readiness expired"); return false; }
+    if (has_verification_ && (!lifecycle_.born || lifecycle_.redcon < 1 || lifecycle_.redcon > profile_.highest_redcon)) {
         shutdown("device inactive or dead"); return false;
     }
     update(telemetry_, Stream::telemetry, has_verification_, now);

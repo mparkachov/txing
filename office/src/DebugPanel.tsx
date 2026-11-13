@@ -83,7 +83,7 @@ function DebugPanel({
       />
 
       {agentShadow && (
-        <section className="debug-panel-agent-shadow" aria-label="TBot agent shadow">
+        <section className="debug-panel-agent-shadow" aria-label="Agent shadow">
           <h2>Agent shadow</h2>
           {agentShadow.status === 'loading' && <p>Loading agent status…</p>}
           {agentShadow.status === 'missing' && <p>Agent status has not been initialized.</p>}

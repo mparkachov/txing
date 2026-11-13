@@ -24,11 +24,12 @@ struct CloudRunDetails {
 // unchanged after an interrupted or ambiguous RunMicrovm call.
 std::string make_cloud_request(const CloudConfig&, const std::string& thing,
                                const std::string& run_id, const std::string& activation_id,
-                               std::int64_t deadline, std::int64_t now);
+                               std::int64_t deadline, std::int64_t now, bool simulation_bound = false);
 // Validate the persisted request and its assignment before using its image
 // as evidence for a known-run shutdown.
 std::string saved_launch_image(const std::string& request, const std::string& run_id,
                                const std::string& thing, const std::string& activation_id);
+std::int64_t saved_launch_lifetime_end(const std::string& request, const std::string& run_id);
 class CloudMicrovms {
 public:
     CloudMicrovms(std::shared_ptr<Aws::Auth::AWSCredentialsProvider>, Aws::Client::ClientConfiguration);

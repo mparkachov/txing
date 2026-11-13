@@ -251,15 +251,18 @@ int attach_main(int argc, char** argv) {
             config.connectTimeoutMs = 2000; config.requestTimeoutMs = 5000;
             config.retryStrategy = Aws::MakeShared<Aws::Client::DefaultRetryStrategy>("agent-attach", 1);
             AwsDevice device(credentials, config);
-            if (!device.has_capability(thing, "agent")) throw std::runtime_error("Thing does not declare the agent capability");
+            const auto type = device.agent_device_type(thing);
+            if (type.empty()) throw std::runtime_error("Thing does not declare a supported agent profile");
+            if (manual.control && !profile(type, thing, region, ca).allows_control)
+                throw std::runtime_error("the registered device profile supports observation only");
             const auto payload = device.agent_shadow(thing);
             const auto snapshot = parse_controller_shadow(payload);
             const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-            const auto projection = device.projection(thing);
+            const auto projection = device.projection(thing, type);
             if (!snapshot.state.run || snapshot.state.run->phase != RunPhase::running ||
-                !activation_authorized(snapshot.state.activation, now) || !projection.active || !*projection.active ||
-                projection.version != snapshot.state.activation.projection_version ||
-                projection.source_timestamp_ms != snapshot.state.activation.source_timestamp_ms)
+                !activation_authorized(snapshot.state.activation, now) ||
+                !projection_matches_active(snapshot.state.activation, projection) ||
+                projection.version != snapshot.state.activation.projection_version)
                 throw std::runtime_error("no verified current cloud assignment");
             Aws::Utils::Json::JsonValue document(Aws::String(payload.c_str()));
             const auto reported = document.View().GetObject("state").GetObject("reported");

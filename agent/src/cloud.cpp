@@ -50,7 +50,11 @@ vm::RunMicrovmRequest parse_request(const std::string& text, const std::string& 
     const auto hook = field(value, "runHookPayload");
     Json hook_json(Aws::String(hook.c_str()));
     const auto hook_value = hook_json.View();
-    if (!hook_json.WasParseSuccessful() || !hook_value.IsObject() || hook_value.GetAllObjects().size() != 5 ||
+    if (!hook_json.WasParseSuccessful() || !hook_value.IsObject())
+        throw std::invalid_argument("invalid run hook assignment");
+    const bool simulation_bound = hook_value.ValueExists("deviceType");
+    if (hook_value.GetAllObjects().size() != (simulation_bound ? 6u : 5u) ||
+        (simulation_bound && field(hook_value, "deviceType") != "virtual-quad") ||
         field(hook_value, "runId") != token || field(hook_value, "region") != region ||
         !identifier(field(hook_value, "thingId")) || !identifier(field(hook_value, "activationId")))
         throw std::invalid_argument("invalid run hook assignment");
@@ -74,7 +78,7 @@ vm::RunMicrovmRequest parse_request(const std::string& text, const std::string& 
 
 std::string make_cloud_request(const CloudConfig& config, const std::string& thing,
                                const std::string& run_id, const std::string& activation_id,
-                               std::int64_t deadline, std::int64_t now) {
+                               std::int64_t deadline, std::int64_t now, bool simulation_bound) {
     if (config.region != "eu-central-1" || config.image.empty() || config.image_version.empty() ||
         config.execution_role.empty() || config.log_group.empty() || !identifier(thing) ||
         !identifier(run_id) || !identifier(activation_id) || now < 0 || deadline <= now)
@@ -82,6 +86,7 @@ std::string make_cloud_request(const CloudConfig& config, const std::string& thi
     Json hook; hook.WithString("thingId", thing.c_str()).WithString("region", config.region.c_str())
         .WithString("runId", run_id.c_str()).WithString("activationId", activation_id.c_str())
         .WithString("deadline", std::to_string(deadline).c_str());
+    if (simulation_bound) hook.WithString("deviceType", "virtual-quad");
     Json request;
     request.WithString("clientToken", run_id.c_str()).WithString("region", config.region.c_str())
         .WithString("imageIdentifier", config.image.c_str()).WithString("imageVersion", config.image_version.c_str())
@@ -113,6 +118,13 @@ std::string saved_launch_image(const std::string& text, const std::string& run_i
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != std::string::npos)
         throw std::invalid_argument("saved launch image is not a scoped Frankfurt image ARN");
     return image;
+}
+
+std::int64_t saved_launch_lifetime_end(const std::string& text, const std::string& run_id) {
+    const auto request = parse_request(text, run_id);
+    const Json hook(request.GetRunHookPayload());
+    const auto deadline = std::stoll(field(hook.View(), "deadline"));
+    return deadline + request.GetMaximumDurationInSeconds();
 }
 
 CloudMicrovms::CloudMicrovms(std::shared_ptr<Aws::Auth::AWSCredentialsProvider> credentials,

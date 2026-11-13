@@ -91,10 +91,11 @@ struct FakeTransport : Transport {
 struct Fixture {
     RecordingOperator op; std::vector<std::shared_ptr<FakeState>> links;
     const Time now = Time{} + 100s;
-    Session session{profile("tbot", "id", "region", "ca"), [this] {
-        auto s = std::make_shared<FakeState>(); links.push_back(s); return std::make_unique<FakeTransport>(s);
-    }, op, now};
-    Fixture() { op.actions = &session; }
+    Session session;
+    explicit Fixture(const std::string& type = "tbot")
+        : session(profile(type, "id", "region", "ca"), [this] {
+            auto s = std::make_shared<FakeState>(); links.push_back(s); return std::make_unique<FakeTransport>(s);
+        }, op, now) { op.actions = &session; }
     void active(int redcon = 1) { session.verified({true, redcon}, now); REQUIRE(session.tick(now)); }
     void acquire() {
         REQUIRE(session.acquire("test")); session.tick(now); session.tick(now);
@@ -107,11 +108,54 @@ void profile_and_framing() {
     REQUIRE(p.telemetry.channel == "unrelated-name-mavlink");
     REQUIRE(p.video.channel == "unrelated-name-board-video");
     REQUIRE(p.telemetry.region == "region" && p.telemetry.label == "txing.mavlink.v1");
+    REQUIRE(!p.telemetry.force_relay && !p.video.force_relay);
+    const auto virtual_quad = profile("virtual-quad", "unrelated-name", "region", "ca");
+    REQUIRE(!virtual_quad.allows_control && virtual_quad.telemetry.force_relay && virtual_quad.video.force_relay);
     bool rejected = false;
     try { profile("unit", "tbot-name", "region", "ca"); } catch (...) { rejected = true; }
     REQUIRE(rejected); REQUIRE(valid_mavlink2(frame())); REQUIRE(valid_mavlink2(frame(true)));
     auto bad = frame(); bad.push_back(0); REQUIRE(!valid_mavlink2(bad));
     bad = frame(); bad[2] = 2; REQUIRE(!valid_mavlink2(bad));
+}
+void virtual_quad_observation() {
+    const std::string sparkplug = R"({"version":9,"state":{"reported":{"topic":{"deviceId":"id","namespace":"spBv1.0","messageType":"DDATA"},"payload":{"timestamp":2000,"metrics":{"redcon":1,"capability":{"agent":true},"virtualQuad":{"sessionId":"quad-1"}}}}}})";
+    const std::string simulation = R"({"state":{"reported":{"phase":"operational","sessionId":"quad-1","flightDeadlineMs":12000,"availabilityWatermarkMs":2000,"availabilityExpiresAtMs":7000}}})";
+    const auto ready = parse_simulation_projection(sparkplug, simulation, "id", 2100);
+    REQUIRE(ready.active == true && ready.simulation_bound && ready.simulation &&
+            ready.simulation->session_id == "quad-1" && ready.simulation->flight_deadline == 12);
+    REQUIRE(parse_simulation_projection(sparkplug, simulation, "id", 7000).active == false);
+    REQUIRE(parse_simulation_projection(sparkplug, R"({"state":{"reported":{"phase":"stopping"}}})", "id", 2100).active == false);
+    auto changed = simulation;
+    changed.replace(changed.find("quad-1"), 6, "quad-2");
+    REQUIRE(parse_simulation_projection(sparkplug, changed, "id", 2100).active == false);
+    const std::string newer_watermark = R"({"state":{"reported":{"phase":"operational","sessionId":"quad-1","flightDeadlineMs":12000,"availabilityWatermarkMs":2001,"availabilityExpiresAtMs":7000}}})";
+    REQUIRE(parse_simulation_projection(sparkplug, newer_watermark, "id", 2100).active == false);
+    auto partial = sparkplug;
+    partial.replace(partial.find("\"redcon\":1"), 10, "\"redcon\":2");
+    REQUIRE(parse_simulation_projection(partial, simulation, "id", 2100).active == false);
+    std::string generation;
+    REQUIRE(observing_simulation(ready, generation).born && generation == "quad-1");
+    auto replacement = ready;
+    replacement.simulation->session_id = "quad-2";
+    REQUIRE(!observing_simulation(replacement, generation).born);
+    const MicrovmRun run{"vm-1", "id", "eu-central-1", "run-1", "quad-1", 12, true};
+    const ControllerState assignment{{9, 2000, 0, true, true, Activation{"quad-1", 2, 12}},
+        RunReservation{"run-1", "quad-1", "1.0.0", "request", "vm-1", RunPhase::running}};
+    REQUIRE(assigned_run_lifecycle(run, ready, assignment).born);
+    REQUIRE(!assigned_run_lifecycle(run, replacement, assignment).born);
+    REQUIRE(!assigned_run_lifecycle(run, parse_projection_observation(sparkplug, "id"), assignment).born);
+
+    Fixture f("virtual-quad");
+    f.session.verified({true, 1, f.now + 3s}, f.now);
+    REQUIRE(f.session.tick(f.now) && f.links.size() == 2);
+    f.links[0]->events.data(frame(), true);
+    f.links[1]->events.video({Bytes{1, 2, 3}, "h264", 100, std::chrono::system_clock::now()});
+    eventually([&] { return f.op.telemetry_count == 1 && f.op.video_count == 1; });
+    REQUIRE(!f.session.acquire("test") && !f.session.send(frame()));
+    receive(f.links[0], reply("unsolicited", "control.activated", 1));
+    REQUIRE(f.session.tick(f.now + 2s) && f.links[0]->text.empty() && f.links[0]->binary.empty());
+    REQUIRE(!f.session.tick(f.now + 3s));
+    REQUIRE(f.links[0]->stops == 1 && f.links[1]->stops == 1);
 }
 void lifecycle_and_recovery() {
     Fixture f; REQUIRE(f.session.tick(f.now)); REQUIRE(f.links.empty());
@@ -407,6 +451,11 @@ void cloud_launch_request() {
     auto replacement = make_cloud_request(config, "tbot-test", "run-2", "activation-1", 3100, 3090);
     JsonValue next(Aws::String(replacement.c_str()));
     REQUIRE(next.View().GetInt64("maximumDurationInSeconds") == 10);
+    const auto observer = make_cloud_request(config, "virtual-quad-test", "run-3", "quad-1", 3100, 3090, true);
+    JsonValue observer_request(Aws::String(observer.c_str()));
+    JsonValue observer_hook(observer_request.View().GetString("runHookPayload"));
+    REQUIRE(observer_hook.View().GetString("deviceType") == "virtual-quad");
+    REQUIRE(saved_launch_lifetime_end(observer, "run-3") == 3110);
     bool rejected = false;
     try { make_cloud_request(config, "tbot-test", "run-2", "activation-1", 3100, 3100); }
     catch (...) { rejected = true; } REQUIRE(rejected);
@@ -565,7 +614,8 @@ int main() {
     try {
         KvsRuntime runtime;
         for (const auto& test : std::vector<std::pair<const char*, void(*)()>>{
-            {"profile and framing", profile_and_framing}, {"lifecycle and recovery", lifecycle_and_recovery},
+            {"profile and framing", profile_and_framing}, {"virtual quad observation", virtual_quad_observation},
+            {"lifecycle and recovery", lifecycle_and_recovery},
             {"silent telemetry recovery", silent_telemetry_recovery},
             {"operator and authority", operator_and_authority}, {"loss and shutdown", loss_and_shutdown},
             {"queued authority", queued_authority},

@@ -84,6 +84,60 @@ struct FakeDrain : DrainBackend {
     }
 };
 void tests() {
+    Fake quad;
+    quad.observed = ProjectionObservation{1, true, 1000, 1, SimulationActivation{"quad-1", 140}, true};
+    reconcile(quad, 101, "1.0.0", {});
+    quad.host.state = "RUNNING";
+    reconcile(quad, 102, "1.0.0", {});
+    require(quad.launches == 1 && quad.stored.state.run->phase == RunPhase::running &&
+            quad.stored.state.activation.activation->id == "quad-1" &&
+            quad.stored.state.activation.activation->deadline == 140,
+            "first verified simulator generation did not bind the observer cutoff");
+    quad.observed = ProjectionObservation{1, false, 1000, 1, {}, true};
+    reconcile(quad, 110, "1.0.0", {});
+    require(quad.terminations == 1 && !quad.stored.state.activation.active &&
+            quad.stored.state.run->phase == RunPhase::stopping,
+            "readiness expiry with unchanged Sparkplug did not fence the observer");
+    quad.observed = ProjectionObservation{2, true, 2000, 1, SimulationActivation{"quad-1", 170}, true};
+    reconcile(quad, 111, "1.0.0", {});
+    require(quad.launches == 1 && quad.stored.state.activation.activation->deadline == 140,
+            "same simulator generation extended its cutoff or launched before teardown");
+    quad.host.state = "TERMINATED";
+    reconcile(quad, 112, "1.0.0", {});
+    quad.host = {"vm-2", "RUNNING", "replacement"};
+    reconcile(quad, 113, "1.0.0", {});
+    require(quad.launches == 2 && quad.stored.state.run->request.find(":140") != std::string::npos,
+            "observer recovery did not reuse the original flight cutoff");
+    quad.observed = ProjectionObservation{3, true, 3000, 1, SimulationActivation{"quad-2", 210}, true};
+    reconcile(quad, 114, "1.0.0", {});
+    require(quad.launches == 2 && quad.terminations == 2 &&
+            quad.stored.state.activation.activation->id == "quad-2" &&
+            quad.stored.state.run->activation_id == "quad-1" && quad.stored.state.run->phase == RunPhase::stopping,
+            "rapid restart failed to fence the previous generation before launching");
+    quad.host.state = "TERMINATED";
+    reconcile(quad, 115, "1.0.0", {});
+    quad.host = {"vm-3", "RUNNING", "replacement"};
+    reconcile(quad, 116, "1.0.0", {});
+    require(quad.launches == 3 && quad.stored.state.run->activation_id == "quad-2",
+            "confirmed termination failed to unblock the new generation");
+    quad.observed = ProjectionObservation{2, true, 2000, 1, SimulationActivation{"quad-1", 170}, true};
+    reconcile(quad, 117, "1.0.0", {});
+    require(quad.launches == 3 && quad.stored.state.activation.activation->id == "quad-2",
+            "replayed simulation generation regained authorization");
+
+    Fake unknown_quad;
+    unknown_quad.ambiguous = true;
+    unknown_quad.observed = ProjectionObservation{1, true, 1000, 1, SimulationActivation{"quad-1", 140}, true};
+    bool ambiguous = false;
+    try { reconcile(unknown_quad, 101, "1.0.0", {}); }
+    catch (const std::runtime_error&) { ambiguous = true; }
+    require(ambiguous, "test did not simulate an ambiguous launch");
+    unknown_quad.observed = ProjectionObservation{2, true, 2000, 1, SimulationActivation{"quad-2", 210}, true};
+    reconcile(unknown_quad, 102, "1.0.0", {});
+    require(unknown_quad.launches == 1 && unknown_quad.stored.state.run->activation_id == "quad-1" &&
+            unknown_quad.stored.state.run->phase == RunPhase::stopping,
+            "replacement bypassed an unconfirmed old simulator observer");
+
     Fake accelerated;
     reconcile(accelerated, 100, "1.0.0", {}, 180);
     accelerated.observed = ProjectionObservation{2, true, 2000};

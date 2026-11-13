@@ -24,6 +24,11 @@ struct ActivationState {
     bool active = false;
     std::optional<Activation> activation;
 };
+struct SimulationActivation {
+    std::string session_id;
+    std::int64_t flight_deadline = 0;
+    std::chrono::steady_clock::time_point expires_at = std::chrono::steady_clock::time_point::max();
+};
 struct ProjectionObservation {
     std::uint64_t version = 0;
     // Missing means that the current projection could not be verified. In
@@ -35,14 +40,15 @@ struct ProjectionObservation {
     // Runtime stream selection uses this same verified shadow read. This is
     // transient device state, not part of the persisted activation record.
     int redcon = 4;
+    std::optional<SimulationActivation> simulation = {};
+    bool simulation_bound = false;
 };
 enum class ActivationChange { unverified, stale, unchanged, inactive, activated };
 
-// Transition only on newer verified current shadow versions. IDs are allocated
-// only for an observed inactive->active edge. A first observation that is
-// already active has no provable activation boundary and fails closed.
-// Duplicate/out-of-order deliveries and a continuously active expired device
-// cannot allocate a new activation. A missed inactive interval fails closed.
+// Physical devices require a verified inactive->active edge. A simulation's
+// independently verified session ID and cutoff supply its activation boundary.
+// Replayed projections cannot allocate an activation. Simulation readiness can
+// expire even while the Sparkplug shadow version stays the same.
 ActivationChange observe_activation(ActivationState&, const ProjectionObservation&,
                                     std::int64_t now, std::int64_t budget_seconds,
                                     const std::function<std::string()>& new_id);
