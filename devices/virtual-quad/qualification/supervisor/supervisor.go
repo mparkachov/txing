@@ -161,11 +161,25 @@ func startChild(exit chan<- childResult, dir string, env []string, name string, 
 	return cmd, nil
 }
 
-func shutdown(children []*exec.Cmd, pending int, exit <-chan childResult) {
+func shutdown(children []*exec.Cmd, pending int, exit <-chan childResult, flight bool) {
+	wait := grace
+	if flight && pending == 2 {
+		// Keep the loopback autopilot alive while the media process closes the
+		// write gate and attempts landing. Reserve time to reap both processes.
+		_ = syscall.Kill(-children[0].Process.Pid, syscall.SIGTERM)
+		timer := time.NewTimer(15 * time.Second)
+		select {
+		case <-exit:
+			pending--
+		case <-timer.C:
+		}
+		timer.Stop()
+		wait = 3 * time.Second
+	}
 	for _, cmd := range children {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	}
-	timer := time.NewTimer(grace)
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for pending > 0 {
 		select {
@@ -235,19 +249,25 @@ func runWorkload(ctx context.Context, mode string, mediaEnv, mediaArgs []string,
 	if monitor != nil {
 		mediaEnv = append(mediaEnv, "QUAD_HEALTH_FILE="+healthPath)
 	}
+	flight := mode == "microvm-session"
 	if mode == "microvm-session" || mode == "local-camera" {
 		mediaArgs = append(mediaArgs, "--camera")
 		// The pinned build reads message IDs and intervals in milliseconds.
 		// SIM_STATE feeds the camera at 30 Hz and EKF_STATUS_REPORT gates navigation at 2 Hz.
 		intervals := filepath.Join(scratch, "message-intervals-chan0.txt")
-		if err := os.WriteFile(intervals, []byte("108 33\n193 500\n"), 0600); err != nil {
+		intervalConfig := "108 33\n193 500\n"
+		if flight {
+			mediaArgs = append(mediaArgs, "--flight")
+			intervalConfig += "245 200\n"
+		}
+		if err := os.WriteFile(intervals, []byte(intervalConfig), 0600); err != nil {
 			return fmt.Errorf("configure SITL health telemetry: %w", err)
 		}
 	}
 	exit := make(chan childResult, 2)
 	children := make([]*exec.Cmd, 0, 2)
 	pending := 0
-	defer func() { shutdown(children, pending, exit) }()
+	defer func() { shutdown(children, pending, exit, flight) }()
 	media, err := startChild(exit, scratch, mediaEnv, "virtual-quad-media", mediaArgs...)
 	if err != nil {
 		return err

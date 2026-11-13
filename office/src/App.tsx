@@ -2268,6 +2268,7 @@ function App({ initialAuthError = '' }: AppProps) {
       <VirtualQuadLiveView
         key={`${virtualQuadTarget.deviceId}/${virtualQuad.session.sessionId}`}
         deviceId={virtualQuadTarget.deviceId}
+        actor={mcpActor}
         videoAvailable={extractSparkplugCapabilityAvailability(virtualQuad.sparkplug, 'video') === true}
         mavlinkAvailable={extractSparkplugCapabilityAvailability(virtualQuad.sparkplug, 'mavlink') === true}
         resolveIdToken={resolveSessionIdToken}

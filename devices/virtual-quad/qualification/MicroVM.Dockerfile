@@ -12,7 +12,7 @@ FROM docker.io/library/debian:trixie-slim@sha256:24a01011d10eba3a023bc8585b9650b
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates gstreamer1.0-plugins-bad gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-ugly gstreamer1.0-tools libcurl4t64 libgcc-s1 \
-    liblog4cplus-2.0.5t64 libsrtp2-1 libssl3t64 libstdc++6 libusrsctp2 libwebsockets19t64 zlib1g \
+    libjson-c5 liblog4cplus-2.0.5t64 libsrtp2-1 libssl3t64 libstdc++6 libusrsctp2 libwebsockets19t64 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 COPY quad/ /opt/quad/
 COPY --from=snapsafe /opt/snapsafe/ /opt/snapsafe/

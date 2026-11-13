@@ -52,9 +52,8 @@ device on an awake cloud rig and use Start or Stop in the device header.
 The onboard camera uses the current SITL truth pose to render a 640 × 360
 view at 15 fps. During startup, REDCON 2 indicates that the worker has a
 fresh SITL heartbeat and a MAVLink signaling master. Once the session is
-operational, Office opens separate read-only video and MAVLink peers as each
-capability becomes available. Session changes and readiness expiry close
-those peers.
+operational, Office opens separate video and MAVLink peers as each capability
+becomes available. Session changes and readiness expiry close those peers.
 
 If a KVS master disconnects, Office withdraws the affected capability. The
 controller gives the masters up to 30 seconds to reconnect while the worker
@@ -80,3 +79,24 @@ five-second windows. For pose-to-display timing, use the session's
 `QUAD_CAMERA_RTP_EPOCH` value as the RTP time base and a browser with a
 synchronized clock that exposes RTP timestamps in video-frame callbacks.
 Download the samples to retain the per-frame timing measurements.
+The download also includes timestamped simulator positions, arm and mode
+heartbeats, and landed-state changes for flight measurements.
+
+## Flight in Office
+
+Each connection starts in **View only**. With live camera and MAVLink telemetry,
+select **Acquire control** to reserve the free lease. **Take off** selects
+Guided mode, arms through the normal checks, and climbs to 2 m. Office shows
+the controller, camera and telemetry status, mode, arm and landed state,
+altitude, heading, and speed.
+
+Hold the movement buttons or use `W`/`S` for forward and back, `A`/`D` for
+left and right, `R`/`F` for climb and descent, and `Q`/`E` for yaw. Releasing
+the inputs commands a hover. Use **Land** and check for **Landed** and
+**Disarmed** in the telemetry. **Release control** returns to View only.
+
+The simulator grants one five-second renewable lease. Two seconds without
+a decoded camera frame cause Office to release the lease. Release, peer
+disconnect, lease expiry, and session Stop close the simulator's write gate
+and request LAND if the aircraft may be airborne. Reconnecting opens a new
+View only peer.

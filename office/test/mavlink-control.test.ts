@@ -226,6 +226,30 @@ describe('shared MAVLink Office control', () => {
     fresh.session.close()
   })
 
+  test('keeps receiving telemetry when an optional lease probe times out', async () => {
+    let timeout: (() => void) | undefined
+    let closed = false
+    let received = false
+    const session = new MavlinkControlSession({
+      actor: 'observer@example.test',
+      requestId: () => 'lease-probe',
+      setTimeout: ((run: () => void) => { timeout = run; return 1 }) as typeof window.setTimeout,
+      clearTimeout: (() => undefined) as typeof window.clearTimeout,
+      onControlState: () => {},
+      onFlightState: () => { received = true },
+      onProtocolError: () => {},
+    })
+    session.attach({ close: () => { closed = true }, sendBinary: () => {}, sendText: () => {} })
+    const probe = session.getState({ closeOnTimeout: false })
+    void probe.catch(() => undefined)
+    timeout?.()
+    await expect(probe).rejects.toThrow('Timed out waiting for control.get_state')
+    session.handleMessage(heartbeatFrame({ armed: false }))
+    expect(closed).toBe(false)
+    expect(received).toBe(true)
+    session.close()
+  })
+
   test('negotiates a separate data-only peer with no video transceiver or VideoPanel lifecycle', () => {
     const runtime = readFileSync(new URL('../src/mavlink-session-runtime.ts', import.meta.url), 'utf8')
     const panel = readFileSync(

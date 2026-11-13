@@ -28,19 +28,24 @@ RUN ./waf configure --board sitl && ./waf copter -j "${BUILD_JOBS}" \
     && dpkg-query -W > /out/build-packages.txt
 
 WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends libjson-c-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && dpkg-query -W > /out/build-packages.txt
 COPY devices/common/board/kvs_master devices/common/board/kvs_master
+COPY devices/common/board/mavlink/include devices/common/board/mavlink/include
 COPY devices/common/kvs devices/common/kvs
 COPY devices/virtual-quad/qualification/CMakeLists.txt devices/virtual-quad/qualification/*.cpp devices/virtual-quad/qualification/*.hpp devices/virtual-quad/qualification/
 RUN cmake -S devices/virtual-quad/qualification -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTXING_KVS_REAL_SDK=ON \
-    && CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" cmake --build /build --target virtual-quad-media virtual-quad-camera-test \
+    && CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" cmake --build /build --target virtual-quad-media virtual-quad-camera-test virtual-quad-flight-test \
     && /build/virtual-quad-camera-test \
+    && /build/virtual-quad-flight-test \
     && strip -o /out/virtual-quad-media /build/virtual-quad-media
 
 FROM docker.io/library/debian:trixie-slim@sha256:24a01011d10eba3a023bc8585b9650b8b29021240d4217c05b905e09ef4a5232 AS qualification-runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates gstreamer1.0-plugins-bad gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-ugly gstreamer1.0-tools libcurl4t64 libgcc-s1 \
-    liblog4cplus-2.0.5t64 libsrtp2-1 libssl3t64 libstdc++6 libusrsctp2 libwebsockets19t64 zlib1g \
+    libjson-c5 liblog4cplus-2.0.5t64 libsrtp2-1 libssl3t64 libstdc++6 libusrsctp2 libwebsockets19t64 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=go-build /out/virtual-quad-qualification /opt/quad/bin/
 COPY --from=native-build /out/arducopter /out/virtual-quad-media /opt/quad/bin/

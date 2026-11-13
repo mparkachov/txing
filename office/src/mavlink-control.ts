@@ -76,6 +76,9 @@ export type MavlinkControlSessionOptions = {
   onProtocolError: (message: string) => void
   onStateChange?: (state: 'connected' | 'closed') => void
   onTelemetry?: (telemetry: MavlinkTelemetry) => void
+  onFrame?: (frame: MavlinkFrame) => void
+  flightTarget?: MavlinkTarget
+  decodeMode?: (customMode: number) => string
   requestId?: () => string
   setTimeout?: typeof window.setTimeout
   clearTimeout?: typeof window.clearTimeout
@@ -206,7 +209,11 @@ const createRequestId = (): string =>
     ? crypto.randomUUID()
     : `mavlink-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const decodeFlightState = (frame: MavlinkFrame): MavlinkFlightState | null => {
+const decodeRoverMode = (customMode: number): string =>
+  customMode === mavlinkModeManual ? 'manual'
+    : customMode === mavlinkModeHold ? 'hold' : `custom-${customMode}`
+
+const decodeFlightState = (frame: MavlinkFrame, decodeMode: (mode: number) => string): MavlinkFlightState | null => {
   if (frame.messageId !== mavlinkHeartbeatMessageId || frame.payload.byteLength !== 9) {
     return null
   }
@@ -214,23 +221,17 @@ const decodeFlightState = (frame: MavlinkFrame): MavlinkFlightState | null => {
   const customMode = view.getUint32(0, true)
   return {
     armed: (frame.payload[6] & mavlinkSafetyArmedFlag) !== 0,
-    mode:
-      customMode === mavlinkModeManual
-        ? 'manual'
-        : customMode === mavlinkModeHold
-          ? 'hold'
-          : `custom-${customMode}`,
+    mode: decodeMode(customMode),
   }
 }
 
 const decodeCommandAck = (frame: MavlinkFrame): { command: number; result: number } | null => {
-  if (frame.messageId !== mavlinkCommandAckMessageId || frame.payload.byteLength < 3) {
+  if (frame.messageId !== mavlinkCommandAckMessageId || frame.payload.byteLength < 1) {
     return null
   }
-  const view = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength)
   return {
-    command: view.getUint16(0, true),
-    result: frame.payload[2],
+    command: frame.payload[0] | ((frame.payload[1] ?? 0) << 8),
+    result: frame.payload[2] ?? 0,
   }
 }
 
@@ -272,12 +273,14 @@ const buildMavlinkCommandLongFrame = ({
   command,
   param1,
   param2,
+  param7 = 0,
   sequence,
   target,
 }: {
   command: number
   param1: number
   param2: number
+  param7?: number
   sequence: number
   target: MavlinkTarget
 }): Uint8Array => {
@@ -285,6 +288,7 @@ const buildMavlinkCommandLongFrame = ({
   const view = new DataView(payload.buffer)
   view.setFloat32(0, param1, true)
   view.setFloat32(4, param2, true)
+  view.setFloat32(24, param7, true)
   view.setUint16(28, command, true)
   payload[30] = target.systemId
   payload[31] = target.componentId
@@ -298,42 +302,6 @@ const buildMavlinkCommandLongFrame = ({
   })
 }
 
-export const buildMavlinkArmDisarmFrame = ({
-  armed,
-  sequence,
-  target,
-}: {
-  armed: boolean
-  sequence: number
-  target: MavlinkTarget
-}): Uint8Array =>
-  buildMavlinkCommandLongFrame({
-    command: mavlinkCommandComponentArmDisarm,
-    param1: armed ? 1 : 0,
-    // Force arm/disarm uses a magic value here. The contract requires ordinary
-    // commands only, so this field is always zero.
-    param2: 0,
-    sequence,
-    target,
-  })
-
-export const buildMavlinkModeFrame = ({
-  mode,
-  sequence,
-  target,
-}: {
-  mode: 'hold' | 'manual'
-  sequence: number
-  target: MavlinkTarget
-}): Uint8Array =>
-  buildMavlinkCommandLongFrame({
-    command: mavlinkCommandDoSetMode,
-    param1: mavlinkCustomModeEnabledBaseMode,
-    param2: mode === 'manual' ? mavlinkModeManual : mavlinkModeHold,
-    sequence,
-    target,
-  })
-
 export class MavlinkControlSession {
   private readonly actor: string
   private readonly clearTimer: typeof window.clearTimeout
@@ -342,6 +310,9 @@ export class MavlinkControlSession {
   private readonly onProtocolError: MavlinkControlSessionOptions['onProtocolError']
   private readonly onStateChange: MavlinkControlSessionOptions['onStateChange']
   private readonly onTelemetry: MavlinkControlSessionOptions['onTelemetry']
+  private readonly onFrame: MavlinkControlSessionOptions['onFrame']
+  private readonly flightTarget: MavlinkTarget | undefined
+  private readonly decodeMode: (customMode: number) => string
   private readonly requestId: () => string
   private readonly setTimer: typeof window.setTimeout
   private activeSessionId: string | null = null
@@ -366,6 +337,9 @@ export class MavlinkControlSession {
     this.onProtocolError = options.onProtocolError
     this.onStateChange = options.onStateChange
     this.onTelemetry = options.onTelemetry
+    this.onFrame = options.onFrame
+    this.flightTarget = options.flightTarget
+    this.decodeMode = options.decodeMode ?? decodeRoverMode
     this.requestId = options.requestId ?? createRequestId
     this.setTimer = options.setTimeout ?? window.setTimeout.bind(window)
     this.clearTimer = options.clearTimeout ?? window.clearTimeout.bind(window)
@@ -380,8 +354,8 @@ export class MavlinkControlSession {
     this.onStateChange?.('connected')
   }
 
-  public async getState(): Promise<MavlinkControlState> {
-    const { state } = await this.sendControlRequest('control.get_state')
+  public async getState(options?: { closeOnTimeout?: boolean }): Promise<MavlinkControlState> {
+    const { state } = await this.sendControlRequest('control.get_state', {}, options?.closeOnTimeout ?? true)
     return state
   }
 
@@ -442,33 +416,42 @@ export class MavlinkControlSession {
   }
 
   public async armDisarm(target: MavlinkTarget, armed: boolean): Promise<void> {
-    this.requireActiveEpoch()
-    const acknowledgement = this.waitForCommand(mavlinkCommandComponentArmDisarm)
-    const confirmation = this.waitForFlightState((state) => state.armed === armed)
-    try {
-      this.sendFrame(buildMavlinkArmDisarmFrame({
-        armed,
-        sequence: this.nextFrameSequence(),
-        target,
-      }))
-      await Promise.all([acknowledgement, confirmation])
-    } finally {
-      this.clearPendingCommand()
-      this.clearFlightStateWaiters()
-    }
+    await this.runCommand(target, mavlinkCommandComponentArmDisarm, { param1: armed ? 1 : 0, param2: 0 },
+      (state) => state.armed === armed)
   }
 
   public async selectMode(target: MavlinkTarget, mode: 'hold' | 'manual'): Promise<void> {
+    await this.selectCustomMode(target, mode === 'manual' ? mavlinkModeManual : mavlinkModeHold)
+  }
+
+  public async selectCustomMode(target: MavlinkTarget, customMode: number): Promise<void> {
+    await this.runCommand(target, mavlinkCommandDoSetMode, {
+      param1: mavlinkCustomModeEnabledBaseMode,
+      param2: customMode,
+    }, (state) => state.mode === this.decodeMode(customMode))
+  }
+
+  public sendActiveFrame(build: (sequence: number) => Uint8Array): void {
     this.requireActiveEpoch()
-    const acknowledgement = this.waitForCommand(mavlinkCommandDoSetMode)
-    const confirmation = this.waitForFlightState((state) => state.mode === mode)
+    this.sendFrame(build(this.nextFrameSequence()))
+  }
+
+  public async runCommand(
+    target: MavlinkTarget,
+    command: number,
+    { param1 = 0, param2 = 0, param7 = 0 }: { param1?: number; param2?: number; param7?: number },
+    confirm?: (state: MavlinkFlightState) => boolean,
+  ): Promise<void> {
+    this.requireActiveEpoch()
+    const completed = Promise.all([
+      this.waitForCommand(command),
+      confirm ? this.waitForFlightState(confirm) : undefined,
+    ])
     try {
-      this.sendFrame(buildMavlinkModeFrame({
-        mode,
-        sequence: this.nextFrameSequence(),
-        target,
+      this.sendActiveFrame((sequence) => buildMavlinkCommandLongFrame({
+        command, param1, param2, param7, sequence, target,
       }))
-      await Promise.all([acknowledgement, confirmation])
+      await completed
     } finally {
       this.clearPendingCommand()
       this.clearFlightStateWaiters()
@@ -566,7 +549,10 @@ export class MavlinkControlSession {
       sequence: frame.sequence,
       systemId: frame.systemId,
     })
-    const flightState = decodeFlightState(frame)
+    if (this.flightTarget && (frame.systemId !== this.flightTarget.systemId ||
+      frame.componentId !== this.flightTarget.componentId)) return
+    this.onFrame?.(frame)
+    const flightState = decodeFlightState(frame, this.decodeMode)
     if (flightState) {
       this.flightState = flightState
       this.onFlightState(flightState)
@@ -597,6 +583,7 @@ export class MavlinkControlSession {
   private sendControlRequest(
     type: 'control.get_state' | 'control.activate' | 'control.renew_active' | 'control.release_active',
     fields: Record<string, unknown> = {},
+    closeOnTimeout = true,
   ): Promise<{ responseType: ControlSuccessType; state: MavlinkControlState }> {
     const handle = this.handle
     if (this.closed || !handle) {
@@ -609,7 +596,7 @@ export class MavlinkControlSession {
         reject(new Error(`Timed out waiting for ${type}`))
         // A channel that cannot answer authority requests must be replaced,
         // rather than reused by every subsequent click. Recovery stays View only.
-        this.close()
+        if (closeOnTimeout) this.close()
       }, mavlinkRequestTimeoutMs)
       this.pendingControl.set(requestId, {
         timeoutId,

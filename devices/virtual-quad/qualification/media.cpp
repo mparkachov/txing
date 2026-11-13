@@ -1,5 +1,6 @@
 #include "kvs_master/kvs_session.hpp"
 #include "camera.hpp"
+#include "flight.hpp"
 
 #include <arpa/inet.h>
 #include <gst/app/gstappsink.h>
@@ -22,6 +23,7 @@
 #include <exception>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -62,10 +64,11 @@ class Telemetry {
     std::size_t next = 0;
 };
 
-class Observer final : public kvs::BoardMavlinkPeer {
+class TelemetryPeer final : public kvs::BoardMavlinkPeer {
   public:
-    Observer(Telemetry& telemetry, kvs::MavlinkTelemetryReceiver receiver)
-        : telemetry_(telemetry), reader_([this, receiver = std::move(receiver)] {
+    TelemetryPeer(Telemetry& telemetry, kvs::MavlinkTelemetryReceiver receiver,
+                  quad::FlightControl* flight, std::uint64_t peer)
+        : telemetry_(telemetry), flight_(flight), peer_(peer), reader_([this, receiver = std::move(receiver)] {
             std::unique_lock lock(telemetry_.mutex);
             auto next = telemetry_.next;
             while (true) {
@@ -79,16 +82,19 @@ class Observer final : public kvs::BoardMavlinkPeer {
             }
         }) {}
 
-    ~Observer() override { Close(""); }
+    ~TelemetryPeer() override { Close(""); }
 
-    // The qualification adapter has no write path to SITL, including for JSON.
-    std::string HandleControl(const std::string&) override {
+    std::string HandleControl(const std::string& request) override {
+        if (flight_) return flight_->HandleControl(peer_, request);
         throw std::runtime_error("qualification data channel is receive only");
     }
 
-    void SendFrame(const Frame&, std::uint64_t) override {}
+    void SendFrame(const Frame& frame, std::uint64_t epoch) override {
+        if (flight_) flight_->SendFrame(peer_, epoch, frame);
+    }
 
     void Close(const std::string&) noexcept override {
+        if (flight_ && peer_) flight_->ClosePeer(std::exchange(peer_, 0));
         {
             std::lock_guard lock(telemetry_.mutex);
             closed_ = true;
@@ -99,13 +105,15 @@ class Observer final : public kvs::BoardMavlinkPeer {
 
   private:
     Telemetry& telemetry_;
+    quad::FlightControl* flight_;
+    std::uint64_t peer_;
     bool closed_ = false;  // Guarded by telemetry_.mutex.
     std::thread reader_;
 };
 
-class ObservationBridge final : public kvs::BoardMavlinkBridgeClient {
+class SitlBridge final : public kvs::BoardMavlinkBridgeClient {
   public:
-    explicit ObservationBridge(Telemetry& telemetry) : telemetry_(telemetry) {}
+    SitlBridge(Telemetry& telemetry, quad::FlightControl* flight) : telemetry_(telemetry), flight_(flight) {}
 
     kvs::MavlinkControlChannelConfig GetControlChannelConfig(const std::string&, const std::string&) override {
         throw std::logic_error("qualification config is supplied by the supervisor");
@@ -120,11 +128,18 @@ class ObservationBridge final : public kvs::BoardMavlinkBridgeClient {
     std::unique_ptr<kvs::BoardMavlinkPeer> OpenPeer(
         const std::string&, kvs::MavlinkTelemetryReceiver receiver
     ) override {
-        return std::make_unique<Observer>(telemetry_, std::move(receiver));
+        const auto peer = flight_ ? flight_->OpenPeer() : 0;
+        try {
+            return std::make_unique<TelemetryPeer>(telemetry_, std::move(receiver), flight_, peer);
+        } catch (...) {
+            if (flight_) flight_->ClosePeer(peer);
+            throw;
+        }
     }
 
   private:
     Telemetry& telemetry_;
+    quad::FlightControl* flight_;
 };
 
 struct SitlState {
@@ -147,7 +162,12 @@ struct SitlState {
 
 class SitlTelemetry {
   public:
-    SitlTelemetry() {
+    explicit SitlTelemetry(bool flight) {
+        if (flight) {
+            flight_.emplace([this](const Frame& frame) {
+                return send(socket_, frame.data(), frame.size(), 0) == static_cast<ssize_t>(frame.size());
+            });
+        }
         socket_ = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (socket_ < 0) throw std::runtime_error("create SITL telemetry socket failed");
         sockaddr_in address{};
@@ -167,6 +187,8 @@ class SitlTelemetry {
     }
     SitlTelemetry(const SitlTelemetry&) = delete;
     SitlTelemetry& operator=(const SitlTelemetry&) = delete;
+
+    quad::FlightControl* Flight() { return flight_ ? &*flight_ : nullptr; }
 
     void Start(Telemetry& telemetry) {
         reader_ = std::thread([this, &telemetry] {
@@ -200,7 +222,10 @@ class SitlTelemetry {
         std::lock_guard lock(mutex_);
         for (unsigned i = 0; i < 64; ++i) {
             std::array<std::uint8_t, 65536> packet;
-            const auto size = recv(socket_, packet.data(), packet.size(), 0);
+            sockaddr_in source{};
+            socklen_t source_size = sizeof(source);
+            const auto size = recvfrom(socket_, packet.data(), packet.size(), 0,
+                reinterpret_cast<sockaddr*>(&source), &source_size);
             if (size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
             if (size < 0 && errno == EINTR) continue;
             if (size < 0) throw std::runtime_error("receive SITL telemetry failed");
@@ -228,7 +253,15 @@ class SitlTelemetry {
                         Observe(bytes[7], bytes[1], bytes + 10, received);
                     }
                 }
-                telemetry.Publish(Frame(bytes, bytes + frame_size));
+                Frame frame(bytes, bytes + frame_size);
+                if (flight_ && !connected_ && bytes[7] == 0 && quad::FlightControl::IsAutopilotHeartbeat(frame)) {
+                    if (connect(socket_, reinterpret_cast<const sockaddr*>(&source), source_size) != 0) {
+                        throw std::runtime_error("connect loopback SITL socket failed");
+                    }
+                    connected_ = true;
+                }
+                if (flight_ && connected_) flight_->Observe(frame);
+                telemetry.Publish(std::move(frame));
                 ++state_.frames;
                 offset += frame_size;
             }
@@ -281,6 +314,8 @@ class SitlTelemetry {
     }
 
     int socket_;
+    std::optional<quad::FlightControl> flight_;
+    bool connected_ = false;
     std::atomic_bool stopped_{false};
     std::mutex mutex_;
     SitlState state_;
@@ -378,15 +413,28 @@ void DeletePipeline(GstElement* element) {
     gst_object_unref(element);
 }
 
-void Run(bool local, bool camera) {
+void LandBeforeExit(quad::FlightControl* flight) {
+    if (!flight) return;
+    flight->Stop();
+    const auto deadline = Clock::now() + 13s;
+    while (!flight->SafeToExit() && Clock::now() < deadline) {
+        flight->Tick(false);
+        std::this_thread::sleep_for(50ms);
+    }
+    if (!flight->SafeToExit()) std::puts("QUAD_FLIGHT_LANDING_UNCONFIRMED");
+}
+
+void Run(bool local, bool camera, bool allow_flight) {
     const auto start = Clock::now();
     const auto start_utc = std::chrono::system_clock::now();
     const auto* health_path = std::getenv("QUAD_HEALTH_FILE");
     Telemetry telemetry;
-    SitlTelemetry receiver;
+    SitlTelemetry receiver(allow_flight);
+    auto* flight = receiver.Flight();
     receiver.Start(telemetry);
     std::unique_ptr<kvs::KvsSession> video;
     std::unique_ptr<kvs::KvsSession> data;
+    const std::unique_ptr<quad::FlightControl, decltype(&LandBeforeExit)> landing(flight, LandBeforeExit);
     if (!local) {
         kvs::RuntimeConfig config;
         config.region = RequireEnv("AWS_REGION");
@@ -404,7 +452,7 @@ void Run(bool local, bool camera) {
         config.gather_ice_before_answer = camera;
         config.channel_name = RequireEnv("QUAD_MAVLINK_CHANNEL");
         data = kvs::CreateKvsSessionWithMavlinkBridge(
-            config, credentials, std::make_unique<ObservationBridge>(telemetry));
+            config, credentials, std::make_unique<SitlBridge>(telemetry, flight));
         data->Start();
         std::puts("QUAD_MAVLINK_MASTER_STARTED");
     }
@@ -521,12 +569,15 @@ void Run(bool local, bool camera) {
         const auto sitl = receiver.Snapshot();
         const auto now = Clock::now();
         const bool pose_fresh = !camera || sitl.poses.At(now).has_value();
+        const bool heartbeat = now - sitl.heartbeat < 2s;
+        const bool navigation = sitl.NavigationReady(now) && pose_fresh;
+        const bool mavlink = heartbeat && data && data->SignalingConnected();
+        const bool video_ready = pose_fresh && produced_keyframe && now - last_frame < 1s &&
+            video && video->SignalingConnected();
+        if (flight) flight->Tick(!stopping && navigation && mavlink && video_ready);
         if (health_path && now >= next_health) {
-            if (sitl.armed) throw std::runtime_error("read-only simulator unexpectedly armed");
-            const bool heartbeat = now - sitl.heartbeat < 2s;
-            WriteHealth(health_path, heartbeat, sitl.NavigationReady(now) && pose_fresh,
-                heartbeat && data && data->SignalingConnected(),
-                pose_fresh && produced_keyframe && now - last_frame < 1s && video && video->SignalingConnected());
+            if (!flight && sitl.armed) throw std::runtime_error("read-only simulator unexpectedly armed");
+            WriteHealth(health_path, heartbeat, navigation, mavlink, video_ready);
             next_health = now + 1s;
         }
         if ((!camera || ready) && now - last_frame > 3s) throw std::runtime_error("encoder stopped producing access units");
@@ -575,13 +626,16 @@ int main(int argc, char** argv) {
     try {
         bool local = false;
         bool camera = false;
+        bool flight = false;
         for (int i = 1; i < argc; ++i) {
             const std::string option(argv[i]);
             if (option == "--local") local = true;
             else if (option == "--camera") camera = true;
+            else if (option == "--flight") flight = true;
             else throw std::runtime_error("unknown simulator media option");
         }
-        Run(local, camera);
+        if (flight && (local || !camera)) throw std::runtime_error("flight requires a managed camera session");
+        Run(local, camera, flight);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "QUAD_MEDIA_ERROR %s\n", error.what());
         return 1;

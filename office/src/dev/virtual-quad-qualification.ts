@@ -1,6 +1,8 @@
+import { readQuadPosition } from '../../../devices/virtual-quad/web/virtual-quad-flight'
 import { refreshTokensIfNeeded } from '../auth'
 import { createCredentialProvider } from '../aws-credentials'
 import { connectKvsViewer } from '../kvs-viewer-peer'
+import { parseMavlinkFrame } from '../mavlink-wire'
 
 type CandidateTypes = { local: string | null; remote: string | null }
 type Sample = {
@@ -19,6 +21,11 @@ type Sample = {
   height: number
   poseToDisplayMs: number[]
 }
+type FlightObservation = { at: string; join: number } & (
+  | { type: 'position'; position: NonNullable<ReturnType<typeof readQuadPosition>> }
+  | { type: 'heartbeat'; mode: number; armed: boolean }
+  | { type: 'landed'; state: number }
+)
 type StatsEntry = {
   type: string
   kind?: string
@@ -51,6 +58,8 @@ const configurePage = () => {
   const input = (id: string) => document.querySelector<HTMLInputElement>(id)!
   const button = (id: string) => document.querySelector<HTMLButtonElement>(id)!
   const preview = document.querySelector<HTMLVideoElement>('#preview')!
+  const camera = document.querySelector<HTMLCanvasElement>('#camera')!
+  const cameraContext = camera.getContext('2d')
   const status = document.querySelector<HTMLElement>('#status')!
   const display = document.querySelector<HTMLElement>('#samples')!
   const query = new URLSearchParams(window.location.search)
@@ -65,6 +74,7 @@ const configurePage = () => {
   let joins = 0
   const samples: Sample[] = []
   const events: { at: string; join: number; event: string; forceTurn?: boolean }[] = []
+  const flight: FlightObservation[] = []
   const event = (join: number, name: string, forceTurn?: boolean) =>
     events.push({ at: new Date().toISOString(), join, event: name, forceTurn })
 
@@ -72,6 +82,7 @@ const configurePage = () => {
     current?.abort()
     current = undefined
     preview.srcObject = null
+    cameraContext?.clearRect(0, 0, camera.width, camera.height)
     button('#join').disabled = false
     button('#leave').disabled = true
   }
@@ -82,7 +93,7 @@ const configurePage = () => {
     status.textContent = 'Left'
   })
   button('#save').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify({ events, samples }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify({ events, samples, flight }, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -112,12 +123,15 @@ const configurePage = () => {
       let mavlinkFrames = 0
       let heartbeats = 0
       let invalidMessages = 0
+      let previousLandedState: number | undefined
       let poseToDisplayMs: number[] = []
       const [video, data] = await Promise.all([
         connectKvsViewer(videoChannel, credentials, forceTurn, (pc) => {
           pc.addTransceiver('video', { direction: 'recvonly' })
           pc.addEventListener('track', ({ track }) => {
+            if (signal.aborted) return
             preview.srcObject = new MediaStream([track])
+            void preview.play().catch(() => undefined)
           })
         }, signal),
         connectKvsViewer(mavlinkChannel, credentials, forceTurn, (pc) => {
@@ -125,36 +139,61 @@ const configurePage = () => {
           channel.binaryType = 'arraybuffer'
           channel.addEventListener('open', () => event(join, 'data-open'))
           channel.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
-            if (data instanceof ArrayBuffer) {
+            if (signal.aborted) return
+            if (!(data instanceof ArrayBuffer)) {
+              ++invalidMessages
+              return
+            }
+            try {
               const bytes = new Uint8Array(data)
-              if (bytes.length >= 12 && bytes[0] === 0xfd && (bytes[2] & ~1) === 0 &&
-                bytes.length === 12 + bytes[1] + ((bytes[2] & 1) ? 13 : 0)) {
-                ++mavlinkFrames
-                if (bytes[5] === 1 && bytes[6] === 1 && bytes[7] === 0 && bytes[8] === 0 && bytes[9] === 0) {
-                  ++heartbeats
-                }
+              if ((bytes[2] & ~1) !== 0) {
+                ++invalidMessages
                 return
               }
+              const { systemId, componentId, messageId, payload } = parseMavlinkFrame(bytes)
+              ++mavlinkFrames
+              if (systemId !== 1 || componentId !== 1 || (messageId !== 0 && messageId !== 33 && messageId !== 245)) return
+              const at = new Date().toISOString()
+              if (messageId === 0 && payload.byteLength === 9) {
+                ++heartbeats
+                const mode = new DataView(payload.buffer, payload.byteOffset).getUint32(0, true)
+                flight.push({ at, join, type: 'heartbeat', mode, armed: (payload[6] & 128) !== 0 })
+              } else if (messageId === 33) {
+                const position = readQuadPosition(payload)
+                if (position) flight.push({ at, join, type: 'position', position })
+              } else if (messageId === 245 && payload[1] !== undefined && payload[1] !== previousLandedState) {
+                previousLandedState = payload[1]
+                flight.push({ at, join, type: 'landed', state: payload[1] })
+              }
+            } catch {
+              ++invalidMessages
             }
-            ++invalidMessages
           })
         }, signal),
       ])
       signal.throwIfAborted()
-      if (Number.isFinite(rtpEpochMs) && typeof preview.requestVideoFrameCallback === 'function') {
+      const drawCamera = () => {
+        if (!signal.aborted && preview.videoWidth > 0 && preview.videoHeight > 0) {
+          cameraContext?.drawImage(preview, 0, 0, camera.width, camera.height)
+        }
+      }
+      if (typeof preview.requestVideoFrameCallback === 'function') {
         const recordFrame: VideoFrameRequestCallback = (_now, frame) => {
           if (signal.aborted) return
-          if (frame.rtpTimestamp !== undefined) {
+          if (Number.isFinite(rtpEpochMs) && frame.rtpTimestamp !== undefined) {
             // The pinned KVS sender uses 90 kHz H.264 RTP with zero random
             // offset. The native log maps tick zero to the first pose's UTC time.
             const poseTime = rtpEpochMs + frame.rtpTimestamp / 90
             const displayTime = performance.timeOrigin + frame.expectedDisplayTime
             poseToDisplayMs.push(Math.round((displayTime - poseTime) * 10) / 10)
           }
+          drawCamera()
           callback = preview.requestVideoFrameCallback(recordFrame)
         }
         let callback = preview.requestVideoFrameCallback(recordFrame)
         signal.addEventListener('abort', () => preview.cancelVideoFrameCallback(callback), { once: true })
+      } else {
+        preview.addEventListener('timeupdate', drawCamera, { signal })
       }
       event(join, 'answers-received')
       status.textContent = 'Connected to signaling; sampling decoded media and telemetry'

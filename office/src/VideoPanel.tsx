@@ -11,6 +11,7 @@ type VideoPanelProps = {
   channelName: string
   debugEnabled?: boolean
   onRuntimeError?: (message: string) => void
+  onFramePresented?: () => void
   overlay?: ReactNode
   videoOnly?: boolean
 }
@@ -55,6 +56,7 @@ function VideoPanel({
   channelName,
   debugEnabled = false,
   onRuntimeError,
+  onFramePresented,
   overlay = null,
   videoOnly = false,
 }: VideoPanelProps) {
@@ -82,6 +84,7 @@ function VideoPanel({
   const reportRuntimeError = useEffectEvent((message: string): void => {
     onRuntimeError?.(message)
   })
+  const reportPresentedFrame = useEffectEvent(() => onFramePresented?.())
   const drawCanvasSource = useEffectEvent((
     source: CanvasImageSource,
     sourceWidth: number,
@@ -190,6 +193,7 @@ function VideoPanel({
     let viewerHandle: { close: () => void } | null = null
     let activeFrameCallbackHandle: number | null = null
     let activeTrackProcessorReader: ReadableStreamDefaultReader<VideoFrameLike> | null = null
+    let detachFrameListeners: (() => void) | undefined
     const videoElement = videoRef.current
     const canvasElement = canvasRef.current
 
@@ -279,6 +283,7 @@ function VideoPanel({
         })
         const streamToken = activeStreamTokenRef.current + 1
         activeStreamTokenRef.current = streamToken
+        detachFrameListeners?.()
         remoteStreamRef.current = stream
         if (!videoElement) {
           logVideoUiDebug('remote stream received but no video element')
@@ -309,12 +314,14 @@ function VideoPanel({
             try {
               while (activeStreamTokenRef.current === streamToken) {
                 const { value, done } = await reader.read()
-                if (done || !value) {
+                if (done || !value || activeStreamTokenRef.current !== streamToken) {
+                  value?.close()
                   break
                 }
 
                 presentedFrames += 1
                 drawCanvasSource(value, value.codedWidth, value.codedHeight)
+                reportPresentedFrame()
                 if (presentedFrames <= 3 || presentedFrames % 150 === 0) {
                   logVideoUiDebug('track processor frame', {
                     presentedFrames,
@@ -363,6 +370,7 @@ function VideoPanel({
             }
 
             syncCanvasFromVideo('requestVideoFrameCallback', metadata)
+            reportPresentedFrame()
             markStreamingFromVideo()
             scheduleFrameCallback()
           })
@@ -376,12 +384,29 @@ function VideoPanel({
             logVideoElementState('video.play rejected')
           }
 
+          if (activeStreamTokenRef.current !== streamToken) return
           if (typeof videoWithFrameCallback.requestVideoFrameCallback === 'function') {
             scheduleFrameCallback()
             return
           }
 
+          let lastFrames = 0
+          const sampleDecodedFrames = () => {
+            const quality = videoElement.getVideoPlaybackQuality?.()
+            if (!quality) return
+            const frames = quality.totalVideoFrames - quality.droppedVideoFrames
+            if (frames <= lastFrames) return
+            lastFrames = frames
+            reportPresentedFrame()
+            markStreamingFromVideo()
+          }
+          videoElement.addEventListener('timeupdate', sampleDecodedFrames)
           videoElement.addEventListener('loadeddata', markStreamingFromVideo, { once: true })
+          detachFrameListeners = () => {
+            videoElement.removeEventListener('timeupdate', sampleDecodedFrames)
+            videoElement.removeEventListener('loadeddata', markStreamingFromVideo)
+          }
+          sampleDecodedFrames()
         }
 
         void playVideo()
@@ -418,6 +443,7 @@ function VideoPanel({
         activeFrameCallbackHandle = null
       }
       detachVideoListeners()
+      detachFrameListeners?.()
       activeStreamTokenRef.current += 1
       if (remoteStreamRef.current) {
         remoteStreamRef.current.getTracks().forEach((track) => track.stop())

@@ -15,9 +15,14 @@ export type MavlinkFrame = {
 const crcExtras = new Map<number, number>([
   [0, 50], // HEARTBEAT
   [11, 89], // SET_MODE
+  [30, 39], // ATTITUDE
+  [33, 104], // GLOBAL_POSITION_INT
   [69, 243], // MANUAL_CONTROL
   [76, 152], // COMMAND_LONG
   [77, 143], // COMMAND_ACK
+  [84, 143], // SET_POSITION_TARGET_LOCAL_NED
+  [245, 130], // EXTENDED_SYS_STATE
+  [253, 83], // STATUSTEXT
 ])
 
 const accumulateX25 = (crc: number, byte: number): number => {

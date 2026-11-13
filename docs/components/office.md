@@ -43,6 +43,9 @@ The video route is derived from the selected route and office origin. It is not 
   MQTT-only MCP because video is unavailable/not ready
 - TBot and Cyberbrick control at REDCON `1` and `2`: a separate MAVLink data
   peer with View only and explicit Control. [Board MAVLink contract](../contracts/board-mavlink.md#office-operation-and-safety-semantics)
+- Virtual quadcopter flight during an operational session: separate camera
+  and MAVLink peers, with an explicit flight lease gated by decoded video
+  and fresh telemetry. [Virtual quadcopter flight](../../devices/virtual-quad/README.md#flight-in-office)
 - active control requires an explicit take-control action
 - board video: AWS KVS WebRTC
 

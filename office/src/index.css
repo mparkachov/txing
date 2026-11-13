@@ -1357,6 +1357,28 @@ h1 {
   text-shadow: 0 0.12rem 0.28rem rgba(0, 0, 0, 0.82);
 }
 
+.virtual-quad-flight-controls {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.virtual-quad-flight-controls .status-video-overlay-metrics,
+.virtual-quad-flight-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.virtual-quad-flight-actions button {
+  touch-action: none;
+}
+
+.virtual-quad-flight-actions kbd {
+  margin-inline-start: 0.25rem;
+  opacity: 0.7;
+}
+
 .status-video-debug-button {
   width: 2.95rem;
   height: 2.95rem;

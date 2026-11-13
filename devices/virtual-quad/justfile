@@ -20,6 +20,8 @@ qualification-build payload_output='':
     sender_context="$context/devices/common/board/kvs_master"
     mkdir -p "$sender_context" "$context/devices/virtual-quad"
     cp -R "$sender/CMakeLists.txt" "$sender/include" "$sender/src" "$sender_context/"
+    mkdir -p "$context/devices/common/board/mavlink"
+    cp -R "{{ project_root }}/devices/common/board/mavlink/include" "$context/devices/common/board/mavlink/"
     cp -R "{{ project_root }}/devices/common/kvs" "$context/devices/common/"
     cp -R "{{ quad_dir }}/qualification" "$context/devices/virtual-quad/"
     dockerfile="$context/devices/virtual-quad/qualification/Dockerfile"
