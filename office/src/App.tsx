@@ -2126,7 +2126,7 @@ function App({ initialAuthError = '' }: AppProps) {
           </div>
           <div className="navigation-panel-actions">
             {currentRouteThingName !== null && routeHeaderMetadata !== null ? (
-              <div className="navigation-status">
+              <div className="navigation-redcon">
                 <SparkplugPanel
                   sparkplugRedcon={navigationRedcon}
                   targetRedcon={session ? session.targetRedcon : pendingTargetRedcon}
@@ -2138,8 +2138,6 @@ function App({ initialAuthError = '' }: AppProps) {
                     void (session ? session.selectRedcon(redcon) : handleRedconSelect(redcon))
                   }}
                 />
-                {session?.statusDetail}
-                {navigationCapabilities}
               </div>
             ) : null}
             <NavigationUserMenu
@@ -2155,6 +2153,10 @@ function App({ initialAuthError = '' }: AppProps) {
                 setIsSessionLogVisible((currentValue) => !currentValue)
               }}
             />
+            {navigationCapabilities}
+            {session?.statusDetail && (
+              <div className="navigation-session-time">{session.statusDetail}</div>
+            )}
           </div>
         </section>
       ) : null

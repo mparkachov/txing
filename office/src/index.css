@@ -324,26 +324,40 @@ body {
 .navigation-panel-actions {
   position: relative;
   z-index: 3;
-  display: inline-flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
   flex: 1 1 auto;
+  align-items: start;
   justify-content: flex-end;
-  gap: 0.8rem;
+  gap: 0.4rem 0.8rem;
   margin-left: auto;
   min-width: 0;
 }
 
-.navigation-status {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.4rem;
+.navigation-redcon {
+  grid-area: 1 / 1;
+  justify-self: end;
   min-width: 0;
 }
 
+.navigation-panel-actions > .user-menu {
+  grid-area: 1 / 2;
+}
+
 .navigation-capabilities {
+  grid-area: 2 / 1;
+  align-self: center;
   justify-content: flex-end;
   padding-right: 0.2rem;
+}
+
+.navigation-session-time {
+  grid-area: 2 / 2;
+  place-self: center;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 
 .sparkplug-strip {
@@ -2280,8 +2294,6 @@ button:disabled {
   }
 
   .navigation-panel-actions {
-    justify-content: flex-end;
-    flex-wrap: wrap;
     width: 100%;
   }
 
