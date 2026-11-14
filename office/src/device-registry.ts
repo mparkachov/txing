@@ -8,9 +8,9 @@ import powerSiDeviceAdapter from '../../devices/power-si/web/power-si-adapter'
 import powerNrfDeviceAdapter from '../../devices/power-nrf/web/power-nrf-adapter'
 import macDeviceAdapter from '../../devices/mac/web/mac-adapter'
 import virtualQuadAdapter from '../../devices/virtual-quad/web/virtual-quad-adapter'
-import type { DeviceWebAdapter } from './device-adapter'
+import type { RegisteredDeviceWebAdapter } from './device-adapter'
 
-const installedDeviceAdapters: readonly DeviceWebAdapter[] = [
+const installedDeviceAdapters: readonly RegisteredDeviceWebAdapter[] = [
   cloudMcuDeviceAdapter,
   unitDeviceAdapter,
   tbotDeviceAdapter,
@@ -29,12 +29,12 @@ const adaptersByType = new Map(
 
 export const getDeviceWebAdapter = (
   thingTypeName: string | null | undefined,
-): DeviceWebAdapter | null => {
+): RegisteredDeviceWebAdapter | null => {
   if (!thingTypeName) {
     return null
   }
   return adaptersByType.get(thingTypeName) ?? null
 }
 
-export const listDeviceWebAdapters = (): readonly DeviceWebAdapter[] =>
+export const listDeviceWebAdapters = (): readonly RegisteredDeviceWebAdapter[] =>
   installedDeviceAdapters

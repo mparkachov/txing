@@ -1,4 +1,4 @@
-module txing.dev/virtual-quad/qualification
+module txing.dev/virtual-quad/runtime
 
 go 1.24
 

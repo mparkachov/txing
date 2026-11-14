@@ -97,7 +97,7 @@ const configurePage = () => {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = 'virtual-quad-qualification.json'
+    link.download = 'virtual-quad-diagnostics.json'
     link.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   })

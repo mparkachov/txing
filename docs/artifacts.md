@@ -370,15 +370,16 @@ Alpine release bump requires a shared KVS release built on that Alpine version
 first; the fully static Cyberbrick binaries need a new release only when their
 own code changes.
 
-## Virtual quadcopter qualification image
+## Virtual quadcopter session image
 
-The planned Linux ARM64 simulator release uses a dedicated Lambda MicroVM
-image version built from a versioned source bundle in same-region S3. Record
-the bundle checksum, managed base, image ARN and image version. The current
-`just virtual-quad::qualification-build` recipe builds the local OCI smoke
-fixture. Use `just virtual-quad::microvm-package` for the disposable
-qualification bundle and its local MicroVM hook test image.
-See the [qualification runbook](../devices/virtual-quad/qualification/README.md).
+The virtual quadcopter runs from a pinned Linux ARM64 Lambda MicroVM image
+version. Each publication stages the runtime bundle and its corresponding
+ArduCopter and txing runtime sources in the environment artifact bucket under
+`virtual-quad/<environment>/<bundle-sha256>/`. The simulator image, controller
+Lambda, Office and agent each follow their owning release workflow. Keep the
+pinned and rollback image versions with their complete artifacts. See the
+[virtual quadcopter image workflow](../devices/virtual-quad/README.md#build-and-publish-the-session-image)
+and [Lambda artifacts](#lambda-artifacts).
 
 ## Rig Artifacts
 

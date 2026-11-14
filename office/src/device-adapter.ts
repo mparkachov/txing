@@ -1,6 +1,9 @@
-import type { ReactElement } from 'react'
+import type { ComponentType, ReactElement, ReactNode } from 'react'
 import type { McpTransportKind } from './mcp-descriptor'
 import type { RobotControlState } from './shadow-api'
+import type { AppNotificationInput } from './app-notifications'
+import type { ShadowName } from './shadow-protocol'
+import type { SparkplugRedconCommandTarget } from './sparkplug-command'
 
 export type DeviceTelemetry = {
   reportedBatteryMv: number | null
@@ -59,9 +62,12 @@ export type DeviceVideoRenderProps = {
   videoChannelName: string
 }
 
-export type DeviceWebAdapter = {
+type DeviceAdapterIdentity = {
   type: string
   displayName: string
+}
+
+export type DeviceWebAdapter = DeviceAdapterIdentity & {
   buildVideoChannelName: (deviceId: string) => string
   buildMavlinkChannelName?: (deviceId: string) => string
   canUseBoardVideo: (reportedRedcon: number | null) => boolean
@@ -73,6 +79,46 @@ export type DeviceWebAdapter = {
   renderDebug?: () => ReactElement
   renderVideo: (props: DeviceVideoRenderProps) => ReactElement
 }
+
+export type CapabilityStatuses = Partial<Record<ShadowName, { active: boolean; label: string }>>
+export type DeviceCommandTarget = Extract<SparkplugRedconCommandTarget, { kind: 'device' }>
+type RedconLevel = 1 | 2 | 3 | 4
+
+export type DeviceSessionView = {
+  sparkplug: unknown | null
+  redcon: number | null
+  targetRedcon: RedconLevel | null
+  canStart: boolean
+  canStop: boolean
+  selectRedcon: (redcon: RedconLevel) => Promise<void>
+  statusDetail: ReactNode
+  capabilities: CapabilityStatuses
+  content: ReactElement
+}
+
+export type DeviceSessionProps = {
+  target: DeviceCommandTarget
+  actor: string
+  sparkplug: unknown | null
+  agentShadow: unknown
+  resolveIdToken: () => Promise<string>
+  debugEnabled: boolean
+  notify: (notification: AppNotificationInput) => void
+  log: (notification: AppNotificationInput) => void
+  children: (view: DeviceSessionView) => ReactElement
+}
+
+export type SessionDeviceWebAdapter = DeviceAdapterIdentity & {
+  View: ComponentType<DeviceSessionProps>
+  catalogShadows: readonly ShadowName[]
+  readCatalogStatus: (
+    target: DeviceCommandTarget,
+    shadows: Partial<Record<ShadowName, unknown>>,
+    now: number,
+  ) => { redcon: number | null; capabilities: CapabilityStatuses }
+}
+
+export type RegisteredDeviceWebAdapter = DeviceWebAdapter | SessionDeviceWebAdapter
 
 type BoardVideoTeardownContext = {
   canUseBoardVideo: (reportedRedcon: number | null) => boolean

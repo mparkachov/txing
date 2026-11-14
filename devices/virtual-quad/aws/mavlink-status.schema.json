@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/virtual-quad/mavlink-status.schema.json",
-  "title": "Virtual Quadcopter MAVLink retained status v1",
-  "description": "Retained with the capability TTL at txings/<thing>/mavlink/status. The status contains no generic timestamp fields; consumers use MQTT retention and shadow metadata for freshness.",
+  "title": "Virtual Quadcopter MAVLink status shape v1",
+  "description": "Reusable MAVLink status fields for the registered device contract. Live virtual-quad readiness comes from the fenced Sparkplug projection and connected peers.",
   "type": "object",
   "additionalProperties": false,
   "required": [

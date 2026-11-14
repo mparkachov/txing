@@ -1,10 +1,10 @@
+import { buildVirtualQuadCommandPacket } from '../../devices/virtual-quad/web/virtual-quad-command'
 import { describe, expect, test } from 'bun:test'
 import {
   buildSparkplugNodeRedconCommandPacket,
   buildSparkplugNodeTopics,
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
-  buildVirtualQuadCommandPacket,
   decodeSparkplugPayload,
   encodeSparkplugPayload,
   SparkplugDataType,

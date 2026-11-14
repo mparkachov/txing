@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(txing_virtual_quad_qualification LANGUAGES CXX)
+project(txing_virtual_quad_runtime LANGUAGES CXX)
 
 set(TXING_KVS_HEADLESS ON)
 set(TXING_KVS_GRPC_BRIDGE OFF)

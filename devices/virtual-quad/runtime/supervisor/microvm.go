@@ -21,25 +21,23 @@ import (
 )
 
 const hookPath = "/aws/lambda-microvms/runtime/v1/"
-const probeRegion = "eu-central-1"
+const sessionRegion = "eu-central-1"
 
 // Treat the service ID as opaque. AWS examples and live responses use
 // different prefixes.
 var vmID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 
 type microVM struct {
-	local    bool
-	managed  bool
 	mu       sync.Mutex
-	id, mode string
+	id       string
 	stopping bool
 	cancel   context.CancelFunc
 	done     chan struct{}
 	session  *sessionActivation
 }
 
-func serveMicroVM(mode string) error {
-	vm := &microVM{local: mode == "microvm-local", managed: mode == "microvm-session"}
+func serveMicroVM() error {
+	vm := &microVM{}
 	server := &http.Server{
 		Addr: ":8080", Handler: vm,
 		ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
@@ -79,8 +77,7 @@ func (vm *microVM) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case hookPath + "run":
 		vm.launch(w, r)
 	case hookPath + "terminate":
-		// The service's 20-second hook timeout should expire first in the
-		// hung-workload test. Keep local callers bounded as well.
+		// Bound local callers as well as the platform's hook timeout.
 		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 		defer cancel()
 		if !vm.terminate(ctx) {
@@ -103,63 +100,13 @@ func (vm *microVM) launch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid MicroVM run payload", http.StatusBadRequest)
 		return
 	}
-	if vm.managed {
-		vm.launchSession(w, r, request.ID, request.Payload)
-		return
-	}
-	var payload struct {
-		Mode string `json:"mode"`
-	}
-	if json.Unmarshal([]byte(request.Payload), &payload) != nil ||
-		(payload.Mode != "kvs" && payload.Mode != "hang-on-stop") {
-		http.Error(w, "invalid MicroVM run payload", http.StatusBadRequest)
-		return
-	}
-	vm.mu.Lock()
-	defer vm.mu.Unlock()
-	if vm.stopping || (vm.id != "" && (vm.id != request.ID || vm.mode != payload.Mode)) {
-		http.Error(w, "MicroVM already assigned or stopping", http.StatusConflict)
-		return
-	}
-	if vm.id == "" {
-		ctx, cancel := context.WithCancel(context.Background())
-		vm.id, vm.mode, vm.cancel = request.ID, payload.Mode, cancel
-		vm.done = make(chan struct{})
-		go vm.work(ctx, request.ID, payload.Mode, vm.done)
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func (vm *microVM) work(ctx context.Context, id, mode string, done chan struct{}) {
-	defer close(done)
-	log.Printf("QUAD_MICROVM_RUN id=%s mode=%s", id, mode)
-	var mediaEnv, mediaArgs []string
-	if vm.local {
-		mediaArgs = []string{"--local"}
-	} else {
-		credentialsCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		creds, err := microVMCredentials(credentialsCtx, time.Now().Add(runLimit))
-		cancel()
-		if err != nil {
-			if ctx.Err() == nil {
-				log.Printf("QUAD_SUPERVISOR_ERROR %v", err)
-			}
-			return
-		}
-		mediaEnv = append(mediaCredentials(creds),
-			"AWS_REGION="+probeRegion,
-			"QUAD_VIDEO_CHANNEL=quad-qualification-176-board-video",
-			"QUAD_MAVLINK_CHANNEL=quad-qualification-176-mavlink")
-	}
-	if err := runWorkload(ctx, mode, mediaEnv, mediaArgs, "", !vm.local, nil); err != nil {
-		log.Printf("QUAD_SUPERVISOR_ERROR %v", err)
-	}
+	vm.launchSession(w, r, request.ID, request.Payload)
 }
 
 func microVMCredentials(ctx context.Context, deadline time.Time) (aws.Credentials, error) {
 	// Resolve the execution role only after restore, through the standard AWS
 	// provider chain. The native KVS sender needs credentials valid for one run.
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(probeRegion))
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(sessionRegion))
 	if err != nil {
 		return aws.Credentials{}, errors.New("could not configure the MicroVM credential provider")
 	}

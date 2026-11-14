@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://txing.local/schemas/virtual-quad/mavlink-descriptor.schema.json",
-  "title": "Virtual Quadcopter MAVLink retained descriptor v1",
-  "description": "Retained without MQTT expiry at txings/<thing>/mavlink/descriptor.",
+  "title": "Virtual Quadcopter MAVLink descriptor shape v1",
+  "description": "Channel and control contract for a registered simulator. The signaling channel is provisioned at enlistment and the simulator reports readiness through Sparkplug.",
   "type": "object",
   "additionalProperties": false,
   "required": [

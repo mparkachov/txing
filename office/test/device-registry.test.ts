@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import type { DeviceDetailRenderProps } from '../src/device-adapter'
-import { getDeviceWebAdapter, listDeviceWebAdapters } from '../src/device-registry'
+import { getDeviceWebAdapter as getRegisteredAdapter, listDeviceWebAdapters } from '../src/device-registry'
+
+const getDeviceWebAdapter = (type: string) => {
+  const adapter = getRegisteredAdapter(type)
+  return adapter && 'renderDetail' in adapter ? adapter : null
+}
 
 describe('device web adapter registry', () => {
   test('registers installed device detail adapters and returns null for unknown device types', () => {
@@ -63,12 +68,11 @@ describe('device web adapter registry', () => {
     expect(macAdapter?.canUseBoardVideo(2)).toBe(false)
     expect(macAdapter?.canUseDriveControl(1)).toBe(false)
     expect(macAdapter?.canUseDriveControl(2)).toBe(false)
-    const virtualQuadAdapter = getDeviceWebAdapter('virtual-quad')
+    const virtualQuadAdapter = getRegisteredAdapter('virtual-quad')
     expect(virtualQuadAdapter?.displayName).toBe('Virtual Quadcopter')
-    expect(virtualQuadAdapter?.buildVideoChannelName('virtual-quad-a1')).toBe('virtual-quad-a1-board-video')
-    expect(virtualQuadAdapter?.buildMavlinkChannelName?.('virtual-quad-a1')).toBe('virtual-quad-a1-mavlink')
-    expect(virtualQuadAdapter?.canUseDriveControl(1)).toBe(false)
-    expect(getDeviceWebAdapter('sensor')).toBeNull()
+    if (!virtualQuadAdapter || !('View' in virtualQuadAdapter)) throw new Error('Missing virtual quad session adapter')
+    expect(virtualQuadAdapter.catalogShadows).toEqual(['agent', 'simulation'])
+    expect(getRegisteredAdapter('sensor')).toBeNull()
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
       'cloud-mcu',
       'unit',

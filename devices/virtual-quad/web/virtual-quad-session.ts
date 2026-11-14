@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getThingNamedShadow } from '../../../office/src/catalog-api'
-import type { SparkplugRedconCommandTarget } from '../../../office/src/sparkplug-command'
+import type { DeviceCommandTarget } from '../../../office/src/device-adapter'
 import {
   extractReportedState,
   extractSparkplugMetrics,
@@ -8,7 +8,7 @@ import {
   hasLiveSparkplugDeviceProjection,
 } from '../../../office/src/sparkplug-model'
 
-export type QuadTarget = Extract<SparkplugRedconCommandTarget, { kind: 'device' }>
+export type QuadTarget = DeviceCommandTarget
 
 const phases = ['stopped', 'starting', 'operational', 'stopping', 'failed'] as const
 type Phase = typeof phases[number]

@@ -173,4 +173,5 @@ board lease with `takeover=false` and permits full MAVLink, including pre-arm
 traffic. The session retains control across arm/disarm/re-arm; client inactivity,
 disconnect, WebRTC/lease loss, lifecycle shutdown, or process shutdown releases
 it, without automatic reacquisition. See the
-[agent design](../components/agent.md) and [board protocol](board-mavlink.md).
+[agent design](../components/agent.md), [virtual quadcopter lifecycle](../virtual-quadcopter-architecture.md#session-lifecycle-and-readiness)
+and [board protocol](board-mavlink.md).

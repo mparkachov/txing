@@ -12,9 +12,7 @@ import {
   buildSparkplugNodeTopics,
   buildSparkplugRedconCommandPacket,
   buildSparkplugTopics,
-  buildVirtualQuadCommandPacket,
   type SparkplugPublishPacket,
-  type VirtualQuadCommand,
 } from './sparkplug-protocol'
 import type { ShadowSession } from './shadow-api'
 
@@ -133,17 +131,10 @@ export const publishDirectSparkplugRedconCommand = (
   publishDirectSparkplugRedconCommandWithClient(client, target, redcon, seq),
 )
 
-export const publishVirtualQuadCommand = (
+export const publishSparkplugPacket = (
   resolveIdToken: ResolveIdToken,
-  target: Extract<SparkplugRedconCommandTarget, { kind: 'device' }>,
-  command: VirtualQuadCommand,
-  seq: number,
-): Promise<void> => {
-  const packet = buildVirtualQuadCommandPacket(
-    buildSparkplugTopics(target.groupId, target.edgeNodeId, target.deviceId), command, seq,
-  )
-  return publishWithFreshCredentials(resolveIdToken, (client) => publishPacket(client, packet))
-}
+  packet: SparkplugPublishPacket,
+): Promise<void> => publishWithFreshCredentials(resolveIdToken, (client) => publishPacket(client, packet))
 
 export const publishSparkplugRedconCommandWithAck = async (
   session: Pick<ShadowSession, 'publishRedconCommand'>,

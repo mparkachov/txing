@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,32 @@ func testAssignment(now time.Time) sessionAssignment {
 		SessionID: "session-1", Token: "token-1",
 		URL:                "https://test123.lambda-url.eu-central-1.on.aws/",
 		ShutdownDeadlineMS: now.Add(runLimit).UnixMilli(),
+	}
+}
+
+func TestMicroVMHooksStartIdleAndRequireManagedAssignment(t *testing.T) {
+	vm := &microVM{}
+	call := func(hook, body string) int {
+		t.Helper()
+		res := httptest.NewRecorder()
+		vm.ServeHTTP(res, httptest.NewRequest(http.MethodPost, hookPath+hook, strings.NewReader(body)))
+		return res.Code
+	}
+
+	for _, hook := range []string{"ready", "validate"} {
+		if status := call(hook, ""); status != http.StatusOK {
+			t.Fatalf("idle %s returned %d", hook, status)
+		}
+	}
+	standalone := `{"microvmId":"microvm-test","runHookPayload":"{\"mode\":\"kvs\"}"}`
+	if status := call("run", standalone); status != http.StatusBadRequest {
+		t.Fatalf("unassigned run returned %d", status)
+	}
+	if status := call("terminate", ""); status != http.StatusOK {
+		t.Fatalf("idle termination returned %d", status)
+	}
+	if status := call("ready", ""); status != http.StatusConflict {
+		t.Fatalf("terminated ready returned %d", status)
 	}
 }
 

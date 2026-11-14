@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from 'react'
 import { mavlinkDriveRefreshMs, mavlinkWebRtcDataChannelLabel } from '../../../office/src/mavlink-control'
+import { createCredentialProvider } from '../../../office/src/aws-credentials'
 import VideoPanel from '../../../office/src/VideoPanel'
 import { VirtualQuadFlight, type Direction, type QuadFlightView } from './virtual-quad-flight'
 import { readQuadMavlinkStatus, type QuadMavlinkStatus } from './virtual-quad-media-status'
@@ -71,9 +72,8 @@ function VirtualQuadTelemetry({
         if (!signal.aborted) reconnect(reason)
       }
       void (async () => {
-        const [{ connectKvsViewer }, { createCredentialProvider }, idToken] = await Promise.all([
+        const [{ connectKvsViewer }, idToken] = await Promise.all([
           import('../../../office/src/kvs-viewer-peer'),
-          import('../../../office/src/aws-credentials'),
           resolveIdToken(),
         ])
         signal.throwIfAborted()

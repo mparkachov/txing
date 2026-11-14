@@ -1,4 +1,4 @@
-import { extractReportedState } from './sparkplug-model'
+import { extractReportedState } from '../../../office/src/sparkplug-model'
 
 const field = (value: unknown, key: string): unknown =>
   value !== null && typeof value === 'object' && key in value

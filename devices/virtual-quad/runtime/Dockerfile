@@ -20,6 +20,7 @@ ENV LD_LIBRARY_PATH=/opt/snapsafe
 ENV HOME=/tmp XDG_CACHE_HOME=/tmp
 ENV GST_PLUGIN_SYSTEM_PATH_1_0=/opt/quad/plugins
 RUN test "$(uname -m)" = aarch64 \
+    && test -r /etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem \
     && dpkg-query -W > /opt/quad/evidence/microvm-runtime-packages.txt \
     && ldd -r /opt/quad/bin/virtual-quad-media > /opt/quad/evidence/microvm-runtime-links.txt 2>&1 \
     && ! grep -E 'not found|undefined symbol' /opt/quad/evidence/microvm-runtime-links.txt \
@@ -29,12 +30,11 @@ RUN test "$(uname -m)" = aarch64 \
     && ! grep -q 'not found' /opt/quad/evidence/sitl-runtime-links.txt \
     && cat /opt/quad/evidence/microvm-runtime-links.txt /opt/quad/evidence/sitl-runtime-links.txt \
     && mkdir /opt/quad/plugins \
-    && for plugin in coreelements videotestsrc x264 videoparsersbad app; do \
+    && for plugin in coreelements x264 videoparsersbad app; do \
          source="/usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgst$plugin.so"; \
          test -r "$source" && ln -s "$source" /opt/quad/plugins/ || exit 1; \
        done
 USER 10001:10001
-RUN for plugin in videotestsrc x264enc h264parse appsink appsrc; do gst-inspect-1.0 "$plugin" >/dev/null || exit 1; done
+RUN for plugin in x264enc h264parse appsink appsrc; do gst-inspect-1.0 "$plugin" >/dev/null || exit 1; done
 EXPOSE 8080
-ENTRYPOINT ["/opt/quad/bin/virtual-quad-qualification"]
-CMD ["microvm"]
+ENTRYPOINT ["/opt/quad/bin/virtual-quad-supervisor"]

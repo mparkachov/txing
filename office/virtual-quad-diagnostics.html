@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Virtual quadcopter qualification</title>
+    <title>Virtual quadcopter diagnostics</title>
     <style>
       .camera-preview { display: grid; width: min(100%, 640px); aspect-ratio: 16 / 9; background: #111; }
       .camera-preview > * { grid-area: 1 / 1; width: 100%; height: 100%; }
@@ -11,11 +11,11 @@
     </style>
   </head>
   <body>
-    <h1>Virtual quadcopter qualification</h1>
+    <h1>Virtual quadcopter diagnostics</h1>
     <p><a href="/?signin=1">Sign in through Office</a>, then open this page again in the same tab.</p>
     <form>
-      <label>Video channel <input id="video-channel" required pattern="(?:quad-qualification-.*|virtual-quad-[a-z0-9]+)-board-video"></label>
-      <label>MAVLink channel <input id="mavlink-channel" required pattern="(?:quad-qualification-.*|virtual-quad-[a-z0-9]+)-mavlink"></label>
+      <label>Video channel <input id="video-channel" required pattern="virtual-quad-[a-z0-9]+-board-video"></label>
+      <label>MAVLink channel <input id="mavlink-channel" required pattern="virtual-quad-[a-z0-9]+-mavlink"></label>
       <label>RTP time base (UTC ms) <input id="rtp-epoch" type="number" min="1" step="any"></label>
       <label><input id="relay" type="checkbox"> Force TURN</label>
       <button id="join">Join</button>
@@ -28,6 +28,6 @@
       <canvas id="camera" width="640" height="360" role="img" aria-label="Simulator camera"></canvas>
     </div>
     <pre id="samples"></pre>
-    <script type="module" src="/src/dev/virtual-quad-qualification.ts"></script>
+    <script type="module" src="/src/dev/virtual-quad-diagnostics.ts"></script>
   </body>
 </html>

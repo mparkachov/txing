@@ -86,7 +86,7 @@ class TelemetryPeer final : public kvs::BoardMavlinkPeer {
 
     std::string HandleControl(const std::string& request) override {
         if (flight_) return flight_->HandleControl(peer_, request);
-        throw std::runtime_error("qualification data channel is receive only");
+        throw std::runtime_error("simulator data channel is receive only");
     }
 
     void SendFrame(const Frame& frame, std::uint64_t epoch) override {
@@ -116,11 +116,11 @@ class SitlBridge final : public kvs::BoardMavlinkBridgeClient {
     SitlBridge(Telemetry& telemetry, quad::FlightControl* flight) : telemetry_(telemetry), flight_(flight) {}
 
     kvs::MavlinkControlChannelConfig GetControlChannelConfig(const std::string&, const std::string&) override {
-        throw std::logic_error("qualification config is supplied by the supervisor");
+        throw std::logic_error("session config is supplied by the supervisor");
     }
 
     kvs::BridgeCredentials RefreshControlChannelCredentials() override {
-        throw std::logic_error("qualification uses credentials valid for the entire run");
+        throw std::logic_error("session uses credentials valid for the entire run");
     }
 
     void ReportControlChannelState(bool, const std::string&) override {}
@@ -424,12 +424,12 @@ void LandBeforeExit(quad::FlightControl* flight) {
     if (!flight->SafeToExit()) std::puts("QUAD_FLIGHT_LANDING_UNCONFIRMED");
 }
 
-void Run(bool local, bool camera, bool allow_flight) {
+void Run(bool local) {
     const auto start = Clock::now();
     const auto start_utc = std::chrono::system_clock::now();
     const auto* health_path = std::getenv("QUAD_HEALTH_FILE");
     Telemetry telemetry;
-    SitlTelemetry receiver(allow_flight);
+    SitlTelemetry receiver(!local);
     auto* flight = receiver.Flight();
     receiver.Start(telemetry);
     std::unique_ptr<kvs::KvsSession> video;
@@ -439,17 +439,17 @@ void Run(bool local, bool camera, bool allow_flight) {
         kvs::RuntimeConfig config;
         config.region = RequireEnv("AWS_REGION");
         config.channel_name = RequireEnv("QUAD_VIDEO_CHANNEL");
-        config.client_id = "virtual-quad-qualification";
+        config.client_id = "virtual-quad";
         config.camera.bitrate = 800'000;
-        config.isolate_video_peers = camera;
-        config.defer_ice_candidate_signaling = camera;
+        config.isolate_video_peers = true;
+        config.defer_ice_candidate_signaling = true;
         const auto credentials = kvs::ResolveAwsCredentials();
         video = kvs::CreateKvsSession(config, credentials);
         video->Start();
         std::puts("QUAD_VIDEO_MASTER_STARTED");
 
         config.session_kind = kvs::KvsSessionKind::kMavlinkControl;
-        config.gather_ice_before_answer = camera;
+        config.gather_ice_before_answer = true;
         config.channel_name = RequireEnv("QUAD_MAVLINK_CHANNEL");
         data = kvs::CreateKvsSessionWithMavlinkBridge(
             config, credentials, std::make_unique<SitlBridge>(telemetry, flight));
@@ -459,11 +459,9 @@ void Run(bool local, bool camera, bool allow_flight) {
 
     gst_init(nullptr, nullptr);
     GError* error = nullptr;
-    const std::string source = camera
-        ? "appsrc name=camera is-live=true format=time max-buffers=2 max-bytes=0 leaky-type=downstream "
-          "! video/x-raw,format=I420,width=640,height=360,framerate=15/1,colorimetry=bt601 "
-        : "videotestsrc is-live=true pattern=ball ! video/x-raw,format=I420,width=640,height=360,framerate=15/1 ";
-    const std::string pipeline_spec = source +
+    const std::string pipeline_spec =
+        "appsrc name=camera is-live=true format=time max-buffers=2 max-bytes=0 leaky-type=downstream "
+        "! video/x-raw,format=I420,width=640,height=360,framerate=15/1,colorimetry=bt601 "
         "! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream "
         "! x264enc tune=zerolatency speed-preset=veryfast bitrate=800 key-int-max=15 bframes=0 byte-stream=true "
         "nal-hrd=cbr "
@@ -486,12 +484,9 @@ void Run(bool local, bool camera, bool allow_flight) {
         throw std::runtime_error("start encoder failed");
     }
     std::unique_ptr<GstElement, decltype(&gst_object_unref)> camera_source(
-        camera ? gst_bin_get_by_name(GST_BIN(pipeline.get()), "camera") : nullptr, gst_object_unref);
-    std::unique_ptr<CameraSource> camera_producer;
-    if (camera) {
-        if (!camera_source) throw std::runtime_error("create camera source failed");
-        camera_producer = std::make_unique<CameraSource>(GST_APP_SRC(camera_source.get()), receiver, start);
-    }
+        gst_bin_get_by_name(GST_BIN(pipeline.get()), "camera"), gst_object_unref);
+    if (!camera_source) throw std::runtime_error("create camera source failed");
+    CameraSource camera_producer(GST_APP_SRC(camera_source.get()), receiver, start);
 
     auto sample_start = Clock::now();
     auto last_frame = sample_start;
@@ -529,15 +524,13 @@ void Run(bool local, bool camera, bool allow_flight) {
             const auto pts = GST_BUFFER_PTS(buffer);
             if (first_pts == GST_CLOCK_TIME_NONE) {
                 first_pts = pts;
-                if (camera) {
-                    const auto* segment = gst_sample_get_segment(sample.get());
-                    const auto running = segment ? gst_segment_to_running_time(segment, GST_FORMAT_TIME, pts) : GST_CLOCK_TIME_NONE;
-                    if (running == GST_CLOCK_TIME_NONE) throw std::runtime_error("camera frame has no running timestamp");
-                    const auto first_pose_utc = start_utc + std::chrono::nanoseconds(running);
-                    const auto epoch_ms = std::chrono::duration<double, std::milli>(first_pose_utc.time_since_epoch()).count();
-                    std::printf("QUAD_CAMERA_RTP_EPOCH epoch_ms=%.3f first_pose_ns=%llu\n", epoch_ms,
-                        static_cast<unsigned long long>(running));
-                }
+                const auto* segment = gst_sample_get_segment(sample.get());
+                const auto running = segment ? gst_segment_to_running_time(segment, GST_FORMAT_TIME, pts) : GST_CLOCK_TIME_NONE;
+                if (running == GST_CLOCK_TIME_NONE) throw std::runtime_error("camera frame has no running timestamp");
+                const auto first_pose_utc = start_utc + std::chrono::nanoseconds(running);
+                const auto epoch_ms = std::chrono::duration<double, std::milli>(first_pose_utc.time_since_epoch()).count();
+                std::printf("QUAD_CAMERA_RTP_EPOCH epoch_ms=%.3f first_pose_ns=%llu\n", epoch_ms,
+                    static_cast<unsigned long long>(running));
             }
             if (pts < first_pts || !gst_buffer_map(buffer, &bytes, GST_MAP_READ)) {
                 throw std::runtime_error("read encoded access unit failed");
@@ -559,7 +552,7 @@ void Run(bool local, bool camera, bool allow_flight) {
             }
             last_frame = Clock::now();
         }
-        if (camera_producer) camera_producer->Check();
+        camera_producer.Check();
         for (auto* session : {video.get(), data.get()}) {
             if (session) {
                 if (auto fatal = session->TakeFatalError()) throw std::runtime_error(*fatal);
@@ -568,7 +561,7 @@ void Run(bool local, bool camera, bool allow_flight) {
 
         const auto sitl = receiver.Snapshot();
         const auto now = Clock::now();
-        const bool pose_fresh = !camera || sitl.poses.At(now).has_value();
+        const bool pose_fresh = sitl.poses.At(now).has_value();
         const bool heartbeat = now - sitl.heartbeat < 2s;
         const bool navigation = sitl.NavigationReady(now) && pose_fresh;
         const bool mavlink = heartbeat && data && data->SignalingConnected();
@@ -580,13 +573,12 @@ void Run(bool local, bool camera, bool allow_flight) {
             WriteHealth(health_path, heartbeat, navigation, mavlink, video_ready);
             next_health = now + 1s;
         }
-        if ((!camera || ready) && now - last_frame > 3s) throw std::runtime_error("encoder stopped producing access units");
-        if (!ready && now - start >= 80s) throw std::runtime_error("qualification startup exceeded 80 seconds");
+        if (ready && now - last_frame > 3s) throw std::runtime_error("encoder stopped producing access units");
+        if (!ready && now - start >= 80s) throw std::runtime_error("simulator startup exceeded 80 seconds");
         if (!ready && keyframes && pose_fresh && sitl.boot_ms && sitl.heartbeat != Clock::time_point{} &&
             now - sitl.heartbeat < 2s && now - sitl.attitude < 1s) {
-            std::printf("QUAD_READY mode=%s camera=%s unix_ms=%lld media_elapsed_ms=%lld boot_ms=%u\n",
+            std::printf("QUAD_READY mode=%s camera=pose unix_ms=%lld media_elapsed_ms=%lld boot_ms=%u\n",
                 local ? "local" : "kvs",
-                camera ? "pose" : "pattern",
                 UnixMilliseconds(),
                 static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count()),
                 sitl.boot_ms);
@@ -624,18 +616,9 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, Stop);
     std::signal(SIGINT, Stop);
     try {
-        bool local = false;
-        bool camera = false;
-        bool flight = false;
-        for (int i = 1; i < argc; ++i) {
-            const std::string option(argv[i]);
-            if (option == "--local") local = true;
-            else if (option == "--camera") camera = true;
-            else if (option == "--flight") flight = true;
-            else throw std::runtime_error("unknown simulator media option");
-        }
-        if (flight && (local || !camera)) throw std::runtime_error("flight requires a managed camera session");
-        Run(local, camera, flight);
+        const bool local = argc == 2 && std::string(argv[1]) == "--local";
+        if (argc != 1 && !local) throw std::runtime_error("unknown simulator media option");
+        Run(local);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "QUAD_MEDIA_ERROR %s\n", error.what());
         return 1;

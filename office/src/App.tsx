@@ -10,11 +10,6 @@ import {
 } from 'react'
 import { extractCyberbrickMavlinkReportedState } from '../../devices/cyberbrick/web/app-model'
 import { MavlinkControlProvider } from '../../devices/cyberbrick/web/MavlinkControlPanel'
-import { useVirtualQuadRedcon } from '../../devices/virtual-quad/web/virtual-quad-redcon'
-import { readVirtualQuadSession, useVirtualQuadSession } from '../../devices/virtual-quad/web/virtual-quad-session'
-import { VirtualQuadLiveView } from '../../devices/virtual-quad/web/VirtualQuadLiveView'
-import { readQuadMediaAvailability, type QuadMavlinkStatus } from '../../devices/virtual-quad/web/virtual-quad-media-status'
-import { readVirtualQuadAgentStatus } from './agent-shadow-status'
 import {
   beginSignIn,
   clearAuthState,
@@ -45,7 +40,7 @@ import {
   type AppNotificationInput,
   type AppNotificationLogEntry,
 } from './app-notifications'
-import { shouldSuppressBoardVideoRuntimeError } from './device-adapter'
+import { shouldSuppressBoardVideoRuntimeError, type DeviceSessionView } from './device-adapter'
 import { getDeviceWebAdapter } from './device-registry'
 import {
   describeThingMetadata,
@@ -140,8 +135,7 @@ type SparkplugCatalogItem = {
   thingName: string
   thingTypeName?: string | null
   capabilities: readonly ShadowName[]
-  agentShadow?: unknown
-  simulationShadow?: unknown
+  deviceShadows?: Partial<Record<ShadowName, unknown>>
 } & CatalogSparkplugFields
 type RigCatalogItem = RigCatalogEntry & CatalogSparkplugFields
 type DeviceCatalogItem = DeviceCatalogEntry & SparkplugCatalogItem
@@ -311,7 +305,6 @@ function App({ initialAuthError = '' }: AppProps) {
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
   const [agentShadowView, setAgentShadowView] = useState<AgentShadowView | null>(null)
-  const [quadMavlink, setQuadMavlink] = useState<{ sessionId: string; status: QuadMavlinkStatus } | null>(null)
   const [isTakingMcpControl, setIsTakingMcpControl] = useState(false)
   const [isTownPanelOpen, setIsTownPanelOpen] = useState(false)
   const [isRigPanelOpen, setIsRigPanelOpen] = useState(false)
@@ -396,7 +389,6 @@ function App({ initialAuthError = '' }: AppProps) {
     ? routeHeaderState.shadowWarning
     : ''
   const currentThingTypeName = routeHeaderMetadata?.thingTypeName ?? null
-  const isVirtualQuad = currentThingTypeName === 'virtual-quad'
   const currentThingKind = routeHeaderMetadata?.kind ?? null
   const currentTownCatalogName =
     route.kind === 'town'
@@ -448,10 +440,12 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }, [shadowJson])
   const displayShadowDocument = lastShadowUpdateAtMs !== null ? shadowDocument : routeSparkplugShadow
-  const currentDeviceAdapter = useMemo(
+  const deviceAdapter = useMemo(
     () => getDeviceWebAdapter(currentThingTypeName),
     [currentThingTypeName],
   )
+  const sessionAdapter = deviceAdapter && 'View' in deviceAdapter ? deviceAdapter : null
+  const currentDeviceAdapter = deviceAdapter && 'renderDetail' in deviceAdapter ? deviceAdapter : null
   const isDeviceThingType = currentThingKind === 'deviceType'
   const mavlinkTarget = useMemo(
     () => extractCyberbrickMavlinkReportedState(displayShadowDocument).target,
@@ -462,7 +456,6 @@ function App({ initialAuthError = '' }: AppProps) {
       ? currentDeviceAdapter.buildMavlinkChannelName(selectedDeviceRoute.device)
       : ''
   const isMavlinkControlEnabled =
-    !isVirtualQuad &&
     mavlinkChannelName !== '' &&
     extractSparkplugCapabilityAvailability(displayShadowDocument, 'mavlink') === true
   const deviceDebugDiagnostics = currentDeviceAdapter?.renderDebug?.() ?? null
@@ -489,7 +482,7 @@ function App({ initialAuthError = '' }: AppProps) {
     () => resolveThingSparkplugRedconCommandTarget(routeHeaderMetadata),
     [routeHeaderMetadata],
   )
-  const virtualQuadTarget = isVirtualQuad && currentThingSparkplugCommandTarget?.kind === 'device'
+  const sessionTarget = sessionAdapter && currentThingSparkplugCommandTarget?.kind === 'device'
     ? currentThingSparkplugCommandTarget : null
   const commandableRedconLevels = useMemo(
     () => routeHeaderMetadata?.redconCommandLevels ?? [],
@@ -546,7 +539,7 @@ function App({ initialAuthError = '' }: AppProps) {
     routeHeaderMetadata.townId !== null &&
     routeHeaderMetadata.rigId !== null &&
     (route.kind !== 'device_video' ||
-      (currentDeviceAdapter !== null && routeHeaderMetadata.capabilities.includes('video')))
+      (deviceAdapter !== null && routeHeaderMetadata.capabilities.includes('video')))
   const activeShadowTarget = shadowTargetState.status === 'ready' ? shadowTargetState.target : null
   const hasAgentCapability = routeHeaderMetadata?.capabilities.includes('agent') ?? false
 
@@ -666,16 +659,7 @@ function App({ initialAuthError = '' }: AppProps) {
     setAuthUser(getAuthUser(refreshedTokens))
     return refreshedTokens.idToken
   }, [])
-  const virtualQuad = useVirtualQuadSession(virtualQuadTarget, resolveSessionIdToken)
-  const quadRedconControl = useVirtualQuadRedcon(
-    virtualQuadTarget, virtualQuad, resolveSessionIdToken, enqueueNotification, appendSessionLogEntry,
-  )
-  const quadSessionId = virtualQuad.session?.sessionId ?? null
-  const onQuadMavlinkStatus = useCallback((status: QuadMavlinkStatus) => {
-    if (quadSessionId) setQuadMavlink({ sessionId: quadSessionId, status })
-  }, [quadSessionId])
-
-  const shouldReadAgentShadow = hasAgentCapability && (isDebugEnabled || isVirtualQuad)
+  const shouldReadAgentShadow = hasAgentCapability && (isDebugEnabled || sessionTarget !== null)
   const agentShadowThing = activeShadowTarget?.thingName
   const currentAgentShadow = agentShadowView?.thingName === agentShadowThing ? agentShadowView : null
 
@@ -1200,20 +1184,16 @@ function App({ initialAuthError = '' }: AppProps) {
       device: DeviceCatalogEntry,
     ): Promise<DeviceCatalogItem> => {
       const read = (name: ShadowName) => getThingNamedShadow(resolveSessionIdToken, device.thingName, name)
-      const observesVirtualQuad = device.thingTypeName === 'virtual-quad' && device.capabilities.includes('agent')
-      const [sparkplug, agent, simulation] = await Promise.allSettled([
-        read('sparkplug'),
-        observesVirtualQuad ? read('agent') : undefined,
-        observesVirtualQuad ? read('simulation') : undefined,
-      ])
-      const agentFields = {
-        agentShadow: agent.status === 'fulfilled' ? agent.value : undefined,
-        simulationShadow: simulation.status === 'fulfilled' ? simulation.value : undefined,
-      }
+      const adapter = getDeviceWebAdapter(device.thingTypeName)
+      const names = adapter && 'View' in adapter ? adapter.catalogShadows.filter((name) => device.capabilities.includes(name)) : []
+      const [sparkplug, ...shadows] = await Promise.allSettled([read('sparkplug'), ...names.map(read)])
+      const deviceShadows = Object.fromEntries(names.map((name, index) => [
+        name, shadows[index].status === 'fulfilled' ? shadows[index].value : undefined,
+      ]))
       if (sparkplug.status === 'fulfilled') {
         return {
           ...device,
-          ...agentFields,
+          deviceShadows,
           sparkplugShadow: sparkplug.value,
           sparkplugShadowStatus: 'ready',
           sparkplugShadowError: '',
@@ -1221,7 +1201,7 @@ function App({ initialAuthError = '' }: AppProps) {
       }
       return {
         ...device,
-        ...agentFields,
+        deviceShadows,
         sparkplugShadow: null,
         sparkplugShadowStatus: 'error',
         sparkplugShadowError: formatThingShadowReadError(sparkplug.reason, device.thingName, 'sparkplug'),
@@ -1841,10 +1821,6 @@ function App({ initialAuthError = '' }: AppProps) {
     if (!commandableRedconLevelSet.has(redcon)) {
       return
     }
-    if (isVirtualQuad) {
-      await quadRedconControl.select(redcon)
-      return
-    }
     if (redcon === 4) {
       if (isRedconSleepCommandDisabled) {
         return
@@ -1891,9 +1867,17 @@ function App({ initialAuthError = '' }: AppProps) {
     label: string,
     item: SparkplugCatalogItem,
   ): ReactElement => {
+    const adapter = getDeviceWebAdapter(item.thingTypeName)
+    const sessionStatus = route.kind === 'rig' && adapter && 'View' in adapter
+      ? adapter.readCatalogStatus(
+        { kind: 'device', groupId: route.town, edgeNodeId: route.rig, deviceId: item.thingName },
+        { ...item.deviceShadows, sparkplug: item.sparkplugShadow },
+        Date.now(),
+      )
+      : null
     const redcon =
       item.sparkplugShadowStatus === 'ready'
-        ? extractReportedRedcon(item.sparkplugShadow)
+        ? (sessionStatus ? sessionStatus.redcon : extractReportedRedcon(item.sparkplugShadow))
         : null
     const redconDescription =
       item.sparkplugShadowStatus === 'loading'
@@ -1901,11 +1885,6 @@ function App({ initialAuthError = '' }: AppProps) {
         : item.sparkplugShadowStatus === 'error'
           ? item.sparkplugShadowError
           : describeRedcon(redcon)
-    const simulation = item.thingTypeName === 'virtual-quad' ? readVirtualQuadSession(item.simulationShadow) : null
-    const now = Date.now()
-    const activeSessionId = simulation?.phase === 'operational' && (simulation.availabilityExpiresAtMs ?? 0) > now
-      ? simulation.sessionId
-      : null
 
     return (
       <a
@@ -1931,9 +1910,7 @@ function App({ initialAuthError = '' }: AppProps) {
           capabilities={item.capabilities}
           sparkplugShadow={item.sparkplugShadow}
           sparkplugShadowStatus={item.sparkplugShadowStatus}
-          agentStatus={item.thingTypeName === 'virtual-quad'
-            ? readVirtualQuadAgentStatus(item.agentShadow, activeSessionId, now)
-            : undefined}
+          capabilityStatuses={sessionStatus?.capabilities}
         />
       </a>
     )
@@ -2092,409 +2069,395 @@ function App({ initialAuthError = '' }: AppProps) {
     activeShadowTarget?.thingName === currentRouteThingName
       ? displayShadowDocument
       : routeSparkplugShadow
-  const navigationCapabilityShadow = virtualQuadTarget ? virtualQuad.sparkplug ?? routeCapabilityShadow : routeCapabilityShadow
-  const quadRedcon = extractReportedRedcon(navigationCapabilityShadow)
-  const quadMedia = readQuadMediaAvailability(virtualQuad.fresh, virtualQuad.session?.phase, quadRedcon, virtualQuad.sparkplug)
-  const quadMavlinkStatus = !quadMedia.mavlink ? 'inactive'
-    : quadMavlink?.sessionId === quadSessionId && quadMavlink.status !== 'inactive' ? quadMavlink.status
-      : 'connecting'
-  const navigationRedcon = virtualQuadTarget
-    ? (quadRedcon !== null && quadRedcon < 3 && !virtualQuad.fresh ? 3 : quadRedcon)
-    : reportedRedcon
-  const quadSessionDeadline = virtualQuad.session?.phase === 'starting' ? virtualQuad.session.startupDeadlineMs
-    : virtualQuad.session?.phase === 'operational' ? virtualQuad.session.flightDeadlineMs
-      : virtualQuad.session?.phase === 'stopping' ? virtualQuad.session.shutdownDeadlineMs : null
-  const quadSecondsRemaining = quadSessionDeadline === null
-    ? null : Math.max(0, Math.ceil((quadSessionDeadline - virtualQuad.now) / 1_000))
-  const navigationCapabilityStatus: CapabilityStackStatus =
-    routeHeaderState.status !== 'ready'
-      ? 'loading'
-      : navigationCapabilityShadow !== null
-        ? 'ready'
-        : routeHeaderShadowWarning
-          ? 'error'
-          : 'loading'
-  const quadAgentStatus = virtualQuadTarget
-    ? readVirtualQuadAgentStatus(
-      currentAgentShadow?.shadow,
-      virtualQuad.fresh && virtualQuad.session?.phase === 'operational' ? virtualQuad.session.sessionId : null,
-      virtualQuad.now,
-    )
-    : undefined
-  const navigationCapabilities =
-    currentRouteThingName !== null && routeHeaderMetadata !== null ? (
-      <CapabilityStack
-        thingName={currentRouteThingName}
-        label={navigationCapabilityLabel}
-        capabilities={routeHeaderMetadata.capabilities}
-        sparkplugShadow={navigationCapabilityShadow}
-        sparkplugShadowStatus={navigationCapabilityStatus}
-        inactiveCapabilities={virtualQuadTarget && !quadMedia.video ? ['video'] : undefined}
-        agentStatus={quadAgentStatus}
-        mavlinkStatus={virtualQuadTarget ? quadMavlinkStatus : undefined}
-        className="navigation-capabilities"
-      />
-    ) : null
+  const renderDevicePage = (session: DeviceSessionView | null): ReactElement => {
+    const navigationCapabilityShadow = session ? session.sparkplug : routeCapabilityShadow
+    const navigationRedcon = session ? session.redcon : reportedRedcon
+    const navigationCapabilityStatus: CapabilityStackStatus =
+      routeHeaderState.status !== 'ready'
+        ? 'loading'
+        : navigationCapabilityShadow !== null
+          ? 'ready'
+          : routeHeaderShadowWarning
+            ? 'error'
+            : 'loading'
+    const navigationCapabilities =
+      currentRouteThingName !== null && routeHeaderMetadata !== null ? (
+        <CapabilityStack
+          thingName={currentRouteThingName}
+          label={navigationCapabilityLabel}
+          capabilities={routeHeaderMetadata.capabilities}
+          sparkplugShadow={navigationCapabilityShadow}
+          sparkplugShadowStatus={navigationCapabilityStatus}
+          capabilityStatuses={session?.capabilities}
+          className="navigation-capabilities"
+        />
+      ) : null
 
-  const navigationPanel =
-    shouldRenderNavigationPanel ? (
-      <section
-        className={`card navigation-panel ${isNavigationBusy ? 'navigation-panel-busy' : ''}`}
-        aria-label="Navigation panel"
-        aria-busy={isNavigationBusy}
-      >
-        <div className="navigation-panel-main">
-          <div className="navigation-panel-header">
-            <a
-              href={appHomePath}
-              className="navigation-logo-link"
-              aria-label="Open town browser home"
-              onClick={(event) => {
-                handleRouteLinkClick(event, appHomePath)
-              }}
-            >
-              <img
-                src={txingLogoUrl}
-                alt="txing logo"
-                className="navigation-logo"
-              />
-            </a>
-            <span className="navigation-panel-brand">TXING</span>
-            <div className="navigation-panel-route">
-              {renderNavigationPath() ?? (
-                <span className="navigation-current-link">route not found</span>
-              )}
+    const navigationPanel =
+      shouldRenderNavigationPanel ? (
+        <section
+          className={`card navigation-panel ${isNavigationBusy ? 'navigation-panel-busy' : ''}`}
+          aria-label="Navigation panel"
+          aria-busy={isNavigationBusy}
+        >
+          <div className="navigation-panel-main">
+            <div className="navigation-panel-header">
+              <a
+                href={appHomePath}
+                className="navigation-logo-link"
+                aria-label="Open town browser home"
+                onClick={(event) => {
+                  handleRouteLinkClick(event, appHomePath)
+                }}
+              >
+                <img
+                  src={txingLogoUrl}
+                  alt="txing logo"
+                  className="navigation-logo"
+                />
+              </a>
+              <span className="navigation-panel-brand">TXING</span>
+              <div className="navigation-panel-route">
+                {renderNavigationPath() ?? (
+                  <span className="navigation-current-link">route not found</span>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-        <div className="navigation-panel-actions">
-          {currentRouteThingName !== null && routeHeaderMetadata !== null ? (
-            <div className="navigation-status">
-              <SparkplugPanel
-                sparkplugRedcon={navigationRedcon}
-                targetRedcon={isVirtualQuad ? quadRedconControl.pendingRedcon : pendingTargetRedcon}
-                isInteractive={isVirtualQuad ? virtualQuadTarget !== null : isSparkplugDeviceCommandAvailable}
-                isRedconCommandDisabled={isVirtualQuad ? !quadRedconControl.canStart : isRedconCommandDisabled}
-                isRedconSleepCommandDisabled={isVirtualQuad ? !quadRedconControl.canStop : isRedconSleepCommandDisabled}
-                commandableRedconLevels={commandableRedconLevels}
-                onRedconSelect={(redcon) => {
-                  void handleRedconSelect(redcon)
-                }}
-              />
-              {virtualQuadTarget && quadSecondsRemaining !== null && (
-                <span aria-label="Session time remaining">
-                  {Math.floor(quadSecondsRemaining / 60)}:{String(quadSecondsRemaining % 60).padStart(2, '0')}
-                </span>
-              )}
-              {navigationCapabilities}
-            </div>
-          ) : null}
-          <NavigationUserMenu
-            authUser={authUser}
-            txingVersion={appConfig.txingVersion}
-            isDebugEnabled={isDebugEnabled}
-            isSessionLogVisible={isSessionLogVisible}
-            onSignOff={handleSignOff}
-            onToggleDebug={virtualQuadTarget && hasAgentCapability ? () => {
-              setIsDebugEnabled((currentValue) => !currentValue)
-            } : undefined}
-            onToggleSessionLog={() => {
-              setIsSessionLogVisible((currentValue) => !currentValue)
-            }}
-          />
-        </div>
-      </section>
-    ) : null
+          <div className="navigation-panel-actions">
+            {currentRouteThingName !== null && routeHeaderMetadata !== null ? (
+              <div className="navigation-status">
+                <SparkplugPanel
+                  sparkplugRedcon={navigationRedcon}
+                  targetRedcon={session ? session.targetRedcon : pendingTargetRedcon}
+                  isInteractive={session !== null || isSparkplugDeviceCommandAvailable}
+                  isRedconCommandDisabled={session ? !session.canStart : isRedconCommandDisabled}
+                  isRedconSleepCommandDisabled={session ? !session.canStop : isRedconSleepCommandDisabled}
+                  commandableRedconLevels={commandableRedconLevels}
+                  onRedconSelect={(redcon) => {
+                    void (session ? session.selectRedcon(redcon) : handleRedconSelect(redcon))
+                  }}
+                />
+                {session?.statusDetail}
+                {navigationCapabilities}
+              </div>
+            ) : null}
+            <NavigationUserMenu
+              authUser={authUser}
+              txingVersion={appConfig.txingVersion}
+              isDebugEnabled={isDebugEnabled}
+              isSessionLogVisible={isSessionLogVisible}
+              onSignOff={handleSignOff}
+              onToggleDebug={session && hasAgentCapability ? () => {
+                setIsDebugEnabled((currentValue) => !currentValue)
+              } : undefined}
+              onToggleSessionLog={() => {
+                setIsSessionLogVisible((currentValue) => !currentValue)
+              }}
+            />
+          </div>
+        </section>
+      ) : null
 
-  let content: ReactElement
-  if (route.kind === 'root') {
-    content = (
-      <section className="card">
-        <h1>Device Shadow Admin</h1>
-        <p>Loading town route...</p>
-      </section>
-    )
-  } else if (route.kind === 'not_found') {
-    content = (
-      <section className="card catalog-card">
-        <h1>Route not found</h1>
-        <p>The path does not match the supported town / rig / device URL schema.</p>
-        <p>{renderInlineRouteLink(configuredTownPath, 'Open the configured town')}</p>
-      </section>
-    )
-  } else if (hasUnsupportedTown) {
-    content = (
-      <section className="card catalog-card">
-        <h1>Unsupported town</h1>
-        <p>
-          This deployment is scoped to <strong>{configuredTownLabel}</strong> (
-          <code>{configuredTownThingName}</code>). The current URL targets town thing{' '}
-          <strong>{currentRouteTown}</strong>.
-        </p>
-        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
-      </section>
-    )
-  } else if (routeHeaderState.status === 'error') {
-    content = (
-      <section className="card catalog-card">
-        <h1>Route unavailable</h1>
-        <p>{routeHeaderState.error}</p>
-        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
-      </section>
-    )
-  } else if (isRouteSessionPending) {
-    content = <></>
-  } else if (currentThingKind === 'townType' && route.kind === 'town') {
-    content = isTownPanelOpen && shouldRenderCatalogPanel ? (
-      <section className="catalog-grid-shell">
-        {rigCatalog.status === 'error' ? <p className="error">{rigCatalog.error}</p> : null}
-        {rigCatalog.status === 'ready' && rigCatalog.rigs.length === 0 ? (
-          <p>No rigs are currently registered for this town.</p>
-        ) : null}
-        {rigCatalog.rigs.length > 0 ? (
-          <ul
-            className="catalog-list catalog-grid catalog-status-list"
-            aria-label={`Rigs in ${navigationTownLabel ?? route.town}`}
-          >
-            {rigCatalog.rigs.map((rig) => (
-              <li key={rig.thingName} className="catalog-list-item">
-                {renderSparkplugCatalogCardLink(
-                  buildRigPath(route.town, rig.thingName),
-                  rig.rigName,
-                  rig,
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
-    ) : (
-      <></>
-    )
-  } else if (currentThingKind === 'rigType' && route.kind === 'rig') {
-    content = isRigPanelOpen && shouldRenderCatalogPanel ? (
-      <section className="catalog-grid-shell">
-        {deviceCatalog.status === 'not_found' ? <p className="error">{deviceCatalog.error}</p> : null}
-        {deviceCatalog.status === 'error' ? <p className="error">{deviceCatalog.error}</p> : null}
-        {deviceCatalog.status === 'ready' && deviceCatalog.devices.length === 0 ? (
-          <p>No devices are currently assigned to this rig.</p>
-        ) : null}
-        {deviceCatalog.devices.length > 0 ? (
-          <ul
-            className="catalog-list catalog-grid catalog-status-list"
-            aria-label={`Devices in ${navigationRigLabel ?? route.rig}`}
-          >
-            {deviceCatalog.devices.map((device) => (
-              <li key={device.thingName} className="catalog-list-item">
-                {renderSparkplugCatalogCardLink(
-                  buildDevicePath(route.town, route.rig, device.thingName),
-                  getCatalogDeviceLabel(device),
-                  device,
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
-    ) : (
-      <></>
-    )
-  } else if (isDeviceThingType && selectedDeviceRoute && !isSelectedDeviceValid) {
-    content = (
-      <section className="card catalog-card">
-        <h1>Device unavailable</h1>
-        <p>
-          {route.kind === 'device_video'
-            ? `Thing '${selectedDeviceRoute.device}' does not expose board video for this route.`
-            : `Thing '${selectedDeviceRoute.device}' could not be opened as a device route.`}
-        </p>
-        <p>
-          {renderInlineRouteLink(
-            buildRigPath(selectedDeviceRoute.town, selectedDeviceRoute.rig),
-            `Open ${navigationRigLabel ?? selectedDeviceRoute.rig}`,
-          )}
-        </p>
-      </section>
-    )
-  } else if (virtualQuadTarget && selectedDeviceRoute) {
-    content = quadSessionId && (quadMedia.mavlink || quadMedia.video) ? (
-      <VirtualQuadLiveView
-        key={`${virtualQuadTarget.deviceId}/${quadSessionId}`}
-        deviceId={virtualQuadTarget.deviceId}
-        actor={mcpActor}
-        videoAvailable={quadMedia.video}
-        mavlinkAvailable={quadMedia.mavlink}
-        resolveIdToken={resolveSessionIdToken}
-        debugEnabled={isDebugEnabled}
-        onMavlinkStatus={onQuadMavlinkStatus}
-      />
-    ) : <></>
-  } else if (
-    isDeviceThingType &&
-    currentDeviceAdapter !== null &&
-    route.kind === 'device_video' &&
-    selectedDeviceRoute
-  ) {
-    content = (
-      <section className="card catalog-card catalog-card-detail">
-        {currentDeviceAdapter.renderVideo({
+    let content: ReactElement
+    if (route.kind === 'root') {
+      content = (
+        <section className="card">
+          <h1>Device Shadow Admin</h1>
+          <p>Loading town route...</p>
+        </section>
+      )
+    } else if (route.kind === 'not_found') {
+      content = (
+        <section className="card catalog-card">
+          <h1>Route not found</h1>
+          <p>The path does not match the supported town / rig / device URL schema.</p>
+          <p>{renderInlineRouteLink(configuredTownPath, 'Open the configured town')}</p>
+        </section>
+      )
+    } else if (hasUnsupportedTown) {
+      content = (
+        <section className="card catalog-card">
+          <h1>Unsupported town</h1>
+          <p>
+            This deployment is scoped to <strong>{configuredTownLabel}</strong> (
+            <code>{configuredTownThingName}</code>). The current URL targets town thing{' '}
+            <strong>{currentRouteTown}</strong>.
+          </p>
+          <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
+        </section>
+      )
+    } else if (routeHeaderState.status === 'error') {
+      content = (
+        <section className="card catalog-card">
+          <h1>Route unavailable</h1>
+          <p>{routeHeaderState.error}</p>
+          <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
+        </section>
+      )
+    } else if (isRouteSessionPending) {
+      content = <></>
+    } else if (currentThingKind === 'townType' && route.kind === 'town') {
+      content = isTownPanelOpen && shouldRenderCatalogPanel ? (
+        <section className="catalog-grid-shell">
+          {rigCatalog.status === 'error' ? <p className="error">{rigCatalog.error}</p> : null}
+          {rigCatalog.status === 'ready' && rigCatalog.rigs.length === 0 ? (
+            <p>No rigs are currently registered for this town.</p>
+          ) : null}
+          {rigCatalog.rigs.length > 0 ? (
+            <ul
+              className="catalog-list catalog-grid catalog-status-list"
+              aria-label={`Rigs in ${navigationTownLabel ?? route.town}`}
+            >
+              {rigCatalog.rigs.map((rig) => (
+                <li key={rig.thingName} className="catalog-list-item">
+                  {renderSparkplugCatalogCardLink(
+                    buildRigPath(route.town, rig.thingName),
+                    rig.rigName,
+                    rig,
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : (
+        <></>
+      )
+    } else if (currentThingKind === 'rigType' && route.kind === 'rig') {
+      content = isRigPanelOpen && shouldRenderCatalogPanel ? (
+        <section className="catalog-grid-shell">
+          {deviceCatalog.status === 'not_found' ? <p className="error">{deviceCatalog.error}</p> : null}
+          {deviceCatalog.status === 'error' ? <p className="error">{deviceCatalog.error}</p> : null}
+          {deviceCatalog.status === 'ready' && deviceCatalog.devices.length === 0 ? (
+            <p>No devices are currently assigned to this rig.</p>
+          ) : null}
+          {deviceCatalog.devices.length > 0 ? (
+            <ul
+              className="catalog-list catalog-grid catalog-status-list"
+              aria-label={`Devices in ${navigationRigLabel ?? route.rig}`}
+            >
+              {deviceCatalog.devices.map((device) => (
+                <li key={device.thingName} className="catalog-list-item">
+                  {renderSparkplugCatalogCardLink(
+                    buildDevicePath(route.town, route.rig, device.thingName),
+                    getCatalogDeviceLabel(device),
+                    device,
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : (
+        <></>
+      )
+    } else if (isDeviceThingType && selectedDeviceRoute && !isSelectedDeviceValid) {
+      content = (
+        <section className="card catalog-card">
+          <h1>Device unavailable</h1>
+          <p>
+            {route.kind === 'device_video'
+              ? `Thing '${selectedDeviceRoute.device}' does not expose board video for this route.`
+              : `Thing '${selectedDeviceRoute.device}' could not be opened as a device route.`}
+          </p>
+          <p>
+            {renderInlineRouteLink(
+              buildRigPath(selectedDeviceRoute.town, selectedDeviceRoute.rig),
+              `Open ${navigationRigLabel ?? selectedDeviceRoute.rig}`,
+            )}
+          </p>
+        </section>
+      )
+    } else if (session) {
+      content = session.content
+    } else if (
+      isDeviceThingType &&
+      currentDeviceAdapter !== null &&
+      route.kind === 'device_video' &&
+      selectedDeviceRoute
+    ) {
+      content = (
+        <section className="card catalog-card catalog-card-detail">
+          {currentDeviceAdapter.renderVideo({
+            videoChannelName: currentDeviceAdapter.buildVideoChannelName(selectedDeviceRoute.device),
+            debugEnabled: isDebugEnabled,
+            onRuntimeError: (message: string) => {
+              if (
+                shouldSuppressBoardVideoRuntimeError({
+                  canUseBoardVideo: currentDeviceAdapter.canUseBoardVideo,
+                  pendingTargetRedcon,
+                  reportedRedcon,
+                })
+              ) {
+                return
+              }
+              enqueueRuntimeError(message, 'board-video-viewer')
+            },
+            resolveIdToken: resolveSessionIdToken,
+          })}
+        </section>
+      )
+    } else if (
+      isDeviceThingType &&
+      currentDeviceAdapter !== null &&
+      route.kind === 'device' &&
+      selectedDeviceRoute &&
+      isBotPanelOpen
+    ) {
+      content = (
+        currentDeviceAdapter.renderDetail({
+          callMcpTool: callDeviceMcpTool,
+          isBoardVideoExpanded,
+          isDebugEnabled,
+          mavlinkActor: mcpActor,
+          mavlinkChannelName,
+          mavlinkRegion: appConfig.awsRegion,
+          isTakeControlPending: isTakingMcpControl,
+          isShadowConnected,
+          mcpTransport,
+          onTakeControl: () => {
+            void takeMcpControl()
+          },
+          onToggleDebug: () => {
+            setIsDebugEnabled((currentValue) => !currentValue)
+          },
+          robotControl: robotState?.control ?? null,
+          reportedBatteryMv: primaryReportedBatteryMv,
+          reportedBoardLeftTrackSpeed,
+          reportedBoardOnline,
+          reportedBoardRightTrackSpeed,
+          reportedRedcon,
+          reportedMcuOnline,
           videoChannelName: currentDeviceAdapter.buildVideoChannelName(selectedDeviceRoute.device),
-          debugEnabled: isDebugEnabled,
-          onRuntimeError: (message: string) => {
-            if (
-              shouldSuppressBoardVideoRuntimeError({
-                canUseBoardVideo: currentDeviceAdapter.canUseBoardVideo,
-                pendingTargetRedcon,
-                reportedRedcon,
-              })
-            ) {
-              return
-            }
+          resolveIdToken: resolveSessionIdToken,
+          shadow: displayShadowDocument,
+          onBoardVideoRuntimeError: (message) => {
             enqueueRuntimeError(message, 'board-video-viewer')
           },
-          resolveIdToken: resolveSessionIdToken,
-        })}
-      </section>
-    )
-  } else if (
-    isDeviceThingType &&
-    currentDeviceAdapter !== null &&
-    route.kind === 'device' &&
-    selectedDeviceRoute &&
-    isBotPanelOpen
-  ) {
-    content = (
-      currentDeviceAdapter.renderDetail({
-        callMcpTool: callDeviceMcpTool,
-        isBoardVideoExpanded,
-        isDebugEnabled,
-        mavlinkActor: mcpActor,
-        mavlinkChannelName,
-        mavlinkRegion: appConfig.awsRegion,
-        isTakeControlPending: isTakingMcpControl,
-        isShadowConnected,
-        mcpTransport,
-        onTakeControl: () => {
-          void takeMcpControl()
-        },
-        onToggleDebug: () => {
-          setIsDebugEnabled((currentValue) => !currentValue)
-        },
-        robotControl: robotState?.control ?? null,
-        reportedBatteryMv: primaryReportedBatteryMv,
-        reportedBoardLeftTrackSpeed,
-        reportedBoardOnline,
-        reportedBoardRightTrackSpeed,
-        reportedRedcon,
-        reportedMcuOnline,
-        videoChannelName: currentDeviceAdapter.buildVideoChannelName(selectedDeviceRoute.device),
-        resolveIdToken: resolveSessionIdToken,
-        shadow: displayShadowDocument,
-        onBoardVideoRuntimeError: (message) => {
-          enqueueRuntimeError(message, 'board-video-viewer')
-        },
-      })
-    )
-  } else if (
-    isDeviceThingType &&
-    currentDeviceAdapter !== null &&
-    route.kind === 'device' &&
-    selectedDeviceRoute
-  ) {
-    content = <></>
-  } else if (isDeviceThingType && selectedDeviceRoute) {
-    content = (
-      <section className="card catalog-card">
-        <h1>Unsupported device type</h1>
-        <p>
-          Thing <strong>{selectedDeviceRoute.device}</strong> has device type{' '}
-          <strong>{currentThingTypeName}</strong>, but this web build has no registered detail
-          adapter for that type.
-        </p>
-      </section>
-    )
-  } else {
-    content = (
-      <section className="card catalog-card">
-        <h1>Device Shadow Admin</h1>
-        <p>Waiting for a valid route selection.</p>
-        <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
-      </section>
+        })
+      )
+    } else if (
+      isDeviceThingType &&
+      currentDeviceAdapter !== null &&
+      route.kind === 'device' &&
+      selectedDeviceRoute
+    ) {
+      content = <></>
+    } else if (isDeviceThingType && selectedDeviceRoute) {
+      content = (
+        <section className="card catalog-card">
+          <h1>Unsupported device type</h1>
+          <p>
+            Thing <strong>{selectedDeviceRoute.device}</strong> has device type{' '}
+            <strong>{currentThingTypeName}</strong>, but this web build has no registered detail
+            adapter for that type.
+          </p>
+        </section>
+      )
+    } else {
+      content = (
+        <section className="card catalog-card">
+          <h1>Device Shadow Admin</h1>
+          <p>Waiting for a valid route selection.</p>
+          <p>{renderInlineRouteLink(configuredTownPath, `Open ${configuredTownLabel}`)}</p>
+        </section>
+      )
+    }
+
+    const shadowAvailabilityNotice =
+      hasShadowBootstrapFailure && activeShadowTarget !== null ? (
+        <section className="card catalog-card">
+          <h1>Live shadow connection unavailable</h1>
+          <p>{shadowBootstrapError}</p>
+          <p>
+            Showing route labels and current Sparkplug state from direct AWS IoT reads. Sparkplug
+            REDCON commands still publish directly; device detail telemetry remains limited until the
+            live shadow session reconnects.
+          </p>
+        </section>
+      ) : null
+    const routeHeaderShadowNotice =
+      routeHeaderShadowWarning !== '' ? (
+        <section className="card catalog-card">
+          <h1>Current Sparkplug state unavailable</h1>
+          <p>{routeHeaderShadowWarning}</p>
+          <p>
+            Route labels come from the registry metadata. The top panel stays generic to the
+            current thing, while type-specific detail content remains gated by the current
+            Sparkplug REDCON state.
+          </p>
+        </section>
+      ) : null
+
+    return (
+      <MavlinkControlProvider
+        actor={mcpActor}
+        channelName={mavlinkChannelName}
+        enabled={isMavlinkControlEnabled}
+        initialTarget={mavlinkTarget}
+        onRuntimeError={(message) => {
+          enqueueRuntimeError(message, 'mavlink-control')
+        }}
+        region={appConfig.awsRegion}
+        resolveIdToken={resolveSessionIdToken}
+      >
+        <main className="page page-signed-in">
+          {navigationPanel}
+          {routeHeaderShadowNotice}
+          {shadowAvailabilityNotice}
+          {content}
+
+          <NotificationTray
+            notifications={notifications}
+            onDismiss={(notificationId) => {
+              dismissNotification(notificationId)
+            }}
+          />
+
+          {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
+
+          {isDebugEnabled && activeShadowTarget !== null && (
+            <DebugPanel
+              agentShadow={hasAgentCapability
+                ? currentAgentShadow ?? { status: 'loading', json: '', error: '' }
+                : undefined}
+              canLoadShadow={canLoadShadow}
+              deviceDiagnostics={deviceDebugDiagnostics}
+              lastShadowUpdateLabel={lastShadowUpdateLabel}
+              lastShadowUpdateTitle={lastShadowUpdateTitle}
+              onLoadShadow={() => {
+                void loadShadow()
+              }}
+              reportedBoardPower={reportedBoardPower}
+              reportedMcuPower={reportedMcuPower}
+              shadowJson={shadowJson}
+            />
+          )}
+        </main>
+      </MavlinkControlProvider>
     )
   }
 
-  const shadowAvailabilityNotice =
-    hasShadowBootstrapFailure && activeShadowTarget !== null ? (
-      <section className="card catalog-card">
-        <h1>Live shadow connection unavailable</h1>
-        <p>{shadowBootstrapError}</p>
-        <p>
-          Showing route labels and current Sparkplug state from direct AWS IoT reads. Sparkplug
-          REDCON commands still publish directly; device detail telemetry remains limited until the
-          live shadow session reconnects.
-        </p>
-      </section>
-    ) : null
-  const routeHeaderShadowNotice =
-    routeHeaderShadowWarning !== '' ? (
-      <section className="card catalog-card">
-        <h1>Current Sparkplug state unavailable</h1>
-        <p>{routeHeaderShadowWarning}</p>
-        <p>
-          Route labels come from the registry metadata. The top panel stays generic to the
-          current thing, while type-specific detail content remains gated by the current
-          Sparkplug REDCON state.
-        </p>
-      </section>
-    ) : null
-
-  return (
-    <MavlinkControlProvider
-      actor={mcpActor}
-      channelName={mavlinkChannelName}
-      enabled={isMavlinkControlEnabled}
-      initialTarget={mavlinkTarget}
-      onRuntimeError={(message) => {
-        enqueueRuntimeError(message, 'mavlink-control')
-      }}
-      region={appConfig.awsRegion}
-      resolveIdToken={resolveSessionIdToken}
-    >
-      <main className="page page-signed-in">
-        {navigationPanel}
-        {routeHeaderShadowNotice}
-        {shadowAvailabilityNotice}
-        {content}
-
-        <NotificationTray
-          notifications={notifications}
-          onDismiss={(notificationId) => {
-            dismissNotification(notificationId)
-          }}
-        />
-
-        {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
-
-        {isDebugEnabled && activeShadowTarget !== null && (
-          <DebugPanel
-            agentShadow={hasAgentCapability
-              ? currentAgentShadow ?? { status: 'loading', json: '', error: '' }
-              : undefined}
-            canLoadShadow={canLoadShadow}
-            deviceDiagnostics={deviceDebugDiagnostics}
-            lastShadowUpdateLabel={lastShadowUpdateLabel}
-            lastShadowUpdateTitle={lastShadowUpdateTitle}
-            onLoadShadow={() => {
-              void loadShadow()
-            }}
-            reportedBoardPower={reportedBoardPower}
-            reportedMcuPower={reportedMcuPower}
-            shadowJson={shadowJson}
-          />
-        )}
-      </main>
-    </MavlinkControlProvider>
-  )
+  if (sessionAdapter && sessionTarget && isSelectedDeviceValid && !hasUnsupportedTown) {
+    const SessionView = sessionAdapter.View
+    return (
+      <SessionView
+        key={sessionTarget.deviceId}
+        target={sessionTarget}
+        actor={mcpActor}
+        sparkplug={routeCapabilityShadow}
+        agentShadow={currentAgentShadow?.shadow}
+        resolveIdToken={resolveSessionIdToken}
+        debugEnabled={isDebugEnabled}
+        notify={enqueueNotification}
+        log={appendSessionLogEntry}
+      >
+        {renderDevicePage}
+      </SessionView>
+    )
+  }
+  return renderDevicePage(null)
 }
 
 export default App

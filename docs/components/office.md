@@ -65,6 +65,15 @@ commands or client-side transport state. Capability indicators reflect the
 Sparkplug named shadow projection. A small delay is acceptable; inconsistent
 client-side capability prediction is not.
 
+The device registry selects a type-owned web adapter. The virtual-quad session
+adapter interprets the matching simulation and Sparkplug projections, supplies
+REDCON command state to the shared selector and renders its camera and flight
+panel. Office provides the authenticated shadow reader, command publishing,
+navigation, capability stack and notification stream. The detail-route MAVLink
+indicator reflects heartbeat reception by its browser peer. Media connection
+state has no authority to advance the reported REDCON.
+[Virtual quadcopter architecture](../virtual-quadcopter-architecture.md#office-and-flight-authority)
+
 ## Local Development
 
 Install and write the local env:

@@ -69,7 +69,8 @@ operational REDCON 1 once the Sparkplug projection matches the current simulatio
 session ID and readiness watermark. Readiness loss, readiness expiry or a new
 simulation session closes both peers. The native command and cloud attachment
 reject `--control` for virtual quad, and the cloud runtime rejects lease and
-MAVLink sends from an attached observer.
+MAVLink sends from an attached observer. The simulator owns flight readiness and
+session deadlines. [Virtual quadcopter architecture](../virtual-quadcopter-architecture.md#agent-observation)
 
 Unsupported registered types fail before session creation. A name prefix alone
 does not establish support. Rig and witness remain lifecycle authorities.

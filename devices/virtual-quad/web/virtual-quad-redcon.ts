@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppNotificationInput } from '../../../office/src/app-notifications'
 import { getThingNamedShadow } from '../../../office/src/catalog-api'
-import { publishVirtualQuadCommand } from '../../../office/src/sparkplug-command'
+import { publishVirtualQuadCommand, type VirtualQuadCommand } from './virtual-quad-command'
 import {
   extractReportedRedcon,
   extractSparkplugCapabilityAvailability,
@@ -9,7 +9,6 @@ import {
   extractSparkplugRedconCommandStatus,
   hasLiveSparkplugDeviceProjection,
 } from '../../../office/src/sparkplug-model'
-import type { VirtualQuadCommand } from '../../../office/src/sparkplug-protocol'
 import type { QuadTarget, useVirtualQuadSession } from './virtual-quad-session'
 
 type SessionView = ReturnType<typeof useVirtualQuadSession>

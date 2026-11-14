@@ -27,7 +27,7 @@ const (
 )
 
 var sessionSegment = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
-var workerHostname = regexp.MustCompile(`^[a-z0-9]+\.lambda-url\.` + probeRegion + `\.on\.aws$`)
+var workerHostname = regexp.MustCompile(`^[a-z0-9]+\.lambda-url\.` + sessionRegion + `\.on\.aws$`)
 
 type sessionAssignment struct {
 	DeviceID           string `json:"deviceId"`
@@ -159,7 +159,7 @@ func (c sessionClient) request(ctx context.Context, action string, health *sessi
 	digest := sha256.Sum256(body)
 	payloadHash := hex.EncodeToString(digest[:])
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
-	if err := c.signer.SignHTTP(ctx, c.creds, req, payloadHash, "lambda", probeRegion, time.Now()); err != nil {
+	if err := c.signer.SignHTTP(ctx, c.creds, req, payloadHash, "lambda", sessionRegion, time.Now()); err != nil {
 		return 0, errors.New("sign session controller request")
 	}
 	res, err := c.http.Do(req)
@@ -218,10 +218,10 @@ func (a *sessionActivation) work(ctx context.Context, cancel context.CancelFunc,
 	}
 	log.Printf("QUAD_SESSION_CLAIMED id=%s session=%s", id, a.assignment.SessionID)
 	mediaEnv := append(mediaCredentials(creds),
-		"AWS_REGION="+probeRegion,
+		"AWS_REGION="+sessionRegion,
 		"QUAD_VIDEO_CHANNEL="+a.assignment.DeviceID+"-board-video",
 		"QUAD_MAVLINK_CHANNEL="+a.assignment.DeviceID+"-mavlink")
-	if err := runWorkload(ctx, "microvm-session", mediaEnv, nil, "", true, func(ctx context.Context, path string) {
+	if err := runWorkload(ctx, mediaEnv, nil, func(ctx context.Context, path string) {
 		client.monitor(ctx, cancel, path)
 	}); err != nil {
 		log.Printf("QUAD_SESSION_WORKLOAD_ERROR %v", err)
