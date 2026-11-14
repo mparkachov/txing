@@ -2,20 +2,10 @@ import { useEffect, useEffectEvent, useRef, useState, type RefObject } from 'rea
 import { mavlinkDriveRefreshMs, mavlinkWebRtcDataChannelLabel } from '../../../office/src/mavlink-control'
 import { createCredentialProvider } from '../../../office/src/aws-credentials'
 import VideoPanel from '../../../office/src/VideoPanel'
-import { VirtualQuadFlight, type Direction, type QuadFlightView } from './virtual-quad-flight'
+import MavlinkControllerPanel from '../../../office/src/MavlinkControllerPanel'
+import { VirtualQuadFlight, type QuadFlightView } from './virtual-quad-flight'
 import { readQuadMavlinkStatus, type QuadMavlinkStatus } from './virtual-quad-media-status'
 
-const directionButtons: { direction: Direction; key: string; label: string }[] = [
-  { direction: 'forward', key: 'w', label: 'Forward' },
-  { direction: 'back', key: 's', label: 'Back' },
-  { direction: 'left', key: 'a', label: 'Left' },
-  { direction: 'right', key: 'd', label: 'Right' },
-  { direction: 'up', key: 'r', label: 'Climb' },
-  { direction: 'down', key: 'f', label: 'Descend' },
-  { direction: 'yawLeft', key: 'q', label: 'Yaw left' },
-  { direction: 'yawRight', key: 'e', label: 'Yaw right' },
-]
-const directionByKey = new Map(directionButtons.map(({ key, direction }) => [key, direction]))
 const landedLabel: Record<number, string> = { 1: 'Landed', 2: 'Airborne', 3: 'Taking off', 4: 'Landing' }
 
 function VirtualQuadTelemetry({
@@ -131,34 +121,15 @@ function VirtualQuadTelemetry({
       if (flight.current === controller) setView(next)
     }, mavlinkDriveRefreshMs)
 
-    const keyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase()
-      const direction = directionByKey.get(key)
-      if (!direction || event.ctrlKey || event.altKey || event.metaKey ||
-        (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable], [role="dialog"]')) ||
-        !flight.current?.view().canMove) return
-      event.preventDefault()
-      flight.current.setInput(key, direction)
-    }
-    const keyUp = (event: KeyboardEvent) => flight.current?.releaseInput(event.key.toLowerCase())
-    const clearInput = () => flight.current?.clearInput()
     const pageHide = () => reconnect('Page disconnected')
-    window.addEventListener('keydown', keyDown)
-    window.addEventListener('keyup', keyUp)
-    window.addEventListener('blur', clearInput)
     window.addEventListener('pagehide', pageHide)
-    document.addEventListener('visibilitychange', clearInput)
     return () => {
       lifetime.abort()
       flight.current?.close()
       flight.current = null
       window.clearTimeout(retry)
       window.clearInterval(timer)
-      window.removeEventListener('keydown', keyDown)
-      window.removeEventListener('keyup', keyUp)
-      window.removeEventListener('blur', clearInput)
       window.removeEventListener('pagehide', pageHide)
-      document.removeEventListener('visibilitychange', clearInput)
     }
   }, [actor, deviceId, resolveIdToken])
 
@@ -181,47 +152,32 @@ function VirtualQuadTelemetry({
           </>
         )}
       </div>
-      <div className="virtual-quad-flight-actions">
-        <span>{view?.held ? 'Control' : 'View only'}</span>
-        {view?.owner && <span>Controller {view.owner}</span>}
-        {videoAvailable && view?.supported === false && <span>Flight controls unavailable</span>}
-        {videoAvailable && view?.supported && (
-          view.held
-            ? <button type="button" onClick={() => { void flight.current?.release() }}>Release control</button>
-            : <button type="button" disabled={!view.canAcquire} onClick={() => { void flight.current?.acquire() }}>Acquire control</button>
-        )}
-        {videoAvailable && view?.held && (
-          <>
-            <button type="button" disabled={!view.canTakeOff} onClick={() => { void flight.current?.takeOff() }}>Take off</button>
-            <button type="button" disabled={!view.canLand} onClick={() => { void flight.current?.land() }}>Land</button>
-          </>
-        )}
-        {view?.pending && <span role="status">{view.pending}</span>}
-      </div>
-      {videoAvailable && view?.held && <div className="virtual-quad-flight-actions" aria-label="Movement">
-        {directionButtons.map(({ direction, key, label }) => (
-          <button key={direction} type="button" disabled={!view.canMove} aria-keyshortcuts={key.toUpperCase()}
-            onPointerDown={(event) => {
-              if (event.button !== 0) return
-              event.currentTarget.setPointerCapture(event.pointerId)
-              flight.current?.setInput(`pointer-${event.pointerId}`, direction)
-            }}
-            onPointerUp={(event) => flight.current?.releaseInput(`pointer-${event.pointerId}`)}
-            onPointerCancel={(event) => flight.current?.releaseInput(`pointer-${event.pointerId}`)}
-            onLostPointerCapture={(event) => flight.current?.releaseInput(`pointer-${event.pointerId}`)}
-            onKeyDown={(event) => {
-              if (event.key === ' ' || event.key === 'Enter') {
-                event.preventDefault()
-                flight.current?.setInput('movement-button', direction)
-              }
-            }}
-            onKeyUp={(event) => {
-              if (event.key === ' ' || event.key === 'Enter') flight.current?.releaseInput('movement-button')
-            }}
-            onBlur={() => flight.current?.releaseInput('movement-button')}
-          >{label} <kbd>{key.toUpperCase()}</kbd></button>
-        ))}
-      </div>}
+      {videoAvailable && view?.supported === false && <span>Flight controls unavailable</span>}
+      {videoAvailable && (
+        <MavlinkControllerPanel
+          vehicleName="Virtual quadcopter"
+          profile="quad"
+          held={view?.held ?? false}
+          canMove={view?.canMove ?? false}
+          owner={view?.owner}
+          acquire={{ label: 'Acquire control', enabled: view?.canAcquire ?? false, run: async (signal) => {
+            const controller = flight.current
+            if (!controller || signal.aborted) return
+            const abort = () => controller.close()
+            signal.addEventListener('abort', abort, { once: true })
+            try {
+              await controller.acquire()
+            } finally {
+              signal.removeEventListener('abort', abort)
+            }
+          } }}
+          release={{ enabled: view?.held ?? false, run: () => flight.current?.release() }}
+          takeoff={{ label: 'Take off', enabled: view?.canTakeOff ?? false, run: () => flight.current?.takeOff() }}
+          land={{ label: 'Land', enabled: view?.canLand ?? false, run: () => flight.current?.land() }}
+          sendMotion={(sticks) => flight.current?.sendMotion(sticks)}
+        />
+      )}
+      {view?.pending && <span role="status">{view.pending}</span>}
       {view?.error && <span role="alert">{view.error}</span>}
     </div>
   )

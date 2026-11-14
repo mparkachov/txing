@@ -74,6 +74,32 @@ indicator reflects heartbeat reception by its browser peer. Media connection
 state has no authority to advance the reported REDCON.
 [Virtual quadcopter architecture](../virtual-quadcopter-architecture.md#office-and-flight-authority)
 
+## MAVLink controller
+
+Virtual quad, TBot, and Cyberbrick show a controller below the video. TBot
+and Cyberbrick also show it below the video placeholder at REDCON 2. Drag
+the on-screen sticks with a mouse or touch, use the keyboard shortcuts,
+or press a button on a connected gamepad to make it available to Office.
+Office uses the browser's standard controller mapping.
+
+| Input | Virtual quad | TBot and Cyberbrick |
+| --- | --- | --- |
+| Left stick | Climb, descend, yaw | Forward and reverse |
+| Right stick | Forward, back, left, right | Steering |
+| Menu | Hold for one second to acquire control. Press to release. | Hold for one second to take control or take over. Press to release. |
+| LB | Hover | Stop movement |
+| A | Hold for one second to take off | — |
+| B | Land | — |
+
+The panel buttons provide the same actions. Center the sticks before
+acquiring control or taking off. Release the current input before using
+another. An overlapping key press or stick movement must return to
+neutral before it can take over. Losing focus or pressing LB clears
+movement. Disconnecting the gamepad releases control if the gamepad was
+used to acquire, take off, or most recently move. The keyboard shortcuts
+are WASD, R/F, and Q/E for virtual quad and the arrow keys and S for
+rovers. [DJI stick layout](https://developer.dji.com/mobile-sdk/documentation/introduction/component-guide-remotecontroller.html) · [QGroundControl joystick mapping](https://github.com/mavlink/qgroundcontrol/blob/v5.1.5/src/FlyView/VirtualJoystick.qml)
+
 ## Debug
 
 Open **Debug** from the profile menu on a device page. Office shows one

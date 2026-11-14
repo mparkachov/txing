@@ -1341,21 +1341,122 @@ h1 {
   gap: 0.75rem;
 }
 
-.virtual-quad-flight-controls .status-video-overlay-metrics,
-.virtual-quad-flight-actions {
+.virtual-quad-flight-controls .status-video-overlay-metrics {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.65rem;
 }
 
-.virtual-quad-flight-actions button {
-  touch-action: none;
+.mavlink-controller {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
 }
 
-.virtual-quad-flight-actions kbd {
-  margin-inline-start: 0.25rem;
-  opacity: 0.7;
+.mavlink-controller-header,
+.mavlink-controller-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.mavlink-controller-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.mavlink-controller-header {
+  justify-content: flex-end;
+}
+
+.mavlink-controller-body {
+  width: min(100%, 37rem);
+  justify-self: center;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-areas:
+    "shoulder menu actions"
+    "left . actions"
+    "left . right";
+  gap: 0.45rem;
+  align-items: start;
+  padding: clamp(0.65rem, 3vw, 1.6rem);
+  border: 1px solid var(--panel-border);
+  border-radius: 2rem 2rem 4.75rem 4.75rem;
+  background: radial-gradient(ellipse at top, #24373f, #0a1219 82%);
+}
+
+.mavlink-controller button {
+  font-size: 0.85rem;
+}
+
+.mavlink-controller kbd {
+  font-size: 0.8em;
+  color: var(--accent);
+}
+
+.mavlink-controller-shoulder { grid-area: shoulder; justify-self: start; }
+.mavlink-controller-menu { grid-area: menu; justify-self: center; }
+.mavlink-controller-actions { grid-area: actions; justify-content: center; }
+.mavlink-controller-left { grid-area: left; }
+.mavlink-controller-right { grid-area: right; }
+
+.mavlink-controller-stick-group {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.mavlink-controller-stick {
+  position: relative;
+  width: min(100%, 7rem);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--panel-border);
+  border-radius: 50%;
+  background: radial-gradient(circle, #17242d, #080f16);
+}
+
+.mavlink-controller-stick[data-interactive="true"] {
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+
+.mavlink-controller-stick[data-interactive="true"]:active {
+  cursor: grabbing;
+}
+
+.mavlink-controller-thumb {
+  pointer-events: none;
+  width: 34%;
+  aspect-ratio: 1;
+  border: 1px solid #4d6974;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 25%, #526977, #202f37 75%);
+  box-shadow: 0 0.3rem 0.7rem #05090c;
+}
+
+@media (max-width: 480px) {
+  .mavlink-controller-body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "shoulder menu"
+      "left actions"
+      "left right";
+    border-radius: 1.4rem 1.4rem 2.5rem 2.5rem;
+  }
 }
 
 .status-video-debug-button {

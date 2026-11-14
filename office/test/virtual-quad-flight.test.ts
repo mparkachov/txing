@@ -1,3 +1,4 @@
+import { centeredSticks } from '../src/mavlink-controller-input'
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { VirtualQuadFlight, readQuadPosition } from '../../devices/virtual-quad/web/virtual-quad-flight'
 import { buildMavlinkFrame, parseMavlinkFrame, type MavlinkFrame } from '../src/mavlink-wire'
@@ -117,11 +118,8 @@ test('explicit acquire, takeoff, body-relative flight, hover and landed confirma
     expect(fields(binary[2]).getFloat32(24, true)).toBe(2)
     expect(flight.view()).toMatchObject({ mode: 'Guided', armed: true, canMove: true, landed: 2 })
 
-    flight.setInput('w', 'forward')
-    flight.setInput('d', 'right')
-    flight.setInput('r', 'up')
-    flight.setInput('e', 'yawRight')
-    flight.tick()
+    const diagonal = { leftX: 1, leftY: 1, rightX: 1, rightY: 1 }
+    flight.sendMotion(diagonal)
     const move = binary.at(-1)!
     expect(move.messageId).toBe(84)
     expect(move.payload[52]).toBe(9)
@@ -131,14 +129,14 @@ test('explicit acquire, takeoff, body-relative flight, hover and landed confirma
     expect(fields(move).getFloat32(24, true)).toBe(-0.5)
     expect(fields(move).getFloat32(44, true)).toBeCloseTo(Math.PI / 6)
     altitude(3_800)
-    flight.tick()
+    flight.sendMotion(diagonal)
     expect(fields(binary.at(-1)!).getFloat32(24, true)).toBe(0)
-    flight.clearInput()
+    flight.sendMotion(centeredSticks)
     const hover = fields(binary.at(-1)!)
     for (const offset of [16, 20, 24, 44]) expect(hover.getFloat32(offset, true)).toBe(0)
     const beforeBlockedSend = binary.length
     blockSend()
-    flight.tick()
+    flight.sendMotion(diagonal)
     expect(binary).toHaveLength(beforeBlockedSend)
 
     await flight.land()
@@ -155,11 +153,10 @@ test('camera loss in flight releases the lease, stops movement, and requires exp
     await flush()
     await flight.acquire()
     await flight.takeOff()
-    flight.setInput('w', 'forward')
-    flight.tick()
+    flight.sendMotion({ ...centeredSticks, rightY: 0.4 })
     const move = binary.at(-1)!
     expect(move.messageId).toBe(84)
-    expect(fields(move).getFloat32(16, true)).toBe(1)
+    expect(fields(move).getFloat32(16, true)).toBeCloseTo(0.4)
     const writesBeforeLoss = binary.length
     loseCamera()
     flight.tick()
@@ -167,8 +164,7 @@ test('camera loss in flight releases the lease, stops movement, and requires exp
     expect(text.at(-1)).toMatchObject({ type: 'control.release_active', epoch: 1 })
     expect(flight.view()).toMatchObject({ held: false, camera: false, canAcquire: false, canMove: false })
     recoverCamera()
-    flight.setInput('w', 'forward')
-    flight.tick()
+    flight.sendMotion({ ...centeredSticks, rightY: 0.4 })
     expect(flight.view()).toMatchObject({ held: false, camera: true, canAcquire: true, canMove: false })
     expect(binary).toHaveLength(writesBeforeLoss)
     expect(text.filter(({ type }) => type === 'control.activate')).toHaveLength(1)

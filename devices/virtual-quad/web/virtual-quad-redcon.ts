@@ -16,16 +16,14 @@ type Pending = { target: QuadTarget; action: VirtualQuadCommand; deadlineMs: num
 
 const phaseLabel = {
   stopped: 'Stopped',
-  starting: 'Starting simulator',
   operational: 'Simulator running',
-  stopping: 'Stopping simulator',
   failed: 'Session failed',
 }
 
 export function readVirtualQuadLifecycleMessage(
   session: SessionView['session'], fresh = true, observedSessionId: string | null = null,
 ): Omit<AppNotificationInput, 'objectId'> | null {
-  if (!session) return null
+  if (!session || session.phase === 'starting' || session.phase === 'stopping') return null
   if (session.phase === 'stopped' &&
     (!session.lastOutcome || observedSessionId === null || session.lastSessionId !== observedSessionId)) return null
   if (session.phase === 'operational' && !fresh) {

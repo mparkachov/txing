@@ -24,6 +24,7 @@ export type StartMavlinkDataChannelOptions = {
 
 export type MavlinkDataChannelRuntimeHandle = {
   close: () => void
+  isSendQueueEmpty: () => boolean
   sendBinary: (frame: Uint8Array) => void
   sendText: (message: string) => void
 }
@@ -261,6 +262,7 @@ export const connectMavlinkPeer = async (
   await openPromise
 
   return {
+    isSendQueueEmpty: () => dataChannel.bufferedAmount === 0,
     sendText: (message) => {
       if (closed || dataChannel.readyState !== 'open') {
         throw new Error('MAVLink data channel is not open')

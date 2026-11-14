@@ -65,6 +65,7 @@ export type MavlinkTarget = {
 
 export type MavlinkDataChannelHandle = {
   close: () => void
+  isSendQueueEmpty?: () => boolean
   sendBinary: (frame: Uint8Array) => void
   sendText: (message: string) => void
 }
@@ -397,12 +398,18 @@ export class MavlinkControlSession {
     return state
   }
 
+  public hasActiveControl(): boolean {
+    return !this.closed && this.activeSessionId !== null &&
+      this.controlState.activeControl?.sessionId === this.activeSessionId
+  }
+
   public async sendManualControl(
     target: MavlinkTarget,
     steering: number,
     throttle: number,
   ): Promise<void> {
     this.requireActiveEpoch()
+    if (this.handle?.isSendQueueEmpty?.() === false) return
     this.sendFrame(buildMavlinkManualControlFrame({
       sequence: this.nextFrameSequence(),
       steering,
@@ -712,94 +719,5 @@ export class MavlinkControlSession {
         waiter.reject(error)
       }
     }
-  }
-}
-
-export class MavlinkDriveTeleopController {
-  private readonly heldKeys = new Set<string>()
-  private readonly sendControl: (steering: number, throttle: number) => Promise<void> | void
-  private active = false
-
-  public constructor(options: {
-    sendControl: (steering: number, throttle: number) => Promise<void> | void
-  }) {
-    this.sendControl = options.sendControl
-  }
-
-  public activate(): void {
-    this.active = true
-  }
-
-  public deactivate(): void {
-    if (!this.active) {
-      return
-    }
-    this.active = false
-    this.sendNeutral()
-  }
-
-  public handleKeyDown(key: string): boolean {
-    if (!this.active || !isMavlinkControlKey(key)) {
-      return false
-    }
-    if (isMavlinkStopKey(key)) {
-      this.sendNeutral()
-      return true
-    }
-    this.heldKeys.add(key)
-    this.sendCurrentControl()
-    return true
-  }
-
-  public handleKeyUp(key: string): boolean {
-    if (!this.active || !isMavlinkDirectionalKey(key)) {
-      return false
-    }
-    this.heldKeys.delete(key)
-    this.sendCurrentControl()
-    return true
-  }
-
-  public handleSafetyStop(): void {
-    if (this.active) {
-      this.sendNeutral()
-    }
-  }
-
-  public tick(): void {
-    if (!this.active) {
-      return
-    }
-    this.sendCurrentControl()
-  }
-
-  private sendCurrentControl(): void {
-    const { steering, throttle } = buildMavlinkControlAxes(this.heldKeys)
-    void this.sendControl(steering, throttle)
-  }
-
-  private sendNeutral(): void {
-    this.heldKeys.clear()
-    void this.sendControl(0, 0)
-  }
-}
-
-const mavlinkDirectionalKeys = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
-
-export const isMavlinkDirectionalKey = (key: string): boolean => mavlinkDirectionalKeys.has(key)
-
-export const isMavlinkStopKey = (key: string): boolean => key.toLowerCase() === 's'
-
-export const isMavlinkControlKey = (key: string): boolean =>
-  isMavlinkDirectionalKey(key) || isMavlinkStopKey(key)
-
-export const buildMavlinkControlAxes = (keys: Iterable<string>): {
-  steering: number
-  throttle: number
-} => {
-  const held = new Set(keys)
-  return {
-    steering: (held.has('ArrowRight') ? 1000 : 0) - (held.has('ArrowLeft') ? 1000 : 0),
-    throttle: (held.has('ArrowUp') ? 1000 : 0) - (held.has('ArrowDown') ? 1000 : 0),
   }
 }

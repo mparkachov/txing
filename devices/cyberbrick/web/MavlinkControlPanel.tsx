@@ -9,14 +9,14 @@ import {
 } from 'react'
 import {
   MavlinkControlSession,
-  MavlinkDriveTeleopController,
-  mavlinkDriveRefreshMs,
   mavlinkWebRtcDataChannelLabel,
   type MavlinkControlState,
   type MavlinkFlightState,
   type MavlinkTelemetry,
   type MavlinkTarget,
 } from '../../../office/src/mavlink-control'
+import MavlinkControllerPanel from '../../../office/src/MavlinkControllerPanel'
+import { centeredSticks, readRoverMotion, type ControllerSticks } from '../../../office/src/mavlink-controller-input'
 import { startMavlinkDataChannel } from '../../../office/src/mavlink-session'
 
 type MavlinkControlProviderProps = {
@@ -36,14 +36,16 @@ type MavlinkControlContextValue = {
   activeHeldByCaller: boolean
   connectionState: ConnectionState
   controlActionLabel: string
-  controlActionTitle: string
+  canDrive: boolean
   controlLabel: string
   flightState: MavlinkFlightState
   isControlActionDisabled: boolean
   leaseTtlMs: number
   telemetry: MavlinkTelemetry | null
   telemetryFrameCount: number
-  toggleControl: () => void
+  acquireDriveControl: (signal: AbortSignal) => Promise<void>
+  releaseDriveControl: () => Promise<void>
+  sendMotion: (sticks: ControllerSticks) => void
 }
 
 const emptyControlState: MavlinkControlState = {
@@ -107,9 +109,11 @@ export function MavlinkControlProvider({
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [driveReady, setDriveReady] = useState(false)
   const sessionRef = useRef<MavlinkControlSession | null>(null)
+  const actionSession = useRef<MavlinkControlSession | null>(null)
   const reportRuntimeError = useEffectEvent(onRuntimeError)
 
   useEffect(() => {
+    setPendingAction(null)
     if (!enabled || channelName === '') {
       setConnectionState('idle')
       setControlState(emptyControlState)
@@ -143,6 +147,7 @@ export function MavlinkControlProvider({
         return
       }
       setConnectionState('connecting')
+      setPendingAction(null)
       const abortController = new AbortController()
       connectionAbortController = abortController
       const session = new MavlinkControlSession({
@@ -241,105 +246,77 @@ export function MavlinkControlProvider({
     }
   }, [actor, channelName, enabled, region, resolveIdToken])
 
-  const canControl = connectionState === 'open' && activeHeldByCaller && initialTarget !== null
-  const canDrive = canControl && driveReady && pendingAction === null
-
-  useEffect(() => {
-    if (!canDrive || !initialTarget) {
-      return
-    }
-    const teleop = new MavlinkDriveTeleopController({
-      sendControl: async (steering, throttle) => {
-        await sessionRef.current?.sendManualControl(initialTarget, steering, throttle)
-      },
+  const isConnected = enabled && connectionState === 'open'
+  const canDrive = isConnected && activeHeldByCaller && initialTarget !== null && driveReady && pendingAction === null
+  const sendMotion = (sticks: ControllerSticks) => {
+    const session = sessionRef.current
+    if (!canDrive || !initialTarget || !session || actionSession.current === session) return
+    const { steering, throttle } = readRoverMotion(sticks)
+    void session.sendManualControl(initialTarget, steering, throttle).catch(() => {
+      // The session can lose its lease between a React render and this sample.
     })
-    teleop.activate()
-    const refreshTimerId = window.setInterval(() => {
-      teleop.tick()
-    }, mavlinkDriveRefreshMs)
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (teleop.handleKeyDown(event.key)) {
-        event.preventDefault()
-      }
-    }
-    const handleKeyUp = (event: KeyboardEvent): void => {
-      if (teleop.handleKeyUp(event.key)) {
-        event.preventDefault()
-      }
-    }
-    const handleBlur = (): void => teleop.handleSafetyStop()
-    const handleVisibilityChange = (): void => {
-      if (document.hidden) {
-        teleop.handleSafetyStop()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
-    window.addEventListener('blur', handleBlur)
-    window.addEventListener('pagehide', handleBlur)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => {
-      window.clearInterval(refreshTimerId)
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
-      window.removeEventListener('blur', handleBlur)
-      window.removeEventListener('pagehide', handleBlur)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-      teleop.deactivate()
-    }
-  }, [canDrive, initialTarget])
-
-  const acquireDriveControl = async (): Promise<void> => {
-    const session = sessionRef.current
-    if (!session || !initialTarget) {
-      throw new Error('MAVLink control is not ready')
-    }
-    setDriveReady(false)
-    await session.takeManualControl(initialTarget)
-    setDriveReady(true)
   }
 
-  const releaseDriveControl = async (): Promise<void> => {
-    const session = sessionRef.current
-    if (!session) {
-      throw new Error('MAVLink data channel is not connected')
+  const releaseSession = async (session: MavlinkControlSession): Promise<void> => {
+    if (session === sessionRef.current) {
+      sendMotion(centeredSticks)
+      setDriveReady(false)
     }
-    setDriveReady(false)
-    await session.release()
+    try {
+      await session.release()
+    } catch (error) {
+      session.close()
+      if (session === sessionRef.current) {
+        onRuntimeError(error instanceof Error ? error.message : 'MAVLink release failed')
+      }
+    }
   }
 
-  const toggleControl = (): void => {
-    const action = activeHeldByCaller ? 'release' : 'activate'
-    setPendingAction(action)
-    void (async () => {
-      try {
-        if (activeHeldByCaller) {
-          await releaseDriveControl()
-        } else {
-          await acquireDriveControl()
-        }
-      } catch (error) {
-        reportRuntimeError(error instanceof Error ? error.message : `MAVLink ${action} failed`)
-      } finally {
-        setPendingAction(null)
+  const acquireDriveControl = async (signal: AbortSignal) => {
+    const session = sessionRef.current
+    if (signal.aborted || !isConnected || !session || !initialTarget ||
+      session.hasActiveControl() || actionSession.current === session) return
+    actionSession.current = session
+    setPendingAction('activate')
+    setDriveReady(false)
+    const abort = () => session.close()
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      await session.takeManualControl(initialTarget)
+      if (sessionRef.current === session && !signal.aborted && session.hasActiveControl()) setDriveReady(true)
+    } catch (error) {
+      if (sessionRef.current === session && !signal.aborted) {
+        onRuntimeError(error instanceof Error ? error.message : 'MAVLink activation failed')
       }
-    })()
+    } finally {
+      signal.removeEventListener('abort', abort)
+      if (actionSession.current === session) {
+        actionSession.current = null
+        if (sessionRef.current === session) setPendingAction(null)
+      }
+    }
+  }
+
+  const releaseDriveControl = async () => {
+    const session = sessionRef.current
+    if (!session?.hasActiveControl() || actionSession.current === session) return
+    const result = releaseSession(session)
+    actionSession.current = session
+    setPendingAction('release')
+    try {
+      await result
+    } finally {
+      if (actionSession.current === session) {
+        actionSession.current = null
+        if (sessionRef.current === session) setPendingAction(null)
+      }
+    }
   }
 
   const controlLabel = describeOwner(controlState, activeHeldByCaller)
-  const controlActionLabel = activeHeldByCaller
-    ? 'Release control'
-    : controlState.activeControl
-      ? 'Take over control'
-      : 'Take control'
-  const controlActionTitle = activeHeldByCaller
-    ? 'Release MAVLink control and return the vehicle to its safe state'
-    : controlState.activeControl
-      ? `Take over MAVLink control from ${controlState.activeControl.actor}`
-      : 'Take MAVLink control'
-  const isControlActionDisabled =
-    pendingAction !== null ||
-    (activeHeldByCaller ? connectionState !== 'open' : connectionState !== 'open' || initialTarget === null)
+  const controlActionLabel = controlState.activeControl ? 'Take over control' : 'Take control'
+  const isControlActionDisabled = pendingAction !== null || !isConnected ||
+    (!activeHeldByCaller && initialTarget === null)
 
   return (
     <MavlinkControlContext.Provider
@@ -347,14 +324,16 @@ export function MavlinkControlProvider({
         activeHeldByCaller,
         connectionState,
         controlActionLabel,
-        controlActionTitle,
+        canDrive,
         controlLabel,
         flightState,
         isControlActionDisabled,
         leaseTtlMs: controlState.leaseTtlMs,
         telemetry,
         telemetryFrameCount,
-        toggleControl,
+        acquireDriveControl,
+        releaseDriveControl,
+        sendMotion,
       }}
     >
       {children}
@@ -362,54 +341,20 @@ export function MavlinkControlProvider({
   )
 }
 
-const MavlinkControlGlyph = ({ active }: { active: boolean }) => (
-  <svg
-    className="status-video-take-control-glyph"
-    viewBox="0 0 24 24"
-    aria-hidden="true"
-    focusable="false"
-  >
-    {active ? (
-      <path
-        d="M5 12.8 9.4 17 19 7"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2.4"
-      />
-    ) : (
-      <>
-        <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="1.9" />
-        <path
-          d="M12 7.6v8.8M7.6 12h8.8"
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeWidth="2.1"
-        />
-      </>
-    )}
-  </svg>
-)
-
-export function MavlinkControlButton({ vehicleName }: { vehicleName: string }) {
+export function RoverControllerPanel({ vehicleName }: { vehicleName: string }) {
   const control = useContext(MavlinkControlContext)
-  if (!control) {
-    return null
-  }
+  if (!control) return null
   return (
-    <button
-      type="button"
-      className="status-video-take-control-button status-video-mavlink-control-button"
-      aria-label={`${control.controlActionLabel} for ${vehicleName}`}
-      disabled={control.isControlActionDisabled}
-      title={control.controlActionTitle}
-      data-mavlink-control-owner={control.activeHeldByCaller ? 'current' : 'other'}
-      onClick={control.toggleControl}
-    >
-      <MavlinkControlGlyph active={control.activeHeldByCaller} />
-    </button>
+    <MavlinkControllerPanel
+      vehicleName={vehicleName}
+      profile="rover"
+      held={control.activeHeldByCaller}
+      canMove={control.canDrive}
+      status={control.controlLabel}
+      acquire={{ label: control.controlActionLabel, enabled: !control.isControlActionDisabled, run: control.acquireDriveControl }}
+      release={{ enabled: !control.isControlActionDisabled, run: control.releaseDriveControl }}
+      sendMotion={control.sendMotion}
+    />
   )
 }
 
@@ -440,7 +385,7 @@ export function MavlinkDebugPanel({ vehicleName }: { vehicleName: string }) {
           ? `Telemetry ${control.telemetryFrameCount}: message ${control.telemetry.messageId} from ${control.telemetry.systemId}:${control.telemetry.componentId} (sequence ${control.telemetry.sequence})`
           : 'Telemetry pending'}
       </p>
-      <p className="mavlink-debug-help">Use the single status control button to acquire or release drive control.</p>
+      <p className="mavlink-debug-help">Use the controller panel to acquire or release drive control.</p>
     </section>
   )
 }

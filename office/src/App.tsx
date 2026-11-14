@@ -2371,6 +2371,7 @@ function App({ initialAuthError = '' }: AppProps) {
 
     return (
       <MavlinkControlProvider
+        key={mavlinkChannelName}
         actor={mcpActor}
         channelName={mavlinkChannelName}
         enabled={isMavlinkControlEnabled}

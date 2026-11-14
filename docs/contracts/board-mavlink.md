@@ -95,10 +95,10 @@ Office presents two operator modes for every MAVLink-capable board:
   refreshing the page.
   After the lease grant, Office selects Manual mode and sends an ordinary Arm
   command as part of its Control action. It then sends `MANUAL_CONTROL` at 10 Hz,
-  including neutral frames while no arrow key is held. ArduRover uses `y`
+  including neutral frames while the controller input is centered. ArduRover uses `y`
   for steering and `z` for throttle. The client marks unused axes invalid.
   Arm state and Manual/Hold selection are flight-controller details,
-  not separate Office control modes.
+  not separate Office control modes. [Office controller mapping](../components/office.md#mavlink-controller)
 
 Office starts its observer peer only when the Sparkplug projection reports
 `capability.mavlink=true`. A negotiation that does not open the data channel

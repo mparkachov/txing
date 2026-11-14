@@ -3,10 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   MavlinkControlError,
   MavlinkControlSession,
-  MavlinkDriveTeleopController,
-  buildMavlinkControlAxes,
   buildMavlinkManualControlFrame,
-  mavlinkDriveRefreshMs,
   parseMavlinkControlEnvelope,
   type MavlinkDataChannelHandle,
   type MavlinkTelemetry,
@@ -413,14 +410,6 @@ describe('shared MAVLink Office control', () => {
   })
 
   test('maps Rover steering to y, throttle to z, and marks x/r invalid', () => {
-    expect(buildMavlinkControlAxes(['ArrowLeft', 'ArrowUp'])).toEqual({
-      steering: -1000,
-      throttle: 1000,
-    })
-    expect(buildMavlinkControlAxes(['ArrowRight', 'ArrowDown'])).toEqual({
-      steering: 1000,
-      throttle: -1000,
-    })
     const frame = parseMavlinkFrame(buildMavlinkManualControlFrame({
       sequence: 3,
       steering: -1000,
@@ -433,30 +422,6 @@ describe('shared MAVLink Office control', () => {
     expect(view.getInt16(4, true)).toBe(1000)
     expect(view.getInt16(6, true)).toBe(0x7fff)
     expect(frame.payload[10]).toBe(1)
-  })
-
-  test('refreshes drive input at 10 Hz, including neutral while control remains active', () => {
-    const controls: Array<{ steering: number; throttle: number }> = []
-    const teleop = new MavlinkDriveTeleopController({
-      sendControl: (steering, throttle) => controls.push({ steering, throttle }),
-    })
-    teleop.activate()
-    teleop.tick()
-    teleop.handleKeyDown('ArrowUp')
-    teleop.tick()
-    teleop.handleKeyUp('ArrowUp')
-    teleop.handleSafetyStop()
-    teleop.deactivate()
-
-    expect(mavlinkDriveRefreshMs).toBe(100)
-    expect(controls).toEqual([
-      { steering: 0, throttle: 0 },
-      { steering: 0, throttle: 1000 },
-      { steering: 0, throttle: 1000 },
-      { steering: 0, throttle: 0 },
-      { steering: 0, throttle: 0 },
-      { steering: 0, throttle: 0 },
-    ])
   })
 
   test('rejects invalid control envelopes before they can mutate active control state', () => {

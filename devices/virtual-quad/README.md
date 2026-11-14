@@ -179,7 +179,7 @@ per-frame timing, decoded fps, heartbeat and flight observations.
 ## Flight in Office
 
 On the selected device route, select REDCON 1 to start and REDCON 4 to stop.
-REDCON 2 and 3 reflect readiness during startup, degradation and shutdown.
+The REDCON indicator and countdown show startup and shutdown progress.
 Lifecycle messages appear in the notification tray and Session Log.
 When you open an already stopped device, REDCON 4 shows its state. Office
 announces a stop when a session observed on the open page ends.
@@ -195,10 +195,11 @@ Guided mode, arms through the normal checks, and climbs to 2 m. Office shows
 the controller, camera and telemetry status, mode, arm and landed state,
 altitude, heading, and speed.
 
-Hold the movement buttons or use `W`/`S` for forward and back, `A`/`D` for
-left and right, `R`/`F` for climb and descent, and `Q`/`E` for yaw. Releasing
-the inputs commands a hover. Use **Land** and check for **Landed** and
-**Disarmed** in the telemetry. **Release control** returns to View only.
+Use the on-screen sticks, the keyboard shortcuts, or a connected gamepad
+to fly. Centering the sticks
+commands a hover. Use **Land** and check for **Landed** and **Disarmed** in
+the telemetry. **Release control** returns to View only.
+[Office controller mapping](../../docs/components/office.md#mavlink-controller)
 
 The simulator grants one five-second renewable lease. Two seconds without
 a decoded camera frame cause Office to release the lease. Release, peer

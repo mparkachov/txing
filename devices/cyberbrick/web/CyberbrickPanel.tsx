@@ -1,6 +1,6 @@
 import { getTrackIndicatorPresentation } from './app-model'
 import VideoPanel from '../../../office/src/VideoPanel'
-import { MavlinkControlButton } from './MavlinkControlPanel'
+import { RoverControllerPanel } from './MavlinkControlPanel'
 
 type CyberbrickPanelProps = {
   deviceLabel?: string
@@ -222,7 +222,6 @@ function CyberbrickPanel({
             <DebugGlyph />
           </button>
         ) : null}
-        <MavlinkControlButton vehicleName={deviceName} />
       </div>
       <div className="status-video-overlay-lockup">
         <div className="status-txing-title-group" role="group" aria-label={`${deviceName} drive indicators`}>
@@ -294,6 +293,7 @@ function CyberbrickPanel({
               {videoOverlay}
             </div>
           )}
+          <RoverControllerPanel key={videoChannelName} vehicleName={deviceName} />
         </div>
       </div>
     </section>

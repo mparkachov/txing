@@ -4,6 +4,7 @@ import {
   type MavlinkFlightState,
 } from '../../../office/src/mavlink-control'
 import { buildMavlinkFrame, type MavlinkFrame } from '../../../office/src/mavlink-wire'
+import { centeredSticks, type ControllerSticks } from '../../../office/src/mavlink-controller-input'
 
 const target = { systemId: 1, componentId: 1 }
 const guidedMode = 4
@@ -14,7 +15,6 @@ const ground = 1
 const inAir = 2
 const maxVideoAgeMs = 2_000
 
-export type Direction = 'forward' | 'back' | 'left' | 'right' | 'up' | 'down' | 'yawLeft' | 'yawRight'
 type Position = {
   latitude: number
   longitude: number
@@ -48,23 +48,19 @@ export const readQuadPosition = (payload: Uint8Array): Position | null => {
   }
 }
 
-export const buildQuadVelocity = (
+const buildQuadVelocity = (
   sequence: number,
-  directions: Iterable<Direction>,
+  { leftX, leftY, rightX, rightY }: ControllerSticks,
   altitude: number,
 ): Uint8Array => {
-  const held = new Set(directions)
-  const axis = (positive: Direction, negative: Direction) => Number(held.has(positive)) - Number(held.has(negative))
-  const forward = axis('forward', 'back')
-  const right = axis('right', 'left')
-  const horizontalScale = Math.max(1, Math.hypot(forward, right))
-  const down = axis('down', 'up') * 0.5
+  const horizontalScale = Math.max(1, Math.hypot(rightY, rightX))
+  const down = -leftY * 0.5
   const payload = new Uint8Array(53)
   const view = new DataView(payload.buffer)
-  view.setFloat32(16, forward / horizontalScale, true)
-  view.setFloat32(20, right / horizontalScale, true)
-  view.setFloat32(24, altitude >= 3.8 && down < 0 ? 0 : down, true)
-  view.setFloat32(44, axis('yawRight', 'yawLeft') * Math.PI / 6, true)
+  view.setFloat32(16, rightY / horizontalScale, true)
+  view.setFloat32(20, rightX / horizontalScale, true)
+  view.setFloat32(24, down === 0 || altitude >= 3.8 && down < 0 ? 0 : down, true)
+  view.setFloat32(44, leftX * Math.PI / 6, true)
   view.setUint16(48, 1479, true) // Use velocity and yaw rate only.
   payload[50] = target.systemId
   payload[51] = target.componentId
@@ -93,7 +89,6 @@ export type QuadFlightView = {
 
 export class VirtualQuadFlight {
   private readonly session: MavlinkControlSession
-  private readonly inputs = new Map<string, Direction>()
   private readonly videoAt: () => number
   private readonly sendQueueEmpty: () => boolean
   private connected = false
@@ -127,7 +122,6 @@ export class VirtualQuadFlight {
       flightTarget: target,
       decodeMode,
       onControlState: (state, held) => {
-        if (this.held && !held) this.inputs.clear()
         this.held = held
         this.owner = state.activeControl?.actor ?? null
       },
@@ -146,7 +140,6 @@ export class VirtualQuadFlight {
         this.connected = state === 'connected'
         if (!this.connected) {
           this.held = false
-          this.inputs.clear()
           options.onClose()
         }
       },
@@ -205,7 +198,7 @@ export class VirtualQuadFlight {
 
   public async release(reason?: string): Promise<void> {
     if (!this.held || this.leaseOperation === 'Releasing') return
-    this.clearInput()
+    this.sendMotion(centeredSticks)
     this.leaseOperation = 'Releasing'
     if (reason) this.error = reason
     try {
@@ -233,35 +226,17 @@ export class VirtualQuadFlight {
 
   public async land(): Promise<void> {
     if (!this.view().canLand) return
-    this.clearInput()
+    this.sendMotion(centeredSticks)
     await this.perform('Landing', async () => {
       await this.session.selectCustomMode(target, landMode)
       await this.confirm((view) => view.armed === false && view.landed === ground)
     })
   }
 
-  public setInput(id: string, direction: Direction): void {
-    if (this.view().canMove) this.inputs.set(id, direction)
-  }
-
-  public releaseInput(id: string): void {
-    if (this.inputs.delete(id) && this.inputs.size === 0) this.sendVelocity()
-  }
-
-  public clearInput(): void {
-    if (this.inputs.size === 0) return
-    this.inputs.clear()
-    this.sendVelocity()
-  }
-
   public tick(): void {
     const view = this.view()
     if (view.held && (!view.camera || !view.heartbeat || view.position === null || view.landed === null)) {
       void this.release(view.camera ? 'Flight control released · telemetry lost' : 'Flight control released · camera lost')
-    } else if (view.canMove) {
-      this.sendVelocity()
-    } else {
-      this.inputs.clear()
     }
     if (this.connected && !this.held && !this.leaseOperation && performance.now() >= this.nextOwnerPoll) {
       this.nextOwnerPoll = Infinity
@@ -323,12 +298,12 @@ export class VirtualQuadFlight {
     }
   }
 
-  private sendVelocity(): void {
+  public sendMotion(sticks: ControllerSticks): void {
     const view = this.view()
     if (!view.canMove || !view.position || !this.sendQueueEmpty()) return
     const altitude = view.position.altitude
     try {
-      this.session.sendActiveFrame((sequence) => buildQuadVelocity(sequence, this.inputs.values(), altitude))
+      this.session.sendActiveFrame((sequence) => buildQuadVelocity(sequence, sticks, altitude))
     } catch {
       this.close()
     }
