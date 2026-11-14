@@ -42,22 +42,24 @@ mkdir -p tmp
    already needs no deletion.
 
    ```sh
-   version=$(aws_quad dynamodb get-item --table-name "$table" \\
+   version=$(aws_quad dynamodb get-item --table-name "$table" \
      --key "$key" --consistent-read --output json | jq -er '
        if .Item == null then "absent"
        elif (.Item.record.B | @base64d | fromjson | .session) == null
        then .Item.version.N else error("session still active") end')
    ```
 
-3. Confirm the temporary Thing has no attached principals or groups with
-   `iot list-thing-principals` and `iot list-thing-groups-for-thing`. Delete
-   the device registry entry first to stop discovery and new reservations.
-   To fence a concurrent registry update, use the version from
-   `aws_quad iot describe-thing --thing-name "$device" --query version --output text`.
+3. With the device drained and new starts paused, discharge the Thing.
+   This removes its declared shadows, detaches principals and deletes
+   the registry entry. Check the returned `deleted` field.
 
    ```sh
-   aws_quad iot delete-thing --thing-name "$device" --expected-version <thing-version>
+   just aws::discharge "$device" town
    ```
+
+   If the registry entry was already deleted, continue with the ledger
+   and remaining shadows below. Discharge needs the Thing's attributes
+   to identify its declared shadows.
 
 4. If the drained ledger item existed, remove it only at the inspected
    version. Recheck state if the condition fails. A command that raced
@@ -65,8 +67,8 @@ mkdir -p tmp
 
    ```sh
    if [ "$version" != absent ]; then
-     aws_quad dynamodb delete-item --table-name "$table" --key "$key" \\
-       --condition-expression '#v = :v' --expression-attribute-names '{"#v":"version"}' \\
+     aws_quad dynamodb delete-item --table-name "$table" --key "$key" \
+       --condition-expression '#v = :v' --expression-attribute-names '{"#v":"version"}' \
        --expression-attribute-values "$(jq -cn --arg v "$version" '{":v":{N:$v}}')"
    fi
    ```
@@ -78,7 +80,7 @@ mkdir -p tmp
    in this example.
 
    ```sh
-   aws_quad iot-data delete-thing-shadow --thing-name "$device" \\
+   aws_quad iot-data delete-thing-shadow --thing-name "$device" \
      --shadow-name simulation tmp/virtual-quad-deleted-shadow.json
    ```
 
@@ -88,7 +90,7 @@ mkdir -p tmp
 
    ```sh
    channel="$device-board-video"
-   channel_arn=$(aws_quad kinesisvideo describe-signaling-channel --channel-name "$channel" \\
+   channel_arn=$(aws_quad kinesisvideo describe-signaling-channel --channel-name "$channel" \
      --query ChannelInfo.ChannelARN --output text) &&
      aws_quad kinesisvideo delete-signaling-channel --channel-arn "$channel_arn"
    ```
@@ -102,14 +104,12 @@ mkdir -p tmp
    aws_quad iot list-things --attribute-name rigId --attribute-value "$rig" --query 'things[].thingName'
    ```
 
-   After confirming the rig has no principals, remove only its membership
-   in the shared group, then delete the rig Thing and its `sparkplug` shadow.
+   Remove the rig's membership in the shared group, then discharge the rig.
+   Discharge deletes its `sparkplug` shadow and registry entry.
 
    ```sh
    aws_quad iot remove-thing-from-thing-group --thing-name "$rig" --thing-group-name txing-rig-type-cloud
-   aws_quad iot delete-thing --thing-name "$rig" --expected-version <rig-thing-version>
-   aws_quad iot-data delete-thing-shadow --thing-name "$rig" \\
-     --shadow-name sparkplug tmp/virtual-quad-deleted-rig-shadow.json
+   just aws::discharge "$rig" town
    ```
 
 8. Verify both Things are absent, their named-shadow lists are empty, both
@@ -127,9 +127,9 @@ their ownership before deleting any S3 objects or IAM resources.
 ```sh
 probe=quad-qualification-microvm-176
 probe_image="arn:aws:lambda:eu-central-1:453102798330:microvm-image:$probe"
-aws_quad cloudformation describe-stack-resources --stack-name "$probe" \\
+aws_quad cloudformation describe-stack-resources --stack-name "$probe" \
   --query 'StackResources[].[ResourceType,PhysicalResourceId]'
-aws_quad lambda-microvms list-microvms --image-identifier "$probe_image" \\
+aws_quad lambda-microvms list-microvms --image-identifier "$probe_image" \
   --query 'items[].[microvmId,state]'
 ```
 
