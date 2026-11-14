@@ -136,14 +136,15 @@ func (r Reconciler) dispatch(ctx context.Context, record Record) (Record, error)
 func (r Reconciler) observeVM(ctx context.Context, record Record) (Record, error) {
 	session := record.Session
 	if session.Launch == nil {
-		return record, errors.New("MicroVM reservation is missing its pinned launch")
+		return record, errors.New("MicroVM reservation is missing its launch request")
 	}
 	vm, err := r.platform.Get(ctx, session.VMID)
 	if err != nil {
 		return record, err
 	}
-	if vm.ID != session.VMID || vm.ImageARN != session.Launch.ImageARN || vm.ImageVersion != session.Launch.ImageVersion {
-		return record, errors.New("MicroVM identity or pinned image differs from its reservation")
+	if vm.ID != session.VMID || vm.ImageARN != session.Launch.ImageARN ||
+		(session.Launch.ImageVersion != "" && vm.ImageVersion != session.Launch.ImageVersion) {
+		return record, errors.New("MicroVM identity or image differs from its reservation")
 	}
 	if vm.State == types.MicrovmStateTerminated {
 		return r.ledger.Complete(ctx, record.DeviceID, session.ID, Termination{VMID: vm.ID}, r.now().UnixMilli())

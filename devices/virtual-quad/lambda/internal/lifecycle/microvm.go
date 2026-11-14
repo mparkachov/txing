@@ -40,13 +40,17 @@ type AWSMicroVMs struct{ client MicroVMClient }
 func NewAWSMicroVMs(client MicroVMClient) AWSMicroVMs { return AWSMicroVMs{client: client} }
 
 func (p AWSMicroVMs) Run(ctx context.Context, launch Launch) (string, error) {
-	result, err := p.client.RunMicrovm(ctx, &lambdamicrovms.RunMicrovmInput{
-		ImageIdentifier: aws.String(launch.ImageARN), ImageVersion: aws.String(launch.ImageVersion),
-		ClientToken: aws.String(launch.ClientToken), ExecutionRoleArn: aws.String(launch.ExecutionRoleARN),
+	input := &lambdamicrovms.RunMicrovmInput{
+		ImageIdentifier: aws.String(launch.ImageARN),
+		ClientToken:     aws.String(launch.ClientToken), ExecutionRoleArn: aws.String(launch.ExecutionRoleARN),
 		IngressNetworkConnectors: []string{launch.IngressConnector}, EgressNetworkConnectors: []string{launch.EgressConnector},
 		MaximumDurationInSeconds: aws.Int32(launch.MaximumDurationInSeconds), RunHookPayload: aws.String(launch.RunHookPayload),
 		Logging: &types.LoggingMemberCloudWatch{Value: types.CloudWatchLogging{LogGroup: aws.String(launch.LogGroup)}},
-	}, func(options *lambdamicrovms.Options) {
+	}
+	if launch.ImageVersion != "" {
+		input.ImageVersion = aws.String(launch.ImageVersion)
+	}
+	result, err := p.client.RunMicrovm(ctx, input, func(options *lambdamicrovms.Options) {
 		// The ledger owns retries and can distinguish the first service
 		// rejection from one received after an ambiguous attempt.
 		options.Retryer = aws.NopRetryer{}

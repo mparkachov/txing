@@ -91,7 +91,6 @@ type Receipt struct {
 
 type LaunchConfig struct {
 	ImageARN         string `json:"imageArn"`
-	ImageVersion     string `json:"imageVersion"`
 	ExecutionRoleARN string `json:"executionRoleArn"`
 	IngressConnector string `json:"ingressConnector"`
 	EgressConnector  string `json:"egressConnector"`
@@ -100,13 +99,15 @@ type LaunchConfig struct {
 }
 
 func (c LaunchConfig) valid() bool {
-	return c.ImageARN != "" && c.ImageVersion != "" && c.ExecutionRoleARN != "" &&
+	return c.ImageARN != "" && c.ExecutionRoleARN != "" &&
 		c.IngressConnector != "" && c.EgressConnector != "" && c.LogGroup != "" && c.ControllerURL != ""
 }
 
 // Launch is written before RunMicrovm. Every retry sends these same inputs.
 type Launch struct {
 	LaunchConfig
+	// Older reservations can carry an explicit version. New launches omit it.
+	ImageVersion             string `json:"imageVersion,omitempty"`
 	ClientToken              string `json:"clientToken"`
 	MaximumDurationInSeconds int32  `json:"maximumDurationInSeconds"`
 	RunHookPayload           string `json:"runHookPayload"`

@@ -44,12 +44,12 @@ func initialize(ctx context.Context) (controller.Handler, error) {
 	table := os.Getenv("VIRTUAL_QUAD_SESSION_TABLE")
 	function := os.Getenv("AWS_LAMBDA_FUNCTION_NAME")
 	launch := lifecycle.LaunchConfig{
-		ImageARN: os.Getenv("VIRTUAL_QUAD_IMAGE_ARN"), ImageVersion: os.Getenv("VIRTUAL_QUAD_IMAGE_VERSION"),
+		ImageARN:         os.Getenv("VIRTUAL_QUAD_IMAGE_ARN"),
 		ExecutionRoleARN: os.Getenv("VIRTUAL_QUAD_WORKER_ROLE_ARN"), LogGroup: os.Getenv("VIRTUAL_QUAD_WORKER_LOG_GROUP"),
 	}
 	image, err := arn.Parse(launch.ImageARN)
 	if err != nil || image.Service != "lambda" || image.Region != cfg.Region || cfg.Region != "eu-central-1" ||
-		!strings.HasPrefix(image.Resource, "microvm-image:") || launch.ImageVersion == "" ||
+		!strings.HasPrefix(image.Resource, "microvm-image:") ||
 		launch.ExecutionRoleARN == "" || launch.LogGroup == "" || function == "" || table == "" {
 		return empty, errors.New("missing or invalid virtual quad controller configuration")
 	}

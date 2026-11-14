@@ -47,7 +47,7 @@ func TestAWSMicroVMRunUsesExactStoredInputs(t *testing.T) {
 		t.Fatalf("Run failed: %v", err)
 	}
 	logging := client.run.Logging.(*types.LoggingMemberCloudWatch).Value
-	if aws.ToString(client.run.ImageIdentifier) != config.ImageARN || aws.ToString(client.run.ImageVersion) != config.ImageVersion ||
+	if aws.ToString(client.run.ImageIdentifier) != config.ImageARN || client.run.ImageVersion != nil ||
 		aws.ToString(client.run.ExecutionRoleArn) != config.ExecutionRoleARN || aws.ToString(logging.LogGroup) != config.LogGroup ||
 		aws.ToString(client.run.ClientToken) != launch.ClientToken || aws.ToInt32(client.run.MaximumDurationInSeconds) != launch.MaximumDurationInSeconds ||
 		aws.ToString(client.run.RunHookPayload) != launch.RunHookPayload || client.run.IdlePolicy != nil ||
@@ -57,6 +57,11 @@ func TestAWSMicroVMRunUsesExactStoredInputs(t *testing.T) {
 	}
 	if _, ok := client.retryer.(aws.NopRetryer); !ok {
 		t.Fatal("AWS SDK could retry independently of the ledger")
+	}
+	// An in-flight reservation from the old controller replays its original request.
+	launch.ImageVersion = "7.0"
+	if _, err := platform.Run(t.Context(), launch); err != nil || aws.ToString(client.run.ImageVersion) != "7.0" {
+		t.Fatalf("stored image version was not preserved: %v", err)
 	}
 	client.runErr = &types.ValidationException{Message: aws.String("echoed private launch data")}
 	if _, err := platform.Run(t.Context(), launch); !errors.Is(err, ErrLaunchRejected) || strings.Contains(err.Error(), "private") {

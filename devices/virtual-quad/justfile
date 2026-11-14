@@ -51,7 +51,7 @@ runtime-smoke:
     nerdctl.lima run --rm --network none --stop-timeout 25 txing-virtual-quad:local smoke
 
 [positional-arguments]
-deploy image_version='' stack_name='':
+deploy controller='enabled' stack_name='':
     #!/bin/sh
     set -eu
     . "{{ aws_lib }}"
@@ -63,23 +63,13 @@ deploy image_version='' stack_name='':
       exit 1
     fi
     stack="$(lambda_stack_name virtual-quad)"
-    image_version="$1"
-    set -- "EnvironmentStackName=$TXING_AWS_STACK"
-    if [ -n "$image_version" ]; then
-      caller=$(aws sts get-caller-identity --output json)
-      partition=$(printf '%s\n' "$caller" | jq -er '.Arn | split(":")[1]')
-      account=$(printf '%s\n' "$caller" | jq -er .Account)
-      image="arn:$partition:lambda:$TXING_AWS_REGION:$account:microvm-image:$stack"
-      selected=$(aws lambda-microvms get-microvm-image-version \
-        --image-identifier "$image" --image-version "$image_version" --output json)
-      if ! printf '%s\n' "$selected" | jq -e '.state == "SUCCESSFUL" and .status == "ACTIVE" and
-        any(.cpuConfigurations[]; .architecture == "ARM_64")' > /dev/null; then
-        printf '%s\n' "Image version $image_version must be successful, active, and support ARM64." >&2
-        exit 1
-      fi
-      set -- "$@" "ImageVersion=$image_version"
-    fi
-    deploy_template "$stack" "{{ session_template }}" "$@"
+    case "$1" in
+      enabled) enabled=true ;;
+      disabled) enabled=false ;;
+      *) printf '%s\n' 'Expected enabled or disabled.' >&2; exit 1 ;;
+    esac
+    deploy_template "$stack" "{{ session_template }}" \
+      "EnvironmentStackName=$TXING_AWS_STACK" "ControllerEnabled=$enabled"
     aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].Outputs' --output json
 
 [positional-arguments]

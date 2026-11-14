@@ -80,7 +80,8 @@ availability and flight ownership are read from the sources in the table.
 
 The simulator uses a dedicated Linux ARM64 Lambda MicroVM image in
 `eu-central-1`, with at least 4 GiB of memory. Each session restores a fresh
-VM from an explicit active image version. It uses managed Internet egress,
+VM from the latest active version that AWS selects at launch. A successful
+publication becomes available to new sessions automatically. It uses managed Internet egress,
 `NO_INGRESS`, and a scoped execution role for the virtual-quad KVS channel namespace and
 IAM-authenticated controller URL. The supervisor derives channel names from
 the validated device assignment. The simulator and agent use separate image
@@ -119,7 +120,7 @@ SITL. [Native camera](../devices/virtual-quad/runtime/camera.cpp)
    in Office. The session controller receives the Sparkplug command,
    verifies the current device assignment, awake rig and terminal revision,
    reserves one session in DynamoDB, and requests a new MicroVM from the
-   pinned simulator image. REDCON 3 indicates startup is in progress.
+   latest active simulator image. REDCON 3 indicates startup is in progress.
 2. **Activate the simulator inside the MicroVM.** The restored supervisor
    accepts the run hook and claims the current session from the controller.
    After the claim is granted, it starts fresh ArduCopter SITL and the media
@@ -162,8 +163,9 @@ Commands are Sparkplug `DCMD.redcon` with levels 1 and 4. A UUID
 `virtualQuad.sessionId`, including during startup. DynamoDB conditional writes
 fence the request, registry assignment, worker claim and observed health.
 The launch uses the session ID as its idempotency key and records exact
-inputs before dispatch. A retry sends those inputs, including its image version
-and absolute lifetime budget. A competing VM cannot acquire the existing
+inputs before dispatch, including the image ARN and absolute lifetime budget.
+Retries reuse the request and token. AWS selects the image version when it
+creates an instance. A competing VM cannot acquire the existing
 claim. The repair pass reconciles unresolved reservations and managed image
 inventory. [Lifecycle implementation](../devices/virtual-quad/lambda/internal/lifecycle/)
 · [Sparkplug lifecycle](sparkplug-lifecycle.md)
@@ -227,7 +229,7 @@ Agent health is diagnostic and independent of simulator readiness.
 
 The runtime, controller Lambda, Office and observer have distinct immutable
 release identities. The device guide links their compatibility and build
-evidence to the pinned simulator image.
+evidence to the exact version used by the simulator.
 [Image publication, deployment and rollback](../devices/virtual-quad/README.md#build-and-publish-the-session-image)
 
 Review source ownership, build inputs and shadow contracts before the live

@@ -7,11 +7,11 @@ Parameters:
     AllowedPattern: '[A-Za-z][A-Za-z0-9-]{0,40}'
   LambdaArtifactsBucketName:
     Type: String
-  ImageVersion:
+  ControllerEnabled:
     Type: String
-    Default: ""
-    AllowedPattern: '([0-9]+\.[0-9]+)?'
-    Description: Pin a successful MicroVM image version. An empty value prepares image publication.
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Enable the simulator controller and command routes. False prepares image publication.
 
 Rules:
   Frankfurt:
@@ -20,7 +20,7 @@ Rules:
         AssertDescription: The virtual quadcopter runtime uses eu-central-1.
 
 Conditions:
-  ImageConfigured: !Not [!Equals [!Ref ImageVersion, ""]]
+  ControllerActive: !Equals [!Ref ControllerEnabled, "true"]
 
 Resources:
   MicrovmLogs:
@@ -52,7 +52,7 @@ Resources:
 
   WorkerRole:
     Type: AWS::IAM::Role
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -104,14 +104,14 @@ Resources:
 
   ControllerLogs:
     Type: AWS::Logs::LogGroup
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Properties:
       LogGroupName: !Sub /aws/lambda/${EnvironmentStackName}-virtual-quad
       RetentionInDays: 14
 
   ControllerRole:
     Type: AWS::IAM::Role
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -163,7 +163,7 @@ Resources:
 
   Controller:
     Type: AWS::Lambda::Function
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Properties:
       FunctionName: !Sub ${EnvironmentStackName}-virtual-quad
       Runtime: provided.al2023
@@ -179,20 +179,19 @@ Resources:
         Variables:
           VIRTUAL_QUAD_SESSION_TABLE: !Ref SessionTable
           VIRTUAL_QUAD_IMAGE_ARN: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:microvm-image:${EnvironmentStackName}-virtual-quad
-          VIRTUAL_QUAD_IMAGE_VERSION: !Ref ImageVersion
           VIRTUAL_QUAD_WORKER_ROLE_ARN: !GetAtt WorkerRole.Arn
           VIRTUAL_QUAD_WORKER_LOG_GROUP: !Ref MicrovmLogs
 
   WorkerUrl:
     Type: AWS::Lambda::Url
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Properties:
       AuthType: AWS_IAM
       TargetFunctionArn: !GetAtt Controller.Arn
 
   DeviceCommandRule:
     Type: AWS::IoT::TopicRule
-    Condition: ImageConfigured
+    Condition: ControllerActive
     DependsOn: WorkerUrl
     Properties:
       RuleName: !Join ["_", [!Join ["_", !Split ["-", !Ref EnvironmentStackName]], virtual_quad_dcmd]]
@@ -208,7 +207,7 @@ Resources:
 
   DeviceCommandPermission:
     Type: AWS::Lambda::Permission
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref Controller
@@ -218,13 +217,13 @@ Resources:
 
   RepairGroup:
     Type: AWS::Scheduler::ScheduleGroup
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Properties:
       Name: !Sub ${EnvironmentStackName}-virtual-quad
 
   RepairRole:
     Type: AWS::IAM::Role
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -246,7 +245,7 @@ Resources:
 
   RepairSchedule:
     Type: AWS::Scheduler::Schedule
-    Condition: ImageConfigured
+    Condition: ControllerActive
     DependsOn: WorkerUrl
     Properties:
       Name: repair
@@ -271,5 +270,5 @@ Outputs:
   MicrovmLogGroup:
     Value: !Ref MicrovmLogs
   ControllerFunction:
-    Condition: ImageConfigured
+    Condition: ControllerActive
     Value: !Ref Controller

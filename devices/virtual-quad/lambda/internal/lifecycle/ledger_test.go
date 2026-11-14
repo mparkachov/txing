@@ -17,7 +17,7 @@ func requestID(i int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012x
 
 func testConfig() LaunchConfig {
 	return LaunchConfig{
-		ImageARN: "image", ImageVersion: "2.0", ExecutionRoleARN: "worker-role",
+		ImageARN: "image", ExecutionRoleARN: "worker-role",
 		IngressConnector: "NO_INGRESS", EgressConnector: "INTERNET_EGRESS",
 		LogGroup: "simulator-logs", ControllerURL: "controller",
 	}
@@ -130,7 +130,7 @@ func TestLaunchRetryKeepsExactInputsAndWorkerClaim(t *testing.T) {
 		t.Fatalf("overlapping dispatch acquired a lease: %t %v", dispatch, err)
 	}
 	config := testConfig()
-	config.ImageVersion = "3.0"
+	config.LogGroup = "new-log-group"
 	retry, dispatch, err := ledger.BeginDispatch(t.Context(), target.DeviceID, start.Session.ID, config, testNow+20000)
 	if err != nil || !dispatch || *retry.Session.Launch != *first.Session.Launch || retry.Version != first.Version+1 || retry.Session.LaunchAttempts != 2 {
 		t.Fatalf("launch retry changed persisted inputs: dispatch=%t error=%v", dispatch, err)

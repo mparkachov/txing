@@ -18,8 +18,8 @@ just aws::deploy-device <cloud-rig-id> virtual-quad virtual-quad
 The permanent registration in the `town` environment is
 [`aws → virtual-quad`](https://office.txing.dev/town-jhgjjd/cloud-8lgj1r/virtual-quad-1knemq).
 Its Thing ID is `virtual-quad-1knemq`. Use the existing registration when
-updating that environment. The image pin is shared across devices, and each
-registered device has its own session record and signaling channels.
+updating that environment. Each registered device has its own session
+record and signaling channels.
 
 The enlist operation creates the Thing, the five named shadows and the
 device's `-board-video` and `-mavlink` signaling channels. The
@@ -54,10 +54,9 @@ are recorded at build time. The ArduCopter archive contains the corresponding
 source and licenses for the pinned checkout and its submodules.
 
 For a new environment, deploy the shared AWS stack and run
-`just virtual-quad::deploy` to prepare the session table, build role and log
-group. In an existing environment, the no-argument deploy preserves its
-previous image pin. Use the environment's configured AWS profile and
-`TXING_AWS_STACK`. [Environment deployment](../../docs/aws.md#bring-up-order)
+`just virtual-quad::deploy disabled` to prepare the session table, build role
+and log group before the first image exists. Use the environment's configured
+AWS profile and `TXING_AWS_STACK`. [Environment deployment](../../docs/aws.md#bring-up-order)
 
 ```sh
 just virtual-quad::publish-image "$bundle"
@@ -76,42 +75,42 @@ aws lambda-microvms get-microvm-image-version --region eu-central-1 \
   --query '{state:state,status:status,base:baseImageVersion,reason:stateReason,artifact:codeArtifact.uri}'
 ```
 
-Drain existing sessions before switching the controller pin. Ensure the
-compatible controller bootstrap is staged by the shared
-[Lambda publisher](../../docs/artifacts.md#lambda-artifacts). During first
-installation the publisher stages the bootstrap before the function exists.
-For an image-only update a compatible deployed bootstrap can stay in use.
+AWS makes successful builds active automatically. The controller omits the
+image version in new launch requests, so the next Start uses the latest
+active version. Image publication needs no CloudFormation deployment.
+Running simulator sessions keep their current image.
+[AWS MicroVM launch behavior](https://docs.aws.amazon.com/lambda/latest/dg/microvms-launching.html)
+
+For the first installation, stage the compatible controller bootstrap with
+the [Lambda publisher](../../docs/artifacts.md#lambda-artifacts), then enable
+the controller after the image is active. An existing installation using
+a fixed image version needs a one-time migration. Publish `lambda-v0.15.12`
+or later with the existing controller deployed, then run the same command
+to remove the old CloudFormation version parameter and environment setting.
 
 ```sh
-just virtual-quad::deploy <image-version>
+just virtual-quad::deploy enabled
 ```
 
-Deployment pins the reviewed image version for future launches. This lets
-operators review a published version before switching over and select the
-previous version for rollback. Keep the currently deployed image and a
-previous working version active with their complete artifacts. Read the
-controller's deployed pin and code digest before and after changing the pin.
-For the `town` environment, use:
+For `town`, verify the deployed controller and the image selected by AWS:
 
 ```sh
 aws lambda get-function-configuration --region eu-central-1 \
   --function-name town-virtual-quad \
-  --query '{state:State,update:LastUpdateStatus,image:Environment.Variables.VIRTUAL_QUAD_IMAGE_VERSION,code:CodeSha256,architectures:Architectures}'
+  --query '{state:State,update:LastUpdateStatus,code:CodeSha256,architectures:Architectures}'
+aws lambda-microvms get-microvm-image --region eu-central-1 \
+  --image-identifier arn:aws:lambda:eu-central-1:453102798330:microvm-image:town-virtual-quad \
+  --query '{state:state,latest:latestActiveImageVersion}'
 ```
 
-Confirm the controller is active, the update succeeded and the selected
-image is the version returned by publication. Compare `CodeSha256` with the
+Confirm the controller is active and compare `CodeSha256` with the
 base64-encoded SHA-256 of the controller ZIP for the selected Lambda release.
-Record the source revision, bundle digest and S3 URI, image ARN/version and
-resolved base, controller Lambda release and code digest, agent release and
-image version, and Office release or deployment commit with acceptance evidence.
-
-The consolidated supervisor uses the same session assignment and signed
-claim, grant and health contract as the controller in `lambda-v0.15.11`.
-Virtual-quad observation uses the existing `agent-v0.1.3` profile. Office
-changes ship in the next [Office publication](../../docs/components/office.md#cloudflare-pages)
-after updating the Office version. Record the actual deployed combination at
-acceptance.
+Use `get-microvm` on the running instance to verify the actual image version
+used in acceptance. Record the source revision, bundle digest and S3 URI,
+image ARN/version and resolved base, controller release and code digest,
+agent release and image version, and Office release or deployment commit.
+The existing `agent-v0.1.3` and Office `0.18.7` support the consolidated
+simulator. [Office publication](../../docs/components/office.md#cloudflare-pages)
 
 ## Drain and rollback
 
@@ -121,22 +120,31 @@ its session ID and the agent shadow clears its run and endpoint. Confirm both
 MicroVMs are `TERMINATED` in the image inventories. Keep the command rule,
 controller and repair schedule enabled while sessions drain.
 
-For an image rollback, use `just virtual-quad::deploy <previous-image-version>`
-with the retained successful ARM64 version. For a controller rollback, use
-`just release::publish lambda <previous-release>` only when rolling back the
-shared Lambda release is intended, since it also updates the other targets.
-Check the controller's code digest against the selected release. Roll back
-the Office deployment through Cloudflare Pages. Follow the
-[agent drain and release procedure](../../docs/components/agent.md#enable-and-drain)
+For an image rollback, keep the previous working ARM64 version active
+with its bundle and deactivate the faulty version on the MicroVM image.
+Then verify `latestActiveImageVersion` before starting a new session.
+For example, to fall back from 8.0 to 7.0 in `town` when 8.0 is the only
+newer active version:
+
+```sh
+aws lambda-microvms update-microvm-image-version --region eu-central-1 \
+  --image-identifier arn:aws:lambda:eu-central-1:453102798330:microvm-image:town-virtual-quad \
+  --image-version 8.0 --status INACTIVE
+```
+
+For a controller rollback, use `just release::publish lambda <previous-release>`
+only when rolling back the shared Lambda release is intended, since it also
+updates the other targets. Releases before `lambda-v0.15.12` require the old
+controller template with an explicit image version. Check the controller's
+code digest against the selected release. Roll back Office through Cloudflare
+Pages. Follow the [agent drain and release procedure](../../docs/components/agent.md#enable-and-drain)
 when rolling back the shared observer.
 
-To disable simulator launches after draining, set `ImageVersion` to an empty
-string in the existing virtual-quad CloudFormation stack and preserve the other
-parameter values. This removes the controller, command rule and repair schedule
-while retaining the build resources and session table. Re-enable the stack
-with the reviewed image version and republish the selected controller release
-if needed. The registered Thing and signaling channels can be retained for
-re-enablement.
+To disable simulator launches after draining, run
+`just virtual-quad::deploy disabled`. This removes the controller, command
+rule and repair schedule. The build resources, session table, Thing and
+channels remain available for re-enablement. Use
+`just virtual-quad::deploy enabled` to restore the controller.
 
 ## Retire the temporary deployment
 
@@ -206,7 +214,7 @@ View only peer.
 ## Permanent deployment acceptance
 
 Review the [architecture](../../docs/virtual-quadcopter-architecture.md) and
-the build and publication evidence first. For the pinned release, open
+the build and publication evidence first. Open
 [`aws → virtual-quad`](https://office.txing.dev/town-jhgjjd/cloud-8lgj1r/virtual-quad-1knemq)
 on the mixed rig and confirm the following.
 

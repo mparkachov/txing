@@ -107,7 +107,7 @@ type testPlatform struct {
 
 func (p *testPlatform) Run(_ context.Context, launch lifecycle.Launch) (string, error) {
 	p.launches++
-	p.vm = lifecycle.MicroVM{ID: "microvm-test", ImageARN: launch.ImageARN, ImageVersion: launch.ImageVersion, State: types.MicrovmStateRunning}
+	p.vm = lifecycle.MicroVM{ID: "microvm-test", ImageARN: launch.ImageARN, ImageVersion: "8.0", State: types.MicrovmStateRunning}
 	return p.vm.ID, nil
 }
 
@@ -142,7 +142,7 @@ func TestHandlerRoutesCommandsAndWorkerGrant(t *testing.T) {
 	store, platform, reports := &testStore{}, &testPlatform{}, &testReporter{}
 	ledger := lifecycle.NewLedger(store)
 	launch := lifecycle.LaunchConfig{
-		ImageARN: "image", ImageVersion: "2.0", ExecutionRoleARN: workerRole,
+		ImageARN: "image", ExecutionRoleARN: workerRole,
 		IngressConnector: "NO_INGRESS", EgressConnector: "INTERNET_EGRESS", LogGroup: "logs", ControllerURL: "https://example.test/",
 	}
 	handler, err := NewHandler(ledger, lifecycle.NewReconciler(ledger, platform, launch), testRegistry{awake: true}, store, reports, workerRole)

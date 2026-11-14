@@ -11,7 +11,7 @@ deleting logs or artifacts.
 | Temporary registered device | `virtual-quad-eypfeo` on `cloud-ikgp4n` (Office name `virtual-quad-test`), its five named shadows, channels `virtual-quad-eypfeo-board-video` and `virtual-quad-eypfeo-mavlink`, and its item in `town-virtual-quad-sessions`. |
 | Temporary rig | `cloud-ikgp4n`, `sparkplug` named shadow, and its membership in `txing-rig-type-cloud`. |
 | Standalone feasibility run | MicroVM image and CloudFormation stack `quad-qualification-microvm-176`, bucket `quad-qualification-microvm-176-artifacts-adzkvmdxvocd`, CloudWatch group `/aws/lambda-microvms/quad-qualification-microvm-176`, and stack-owned roles `quad-qualification-microvm-176-BuildRole-1Jl4Vfs7Mft9` and `quad-qualification-microvm-176-ExecutionRole-fEJtHmXiOjic`. Channels `quad-qualification-176-board-video` and `quad-qualification-176-mavlink`. |
-| Permanent device and shared services | `virtual-quad-1knemq` on `cloud-8lgj1r` (Office name `aws`), both permanent channels, shared cloud rig and observer schedules, `town-virtual-quad` controller and repair schedule, session table, artifact bucket and retained production image versions. Keep these available. |
+| Permanent device and shared services | `virtual-quad-1knemq` on `cloud-8lgj1r` (Office name `aws`), both permanent channels, shared cloud rig and observer schedules, `town-virtual-quad` controller and repair schedule, session table, artifact bucket and current and retained production image versions. Keep these available. |
 
 The removed Fargate prototype used stack and repository
 `quad-qualification-176`. Both were absent on the last inventory. The KVS

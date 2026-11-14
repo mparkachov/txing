@@ -45,7 +45,7 @@ func (f *fakeMicroVMs) Inventory(_ context.Context, image string) ([]MicroVM, er
 	return f.listed, nil
 }
 
-func TestReconcileAmbiguousLaunchKeepsReservationAndPinnedRequest(t *testing.T) {
+func TestReconcileAmbiguousLaunchKeepsReservationAndRequest(t *testing.T) {
 	ledger := NewLedger(&memoryStore{})
 	started := reserve(t, ledger, 0, testNow)
 	platform := &fakeMicroVMs{run: func() (string, error) { return "", context.DeadlineExceeded }}
@@ -63,7 +63,7 @@ func TestReconcileAmbiguousLaunchKeepsReservationAndPinnedRequest(t *testing.T) 
 	}
 	now = now.Add(DispatchTimeout)
 	platform.run = func() (string, error) { return "", ErrLaunchRejected }
-	reconciler.launch.ImageVersion = "3.0"
+	reconciler.launch.LogGroup = "new-log-group"
 	if record, err := reconcile(); !errors.Is(err, ErrLaunchRejected) || record.Session == nil || record.Session.LaunchAttempts != 2 {
 		t.Fatalf("a rejection after an ambiguous dispatch released the reservation: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestStartReplaysAmbiguousLaunchBeforeScheduledRepair(t *testing.T) {
 func TestReconcileTerminatesVMReturnedAfterStop(t *testing.T) {
 	ledger := NewLedger(&memoryStore{})
 	started := reserve(t, ledger, 0, testNow)
-	vm := MicroVM{ID: "microvm-late", ImageARN: testConfig().ImageARN, ImageVersion: testConfig().ImageVersion, State: types.MicrovmStatePending}
+	vm := MicroVM{ID: "microvm-late", ImageARN: testConfig().ImageARN, ImageVersion: "8.0", State: types.MicrovmStatePending}
 	platform := &fakeMicroVMs{vms: map[string]MicroVM{vm.ID: vm}}
 	platform.run = func() (string, error) {
 		if _, _, err := ledger.RequestStop(t.Context(), target, CommandRequest{ID: requestID(40)}, started.Session.ID, testNow); err != nil {

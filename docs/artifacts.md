@@ -372,12 +372,12 @@ own code changes.
 
 ## Virtual quadcopter session image
 
-The virtual quadcopter runs from a pinned Linux ARM64 Lambda MicroVM image
-version. Each publication stages the runtime bundle and its corresponding
+New virtual quadcopter sessions use the latest active Linux ARM64 Lambda
+MicroVM image version. Each publication stages the runtime bundle and its corresponding
 ArduCopter and txing runtime sources in the environment artifact bucket under
 `virtual-quad/<environment>/<bundle-sha256>/`. The simulator image, controller
 Lambda, Office and agent each follow their owning release workflow. Keep the
-pinned and rollback image versions with their complete artifacts. See the
+current and rollback image versions with their complete artifacts. See the
 [virtual quadcopter image workflow](../devices/virtual-quad/README.md#build-and-publish-the-session-image)
 and [Lambda artifacts](#lambda-artifacts).
 
