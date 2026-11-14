@@ -105,7 +105,8 @@ type AppProps = {
 }
 type DriveControlOwnership = 'unknown' | 'no-owner' | 'current-browser' | 'another-session'
 type ShadowSnapshotView = {
-  json: string
+  thingName: string
+  document: unknown
   updatedAtMs: number
 }
 type AgentShadowView = {
@@ -164,7 +165,6 @@ type RouteHeaderState = {
   error: string
 }
 
-const formatJson = (value: unknown): string => JSON.stringify(value, null, 2)
 const defaultMcpActiveTtlMs = 5_000
 const robotStatePollIntervalMs = 5_000
 const routeSparkplugPollIntervalMs = 2_000
@@ -203,11 +203,6 @@ const emptyRouteHeaderState = (): RouteHeaderState => ({
   sparkplugShadow: null,
   shadowWarning: '',
   error: '',
-})
-
-const createShadowSnapshotView = (shadow: unknown): ShadowSnapshotView => ({
-  json: formatJson(shadow),
-  updatedAtMs: Date.now(),
 })
 
 const buildMcpActor = (authUser: AuthUser | null): string => {
@@ -297,10 +292,9 @@ function App({ initialAuthError = '' }: AppProps) {
   const [route, setRoute] = useState<AppRoute>(getInitialRoute)
   const [status, setStatus] = useState<SessionStatus>('loading')
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
-  const [shadowJson, setShadowJson] = useState<string>('{}')
+  const [shadowSnapshot, setShadowSnapshot] = useState<ShadowSnapshotView | null>(null)
   const [robotState, setRobotState] = useState<RobotState | null>(null)
   const [mcpTransport, setMcpTransport] = useState<McpTransportKind | null>(null)
-  const [lastShadowUpdateAtMs, setLastShadowUpdateAtMs] = useState<number | null>(null)
   const [isLoadingShadow, setIsLoadingShadow] = useState(false)
   const [isUpdatingShadow, setIsUpdatingShadow] = useState(false)
   const [isDebugEnabled, setIsDebugEnabled] = useState(false)
@@ -430,16 +424,10 @@ function App({ initialAuthError = '' }: AppProps) {
       : route.kind === 'device' || route.kind === 'device_video'
         ? routeHeaderMetadata?.rigName ?? route.rig
         : null
+  const currentShadowSnapshot = shadowSnapshot?.thingName === currentRouteThingName ? shadowSnapshot : null
+  const lastShadowUpdateAtMs = currentShadowSnapshot?.updatedAtMs ?? null
   const hasShadowBootstrapFailure = shadowBootstrapError !== '' && lastShadowUpdateAtMs === null
-
-  const shadowDocument = useMemo<unknown>(() => {
-    try {
-      return JSON.parse(shadowJson)
-    } catch {
-      return null
-    }
-  }, [shadowJson])
-  const displayShadowDocument = lastShadowUpdateAtMs !== null ? shadowDocument : routeSparkplugShadow
+  const displayShadowDocument = currentShadowSnapshot ? currentShadowSnapshot.document : routeSparkplugShadow
   const deviceAdapter = useMemo(
     () => getDeviceWebAdapter(currentThingTypeName),
     [currentThingTypeName],
@@ -464,10 +452,8 @@ function App({ initialAuthError = '' }: AppProps) {
     [currentDeviceAdapter, displayShadowDocument],
   )
 
-  const reportedMcuPower = deviceTelemetry?.reportedMcuPower ?? null
   const reportedMcuOnline = deviceTelemetry?.reportedMcuOnline ?? null
   const primaryReportedBatteryMv = deviceTelemetry?.reportedBatteryMv ?? null
-  const reportedBoardPower = deviceTelemetry?.reportedBoardPower ?? null
   const reportedBoardOnline = deviceTelemetry?.reportedBoardOnline ?? null
   const shadowReportedRedcon = useMemo(
     () => extractReportedRedcon(displayShadowDocument),
@@ -640,12 +626,6 @@ function App({ initialAuthError = '' }: AppProps) {
     [appendSessionLogEntry],
   )
 
-  const applyShadowSnapshot = useCallback((shadow: unknown): void => {
-    const snapshotView = createShadowSnapshotView(shadow)
-    setShadowJson(snapshotView.json)
-    setLastShadowUpdateAtMs(snapshotView.updatedAtMs)
-  }, [])
-
   const resolveSessionIdToken = useCallback(async (): Promise<string> => {
     const refreshedTokens = await refreshTokensIfNeeded()
     if (!refreshedTokens) {
@@ -811,14 +791,6 @@ function App({ initialAuthError = '' }: AppProps) {
     },
     [enqueueRuntimeError, refreshRouteSparkplugShadow],
   )
-
-  const getShadowSession = (): ShadowSession => {
-    const shadowSession = shadowSessionRef.current
-    if (!shadowSession || !isShadowConnected) {
-      throw new Error('Shadow connection is not ready')
-    }
-    return shadowSession
-  }
 
   useEffect(() => {
     if (hasConfigErrors) {
@@ -1417,8 +1389,7 @@ function App({ initialAuthError = '' }: AppProps) {
       setShadowConnectionState('idle')
       setIsLoadingShadow(false)
       setIsUpdatingShadow(false)
-      setLastShadowUpdateAtMs(null)
-      setShadowJson('{}')
+      setShadowSnapshot(null)
       setPendingTargetRedcon(null)
       setRobotState(null)
       setIsBotPanelOpen(false)
@@ -1433,13 +1404,12 @@ function App({ initialAuthError = '' }: AppProps) {
     let shadowSession: ShadowSession | null = null
     redconCommandSequenceRef.current += 1
     hasReceivedShadowSnapshotRef.current = false
-    setShadowJson('{}')
+    setShadowSnapshot(null)
     setShadowBootstrapError('')
     setPendingTargetRedcon(null)
     setRobotState(null)
     setMcpTransport(null)
     setIsTakingMcpControl(false)
-    setLastShadowUpdateAtMs(null)
     setIsLoadingShadow(true)
     setIsUpdatingShadow(false)
     setIsBotPanelOpen(false)
@@ -1469,7 +1439,11 @@ function App({ initialAuthError = '' }: AppProps) {
             }
             hasReceivedShadowSnapshotRef.current = true
             setShadowBootstrapError('')
-            applyShadowSnapshot(shadow)
+            setShadowSnapshot({
+              thingName: activeShadowTarget.thingName,
+              document: shadow,
+              updatedAtMs: Date.now(),
+            })
             setIsLoadingShadow(false)
           },
           onRobotStateChange: (nextRobotState) => {
@@ -1534,7 +1508,6 @@ function App({ initialAuthError = '' }: AppProps) {
     }
   }, [
     activeShadowTarget,
-    applyShadowSnapshot,
     appendActiveControlLossLog,
     enqueueRuntimeError,
     mcpActor,
@@ -1749,19 +1722,25 @@ function App({ initialAuthError = '' }: AppProps) {
   }, [cmdVelRepeatIntervalMs, isDriveInputEnabled])
 
   const loadShadow = async (): Promise<void> => {
+    const session = shadowSessionRef.current
+    if (!session || !isShadowConnected) {
+      return
+    }
     setIsLoadingShadow(true)
 
     try {
-      const shadowSession = getShadowSession()
-      const shadowResponse = await shadowSession.requestSnapshot()
-      applyShadowSnapshot(shadowResponse)
+      await session.requestSnapshot()
     } catch (caughtError) {
-      enqueueRuntimeError(
-        caughtError instanceof Error ? caughtError.message : 'Unable to load shadow',
-        'shadow-load',
-      )
+      if (shadowSessionRef.current === session) {
+        enqueueRuntimeError(
+          caughtError instanceof Error ? caughtError.message : 'Unable to load shadow',
+          'shadow-load',
+        )
+      }
     } finally {
-      setIsLoadingShadow(false)
+      if (shadowSessionRef.current === session) {
+        setIsLoadingShadow(false)
+      }
     }
   }
 
@@ -2064,11 +2043,9 @@ function App({ initialAuthError = '' }: AppProps) {
         : route.kind === 'device' || route.kind === 'device_video'
           ? selectedDeviceLabel ?? route.device
           : ''
-  const routeCapabilityShadow =
-    currentRouteThingName !== null &&
-    activeShadowTarget?.thingName === currentRouteThingName
-      ? displayShadowDocument
-      : routeSparkplugShadow
+  const isDeviceShadowTargetCurrent = activeShadowTarget !== null &&
+    activeShadowTarget.thingName === currentRouteThingName
+  const routeCapabilityShadow = isDeviceShadowTargetCurrent ? displayShadowDocument : routeSparkplugShadow
   const renderDevicePage = (session: DeviceSessionView | null): ReactElement => {
     const navigationCapabilityShadow = session ? session.sparkplug : routeCapabilityShadow
     const navigationRedcon = session ? session.redcon : reportedRedcon
@@ -2146,7 +2123,7 @@ function App({ initialAuthError = '' }: AppProps) {
               isDebugEnabled={isDebugEnabled}
               isSessionLogVisible={isSessionLogVisible}
               onSignOff={handleSignOff}
-              onToggleDebug={session && hasAgentCapability ? () => {
+              onToggleDebug={isDeviceShadowTargetCurrent ? () => {
                 setIsDebugEnabled((currentValue) => !currentValue)
               } : undefined}
               onToggleSessionLog={() => {
@@ -2419,21 +2396,21 @@ function App({ initialAuthError = '' }: AppProps) {
 
           {isSessionLogVisible && <NotificationLogPanel notificationLog={notificationLog} />}
 
-          {isDebugEnabled && activeShadowTarget !== null && (
+          {isDebugEnabled && isDeviceShadowTargetCurrent && (
             <DebugPanel
               agentShadow={hasAgentCapability
                 ? currentAgentShadow ?? { status: 'loading', json: '', error: '' }
                 : undefined}
               canLoadShadow={canLoadShadow}
               deviceDiagnostics={deviceDebugDiagnostics}
+              initialSparkplugShadow={routeSparkplugShadow}
               lastShadowUpdateLabel={lastShadowUpdateLabel}
               lastShadowUpdateTitle={lastShadowUpdateTitle}
               onLoadShadow={() => {
                 void loadShadow()
               }}
-              reportedBoardPower={reportedBoardPower}
-              reportedMcuPower={reportedMcuPower}
-              shadowJson={shadowJson}
+              shadowDocument={currentShadowSnapshot?.document}
+              shadowNames={activeShadowTarget.capabilities}
             />
           )}
         </main>

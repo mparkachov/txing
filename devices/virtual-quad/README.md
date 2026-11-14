@@ -146,12 +146,6 @@ rule and repair schedule. The build resources, session table, Thing and
 channels remain available for re-enablement. Use
 `just virtual-quad::deploy enabled` to restore the controller.
 
-## Retire the temporary deployment
-
-Use the [retirement procedure](retirement.md) once the permanent device
-passes acceptance. The temporary rig/device and standalone feasibility stack
-have separate ownership and cleanup sequences.
-
 ## Live media
 
 The onboard camera uses the current SITL truth pose to render a 640 × 360
@@ -187,6 +181,8 @@ per-frame timing, decoded fps, heartbeat and flight observations.
 On the selected device route, select REDCON 1 to start and REDCON 4 to stop.
 REDCON 2 and 3 reflect readiness during startup, degradation and shutdown.
 Lifecycle messages appear in the notification tray and Session Log.
+When you open an already stopped device, REDCON 4 shows its state. Office
+announces a stop when a session observed on the open page ends.
 
 At REDCON 2, Office can connect to MAVLink in **View only**. The MAVLink dot
 and telemetry panel report the browser peer's connection and heartbeat
@@ -234,7 +230,7 @@ on the mixed rig and confirm the following.
    active IDs.
 5. Check applicable cloud rig and existing device regressions. Retain the
    [prior acceptance and approved hardware skips](https://github.com/mparkachov/txing/issues/182)
-   with the new evidence. Use the retirement procedure after acceptance.
+   with the new evidence.
 
 Use these bounds for the permanent device checks.
 

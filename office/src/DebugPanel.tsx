@@ -1,104 +1,104 @@
 import type { ReactNode } from 'react'
+import type { ShadowName } from './shadow-protocol'
 
 type DebugPanelProps = {
   agentShadow?: { status: 'loading' | 'ready' | 'missing' | 'error'; json: string; error: string }
   canLoadShadow: boolean
   deviceDiagnostics?: ReactNode
+  initialSparkplugShadow?: unknown
   lastShadowUpdateLabel: string
   lastShadowUpdateTitle: string
   onLoadShadow: () => void
-  reportedMcuPower: boolean | null
-  reportedBoardPower: boolean | null
-  shadowJson: string
+  shadowDocument: unknown
+  shadowNames: readonly ShadowName[]
 }
 
-const getPowerNodeClass = (power: boolean | null): string => {
-  if (power === true) {
-    return 'status-node-awake'
-  }
-  if (power === false) {
-    return 'status-node-asleep'
-  }
-  return 'status-node-unknown'
+const shadowDisplayNames: Readonly<Partial<Record<ShadowName, string>>> = {
+  ble: 'BLE',
+  ecs: 'ECS',
+  mavlink: 'MAVLink',
+  mcp: 'MCP',
+  sqs: 'SQS',
 }
 
 function DebugPanel({
   agentShadow,
   canLoadShadow,
   deviceDiagnostics,
+  initialSparkplugShadow,
   lastShadowUpdateLabel,
   lastShadowUpdateTitle,
   onLoadShadow,
-  reportedMcuPower,
-  reportedBoardPower,
-  shadowJson,
+  shadowDocument,
+  shadowNames,
 }: DebugPanelProps) {
+  const namedShadows = shadowDocument && typeof shadowDocument === 'object' && 'namedShadows' in shadowDocument
+    ? shadowDocument.namedShadows
+    : null
+  const documents = namedShadows && typeof namedShadows === 'object'
+    ? namedShadows as Record<ShadowName, unknown>
+    : {}
+
   return (
-    <section className="card debug-panel">
-      <div className="status-devices">
-        <div className={`status-device ${getPowerNodeClass(reportedMcuPower)}`}>
-          <pre className="status-glyph status-glyph-chip" aria-hidden="true">
-            {'╭┄┄╮\n┆▣▣┆\n╰┄┄╯'}
-          </pre>
-          <div className="status-device-label">MCU</div>
-        </div>
-        <div className={`status-device ${getPowerNodeClass(reportedBoardPower)}`}>
-          <pre className="status-glyph status-glyph-board" aria-hidden="true">
-            {'┏━╍━┓\n┃▣╋▣┃\n┗┳━┳┛\n◖▂▂◗'}
-          </pre>
-          <div className="status-device-label">Board</div>
-        </div>
-      </div>
+    <section className="debug-panel" aria-label="Debug">
+      <div className="card">
+        {deviceDiagnostics ? (
+          <div className="debug-panel-device-diagnostics">{deviceDiagnostics}</div>
+        ) : null}
 
-      {deviceDiagnostics ? (
-        <div className="debug-panel-device-diagnostics">{deviceDiagnostics}</div>
-      ) : null}
-
-      <div className="debug-panel-meta">
-        <span className="debug-panel-meta-label">Last shadow update</span>
-        <div className="debug-panel-meta-actions">
-          <button
-            type="button"
-            className="debug-panel-load-shadow"
-            disabled={!canLoadShadow}
-            onClick={onLoadShadow}
-          >
-            Load Shadow
-          </button>
-          <time className="status-last-shadow-update" title={lastShadowUpdateTitle}>
-            {lastShadowUpdateLabel}
-          </time>
+        <div className="debug-panel-meta">
+          <span className="debug-panel-meta-label">Last shadow update</span>
+          <div className="debug-panel-meta-actions">
+            <button
+              type="button"
+              className="debug-panel-load-shadow"
+              disabled={!canLoadShadow}
+              onClick={onLoadShadow}
+            >
+              Load Shadow
+            </button>
+            <time className="status-last-shadow-update" title={lastShadowUpdateTitle}>
+              {lastShadowUpdateLabel}
+            </time>
+          </div>
         </div>
       </div>
 
-      <label htmlFor="shadow-json" className="editor-label">
-        Current shadow JSON
-      </label>
-      <textarea
-        id="shadow-json"
-        className="editor"
-        value={shadowJson}
-        readOnly
-        spellCheck={false}
-      />
+      {shadowNames.map((name) => {
+        const displayName = (Object.hasOwn(shadowDisplayNames, name) ? shadowDisplayNames[name] : undefined)
+          ?? name.charAt(0).toUpperCase() + name.slice(1)
+        const title = `${displayName} shadow`
+        const agent = name === 'agent' ? agentShadow : undefined
+        const document = Object.hasOwn(documents, name)
+          ? documents[name]
+          : name === 'sparkplug' ? initialSparkplugShadow ?? undefined : undefined
+        const json = agent
+          ? agent.status === 'ready' ? agent.json : undefined
+          : JSON.stringify(document, null, 2)
 
-      {agentShadow && (
-        <section className="debug-panel-agent-shadow" aria-label="Agent shadow">
-          <h2>Agent shadow</h2>
-          {agentShadow.status === 'loading' && <p>Loading agent status…</p>}
-          {agentShadow.status === 'missing' && <p>Agent status has not been initialized.</p>}
-          {agentShadow.status === 'error' && <p>Agent status unavailable: {agentShadow.error}</p>}
-          {agentShadow.status === 'ready' && (
-            <textarea
-              aria-label="Agent shadow JSON"
-              className="editor"
-              value={agentShadow.json}
-              readOnly
-              spellCheck={false}
-            />
-          )}
-        </section>
-      )}
+        return (
+          <section key={name} className="card debug-shadow-panel" aria-label={title}>
+            <h2>{title}</h2>
+            {json !== undefined ? (
+              <textarea
+                aria-label={`${title} JSON`}
+                className="editor"
+                value={json}
+                rows={10}
+                readOnly
+                spellCheck={false}
+              />
+            ) : (
+              <p>
+                {agent?.status === 'loading' && 'Loading agent status…'}
+                {agent?.status === 'missing' && 'Agent status has not been initialized.'}
+                {agent?.status === 'error' && `Agent status unavailable: ${agent.error}`}
+                {!agent && 'No shadow data received.'}
+              </p>
+            )}
+          </section>
+        )
+      })}
     </section>
   )
 }

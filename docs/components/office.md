@@ -74,6 +74,13 @@ indicator reflects heartbeat reception by its browser peer. Media connection
 state has no authority to advance the reported REDCON.
 [Virtual quadcopter architecture](../virtual-quadcopter-architecture.md#office-and-flight-authority)
 
+## Debug
+
+Open **Debug** from the profile menu on a device page. Office shows one
+read-only JSON panel per named shadow declared by the device. **Load Shadow**
+refreshes the MQTT snapshots. The Agent panel refreshes over HTTPS and shows
+its own read status. Device-specific diagnostics appear above the panels.
+
 ## Local Development
 
 Install and write the local env:

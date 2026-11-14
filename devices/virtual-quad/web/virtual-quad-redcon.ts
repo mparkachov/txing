@@ -23,9 +23,11 @@ const phaseLabel = {
 }
 
 export function readVirtualQuadLifecycleMessage(
-  session: SessionView['session'], fresh = true,
+  session: SessionView['session'], fresh = true, observedSessionId: string | null = null,
 ): Omit<AppNotificationInput, 'objectId'> | null {
-  if (!session || (session.phase === 'stopped' && !session.lastOutcome)) return null
+  if (!session) return null
+  if (session.phase === 'stopped' &&
+    (!session.lastOutcome || observedSessionId === null || session.lastSessionId !== observedSessionId)) return null
   if (session.phase === 'operational' && !fresh) {
     return {
       tone: 'error',
@@ -71,6 +73,7 @@ export function useVirtualQuadRedcon(
   const command = useRef<Pending | null>(null)
   const [awakeRigId, setAwakeRigId] = useState<string | null>(null)
   const lastMessage = useRef(new Map<string, string>())
+  const observedSession = useRef<{ deviceId: string; sessionId: string } | null>(null)
   const currentPending = pending?.target === target ? pending : null
   const rigId = target?.edgeNodeId
 
@@ -103,7 +106,13 @@ export function useVirtualQuadRedcon(
 
   useEffect(() => {
     if (!target) return
-    const message = readVirtualQuadLifecycleMessage(session, fresh)
+    if (session?.sessionId) {
+      observedSession.current = { deviceId: target.deviceId, sessionId: session.sessionId }
+    }
+    const observedSessionId = observedSession.current?.deviceId === target.deviceId
+      ? observedSession.current.sessionId
+      : null
+    const message = readVirtualQuadLifecycleMessage(session, fresh, observedSessionId)
     if (!message || lastMessage.current.get(target.deviceId) === message.dedupeKey) return
     lastMessage.current.set(target.deviceId, message.dedupeKey)
     notify({ ...message, dedupeKey: `${target.deviceId}:${message.dedupeKey}`, objectId: target.deviceId })

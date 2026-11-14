@@ -1,10 +1,12 @@
-# Retire the temporary virtual quad deployment
+# Temporary virtual quad deployment retirement
 
-This procedure applies to account `453102798330` in `eu-central-1`. Retire
-the temporary resources after the [permanent device passes acceptance](README.md#permanent-deployment-acceptance).
-Use the AWS profile for that account. Retain the relevant acceptance and
-failure evidence in the GitHub issue or approved private storage before
-deleting logs or artifacts.
+The temporary deployment in account `453102798330` in `eu-central-1` was
+retired and verified on November 14, 2026. This record preserves the resource
+inventory and the procedure documented for that cutover.
+[Cleanup verification](https://github.com/mparkachov/txing/issues/183#issuecomment-6874883553)
+
+Use the [virtual quadcopter guide](../../../devices/virtual-quad/README.md)
+for current deployment and operation.
 
 | Scope | Resources |
 | --- | --- |
@@ -34,9 +36,9 @@ mkdir -p tmp
 1. Confirm the account and verify the target's registry assignment using
    `aws_quad iot describe-thing --thing-name "$device"`. In Office, select
    REDCON 4 for the temporary device and follow the
-   [drain procedure](README.md#drain-and-rollback). Confirm its agent and
-   simulator are terminal. Keep the rig's shared census schedule enabled.
-   A cloud rig REDCON 4 command disables that schedule for the environment.
+   [drain procedure](../../../devices/virtual-quad/README.md#drain-and-rollback).
+   Confirm its agent and simulator are terminal. Keep the rig's shared census
+   schedule enabled. A cloud rig REDCON 4 command disables it for the environment.
 2. Read the session item with a consistent read. Check for no current
    session and retain the version for conditional deletion. A missing item
    already needs no deletion.
@@ -168,7 +170,7 @@ aws_quad lambda-microvms list-microvms --image-identifier "$probe_image" \
    `quad-qualification-176-board-video` and
    `quad-qualification-176-mavlink` using the channel procedure above.
 5. Verify the image, stack, bucket, stack-owned roles and log group, and
-   both channels are absent. Record the result in
+   both channels are absent. The results were recorded in
    [#183](https://github.com/mparkachov/txing/issues/183).
 
 [AWS Thing deletion](https://docs.aws.amazon.com/iot/latest/developerguide/delete-thing.html)

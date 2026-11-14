@@ -100,3 +100,14 @@ test('virtual quad worker expiry becomes a standard error notification', () => {
   expect(readVirtualQuadLifecycleMessage(ready, false)?.message).toBe('Simulator readiness unavailable')
   expect(readVirtualQuadLifecycleMessage(ready, true)?.message).toBe('Simulator running')
 })
+
+test('virtual quad only announces a stop for a session observed on the open page', () => {
+  const terminal = simulation('stopped', null)
+  const stopped = readVirtualQuadSession({ state: { reported: {
+    ...terminal.state.reported, lastSessionId: 'finished-session', lastOutcome: 'stopped',
+  } } })
+
+  expect(readVirtualQuadLifecycleMessage(stopped)).toBeNull()
+  expect(readVirtualQuadLifecycleMessage(stopped, true, 'other-session')).toBeNull()
+  expect(readVirtualQuadLifecycleMessage(stopped, false, 'finished-session')?.message).toBe('Stopped')
+})
