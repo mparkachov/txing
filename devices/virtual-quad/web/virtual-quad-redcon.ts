@@ -59,6 +59,12 @@ export function readVirtualQuadCommandResult(action: VirtualQuadCommand, { sessi
   return null
 }
 
+export function canStartVirtualQuad(target: QuadTarget, { session, sparkplug }: Pick<SessionView, 'session' | 'sparkplug'>): boolean {
+  return (session?.phase === 'stopped' || session?.phase === 'failed') &&
+    extractReportedRedcon(sparkplug) === 4 && hasLiveSparkplugDeviceProjection(sparkplug, target) &&
+    extractSparkplugCapabilityAvailability(sparkplug, 'sparkplug') === true
+}
+
 export function useVirtualQuadRedcon(
   target: QuadTarget | null,
   sessionView: SessionView,
@@ -66,7 +72,7 @@ export function useVirtualQuadRedcon(
   notify: (notification: AppNotificationInput) => void,
   log: (notification: AppNotificationInput) => void,
 ) {
-  const { session, sparkplug, fresh, now } = sessionView
+  const { session, fresh, now } = sessionView
   const [pending, setPending] = useState<Pending | null>(null)
   const command = useRef<Pending | null>(null)
   const [awakeRigId, setAwakeRigId] = useState<string | null>(null)
@@ -136,9 +142,7 @@ export function useVirtualQuadRedcon(
   }, [currentPending, notify, now, session, sessionView])
 
   const canStart = target !== null && awakeRigId === rigId && currentPending === null &&
-    (session?.phase === 'stopped' || session?.phase === 'failed') &&
-    extractReportedRedcon(sparkplug) === 4 && hasLiveSparkplugDeviceProjection(sparkplug, target) &&
-    extractSparkplugCapabilityAvailability(sparkplug, 'simulation') === true
+    canStartVirtualQuad(target, sessionView)
   const stopSession = session?.phase === 'starting' || session?.phase === 'operational' ? session.sessionId : null
   const canStop = stopSession !== null && currentPending?.action.redcon !== 4
 

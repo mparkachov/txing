@@ -116,8 +116,10 @@ SITL. [Native camera](../devices/virtual-quad/runtime/camera.cpp)
 ## Session lifecycle and readiness
 
 Sparkplug provides the management path. A born virtual quad at REDCON 4
-can receive Start while its cloud rig is awake. The `simulation` capability
-is the runtime equivalent of `board` on a physical device. The controller
+can receive Start while its cloud rig is awake and Sparkplug is available.
+Office checks this reachability and the terminal session state to enable Start.
+The `simulation` capability is the runtime equivalent of `board` on a physical
+device. The controller
 reports it active when a fresh, granted worker sample confirms a SITL
 heartbeat for the current session. MAVLink and video readiness are reported
 separately. The cloud rig census reports `simulation=false` for a stopped

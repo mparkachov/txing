@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { readQuadMavlinkStatus, readQuadMediaAvailability } from '../../devices/virtual-quad/web/virtual-quad-media-status'
-import { readVirtualQuadCommandResult, readVirtualQuadLifecycleMessage } from '../../devices/virtual-quad/web/virtual-quad-redcon'
+import { canStartVirtualQuad, readVirtualQuadCommandResult, readVirtualQuadLifecycleMessage } from '../../devices/virtual-quad/web/virtual-quad-redcon'
 import {
   isVirtualQuadProjectionFresh,
   readVirtualQuadSession,
@@ -39,6 +39,26 @@ test('virtual quad session phase requires a matching reservation shape', () => {
   expect(readVirtualQuadSession(simulation('stopped', null))?.terminalRevision).toBe(8)
   expect(readVirtualQuadSession(simulation('stopped', 'new-session'))).toBeNull()
   expect(readVirtualQuadSession(simulation('starting', null))).toBeNull()
+})
+
+test('virtual quad can start through Sparkplug while the simulator is inactive', () => {
+  const projection = sparkplug(1_000, 'old-session')
+  const report = projection.state.reported
+  const stopped = {
+    session: readVirtualQuadSession(simulation('stopped', null)),
+    sparkplug: { state: { reported: {
+      ...report,
+      payload: { ...report.payload, metrics: { redcon: 4, capability: { sparkplug: true, simulation: false } } },
+    } } },
+  }
+  expect(canStartVirtualQuad(target, stopped)).toBe(true)
+  expect(canStartVirtualQuad(target, { ...stopped, session: readVirtualQuadSession(simulation('failed', null)) })).toBe(true)
+  expect(canStartVirtualQuad(target, { ...stopped, session: readVirtualQuadSession(simulation('stopping', 'old-session')) })).toBe(false)
+  expect(canStartVirtualQuad(target, { ...stopped, sparkplug: null })).toBe(false)
+  expect(canStartVirtualQuad({ ...target, edgeNodeId: 'other-rig' }, stopped)).toBe(false)
+
+  stopped.sparkplug.state.reported.payload.metrics.capability.sparkplug = false
+  expect(canStartVirtualQuad(target, stopped)).toBe(false)
 })
 
 test('Office can observe MAVLink at REDCON 2 before opening flight and camera at REDCON 1', () => {
