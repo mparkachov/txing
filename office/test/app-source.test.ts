@@ -51,6 +51,17 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('{navigationCapabilities}')
     expect(appSource).toContain('capabilities={routeHeaderMetadata.capabilities}')
     expect(appSource).toContain('capabilities={item.capabilities}')
+    expect(appSource).toContain('simulationExpiresAtMs={sessionStatus?.simulationExpiresAtMs}')
+    expect(appSource).toContain('simulationExpiresAtMs={session?.simulationExpiresAtMs}')
+  })
+
+  test('requests the agent shadow for every declaring device in the catalog and header', () => {
+    const appSource = readFileSync(resolve(repoRoot, 'office/src/App.tsx'), 'utf-8')
+
+    expect(appSource).toContain("device.capabilities.filter((name) => name === 'agent' || adapterShadows.includes(name))")
+    expect(appSource).toContain('agentShadowThing = hasAgentCapability && activeShadowTarget?.thingName === currentRouteThingName')
+    expect(appSource).toContain('readAgentStatus(item.deviceShadows?.agent, now)')
+    expect(appSource).toContain('readAgentStatus(currentAgentShadow?.shadow, currentAgentShadow?.readAtMs ?? 0)')
   })
 
   test('wake commands converge from reported shadow redcon without command-status success', () => {

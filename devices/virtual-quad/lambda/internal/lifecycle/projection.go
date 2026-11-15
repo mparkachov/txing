@@ -9,6 +9,7 @@ type Projection struct {
 	Phase          Phase   `json:"phase"`
 	SessionID      string  `json:"sessionId,omitempty"`
 	REDCON         uint8   `json:"redcon"`
+	Simulation     *bool   `json:"simulation,omitempty"`
 	Mavlink        bool    `json:"mavlink"`
 	Video          bool    `json:"video"`
 	Agent          bool    `json:"agent"`
@@ -33,7 +34,7 @@ func (l Ledger) PrepareProjection(ctx context.Context, deviceID string, requeste
 		previous := record.Projection
 		next := Projection{
 			Phase: record.Phase(), SessionID: sessionID, REDCON: availability.REDCON,
-			Mavlink: availability.Mavlink, Video: availability.Video,
+			Simulation: &availability.Simulation, Mavlink: availability.Mavlink, Video: availability.Video,
 			Agent:   availability.REDCON == 1,
 			Receipt: receipt, SessionReceipt: receipt,
 		}
@@ -49,9 +50,12 @@ func (l Ledger) PrepareProjection(ctx context.Context, deviceID string, requeste
 		}
 		next.TimestampMS = max(nowMS, record.AvailabilityWatermarkMS, observedMS+1)
 		if previous != nil {
-			if previous.TimestampMS >= max(record.AvailabilityWatermarkMS, observedMS) {
+			// An older projection has no simulation value and must be published again.
+			if previous.Simulation != nil && *previous.Simulation == availability.Simulation &&
+				previous.TimestampMS >= max(record.AvailabilityWatermarkMS, observedMS) {
 				candidate := next
 				candidate.TimestampMS = previous.TimestampMS
+				candidate.Simulation = previous.Simulation
 				if candidate == *previous {
 					return false, nil
 				}

@@ -1,5 +1,5 @@
-import type { ReactElement } from 'react'
-import type { AgentCapabilityStatus } from './device-adapter'
+import { useEffect, useState, type ReactElement } from 'react'
+import type { AgentCapabilityStatus } from './agent-shadow-status'
 import type { ShadowName } from './shadow-protocol'
 import { extractSparkplugCapabilityAvailability } from './sparkplug-model'
 
@@ -12,6 +12,7 @@ type CapabilityStackProps = {
   sparkplugShadow: unknown | null
   sparkplugShadowStatus: CapabilityStackStatus
   agentStatus?: AgentCapabilityStatus
+  simulationExpiresAtMs?: number | null
   className?: string
 }
 
@@ -22,8 +23,23 @@ function CapabilityStack({
   sparkplugShadow,
   sparkplugShadowStatus,
   agentStatus,
+  simulationExpiresAtMs,
   className,
 }: CapabilityStackProps): ReactElement | null {
+  const [now, setNow] = useState(Date.now)
+  const simulationFresh = simulationExpiresAtMs != null && now < simulationExpiresAtMs
+  const agentFresh = agentStatus?.active === true && now < agentStatus.expiresAtMs
+  const inactiveAgentLabel = agentStatus?.active === false ? agentStatus.label : 'unavailable'
+  const nextExpiryMs = Math.min(
+    simulationFresh ? simulationExpiresAtMs : Infinity,
+    agentFresh ? agentStatus.expiresAtMs : Infinity,
+  )
+  useEffect(() => {
+    if (!Number.isFinite(nextExpiryMs)) return
+    const timer = window.setTimeout(() => setNow(Math.max(nextExpiryMs, Date.now())), Math.max(0, nextExpiryMs - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [nextExpiryMs])
+
   const visibleCapabilities = capabilities.filter((capability) => capability !== 'sparkplug')
   if (visibleCapabilities.length === 0) {
     return null
@@ -38,9 +54,9 @@ function CapabilityStack({
           sparkplugShadowStatus === 'ready'
             ? extractSparkplugCapabilityAvailability(sparkplugShadow, capability)
             : null
-        const status = capability === 'agent' ? agentStatus : undefined
-        const isActive = status?.active ?? (availability === true)
-        const statusLabel = status?.label ?? (isActive ? 'active' : 'inactive')
+        const isAgent = capability === 'agent'
+        const isActive = availability === true && (isAgent ? agentFresh : capability !== 'simulation' || simulationFresh)
+        const statusLabel = isAgent ? (isActive ? 'running' : inactiveAgentLabel) : isActive ? 'active' : 'inactive'
         return (
           <span
             key={`${thingName}:${capability}`}

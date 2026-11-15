@@ -63,8 +63,11 @@ becomes enabled only when the native KVS worker is ready.
 Catalog cards and route headers show every declared capability except
 `sparkplug`, which is represented by the REDCON indicator. The capability
 badges use the reported Sparkplug shadow projection. The virtual quad's
-`agent` badge uses the reported observer state from its `agent` shadow on
-both surfaces. Browser connection status appears in the video overlay.
+`simulation` badge also respects the matching session's expiry from the
+`simulation` shadow. For every device declaring `agent`, the agent badge
+turns green when the current agent runtime reports fresh MAVLink and video
+connections. Browser connection status appears in the video overlay.
+[Agent badge and shadow contract](../contracts/agent-shadow.md#device-and-office-boundaries)
 
 The device registry selects a type-owned web adapter. The virtual-quad session
 adapter interprets the matching simulation and Sparkplug projections, supplies

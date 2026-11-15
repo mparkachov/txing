@@ -3,8 +3,8 @@
 The agent is the AI counterpart of Office. It receives telemetry and encoded
 video and exposes authorized actions to an interchangeable operator. The
 current operator forwards MAVLink to QGroundControl and counts video frames.
-One C++ runtime runs on macOS and Linux ARM64 Lambda MicroVMs. TBot supports
-observation and manual control. Virtual quad supports receive-only observation.
+One C++ runtime runs on macOS and Linux ARM64 Lambda MicroVMs. TBot and
+virtual quad support observation and explicit manual MAVLink control.
 Cloud operation can start automatically when a device is ready and the operator
 has enabled launches.
 
@@ -64,20 +64,20 @@ the device manifest.
 - `<thing-id>-board-video`: receive-only video, active at born REDCON 1.
 - REDCON 3/4, device death, or expired execution authorization initiates shutdown.
 
-The virtual-quad profile receives the same two channels through KVS TURN. It opens them at
+The virtual-quad profile opens the same two channels through KVS TURN at
 operational REDCON 1 once the Sparkplug projection matches the current simulation
 session ID and readiness watermark. Readiness loss, readiness expiry or a new
-simulation session closes both peers. The native command and cloud attachment
-reject `--control` for virtual quad, and the cloud runtime rejects lease and
-MAVLink sends from an attached observer. The simulator owns flight readiness and
-session deadlines. [Virtual quadcopter architecture](../virtual-quadcopter-architecture.md#agent-observation)
+simulation session closes both peers. Native operation and cloud attachment
+support `--control` for both profiles. The simulator owns flight readiness,
+lease arbitration and session deadlines. [Virtual quadcopter architecture](../virtual-quadcopter-architecture.md#agent-observation)
 
 Unsupported registered types fail before session creation. A name prefix alone
 does not establish support. Rig and witness remain lifecycle authorities.
 
 The agent polls lifecycle every two seconds and stops after fifteen seconds
 without authoritative verification. Video and MAVLink recover independently.
-Returning from REDCON 1 to 2 closes only video. Fifteen seconds without a valid
+On TBot, returning from REDCON 1 to 2 closes video and retains the MAVLink peer.
+Fifteen seconds without a valid
 MAVLink telemetry frame triggers bounded peer recovery. The runtime measures
 receipt per peer generation, releases authority and fences queued sends before
 retiring the peer. Healthy video continues and control requires a fresh request.
@@ -92,7 +92,7 @@ can forward the full MAVLink protocol, including pre-arm parameter traffic.
 The operator session keeps the lease across arm and disarm. The agent releases
 on client inactivity, disconnect, WebRTC loss, lease loss, lifecycle shutdown
 or process exit. It attempts graceful release when the connection is usable.
-If the link is lost, the board's five-second lease expires. A fresh explicit
+If the link is lost, the device's five-second lease expires. A fresh explicit
 request is required for another grant.
 
 The agent validates framing and forwards complete MAVLink 2 frames byte for
@@ -116,7 +116,7 @@ libusrsctp, log4cplus, and their development headers. The production Linux ARM64
 ```sh
 just agent::build
 just agent::test
-just agent::run <registered-tbot-thing-id> --region eu-central-1
+just agent::run <registered-device-id> --region eu-central-1
 ```
 
 The foreground run observes and logs. Ctrl-C or SIGTERM releases authority and
@@ -133,16 +133,16 @@ emission enabled under Telemetry/MAVLink settings. [QGC Comm Links](https://docs
 
 ```sh
 # View telemetry without control.
-just agent::run <registered-tbot-thing-id> --region eu-central-1
+just agent::run <registered-device-id> --region eu-central-1
 
 # Explicit full MAVLink control, including parameter retrieval/configuration.
-just agent::run <registered-tbot-thing-id> --control --region eu-central-1
+just agent::run <registered-device-id> --control --region eu-central-1
 
 # Different agent listener; change QGC's remote host to 127.0.0.1:15551.
-just agent::run <registered-tbot-thing-id> 15551 --control --region eu-central-1
+just agent::run <registered-device-id> 15551 --control --region eu-central-1
 
 # Different QGC listening port as well; configure its local port to 15550.
-just agent::run <registered-tbot-thing-id> 15551 --qgc-port 15550 --region eu-central-1
+just agent::run <registered-device-id> 15551 --qgc-port 15550 --region eu-central-1
 ```
 
 The configured loopback QGC source port establishes presence and sends uplink.
@@ -285,8 +285,9 @@ TBot declares `agent` in the capability catalog. The rig publishes
 quad controller publishes it only for an operational simulator with fresh
 MAVLink and video readiness. Execution requires the registry declaration and
 verified availability. Removing the declaration or reporting false revokes
-authorization. Office shows the agent shadow in Debug for devices declaring
-the capability. The simulator controls its own readiness and flight authority.
+authorization. Office uses the `agent` shadow to show observer readiness on
+both device types and displays it in Debug. The simulator controls its own
+readiness and flight authority. [Office badge rule](../contracts/agent-shadow.md#device-and-office-boundaries)
 
 ### Cloud attachment
 
@@ -294,8 +295,8 @@ With cloud launches enabled and a verified current assignment, use the same
 QGroundControl link configuration as a local run.
 
 ```sh
-just agent::attach <registered-tbot-thing-id>
-just agent::attach <registered-tbot-thing-id> 14551 --control
+just agent::attach <registered-device-id>
+just agent::attach <registered-device-id> 14551 --control
 ```
 
 Attachment discovers and verifies the current assignment, obtains a token for

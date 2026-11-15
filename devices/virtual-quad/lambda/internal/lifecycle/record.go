@@ -185,10 +185,11 @@ type Record struct {
 }
 
 type Availability struct {
-	REDCON    uint8
-	Mavlink   bool
-	Video     bool
-	ExpiresMS int64
+	REDCON     uint8
+	Simulation bool
+	Mavlink    bool
+	Video      bool
+	ExpiresMS  int64
 }
 
 func (r Record) Availability(nowMS int64) Availability {
@@ -207,7 +208,8 @@ func (r Record) Availability(nowMS int64) Availability {
 	if nowMS >= result.ExpiresMS {
 		return Availability{REDCON: 3}
 	}
-	result.Mavlink = s.Health.Heartbeat && s.Health.Mavlink
+	result.Simulation = s.Health.Heartbeat
+	result.Mavlink = result.Simulation && s.Health.Mavlink
 	result.Video = s.Health.Navigation && s.Health.Video
 	if result.Mavlink {
 		result.REDCON = 2

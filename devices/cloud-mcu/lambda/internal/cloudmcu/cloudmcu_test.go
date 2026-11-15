@@ -249,7 +249,7 @@ func TestCensusAnnouncesStoppedVirtualQuadsWithoutCompute(t *testing.T) {
 			}
 			metrics := decodePayloadMetrics(t, message.payload)
 			requireMetric(t, metrics, "redcon", int32(4))
-			for name, value := range map[string]bool{"sparkplug": true, "simulation": true, "mavlink": false, "video": false, "agent": false} {
+			for name, value := range map[string]bool{"sparkplug": true, "simulation": false, "mavlink": false, "video": false, "agent": false} {
 				requireMetric(t, metrics, "capability."+name, value)
 			}
 			seed(quad, "DBIRTH")
@@ -270,11 +270,15 @@ func TestVirtualQuadBirthUsesCurrentAssignmentAndStoppedState(t *testing.T) {
 		indexedRig string
 		projection string
 		phase      string
+		simulation bool
 		wantBirth  bool
 	}{
 		{name: "stopped quad moves to new rig", indexedRig: "rig-2", projection: "DBIRTH", phase: "stopped", wantBirth: true},
 		{name: "index still shows old rig", indexedRig: "rig-1", projection: "DDEATH", phase: "stopped"},
 		{name: "active quad projection is preserved", indexedRig: "rig-2", projection: "DBIRTH", phase: "operational"},
+		{name: "legacy stopped birth is corrected", indexedRig: "rig-1", projection: "DBIRTH", phase: "stopped", simulation: true, wantBirth: true},
+		{name: "healthy stopped birth is preserved", indexedRig: "rig-1", projection: "DBIRTH", phase: "stopped"},
+		{name: "controller data is preserved", indexedRig: "rig-1", projection: "DDATA", phase: "stopped", simulation: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			aws := newFakeAWS()
@@ -283,10 +287,15 @@ func TestVirtualQuadBirthUsesCurrentAssignmentAndStoppedState(t *testing.T) {
 				ThingTypeName: &thingType,
 				Attributes:    map[string]string{"townId": "town-1", "rigId": "rig-2"},
 			}
+			if tc.projection != "DDEATH" {
+				aws.descriptions[thingName].Attributes["rigId"] = tc.indexedRig
+			}
 			aws.shadows[cloudShadowKey(thingName, CapabilitySparkplug)] = mustJSON(map[string]any{
 				"state": map[string]any{"reported": map[string]any{"topic": map[string]any{
 					"deviceId": thingName, "messageType": tc.projection, "groupId": "town-1", "edgeNodeId": "rig-1",
-				}}},
+				}, "payload": map[string]any{"metrics": map[string]any{
+					"redcon": 4, "capability": map[string]any{"simulation": tc.simulation},
+				}}}},
 			})
 			aws.shadows[cloudShadowKey(thingName, CapabilitySimulation)] = mustJSON(map[string]any{
 				"state": map[string]any{"reported": map[string]any{"phase": tc.phase}},
@@ -297,9 +306,10 @@ func TestVirtualQuadBirthUsesCurrentAssignmentAndStoppedState(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.wantBirth {
-				if len(aws.published) != 1 || aws.published[0].topic != "spBv1.0/town-1/DBIRTH/rig-2/"+thingName {
+				if len(aws.published) != 1 || aws.published[0].topic != "spBv1.0/town-1/DBIRTH/"+tc.indexedRig+"/"+thingName {
 					t.Fatalf("expected device birth on the current rig: %#v", aws.published)
 				}
+				requireMetric(t, decodePayloadMetrics(t, aws.published[0].payload), "capability.simulation", false)
 			} else if len(aws.published) != 0 {
 				t.Fatalf("unexpected device birth: %#v", aws.published)
 			}

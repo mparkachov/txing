@@ -4,7 +4,6 @@
 #include <mavlink/v2.0/common/mavlink.h>
 
 #include <array>
-#include <cmath>
 #include <cstdio>
 #include <mutex>
 #include <optional>
@@ -32,11 +31,14 @@ constexpr std::uint16_t velocity_yaw_rate_mask = POSITION_TARGET_TYPEMASK_X_IGNO
     POSITION_TARGET_TYPEMASK_Y_IGNORE | POSITION_TARGET_TYPEMASK_Z_IGNORE |
     POSITION_TARGET_TYPEMASK_AX_IGNORE | POSITION_TARGET_TYPEMASK_AY_IGNORE |
     POSITION_TARGET_TYPEMASK_AZ_IGNORE | POSITION_TARGET_TYPEMASK_YAW_IGNORE;
-constexpr float yaw_rate_limit = 0.523599f;
+
+bool ValidFrame(const Frame& frame) {
+    return frame.size() >= 12 && frame[0] == MAVLINK_STX && (frame[2] & ~MAVLINK_IFLAG_SIGNED) == 0 &&
+        frame.size() == 12u + frame[1] + ((frame[2] & MAVLINK_IFLAG_SIGNED) ? MAVLINK_SIGNATURE_BLOCK_LEN : 0u);
+}
 
 std::optional<mavlink_message_t> ParseFrame(const Frame& frame) {
-    if (frame.size() < 12 || frame[0] != MAVLINK_STX || frame[2] != 0 ||
-        frame.size() != 12u + frame[1]) return std::nullopt;
+    if (!ValidFrame(frame) || frame[2] != 0) return std::nullopt;
     mavlink_message_t buffer{}, message{};
     mavlink_status_t parser{};
     for (const auto byte : frame) mavlink_frame_char_buffer(&buffer, &parser, byte, &message, nullptr);
@@ -81,6 +83,7 @@ struct FlightControl::State {
         std::uint64_t peer;
         std::string actor;
         Clock::time_point expires;
+        std::optional<Clock::time_point> last_uplink;
     };
 
     State(Sender sender, Now clock) : send(std::move(sender)), now(std::move(clock)) {}
@@ -126,17 +129,17 @@ struct FlightControl::State {
 
     void LandIfNeeded(Clock::time_point now) {
         if (!landing_at || now < next_landing_attempt) return;
-        if (!armed && now >= arm_wait_until && heartbeat_at > *landing_at &&
-            landed_at > *landing_at && now - heartbeat_at < telemetry_timeout && Grounded(now)) {
-            takeoff_pending = false;
-            landing_at.reset();
+        const bool fresh_heartbeat = now - heartbeat_at < telemetry_timeout;
+        if (fresh_heartbeat && !armed && Grounded(now)) {
+            if (now >= confirm_ground_after && heartbeat_at > *landing_at && landed_at > *landing_at) {
+                landing_at.reset();
+            }
             return;
         }
-        if (!armed && !takeoff_pending) return;
         next_landing_attempt = now + 500ms;
-        if (armed && Grounded(now) && !takeoff_pending) {
+        if (fresh_heartbeat && armed && Grounded(now) && now >= confirm_ground_after) {
             Command(MAV_CMD_COMPONENT_ARM_DISARM);
-        } else if (mode != land_mode || now - heartbeat_at >= telemetry_timeout) {
+        } else if (mode != land_mode || !fresh_heartbeat) {
             Command(MAV_CMD_DO_SET_MODE, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, land_mode);
         }
     }
@@ -145,9 +148,13 @@ struct FlightControl::State {
         if (!lease) return;
         std::printf("QUAD_FLIGHT_LEASE_REVOKED epoch=%llu reason=%s\n",
             static_cast<unsigned long long>(epoch), reason);
+        const auto last_uplink = lease->last_uplink;
         lease.reset();
         movement_at.reset();
-        if (armed || now < arm_wait_until || takeoff_pending) {
+        if (last_uplink || armed || !Grounded(now) || now - heartbeat_at >= telemetry_timeout) {
+            // An accepted frame can change arm state after release. Wait for
+            // fresh ground confirmation before granting another lease.
+            confirm_ground_after = last_uplink ? *last_uplink + telemetry_timeout : now;
             landing_at = now;
             next_landing_attempt = now;
             LandIfNeeded(now);
@@ -184,51 +191,18 @@ struct FlightControl::State {
         return json_object_to_json_string_ext(response.get(), JSON_C_TO_STRING_PLAIN);
     }
 
-    void OperatorCommand(const mavlink_message_t& message, Clock::time_point now) {
-        mavlink_command_long_t command{};
-        mavlink_msg_command_long_decode(&message, &command);
-        if (command.target_system != autopilot_system || command.target_component != autopilot_component ||
-            command.param3 != 0 || command.param4 != 0 || command.param5 != 0 || command.param6 != 0) return;
-        switch (command.command) {
-        case MAV_CMD_DO_SET_MODE:
-            if (command.param1 != MAV_MODE_FLAG_CUSTOM_MODE_ENABLED || command.param7 != 0) return;
-            if (command.param2 == guided_mode && !armed && Grounded(now) && now >= arm_wait_until) {
-                Command(command.command, command.param1, guided_mode);
-            } else if (command.param2 == land_mode && armed) {
-                if (Command(command.command, command.param1, land_mode)) {
-                    movement_at.reset();
-                    landing_at = now;
-                    next_landing_attempt = now + 500ms;
-                }
-            }
-            break;
-        case MAV_CMD_COMPONENT_ARM_DISARM:
-            if (command.param2 != 0 || command.param7 != 0 || !Grounded(now) || takeoff_pending) return;
-            if (command.param1 == 1 && !armed && mode == guided_mode && now >= arm_wait_until && Heartbeat(now)) {
-                if (Command(command.command, 1)) arm_wait_until = now + 2s;
-            } else if (command.param1 == 0 && armed) {
-                Command(command.command);
-            }
-            break;
-        case MAV_CMD_NAV_TAKEOFF:
-            if (command.param1 == 0 && command.param2 == 0 && command.param7 == 2 &&
-                armed && mode == guided_mode && Grounded(now) && !takeoff_pending &&
-                Command(command.command, 0, 0, 2)) takeoff_pending = true;
-            break;
-        }
-    }
-
-    void OperatorVelocity(const mavlink_message_t& message, Clock::time_point now) {
-        if (!armed || mode != guided_mode || takeoff_pending || landed != MAV_LANDED_STATE_IN_AIR) return;
+    void ObserveUplink(const Frame& frame, Clock::time_point now) {
+        if (frame[7] != MAVLINK_MSG_ID_SET_POSITION_TARGET_LOCAL_NED || frame[8] != 0 || frame[9] != 0) return;
+        const auto message = ParseFrame(frame);
+        if (!message) return;
         mavlink_set_position_target_local_ned_t target{};
-        mavlink_msg_set_position_target_local_ned_decode(&message, &target);
-        if (target.target_system != autopilot_system || target.target_component != autopilot_component ||
-            target.coordinate_frame != MAV_FRAME_BODY_OFFSET_NED || target.type_mask != velocity_yaw_rate_mask ||
-            !std::isfinite(target.vx) || !std::isfinite(target.vy) || !std::isfinite(target.vz) ||
-            !std::isfinite(target.yaw_rate) || std::hypot(target.vx, target.vy) > 1.00001f ||
-            std::abs(target.vz) > 0.5f || std::abs(target.yaw_rate) > yaw_rate_limit) return;
-        if (target.vz < 0 && altitude_m >= 3.8f) target.vz = 0;
-        if (Velocity(target.vx, target.vy, target.vz, target.yaw_rate)) movement_at = now;
+        mavlink_msg_set_position_target_local_ned_decode(&*message, &target);
+        if (target.target_system != autopilot_system || target.target_component != autopilot_component) return;
+        if (target.coordinate_frame == MAV_FRAME_BODY_OFFSET_NED && target.type_mask == velocity_yaw_rate_mask) {
+            movement_at = now;
+        } else {
+            movement_at.reset();
+        }
     }
 
     std::mutex mutex;
@@ -241,12 +215,10 @@ struct FlightControl::State {
     std::optional<Lease> lease;
     std::optional<Clock::time_point> movement_at, landing_at;
     Clock::time_point heartbeat_at{}, landed_at{}, position_at{};
-    Clock::time_point arm_wait_until{}, next_heartbeat{}, next_landing_attempt{}, media_ready_at{};
-    float altitude_m = 0;
+    Clock::time_point confirm_ground_after{}, next_heartbeat{}, next_landing_attempt{}, media_ready_at{};
     std::uint32_t mode = 0;
     std::uint8_t landed = MAV_LANDED_STATE_UNDEFINED;
     bool armed = false;
-    bool takeoff_pending = false;
     bool stopping = false;
 };
 
@@ -300,7 +272,7 @@ std::string FlightControl::HandleControl(std::uint64_t peer, const std::string& 
         }
         if (!state_->lease) {
             ++state_->epoch;
-            state_->lease = State::Lease{peer, actor, now + lease_duration};
+            state_->lease = State::Lease{peer, actor, now + lease_duration, std::nullopt};
         } else {
             state_->lease->expires = now + lease_duration;
         }
@@ -323,14 +295,17 @@ std::string FlightControl::HandleControl(std::uint64_t peer, const std::string& 
 }
 
 void FlightControl::SendFrame(std::uint64_t peer, std::uint64_t epoch, const Frame& frame) {
-    const auto message = ParseFrame(frame);
-    if (!message || message->sysid != gcs_system || message->compid != gcs_component) return;
+    if (!ValidFrame(frame)) return;
     std::lock_guard lock(state_->mutex);
     const auto now = state_->now();
     state_->Expire(now);
     if (!state_->Owns(peer, epoch) || state_->landing_at) return;
-    if (message->msgid == MAVLINK_MSG_ID_COMMAND_LONG) state_->OperatorCommand(*message, now);
-    if (message->msgid == MAVLINK_MSG_ID_SET_POSITION_TARGET_LOCAL_NED) state_->OperatorVelocity(*message, now);
+    // SITL validates the dialect, target, checksum and signature. Preserve
+    // the wire frame, including message IDs unknown to this bridge.
+    if (state_->send(frame)) {
+        state_->lease->last_uplink = now;
+        state_->ObserveUplink(frame, now);
+    }
 }
 
 bool FlightControl::IsAutopilotHeartbeat(const Frame& frame) {
@@ -353,7 +328,6 @@ void FlightControl::Observe(const Frame& frame) {
         state_->heartbeat_at = now;
         state_->mode = heartbeat.custom_mode;
         state_->armed = (heartbeat.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
-        if (state_->armed) state_->arm_wait_until = {};
         break;
     }
     case MAVLINK_MSG_ID_EXTENDED_SYS_STATE: {
@@ -364,15 +338,9 @@ void FlightControl::Observe(const Frame& frame) {
         break;
     }
     case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
-        mavlink_global_position_int_t position{};
-        mavlink_msg_global_position_int_decode(&*message, &position);
         state_->position_at = now;
-        state_->altitude_m = position.relative_alt / 1000.0f;
         break;
     }
-    }
-    if (state_->takeoff_pending && state_->landed == MAV_LANDED_STATE_IN_AIR && state_->altitude_m >= 1.5f) {
-        state_->takeoff_pending = false;
     }
 }
 

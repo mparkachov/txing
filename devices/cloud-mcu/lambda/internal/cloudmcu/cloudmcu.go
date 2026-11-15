@@ -988,6 +988,12 @@ func (s RigScheduler) publishInitialVirtualQuadBirth(ctx context.Context, device
 					EdgeNodeID  string `json:"edgeNodeId"`
 					DeviceID    string `json:"deviceId"`
 				} `json:"topic"`
+				Payload struct {
+					Metrics struct {
+						REDCON     uint8           `json:"redcon"`
+						Capability map[string]bool `json:"capability"`
+					} `json:"metrics"`
+				} `json:"payload"`
 			} `json:"reported"`
 		} `json:"state"`
 	}
@@ -1001,7 +1007,12 @@ func (s RigScheduler) publishInitialVirtualQuadBirth(ctx context.Context, device
 	switch projected.MessageType {
 	case "DBIRTH", "DDATA":
 		if projected.GroupID == device.TownID && projected.EdgeNodeID == device.RigID {
-			return nil
+			// Earlier stopped births incorrectly reported simulator availability.
+			// The controller owns updates to devices that have published session data.
+			metrics := projection.State.Reported.Payload.Metrics
+			if projected.MessageType != "DBIRTH" || metrics.REDCON != RedconSleep || !metrics.Capability[CapabilitySimulation] {
+				return nil
+			}
 		}
 	case "DDEATH":
 	default:
@@ -1043,7 +1054,7 @@ func (s RigScheduler) publishInitialVirtualQuadBirth(ctx context.Context, device
 	}
 	payload, err := buildDeviceReportPayload(RedconSleep, seq, nowMs, []metric{
 		boolMetric("capability.sparkplug", true),
-		boolMetric("capability."+CapabilitySimulation, true),
+		boolMetric("capability."+CapabilitySimulation, false),
 		boolMetric("capability.mavlink", false),
 		boolMetric("capability.video", false),
 		boolMetric("capability.agent", false),

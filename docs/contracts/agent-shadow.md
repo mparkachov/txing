@@ -160,18 +160,21 @@ publishes it for virtual quad at fresh operational REDCON 1. The `agent` shadow
 records actual cloud execution and errors. The device's REDCON and flight
 authority derive from device readiness. Missing or invalid availability is
 unverified. Explicit false or registry capability removal revokes execution.
-Office Debug reads this shadow for devices declaring `agent`. The virtual-quad
-agent indicator also reads it and shows a running observer only with a current
-simulator session, matching run sample, unexpired deadline and both streams
-connected. Office treats samples aged 75 seconds or more as unavailable to
-account for the controller's one-minute sampling interval. The sample is
-diagnostic and leaves REDCON and flight authority to the device.
+Office reads the `agent` shadow for every device declaring `agent`. The
+badge on both the rig card and device header turns green when Sparkplug
+reports eligibility, the lifecycle is `running`, the activation deadline
+is unexpired, and a matching run sample reports both MAVLink and video as
+`connected`. Virtual quad also requires the matching ready simulator
+session. Office treats samples aged 75 seconds or more as unavailable to
+account for the controller's one-minute sampling interval. Green indicates
+the observer's connection readiness. Control ownership and ongoing work
+are separate from this status. Debug shows the underlying shadow.
 
-Virtual quad supports receive-only MAVLink and video, including over cloud
-attachment. Observation remains the TBot operator default. Explicit TBot control acquires a free
-board lease with `takeover=false` and permits full MAVLink, including pre-arm
-traffic. The session retains control across arm/disarm/re-arm; client inactivity,
-disconnect, WebRTC/lease loss, lifecycle shutdown, or process shutdown releases
-it, without automatic reacquisition. See the
+Observation is the default for TBot and virtual quad. Explicit control
+acquires a free device lease with `takeover=false` and permits full MAVLink,
+including pre-arm traffic, in native operation and over cloud attachment.
+The session retains control across arm, disarm and re-arm. Client inactivity,
+disconnect, WebRTC or lease loss, lifecycle shutdown, and process shutdown
+release control. Another grant requires a fresh request. See the
 [agent design](../components/agent.md), [virtual quadcopter lifecycle](../virtual-quadcopter-architecture.md#session-lifecycle-and-readiness)
 and [board protocol](board-mavlink.md).

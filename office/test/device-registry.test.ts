@@ -71,7 +71,7 @@ describe('device web adapter registry', () => {
     const virtualQuadAdapter = getRegisteredAdapter('virtual-quad')
     expect(virtualQuadAdapter?.displayName).toBe('Virtual Quadcopter')
     if (!virtualQuadAdapter || !('View' in virtualQuadAdapter)) throw new Error('Missing virtual quad session adapter')
-    expect(virtualQuadAdapter.catalogShadows).toEqual(['agent', 'simulation'])
+    expect(virtualQuadAdapter.catalogShadows).toEqual(['simulation'])
     expect(getRegisteredAdapter('sensor')).toBeNull()
     expect(listDeviceWebAdapters().map((adapter) => adapter.type)).toEqual([
       'cloud-mcu',

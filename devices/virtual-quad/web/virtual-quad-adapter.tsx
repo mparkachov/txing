@@ -1,16 +1,11 @@
 import { useState } from 'react'
 import type { DeviceSessionProps, SessionDeviceWebAdapter } from '../../../office/src/device-adapter'
+import { readAgentStatus } from '../../../office/src/agent-shadow-status'
 import { extractReportedRedcon } from '../../../office/src/sparkplug-model'
 import { VirtualQuadLiveView, VirtualQuadMavlinkDiagnostics } from './VirtualQuadLiveView'
-import { readVirtualQuadAgentStatus } from './virtual-quad-agent-status'
 import { readQuadMediaAvailability } from './virtual-quad-media-status'
 import { useVirtualQuadRedcon } from './virtual-quad-redcon'
 import { isVirtualQuadProjectionFresh, readVirtualQuadSession, useVirtualQuadSession } from './virtual-quad-session'
-
-function agentCapability(shadow: unknown, sessionId: string | null, now: number) {
-  const label = readVirtualQuadAgentStatus(shadow, sessionId, now)
-  return { label, active: label === 'running' }
-}
 
 function displayRedcon(redcon: number | null, fresh: boolean) {
   return redcon !== null && redcon < 3 && !fresh ? 3 : redcon
@@ -46,7 +41,8 @@ function VirtualQuadDeviceView({
         {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}
       </span>
     ),
-    agentStatus: agentCapability(agentShadow, media.video && media.mavlink ? sessionId : null, now),
+    agentStatus: readAgentStatus(agentShadow, now, media.video && media.mavlink ? sessionId : null),
+    simulationExpiresAtMs: fresh ? session?.availabilityExpiresAtMs ?? null : null,
     debugDiagnostics: hasMedia ? <div ref={setDebugTarget} /> : (
       <VirtualQuadMavlinkDiagnostics status="inactive" connectionError={null} view={null} videoAvailable={false} />
     ),
@@ -71,7 +67,7 @@ const virtualQuadAdapter: SessionDeviceWebAdapter = {
   type: 'virtual-quad',
   displayName: 'Virtual Quadcopter',
   View: VirtualQuadDeviceView,
-  catalogShadows: ['agent', 'simulation'],
+  catalogShadows: ['simulation'],
   readCatalogStatus: (target, { sparkplug, agent, simulation }, now) => {
     const session = readVirtualQuadSession(simulation)
     const fresh = isVirtualQuadProjectionFresh(target, session, sparkplug, now)
@@ -79,7 +75,8 @@ const virtualQuadAdapter: SessionDeviceWebAdapter = {
     const media = readQuadMediaAvailability(fresh, session?.phase, redcon, sparkplug)
     return {
       redcon: displayRedcon(redcon, fresh),
-      agentStatus: agentCapability(agent, media.video && media.mavlink ? session?.sessionId ?? null : null, now),
+      agentStatus: readAgentStatus(agent, now, media.video && media.mavlink ? session?.sessionId ?? null : null),
+      simulationExpiresAtMs: fresh ? session?.availabilityExpiresAtMs ?? null : null,
     }
   },
 }

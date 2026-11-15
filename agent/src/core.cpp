@@ -14,7 +14,7 @@ Profile profile(const std::string& type, const std::string& thing,
     if (thing.empty() || region.empty() || ca.empty()) throw std::invalid_argument("Thing, region and CA path are required");
     return {{thing + "-mavlink", region, "txing.mavlink.v1", ca, Media::data, Role::viewer, virtual_quad},
             {thing + "-board-video", region, "", ca, Media::h264, Role::viewer, virtual_quad},
-            !virtual_quad, virtual_quad ? 1 : 2};
+            true, virtual_quad ? 1 : 2};
 }
 
 bool valid_mavlink2(const Bytes& b) {

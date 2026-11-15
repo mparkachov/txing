@@ -2,7 +2,8 @@
 
 `virtual-quad` is a cloud rig device type with disposable ARM64 ArduCopter
 SITL sessions. Office operates the simulator and displays its onboard camera
-and MAVLink telemetry. The existing agent can join as a read-only observer.
+and MAVLink telemetry. The shared agent can observe or take explicit
+manual control through the device's MAVLink lease.
 [Architecture and ownership](../../docs/virtual-quadcopter-architecture.md)
 
 ## Enlistment
@@ -27,7 +28,7 @@ device's `-board-video` and `-mavlink` signaling channels. The
 in [fixtures](aws/fixtures/).
 
 The next awake cloud rig census announces the device at REDCON 4 with
-Sparkplug and simulation available. Office lists it under the assigned rig
+Sparkplug available and simulation inactive. Office lists it under the assigned rig
 and enables REDCON 1 while the rig reports awake. Enlistment and the stopped
 census use neither simulator nor observer compute.
 
@@ -110,7 +111,10 @@ used in acceptance. Record the source revision, bundle digest and S3 URI,
 image ARN/version and resolved base, controller release and code digest,
 agent release and image version, and Office release or deployment commit.
 The existing `agent-v0.1.3` and Office `0.18.7` support the consolidated
-simulator. [Office publication](../../docs/components/office.md#cloudflare-pages)
+simulator. Full agent control requires a simulator image with the full
+MAVLink bridge and an agent release that enables the virtual-quad control
+profile. [Agent operation](../../docs/components/agent.md#control-authority)
+· [Office publication](../../docs/components/office.md#cloudflare-pages)
 
 ## Drain and rollback
 
@@ -180,6 +184,10 @@ per-frame timing, decoded fps, heartbeat and flight observations.
 
 On the selected device route, select REDCON 1 to start and REDCON 4 to stop.
 The REDCON indicator and countdown show startup and shutdown progress.
+The `simulation` badge turns green once the current worker reports a fresh
+SITL heartbeat. It turns gray when the controller accepts Stop or its
+published health window expires. Debug shows the `simulation` session
+shadow at every REDCON level, including the last result after shutdown.
 The Session Log records simulator startup completion and the end of a
 session observed on the open page. Failures also open a notification.
 When you open an already stopped device, REDCON 4 shows its state.
@@ -224,8 +232,10 @@ on the mixed rig and confirm the following.
    and terminal timestamps.
 3. Confirm camera and heartbeat, take control, take off to 2 m, translate,
    climb, yaw, hover, land and release control. Use a second viewer to check
-   exclusive control. Inspect both streams in Agent Debug, and record relay
-   media performance with the diagnostics page.
+   exclusive control. Inspect both streams in Agent Debug. After releasing
+   Office control, attach the agent with `--control` and verify that
+   QGroundControl reads parameters while the simulator is disarmed. Record
+   relay media performance with the diagnostics page.
 4. Verify a normal stop, stop during startup, flight deadline and readiness
    loss recovery. Check that the old session cannot regain authority and
    that restart allocates a new session with a fresh disarmed aircraft.
@@ -243,7 +253,7 @@ Use these bounds for the permanent device checks.
 | Flight | Take off to 2 m ± 0.5 m, translate at least 1 m on both horizontal axes, change altitude by at least 0.5 m, yaw at least 45°, and hover within 0.5 m horizontally and vertically over five seconds after settling. Verify landed and disarmed. |
 | Media | With operator and observer joined, sustain 640 × 360 and at least 12 decoded fps in 95% of five-second windows for a full-duration session. Measure p95 pose-to-display below 800 ms and a SITL rate of 0.95–1.05× wall time over rolling 30-second windows. Include forced relay and late joins across the five-minute TURN and ten-minute signaling windows. |
 | Authority loss | Confirm old writes fail and LAND begins within two seconds of server-side revocation. A silently disconnected browser loses its lease within five seconds of its last successful renewal. Check touchdown and disarm in a healthy simulator, and verify terminal cleanup at the session deadline. |
-| Observer and restart | The agent receives both streams and has no write authority. Stop, expiry, crash and rapid restart leave no stale observer, writable peer or duplicate simulator. |
+| Agent and restart | The agent receives both streams in observation mode. Explicit control can transfer a free lease and read parameters before arming. Stop, expiry, crash and rapid restart clear the old agent assignment and lease. |
 
 [Milestone 11](https://github.com/mparkachov/txing/milestone/11)
 · [Prior verification](https://github.com/mparkachov/txing/issues/182)

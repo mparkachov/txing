@@ -19,8 +19,10 @@ cloud rig Sparkplug node as REDCON `1` for rigs with registered `cloud-mcu` or
 ticks for `cloud-mcu` based on each device's desired REDCON:
 sleeping/default devices receive one immediate tick per minute, while REDCON `3`
 devices keep ten ticks at offsets `0, 6, ..., 54` seconds for ECS task
-reconciliation. The census publishes a stopped `DBIRTH` when an enlisted
-virtual quad has an offline projection or moves to a different cloud rig.
+reconciliation. The census publishes a stopped `DBIRTH` with
+`capability.simulation=false` when an enlisted virtual quad has an offline
+projection or moves to a different cloud rig. It also corrects earlier
+stopped births that advertised simulation as active.
 
 The same Lambda is also invoked by Sparkplug `NCMD.redcon` on
 `spBv1.0/<town>/NCMD/<cloud-rig>`. `NCMD.redcon=4` disables the recurring

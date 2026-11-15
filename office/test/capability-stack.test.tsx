@@ -101,6 +101,19 @@ describe('capability stack', () => {
     expect(markup).toBe('')
   })
 
+  test('requires both the reported simulation bit and matching unexpired health', () => {
+    const now = Date.now()
+    const renderBadge = (simulation: boolean, simulationExpiresAtMs: number | null) => renderToStaticMarkup(
+      <CapabilityStack thingName="virtual-quad" label="Virtual quad" capabilities={['simulation']}
+        sparkplugShadow={{ state: { reported: { payload: { metrics: { capability: { simulation } } } } } }}
+        sparkplugShadowStatus="ready" simulationExpiresAtMs={simulationExpiresAtMs} />,
+    )
+    expect(renderBadge(true, now + 60_000)).toContain('title="simulation: active"')
+    expect(renderBadge(false, now + 60_000)).toContain('title="simulation: inactive"')
+    expect(renderBadge(true, now)).toContain('title="simulation: inactive"')
+    expect(renderBadge(true, null)).toContain('title="simulation: inactive"')
+  })
+
   for (const { type } of listDeviceWebAdapters()) {
     test(`${type} omits only Sparkplug in the catalog and device header`, () => {
       const manifest = Bun.TOML.parse(readFileSync(
@@ -111,13 +124,14 @@ describe('capability stack', () => {
       const sparkplug = { state: { reported: { payload: { metrics: {
         redcon: 2, capability: Object.fromEntries(availability),
       } } } } }
-      const common = { thingName: type, label: type, capabilities, sparkplugShadowStatus: 'ready' } as const
+      const common = { thingName: type, label: type, capabilities, sparkplugShadowStatus: 'ready',
+        simulationExpiresAtMs: Date.now() + 60_000 } as const
       const catalog = renderToStaticMarkup(<CapabilityStack {...common} sparkplugShadow={sparkplug} />)
       const device = renderToStaticMarkup(<CapabilityStack {...common}
         sparkplugShadow={{ namedShadows: { sparkplug } }} className="navigation-capabilities" />)
       const titles = (markup: string) => Array.from(markup.matchAll(/title="([^"]+)"/g), ([, title]) => title)
       const expected = availability.filter(([name]) => name !== 'sparkplug').reverse()
-        .map(([name, active]) => `${name}: ${active ? 'active' : 'inactive'}`)
+        .map(([name, active]) => `${name}: ${name === 'agent' ? 'unavailable' : active ? 'active' : 'inactive'}`)
       expect(titles(catalog)).toEqual(expected)
       expect(titles(device)).toEqual(expected)
     })

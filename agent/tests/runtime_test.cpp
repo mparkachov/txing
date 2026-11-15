@@ -110,7 +110,7 @@ void profile_and_framing() {
     REQUIRE(p.telemetry.region == "region" && p.telemetry.label == "txing.mavlink.v1");
     REQUIRE(!p.telemetry.force_relay && !p.video.force_relay);
     const auto virtual_quad = profile("virtual-quad", "unrelated-name", "region", "ca");
-    REQUIRE(!virtual_quad.allows_control && virtual_quad.telemetry.force_relay && virtual_quad.video.force_relay);
+    REQUIRE(virtual_quad.allows_control && virtual_quad.telemetry.force_relay && virtual_quad.video.force_relay);
     bool rejected = false;
     try { profile("unit", "tbot-name", "region", "ca"); } catch (...) { rejected = true; }
     REQUIRE(rejected); REQUIRE(valid_mavlink2(frame())); REQUIRE(valid_mavlink2(frame(true)));
@@ -151,11 +151,12 @@ void virtual_quad_observation() {
     f.links[0]->events.data(frame(), true);
     f.links[1]->events.video({Bytes{1, 2, 3}, "h264", 100, std::chrono::system_clock::now()});
     eventually([&] { return f.op.telemetry_count == 1 && f.op.video_count == 1; });
-    REQUIRE(!f.session.acquire("test") && !f.session.send(frame()));
-    receive(f.links[0], reply("unsolicited", "control.activated", 1));
-    REQUIRE(f.session.tick(f.now + 2s) && f.links[0]->text.empty() && f.links[0]->binary.empty());
+    REQUIRE(!f.session.send(frame()) && f.links[0]->text.empty() && f.links[0]->binary.empty());
+    f.acquire();
+    REQUIRE(f.links[0]->binary == std::vector<Bytes>{frame(true)});
     REQUIRE(!f.session.tick(f.now + 3s));
     REQUIRE(f.links[0]->stops == 1 && f.links[1]->stops == 1);
+    REQUIRE(!f.session.send(frame()));
 }
 void lifecycle_and_recovery() {
     Fixture f; REQUIRE(f.session.tick(f.now)); REQUIRE(f.links.empty());

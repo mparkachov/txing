@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { readVirtualQuadAgentStatus } from '../../devices/virtual-quad/web/virtual-quad-agent-status'
 import virtualQuadAdapter from '../../devices/virtual-quad/web/virtual-quad-adapter'
+import { readAgentStatus } from '../src/agent-shadow-status'
 import CapabilityStack from '../src/CapabilityStack'
 
 const now = 1_700_000_000_000
@@ -14,10 +14,11 @@ const reported = {
     sampledAt: now / 1000 - 60,
     mavlink: { state: 'connected' },
     video: { state: 'connected' },
+    control: { state: 'observing' },
   },
 }
 const read = (patch: Partial<typeof reported> = {}, sessionId: string | null = 'quad-1') =>
-  readVirtualQuadAgentStatus({ state: { reported: { ...reported, ...patch } } }, sessionId, now)
+  readAgentStatus({ state: { reported: { ...reported, ...patch } } }, now, sessionId).label
 
 describe('virtual quad agent shadow status', () => {
   test('reports a fresh observer for the current simulator session and run', () => {
@@ -53,7 +54,8 @@ describe('virtual quad agent shadow status', () => {
 
     expect(status(sparkplug('quad-1'))).toEqual({
       redcon: 1,
-      agentStatus: { active: true, label: 'running' },
+      agentStatus: { active: true, label: 'running', expiresAtMs: now + 15_000 },
+      simulationExpiresAtMs: now + 5_000,
     })
     const degraded = status(sparkplug('quad-1', 2))
     expect(degraded.redcon).toBe(2)
@@ -65,6 +67,7 @@ describe('virtual quad agent shadow status', () => {
     ]) {
       expect(stale.redcon).toBe(3)
       expect(stale.agentStatus?.active).toBe(false)
+      expect(stale.simulationExpiresAtMs).toBeNull()
     }
   })
 
@@ -92,4 +95,39 @@ describe('virtual quad agent shadow status', () => {
     />)
     expect(markup).toContain('catalog-status-capability-active" title="mavlink: active"')
   })
+})
+
+test('agent readiness requires two fresh connected streams on a device without a simulator session', () => {
+  expect(readAgentStatus({ state: { reported } }, now).active).toBe(true)
+  for (const runtime of [
+    { ...reported.runtime, mavlink: { state: 'connecting' } },
+    { ...reported.runtime, video: { state: 'error' } },
+    { ...reported.runtime, sampledAt: now / 1000 - 75 },
+    { ...reported.runtime, runId: 'previous-run' },
+  ]) {
+    expect(readAgentStatus({ state: { reported: { ...reported, runtime } } }, now).active).toBe(false)
+  }
+  expect(readAgentStatus(undefined, now).active).toBe(false)
+})
+
+test('TBot catalog and device badges require the runtime shadow in addition to launch eligibility', () => {
+  const nowMs = Date.now()
+  const sample = { ...reported,
+    activation: { id: 'tbot-activation', deadline: Math.floor(nowMs / 1000) + 60 },
+    runtime: { ...reported.runtime, sampledAt: Math.floor(nowMs / 1000) },
+  }
+  const ready = readAgentStatus({ state: { reported: sample } }, nowMs)
+  const projection = (agent: boolean) => ({ state: { reported: { payload: { metrics: { capability: { agent } } } } } })
+  const badge = (catalog: boolean, agentStatus?: typeof ready, eligible = true) => renderToStaticMarkup(
+    <CapabilityStack thingName="tbot" label="TBot" capabilities={['sparkplug', 'agent']}
+      sparkplugShadow={catalog ? projection(eligible) : { namedShadows: { sparkplug: projection(eligible) } }}
+      sparkplugShadowStatus="ready" agentStatus={agentStatus} />,
+  )
+  for (const catalog of [true, false]) {
+    expect(badge(catalog)).toContain('catalog-status-capability-inactive" title="agent: unavailable"')
+    expect(badge(catalog, ready)).toContain('catalog-status-capability-active" title="agent: running"')
+    expect(badge(catalog, { active: true, label: 'running', expiresAtMs: nowMs }))
+      .toContain('catalog-status-capability-inactive" title="agent: unavailable"')
+    expect(badge(catalog, ready, false)).toContain('catalog-status-capability-inactive" title="agent: unavailable"')
+  }
 })

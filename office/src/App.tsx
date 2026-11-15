@@ -41,6 +41,7 @@ import {
   type AppNotificationLogEntry,
 } from './app-notifications'
 import { shouldSuppressBoardVideoRuntimeError, type DeviceSessionView } from './device-adapter'
+import { readAgentStatus } from './agent-shadow-status'
 import { getDeviceWebAdapter } from './device-registry'
 import {
   describeThingMetadata,
@@ -115,6 +116,7 @@ type AgentShadowView = {
   json: string
   error: string
   shadow?: unknown
+  readAtMs?: number
 }
 type RigCatalogState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
@@ -639,13 +641,13 @@ function App({ initialAuthError = '' }: AppProps) {
     setAuthUser(getAuthUser(refreshedTokens))
     return refreshedTokens.idToken
   }, [])
-  const shouldReadAgentShadow = hasAgentCapability && (isDebugEnabled || sessionTarget !== null)
-  const agentShadowThing = activeShadowTarget?.thingName
+  const agentShadowThing = hasAgentCapability && activeShadowTarget?.thingName === currentRouteThingName
+    ? currentRouteThingName : null
   const currentAgentShadow = agentShadowView?.thingName === agentShadowThing ? agentShadowView : null
 
   useEffect(() => {
     const thingName = agentShadowThing
-    if (!shouldReadAgentShadow || !thingName) {
+    if (!thingName) {
       return
     }
     let cancelled = false
@@ -663,6 +665,7 @@ function App({ initialAuthError = '' }: AppProps) {
             json: JSON.stringify(shadow, null, 2),
             error: '',
             shadow,
+            readAtMs: Date.now(),
           })
         }
       } catch (error) {
@@ -684,7 +687,7 @@ function App({ initialAuthError = '' }: AppProps) {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [agentShadowThing, shouldReadAgentShadow, resolveSessionIdToken])
+  }, [agentShadowThing, resolveSessionIdToken])
 
   const refreshRouteSparkplugShadow = useCallback(
     async (thingName: string): Promise<unknown | null> => {
@@ -1157,7 +1160,8 @@ function App({ initialAuthError = '' }: AppProps) {
     ): Promise<DeviceCatalogItem> => {
       const read = (name: ShadowName) => getThingNamedShadow(resolveSessionIdToken, device.thingName, name)
       const adapter = getDeviceWebAdapter(device.thingTypeName)
-      const names = adapter && 'View' in adapter ? adapter.catalogShadows.filter((name) => device.capabilities.includes(name)) : []
+      const adapterShadows = adapter && 'View' in adapter ? adapter.catalogShadows : []
+      const names = device.capabilities.filter((name) => name === 'agent' || adapterShadows.includes(name))
       const [sparkplug, ...shadows] = await Promise.allSettled([read('sparkplug'), ...names.map(read)])
       const deviceShadows = Object.fromEntries(names.map((name, index) => [
         name, shadows[index].status === 'fulfilled' ? shadows[index].value : undefined,
@@ -1851,11 +1855,12 @@ function App({ initialAuthError = '' }: AppProps) {
     item: SparkplugCatalogItem,
   ): ReactElement => {
     const adapter = getDeviceWebAdapter(item.thingTypeName)
+    const now = Date.now()
     const sessionStatus = route.kind === 'rig' && adapter && 'View' in adapter
       ? adapter.readCatalogStatus(
         { kind: 'device', groupId: route.town, edgeNodeId: route.rig, deviceId: item.thingName },
         { ...item.deviceShadows, sparkplug: item.sparkplugShadow },
-        Date.now(),
+        now,
       )
       : null
     const redcon =
@@ -1893,7 +1898,8 @@ function App({ initialAuthError = '' }: AppProps) {
           capabilities={item.capabilities}
           sparkplugShadow={item.sparkplugShadow}
           sparkplugShadowStatus={item.sparkplugShadowStatus}
-          agentStatus={sessionStatus?.agentStatus}
+          agentStatus={sessionStatus?.agentStatus ?? readAgentStatus(item.deviceShadows?.agent, now)}
+          simulationExpiresAtMs={sessionStatus?.simulationExpiresAtMs}
         />
       </a>
     )
@@ -2069,7 +2075,8 @@ function App({ initialAuthError = '' }: AppProps) {
           capabilities={routeHeaderMetadata.capabilities}
           sparkplugShadow={navigationCapabilityShadow}
           sparkplugShadowStatus={navigationCapabilityStatus}
-          agentStatus={session?.agentStatus}
+          agentStatus={session?.agentStatus ?? readAgentStatus(currentAgentShadow?.shadow, currentAgentShadow?.readAtMs ?? 0)}
+          simulationExpiresAtMs={session?.simulationExpiresAtMs}
           className="navigation-capabilities"
         />
       ) : null

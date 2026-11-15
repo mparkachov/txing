@@ -216,7 +216,7 @@ func (l Ledger) ReportHealth(ctx context.Context, deviceID string, worker Worker
 			s.ReadinessLostAtMS = sample.ObservedAtMS
 		}
 		after := record.Availability(nowMS)
-		if before.REDCON != after.REDCON || before.Mavlink != after.Mavlink || before.Video != after.Video {
+		if before.REDCON != after.REDCON || before.Simulation != after.Simulation || before.Mavlink != after.Mavlink || before.Video != after.Video {
 			record.markAvailability(nowMS)
 		}
 		return true, nil

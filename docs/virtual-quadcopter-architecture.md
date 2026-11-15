@@ -2,8 +2,9 @@
 
 `virtual-quad` is a cloud rig device type. An Office operator selects an
 enlisted device, starts a disposable simulator, acquires control, flies using
-onboard video, lands, and stops. The existing agent joins a ready simulator
-as a read-only observer. Each session starts with the same world and a fresh
+onboard video, lands, and stops. The shared agent joins a ready simulator as
+an observer and can acquire a manual control lease on request. Each session
+starts with the same world and a fresh
 disarmed aircraft. The operating and release procedures live in the
 [device guide](../devices/virtual-quad/README.md).
 
@@ -62,7 +63,7 @@ flowchart LR
     W -->|Sparkplug shadow| A
     R <-->|Encoded video and MAVLink| K
     O <-->|Viewer and leased control| K
-    K -->|Read-only viewer| A
+    K <-->|Viewer and leased MAVLink| A
     A -->|Agent shadow| O
 ```
 
@@ -114,6 +115,14 @@ SITL. [Native camera](../devices/virtual-quad/runtime/camera.cpp)
 
 ## Session lifecycle and readiness
 
+Sparkplug provides the management path. A born virtual quad at REDCON 4
+can receive Start while its cloud rig is awake. The `simulation` capability
+is the runtime equivalent of `board` on a physical device. The controller
+reports it active when a fresh, granted worker sample confirms a SITL
+heartbeat for the current session. MAVLink and video readiness are reported
+separately. The cloud rig census reports `simulation=false` for a stopped
+device.
+
 ### Startup sequence
 
 1. **REDCON 4 → 3 — reserve and launch.** The operator selects REDCON 1
@@ -124,9 +133,10 @@ SITL. [Native camera](../devices/virtual-quad/runtime/camera.cpp)
 2. **Activate the simulator inside the MicroVM.** The restored supervisor
    accepts the run hook and claims the current session from the controller.
    After the claim is granted, it starts fresh ArduCopter SITL and the media
-   worker. The worker starts both KVS masters and the camera encoder during
-   this same startup. The REDCON levels reflect which services have passed
-   their readiness checks. The device can go directly from REDCON 3 to 1 if
+   worker. A fresh SITL heartbeat enables `simulation` even if the KVS
+   masters and camera encoder are still starting. The REDCON levels reflect
+   which services have passed their readiness checks. The device can go
+   directly from REDCON 3 to 1 if
    the first ready health report confirms both services.
 3. **REDCON 2 — expose MAVLink.** The controller receives fresh health
    showing a SITL heartbeat and connected KVS MAVLink signaling. Office can
@@ -139,7 +149,7 @@ SITL. [Native camera](../devices/virtual-quad/runtime/camera.cpp)
    viewer after observing the matching Sparkplug and simulation reports.
    The operator can acquire an available flight lease once the browser has
    fresh telemetry and decoded video.
-5. **Start the optional read-only observer.** Fresh operational REDCON 1
+5. **Start the optional agent.** Fresh operational REDCON 1
    makes the device eligible for agent observation. When cloud agent
    automation is enabled, the agent controller verifies that readiness and
    starts a separate MicroVM for the same session. The observer connects to
@@ -152,10 +162,10 @@ SITL. [Native camera](../devices/virtual-quad/runtime/camera.cpp)
 
 | Phase | REDCON | Evidence and behavior |
 | --- | --- | --- |
-| Stopped or terminal failure | 4 | The device is born with Sparkplug and simulation available. No simulator or observer compute is required. A previous failure carries its outcome and reason. |
-| Starting | 3 or 2 | The reservation is current. Fresh SITL heartbeat and MAVLink master readiness permit REDCON 2 and observation. |
-| Operational | 1, with 2 or 3 during readiness loss | REDCON 1 requires heartbeat and MAVLink master plus navigation, fresh pose, encoded camera and ready video master. Agent eligibility follows fresh operational REDCON 1. |
-| Stopping | 3 | External flight authority is withdrawn. The controller retains the reservation until termination or definitive launch failure. |
+| Stopped or terminal failure | 4 | Sparkplug is available and simulation is inactive. A previous failure carries its outcome and reason. |
+| Starting | 3 or 2 | Simulation becomes active on a fresh SITL heartbeat. MAVLink master readiness permits REDCON 2 and observation. |
+| Operational | 1, with 2 or 3 during readiness loss | Simulation stays active during a media-only outage while the worker heartbeat is fresh and the recovery window is open. REDCON 1 also requires MAVLink, navigation and video readiness. Agent eligibility follows fresh operational REDCON 1. |
+| Stopping | 3 | The controller clears simulation and revokes flight authority when it accepts Stop. It retains the reservation until termination or definitive launch failure. |
 
 Commands are Sparkplug `DCMD.redcon` with levels 1 and 4. A UUID
 `virtualQuad.requestId` correlates the result. Start carries the observed
@@ -179,12 +189,14 @@ for terminal state. Repair retries unresolved cleanup and republishes the
 terminal projection. The simulator, browser and agent each reject stale
 session generations.
 
-The simulation shadow carries phase, deadlines, terminal revision, last
-outcome and an availability watermark and expiry. Readiness requires a born
-Sparkplug projection for the same session at or ahead of that watermark,
-before the expiry. This joins two asynchronous shadows without treating a
-delayed media flag as current. The browser can conservatively withdraw
-readiness when it has no fresh matching view. REDCON 4 represents a reachable
+The controller-owned `simulation` shadow is the durable session record.
+Office reads phase, deadlines, terminal revision and last outcome even
+when `simulation` is inactive. Its availability watermark and expiry bind
+live capability reports to the current simulator session. Both Office views
+show `simulation` active only when the Sparkplug bit is true and the
+reported availability is current. If health reports stop, the badge expires
+at the published deadline. The existing repair pass reconciles the session
+and publishes the cleared Sparkplug bit. REDCON 4 represents a reachable
 stopped device. DDEATH is used for device management unavailability.
 
 ## Office and flight authority
@@ -203,13 +215,15 @@ one complete MAVLink 2 frame per binary message and the common JSON lease
 operations. The simulator owns lease arbitration and the loopback write
 gate inside the media worker. Viewers start read-only.
 The browser enables flight commands with fresh telemetry and decoded video.
-The simulator additionally verifies readiness, peer identity, lease epoch,
-MAVLink target and allowed commands before forwarding. The operator takes
-off through Guided mode and normal ArduCopter arm checks. Movement uses
-bounded Guided setpoints. Releasing inputs requests hover. Release, peer
-loss, lease expiry, media loss or Stop revoke writes and request LAND when
-the aircraft may be airborne. Only the active controller can send writable
-commands. [Flight authority implementation](../devices/virtual-quad/runtime/flight.cpp)
+The simulator bridge verifies readiness, peer identity, and lease epoch
+before forwarding complete MAVLink 2 frames byte for byte to loopback SITL.
+ArduCopter validates the frames and their commands. Office takes off through
+Guided mode and normal ArduCopter arm checks, sends bounded velocity setpoints,
+and requests hover when the controls center. Release, peer loss, lease expiry,
+media loss or Stop revoke writes and request LAND when the aircraft may be
+airborne. Before granting another lease, the bridge waits for landed and
+disarmed telemetry if it needs to confirm the effects of recent uplink.
+[Flight authority implementation](../devices/virtual-quad/runtime/flight.cpp)
 · [Shared MAVLink wire contract](contracts/board-mavlink.md)
 · [Office operation](../devices/virtual-quad/README.md#flight-in-office)
 
@@ -218,8 +232,10 @@ commands. [Flight authority implementation](../devices/virtual-quad/runtime/flig
 Fresh operational readiness enables the existing agent's virtual-quad
 profile. Its activation ID is the simulation session ID, with a deadline
 limited by the earlier of the flight cutoff and the agent budget. The agent
-consumes the two channels through KVS TURN and rejects lease acquisition and
-outgoing MAVLink. On readiness loss, expiry, a stopped session or a
+consumes the two channels through KVS TURN. An explicit `--control` request
+can acquire a free lease using the same operator path as TBot. The current
+lease holder keeps control until release or revocation. On readiness loss,
+expiry, a stopped session or a
 replacement session, it closes its peers and the controller retires the run.
 Agent health is diagnostic and independent of simulator readiness.
 [Agent shadow contract](contracts/agent-shadow.md)

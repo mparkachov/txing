@@ -13,7 +13,7 @@
           "redcon": 4,
           "capability": {
             "sparkplug": true,
-            "simulation": true,
+            "simulation": false,
             "mavlink": false,
             "video": false,
             "agent": false

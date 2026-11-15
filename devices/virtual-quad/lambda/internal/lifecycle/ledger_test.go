@@ -244,7 +244,7 @@ func TestReadinessUsesFreshEvidenceAndBoundedDeadlines(t *testing.T) {
 		t.Fatalf("out-of-order health report was accepted: %v", err)
 	}
 	expiry := at + HealthTimeout.Milliseconds()
-	if step.Availability(expiry-1).REDCON != 1 || step.Availability(expiry).REDCON != 3 {
+	if fresh, expired := step.Availability(expiry-1), step.Availability(expiry); fresh.REDCON != 1 || !fresh.Simulation || expired.REDCON != 3 || expired.Simulation {
 		t.Fatal("readiness did not expire at exactly fifteen seconds")
 	}
 	if _, err := ledger.WorkerGrant(t.Context(), target.DeviceID, worker, expiry); !errors.Is(err, ErrGrantDenied) {
@@ -257,6 +257,55 @@ func TestReadinessUsesFreshEvidenceAndBoundedDeadlines(t *testing.T) {
 	projected, err = ledger.PrepareProjection(t.Context(), target.DeviceID, nil, expiry, 0)
 	if err != nil || projected.Projection.Agent {
 		t.Fatalf("expired readiness enabled the observer: %v", err)
+	}
+}
+
+func TestSimulationAvailabilityTracksCurrentHeartbeatBeforeMedia(t *testing.T) {
+	ledger := NewLedger(&memoryStore{})
+	start := reserve(t, ledger, 0, testNow)
+	prepare(t, ledger, start.Session.ID, testNow)
+	worker := claim(t, ledger, start, testNow+1000)
+	if initial := start.Availability(testNow); initial.REDCON != 3 || initial.Simulation {
+		t.Fatalf("reservation alone advertised simulation: %+v", initial)
+	}
+	at := testNow + 2000
+	step, err := ledger.ReportHealth(t.Context(), target.DeviceID, worker, Health{Sequence: 1, ObservedAtMS: at, Heartbeat: true}, at)
+	if ready := step.Availability(at); err != nil || ready.REDCON != 3 || !ready.Simulation || ready.Mavlink || ready.Video || step.AvailabilityWatermarkMS != at {
+		t.Fatalf("first heartbeat did not enable simulation independently of media: %+v, %v", ready, err)
+	}
+	projected, err := ledger.PrepareProjection(t.Context(), target.DeviceID, nil, at, 0)
+	if err != nil || projected.Projection.Simulation == nil || !*projected.Projection.Simulation {
+		t.Fatalf("heartbeat did not reach the projection: %v", err)
+	}
+	at += HealthInterval.Milliseconds()
+	step, err = ledger.ReportHealth(t.Context(), target.DeviceID, worker, Health{Sequence: 2, ObservedAtMS: at}, at)
+	if lost := step.Availability(at); err != nil || lost.Simulation || lost.REDCON != 3 || step.AvailabilityWatermarkMS != at {
+		t.Fatalf("heartbeat loss did not clear simulation independently of REDCON: %+v, %v", lost, err)
+	}
+	at += HealthInterval.Milliseconds()
+	step, err = ledger.ReportHealth(t.Context(), target.DeviceID, worker, Health{Sequence: 3, ObservedAtMS: at, Heartbeat: true}, at)
+	if err != nil || !step.Availability(at).Simulation {
+		t.Fatalf("simulation did not recover with heartbeat: %v", err)
+	}
+	stop, _, err := ledger.RequestStop(t.Context(), target, CommandRequest{ID: requestID(42)}, start.Session.ID, at+1)
+	if err != nil || stop.Session.Phase != Stopping || stop.Availability(at+1).Simulation {
+		t.Fatalf("stop left the simulator available: %v", err)
+	}
+}
+
+func TestLegacyStoppedProjectionIsPublishedOnceWithSimulationUnavailable(t *testing.T) {
+	store := &memoryStore{
+		version: 7,
+		data:    []byte(`{"version":7,"projection":{"timestampMs":100,"phase":"stopped","redcon":4}}`),
+	}
+	ledger := NewLedger(store)
+	current, err := ledger.PrepareProjection(t.Context(), target.DeviceID, nil, 101, 100)
+	if err != nil || current.Projection.TimestampMS != 101 || current.Projection.Simulation == nil || *current.Projection.Simulation {
+		t.Fatalf("legacy stopped projection was not corrected: %+v, %v", current.Projection, err)
+	}
+	repeated, err := ledger.PrepareProjection(t.Context(), target.DeviceID, nil, 102, 101)
+	if err != nil || repeated.Version != current.Version || repeated.Projection.TimestampMS != 101 {
+		t.Fatalf("stable stopped state changed again: %+v, %v", repeated.Projection, err)
 	}
 }
 
@@ -285,7 +334,7 @@ func TestMediaReconnectKeepsSessionWhileSITLIsHealthy(t *testing.T) {
 	for range 4 {
 		degraded := report(true, true, false)
 		availability := degraded.Availability(at - HealthInterval.Milliseconds())
-		if availability.REDCON != 3 || availability.Mavlink || availability.Video || degraded.Session.Phase != Operational {
+		if availability.REDCON != 3 || !availability.Simulation || availability.Mavlink || availability.Video || degraded.Session.Phase != Operational {
 			t.Fatalf("KVS loss did not withdraw readiness during recovery: %+v", availability)
 		}
 	}

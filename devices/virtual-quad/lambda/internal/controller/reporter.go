@@ -162,7 +162,7 @@ func encodeProjection(p lifecycle.Projection) []byte {
 	}
 	integer("redcon", uint64(p.REDCON))
 	boolean("sparkplug", true)
-	boolean("simulation", true)
+	boolean("simulation", p.Simulation != nil && *p.Simulation)
 	boolean("mavlink", p.Mavlink)
 	boolean("video", p.Video)
 	boolean("agent", p.Agent)

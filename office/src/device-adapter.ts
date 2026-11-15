@@ -2,6 +2,7 @@ import type { ComponentType, ReactElement, ReactNode } from 'react'
 import type { McpTransportKind } from './mcp-descriptor'
 import type { RobotControlState } from './shadow-api'
 import type { AppNotificationInput } from './app-notifications'
+import type { AgentCapabilityStatus } from './agent-shadow-status'
 import type { ShadowName } from './shadow-protocol'
 import type { SparkplugRedconCommandTarget } from './sparkplug-command'
 
@@ -80,19 +81,22 @@ export type DeviceWebAdapter = DeviceAdapterIdentity & {
   renderVideo: (props: DeviceVideoRenderProps) => ReactElement
 }
 
-export type AgentCapabilityStatus = { active: boolean; label: string }
 export type DeviceCommandTarget = Extract<SparkplugRedconCommandTarget, { kind: 'device' }>
 type RedconLevel = 1 | 2 | 3 | 4
 
-export type DeviceSessionView = {
-  sparkplug: unknown | null
+type DeviceSessionStatus = {
   redcon: number | null
+  agentStatus?: AgentCapabilityStatus
+  simulationExpiresAtMs?: number | null
+}
+
+export type DeviceSessionView = DeviceSessionStatus & {
+  sparkplug: unknown | null
   targetRedcon: RedconLevel | null
   canStart: boolean
   canStop: boolean
   selectRedcon: (redcon: RedconLevel) => Promise<void>
   statusDetail: ReactNode
-  agentStatus?: AgentCapabilityStatus
   content: ReactElement
   debugDiagnostics?: ReactElement
 }
@@ -117,7 +121,7 @@ export type SessionDeviceWebAdapter = DeviceAdapterIdentity & {
     target: DeviceCommandTarget,
     shadows: Partial<Record<ShadowName, unknown>>,
     now: number,
-  ) => { redcon: number | null; agentStatus?: AgentCapabilityStatus }
+  ) => DeviceSessionStatus
 }
 
 export type RegisteredDeviceWebAdapter = DeviceWebAdapter | SessionDeviceWebAdapter

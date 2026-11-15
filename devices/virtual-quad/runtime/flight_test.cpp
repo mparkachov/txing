@@ -99,12 +99,11 @@ void LeaseAndLanding() {
     Check(test.Reply(test.owner, renew, "control.renewed"), "owner could not renew");
 
     const auto arm = test.Command(MAV_CMD_COMPONENT_ARM_DISARM, 1);
-    auto corrupt = arm;
-    corrupt.back() ^= 1;
-    test.flight.SendFrame(test.owner, 1, corrupt);
+    auto truncated = arm;
+    truncated.pop_back();
+    test.flight.SendFrame(test.owner, 1, truncated);
     test.flight.SendFrame(test.observer, 1, arm);
     test.flight.SendFrame(test.owner, 2, arm);
-    test.flight.SendFrame(test.owner, 1, test.Command(MAV_CMD_COMPONENT_ARM_DISARM, 1, 21196));
     Check(test.writes.size() == 1, "rejected arm reached SITL");
     test.flight.SendFrame(test.owner, 1, arm);
     Check(test.LastCommand().command == MAV_CMD_COMPONENT_ARM_DISARM, "normal arm failed");
@@ -113,12 +112,7 @@ void LeaseAndLanding() {
     test.flight.SendFrame(test.owner, 1, test.Command(MAV_CMD_NAV_TAKEOFF, 0, 0, 2));
     Check(test.LastCommand().command == MAV_CMD_NAV_TAKEOFF, "takeoff did not reach SITL");
     const auto before_move = test.writes.size();
-    test.flight.SendFrame(test.owner, 1, test.Move(0.5f));
-    Check(test.writes.size() == before_move, "movement interrupted takeoff");
-
     test.Report(true, MAV_LANDED_STATE_IN_AIR, 2000);
-    test.flight.SendFrame(test.owner, 1, test.Move(2));
-    Check(test.writes.size() == before_move, "overspeed setpoint reached SITL");
     test.flight.SendFrame(test.owner, 1, test.Move(0.5f));
     Check(test.writes.size() == before_move + 1, "valid movement did not reach SITL");
     test.now += 500ms;
@@ -135,12 +129,43 @@ void LeaseAndLanding() {
     Check(land.command == MAV_CMD_DO_SET_MODE && land.param2 == 9, "release did not request LAND immediately");
     Check(!test.flight.SafeToExit(), "airborne cleanup reported complete");
     Check(test.Reply(test.observer, acquire, "control_busy"), "acquisition during autonomous landing");
-    test.now += 1s;
+    test.now += 2s;
     test.Report(false, MAV_LANDED_STATE_ON_GROUND, 0, 9);
     Check(test.flight.SafeToExit(), "landed and disarmed flight remained active");
     Check(test.Reply(test.observer, acquire, "\"epoch\":2"), "new acquisition did not advance epoch");
     test.flight.ClosePeer(test.owner);
     Check(test.Reply(test.owner, acquire, "stale_epoch"), "closed peer reacquired");
+}
+
+void FullMavlinkUnderLease() {
+    Scenario test;
+    test.Report(false, MAV_LANDED_STATE_ON_GROUND);
+    mavlink_message_t message{};
+    mavlink_msg_param_request_list_pack_status(246, 42, &test.tx, &message, 1, 1);
+    const auto parameters = Encode(message);
+    // A framed message from a dialect unknown to the bridge with a signature trailer.
+    Frame signed_extension(25, 0xa5);
+    signed_extension[0] = MAVLINK_STX;
+    signed_extension[1] = 0;
+    signed_extension[2] = MAVLINK_IFLAG_SIGNED;
+
+    test.flight.SendFrame(test.owner, 0, parameters);
+    Check(test.writes.size() == 1, "observer sent uplink before acquiring a lease");
+    Check(test.Reply(test.owner, acquire, "control.activated"), "could not acquire MAVLink lease");
+    test.flight.SendFrame(test.owner, 1, parameters);
+    Check(test.writes.back() == parameters, "parameter request or source identity was changed");
+    test.flight.SendFrame(test.owner, 1, signed_extension);
+    Check(test.writes.back() == signed_extension, "signed extension was changed or filtered");
+    test.flight.SendFrame(test.owner, 1, test.Command(MAV_CMD_COMPONENT_ARM_DISARM, 1));
+    Check(test.Reply(test.owner, release, "control.released"), "could not release MAVLink lease");
+    const auto writes_at_release = test.writes.size();
+    test.flight.SendFrame(test.owner, 1, parameters);
+    Check(test.writes.size() == writes_at_release, "released lease forwarded a parameter request");
+
+    test.now += 1s;
+    test.Report(true, MAV_LANDED_STATE_IN_AIR, 500);
+    Check(test.LastCommand().param2 == 9, "late arm after release did not request LAND");
+    Check(test.Reply(test.observer, acquire, "control_busy"), "released lease left the gate open during landing");
 }
 
 void ExpiryAndStop() {
@@ -193,6 +218,7 @@ void PeerClosureFencesReconnect() {
 int main() {
     try {
         LeaseAndLanding();
+        FullMavlinkUnderLease();
         ExpiryAndStop();
         PeerClosureFencesReconnect();
     } catch (const std::exception& error) {

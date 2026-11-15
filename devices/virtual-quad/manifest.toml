@@ -6,8 +6,8 @@ compatible_rig_types = ["cloud"]
 redcon_command_levels = [4, 1]
 
 [redcon_rules]
-4 = ["sparkplug", "simulation"]
-3 = ["sparkplug", "simulation"]
+4 = ["sparkplug"]
+3 = ["sparkplug"]
 2 = ["sparkplug", "simulation", "mavlink"]
 1 = ["sparkplug", "simulation", "mavlink", "video"]
 

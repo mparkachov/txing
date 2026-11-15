@@ -179,6 +179,11 @@ Capability availability rules:
 - `false` means the corresponding named shadow or data domain is stale and must
   not be used in logic, even if older data metrics are still present from a
   previous `DDATA` merge
+- for virtual quad, `capability.simulation` describes live simulator
+  availability. The controller-owned `simulation` shadow also holds the
+  durable lifecycle record, which readers use at every REDCON level. Its
+  watermark and expiry determine whether live reports apply to the current
+  session. [Virtual quad readiness](virtual-quadcopter-architecture.md#session-lifecycle-and-readiness)
 - on startup and inventory refresh, SparkplugManager initializes declared
   non-`sparkplug` capabilities to `false`; fresh connectivity adapter state can
   raise them to `true`
