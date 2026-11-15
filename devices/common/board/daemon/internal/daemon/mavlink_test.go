@@ -12,6 +12,7 @@ import (
 	"time"
 
 	mavlinkv1 "github.com/mparkachov/txing/devices/common/board/daemon/internal/proto/mavlinkv1"
+	"google.golang.org/grpc"
 )
 
 func TestMAVLinkControlLeaseTakeoverAndWatchdog(t *testing.T) {
@@ -428,6 +429,102 @@ func TestMAVLinkOfflineRequestsBoundedNeutralHoldAndDisarm(t *testing.T) {
 		t.Fatalf("shutdown safe state = %#v", transport.safeRequests)
 	}
 }
+
+func TestMAVLinkRuntimeCancellationSendsSafeFrames(t *testing.T) {
+	config := testRuntimeConfig()
+	config.Capabilities = []string{BoardCapability, MAVLinkCapability}
+	config.MAVLinkServiceSocketPath = shortUnixSocketPath(t, "mavlink.sock")
+	config.MAVLinkBridgeSocketPath = shortUnixSocketPath(t, "bridge.sock")
+
+	receiver, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	connection, err := net.DialUDP("udp", nil, receiver.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	service := NewMAVLinkService(MAVLinkServiceConfig{HeartbeatWindow: 5 * time.Second})
+	service.transport = connection
+	service.observeFrame(testMAVLinkFrame(mavlinkHeartbeatMessageID, testHeartbeatPayload(0, true), 1, 1))
+	listener, err := bindUnixListener(config.MAVLinkServiceSocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	mavlinkv1.RegisterBoardMavlinkServer(server, service)
+	defer server.Stop()
+	go server.Serve(listener)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RunConnectedRuntime(ctx, config, &mavlinkTestPublisher{}, nil) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		service.mu.RLock()
+		connected := len(service.peers) != 0
+		service.mu.RUnlock()
+		if connected {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal("daemon did not connect to the local MAVLink service")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("daemon shutdown: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon did not finish shutdown")
+	}
+
+	if err := receiver.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		messageID uint32
+		command   uint16
+		param1    float32
+		param2    float32
+	}{
+		{messageID: mavlinkManualControlMessageID},
+		{messageID: mavlinkCommandLongMessageID, command: mavlinkCommandDoSetMode, param1: float32(mavlinkCustomModeEnabledBaseMode), param2: float32(mavlinkModeHold)},
+		{messageID: mavlinkCommandLongMessageID, command: mavlinkCommandComponentArmDisarm},
+	} {
+		var buffer [300]byte
+		count, err := receiver.Read(buffer[:])
+		if err != nil {
+			t.Fatalf("read shutdown frame %d/%d: %v", want.messageID, want.command, err)
+		}
+		frame, err := parseMAVLinkV2Frame(buffer[:count])
+		if err != nil || frame.messageID != want.messageID {
+			t.Fatalf("shutdown frame type = %d, %v, want %d", frame.messageID, err, want.messageID)
+		}
+		if want.command == 0 {
+			if binary.LittleEndian.Uint32(frame.payload[2:6]) != 0 {
+				t.Fatalf("shutdown control frame is not neutral: %v", frame.payload)
+			}
+			continue
+		}
+		if binary.LittleEndian.Uint16(frame.payload[28:30]) != want.command ||
+			binary.LittleEndian.Uint32(frame.payload[0:4]) != math.Float32bits(want.param1) ||
+			binary.LittleEndian.Uint32(frame.payload[4:8]) != math.Float32bits(want.param2) {
+			t.Fatalf("shutdown payload %v does not match command %d with parameters %g, %g", frame.payload, want.command, want.param1, want.param2)
+		}
+	}
+}
+
+type mavlinkTestPublisher struct{ fakePublisher }
+
+func (*mavlinkTestPublisher) Subscribe(context.Context, string) error { return nil }
 
 func TestMAVLinkServiceTracksHeartbeatAndBuildsSafeFrames(t *testing.T) {
 	service := NewMAVLinkService(MAVLinkServiceConfig{HeartbeatWindow: time.Second})

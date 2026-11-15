@@ -38,7 +38,6 @@ type mavlinkSafeStateRequest struct {
 	reason        string
 	requestDisarm bool
 	requestHold   bool
-	done          chan error
 }
 
 func StartMAVLinkFlightClient(parent context.Context, socketPath string, events chan<- interface{}) *MAVLinkFlightClient {
@@ -91,18 +90,28 @@ func (c *MAVLinkFlightClient) RequestNeutral(reason string) {
 }
 
 func (c *MAVLinkFlightClient) EnterSafeState(ctx context.Context, reason string, requestDisarm bool) error {
-	request := mavlinkSafeStateRequest{reason: reason, requestDisarm: requestDisarm, requestHold: true, done: make(chan error, 1)}
-	select {
-	case c.safe <- request:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	select {
-	case err := <-request.done:
+	// Shutdown ends the streaming exchange before sending a bounded final
+	// request. Its context must remain usable after the runtime is canceled.
+	c.Close()
+	conn, err := c.dial(ctx)
+	if err != nil {
 		return err
-	case <-ctx.Done():
-		return ctx.Err()
 	}
+	defer conn.Close()
+	response, err := mavlinkv1.NewBoardMavlinkClient(conn).EnterSafeState(ctx, &mavlinkv1.EnterSafeStateRequest{
+		Reason: reason, RequestDisarm: requestDisarm, RequestHold: true,
+	})
+	if err != nil {
+		return fmt.Errorf("enter MAVLink safe state: %w", err)
+	}
+	if failures := response.GetErrors(); len(failures) != 0 {
+		return fmt.Errorf("local MAVLink service could not send the safe state: %s", failures[0].GetMessage())
+	}
+	if !response.GetNeutralRequested() || !response.GetHoldRequested() ||
+		(requestDisarm && !response.GetDisarmRequested()) {
+		return errors.New("local MAVLink service did not send all requested safe-state frames")
+	}
+	return nil
 }
 
 func (c *MAVLinkFlightClient) Close() {
@@ -131,9 +140,9 @@ func (c *MAVLinkFlightClient) run(ctx context.Context) {
 func (c *MAVLinkFlightClient) connectAndServe(ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, mavlinkFlightDialTimeout)
 	defer cancel()
-	conn, err := grpc.DialContext(dialCtx, "unix://"+c.socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	conn, err := c.dial(dialCtx)
 	if err != nil {
-		return fmt.Errorf("connect to MAVLink service: %w", err)
+		return err
 	}
 	defer conn.Close()
 	client := mavlinkv1.NewBoardMavlinkClient(conn)
@@ -149,6 +158,14 @@ func (c *MAVLinkFlightClient) connectAndServe(ctx context.Context) error {
 	c.connected.Store(true)
 	defer c.connected.Store(false)
 	return c.serveExchange(streamCtx, client, stream)
+}
+
+func (c *MAVLinkFlightClient) dial(ctx context.Context) (*grpc.ClientConn, error) {
+	conn, err := grpc.DialContext(ctx, "unix://"+c.socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	if err != nil {
+		return nil, fmt.Errorf("connect to MAVLink service: %w", err)
+	}
+	return conn, nil
 }
 
 func (c *MAVLinkFlightClient) serveExchange(ctx context.Context, client mavlinkv1.BoardMavlinkClient, stream grpc.BidiStreamingClient[mavlinkv1.MavlinkFrame, mavlinkv1.MavlinkFrame]) error {
@@ -172,11 +189,7 @@ func (c *MAVLinkFlightClient) serveExchange(ctx context.Context, client mavlinkv
 				return fmt.Errorf("send MAVLink frame: %w", err)
 			}
 		case request := <-c.safe:
-			err := c.enterSafeState(ctx, client, request)
-			if request.done != nil {
-				request.done <- err
-			}
-			if err != nil {
+			if err := c.enterSafeState(ctx, client, request); err != nil {
 				c.emit(runtimeMAVLinkFlightStatusEvent{status: MAVLinkUnavailableStatus(err.Error())})
 			}
 		case result := <-received:

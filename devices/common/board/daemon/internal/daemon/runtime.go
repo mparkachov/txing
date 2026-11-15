@@ -766,12 +766,12 @@ func RunConnectedRuntime(ctx context.Context, config RuntimeConfig, publisher in
 	var mavlinkBridge *MAVLinkBridgeServerHandle
 	if state.mavlinkEnabled() {
 		state.mavlinkFlight = StartMAVLinkFlightClient(ctx, config.MAVLinkServiceSocketPath, mavlinkEvents)
+		defer state.mavlinkFlight.Close()
 		mavlinkBridge, err = StartMAVLinkBridgeServer(config, mavlinkEvents)
 		if err != nil {
 			return err
 		}
 		defer mavlinkBridge.Shutdown()
-		defer state.mavlinkFlight.Close()
 	}
 	if state.mcpEnabled() {
 		subscription, err := BuildMCPSessionC2SSubscription(config.ThingID)
@@ -851,7 +851,9 @@ func (s *RuntimeState) PublishOffline(ctx context.Context, publisher Publisher, 
 	if s.mavlinkEnabled() {
 		s.mavlink.active = nil
 		shutdownCtx, cancel := context.WithTimeout(ctx, mavlinkFlightCallTimeout)
-		_ = s.enterMAVLinkSafeState(shutdownCtx, "MAVLink daemon shutdown", true)
+		if err := s.enterMAVLinkSafeState(shutdownCtx, "MAVLink daemon shutdown", true); err != nil {
+			fmt.Fprintf(os.Stderr, "MAVLink shutdown: %v\n", err)
+		}
 		cancel()
 		s.mavlinkStatus = MAVLinkUnavailableStatus("")
 		s.mavlinkKVSReady = false

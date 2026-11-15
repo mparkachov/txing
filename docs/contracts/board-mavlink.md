@@ -129,6 +129,11 @@ only a drive-input watchdog: it requests neutral without releasing the lease,
 changing mode, or disarming. This makes an idle control session equivalent to
 released keys while preserving the established observer/control model.
 
+On graceful daemon shutdown, the daemon closes the local frame stream and
+requests neutral, Hold, and ordinary disarm through a separate bounded call to
+the MAVLink service. The shutdown request has a deadline independent of the
+daemon's canceled runtime context.
+
 `txing.mavlink.v1`, the one-frame-per-binary-message representation, JSON
 operation names, error codes, and the descriptor's legacy
 `cyberbrick-mavlink-control-json-v1` text-message value are wire values. They
