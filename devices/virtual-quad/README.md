@@ -234,8 +234,12 @@ on the mixed rig and confirm the following.
    climb, yaw, hover, land and release control. Use a second viewer to check
    exclusive control. Inspect both streams in Agent Debug. After releasing
    Office control, attach the agent with `--control` and verify that
-   QGroundControl reads parameters while the simulator is disarmed. Record
-   relay media performance with the diagnostics page.
+   QGroundControl reads parameters while the simulator is disarmed. For a
+   button-only flight check, disable the physical joystick and the separate
+   **Virtual joystick** setting in QGroundControl before using **Takeoff** and
+   **Land**. Joystick throttle input can trigger ArduCopter's RC3 neutral
+   arming check. Record relay media performance with the diagnostics page.
+   [QGroundControl Fly View settings](https://docs.qgroundcontrol.com/master/en/qgc-user-guide/settings_view/fly_view.html#virtual-joystick)
 4. Verify a normal stop, stop during startup, flight deadline and readiness
    loss recovery. Check that the old session cannot regain authority and
    that restart allocates a new session with a fresh disarmed aircraft.
