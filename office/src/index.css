@@ -1282,7 +1282,9 @@ h1 {
 .status-video-offline-surface .status-video-overlay-bar {
   position: absolute;
   inset: 1rem;
+  z-index: 2;
   width: auto;
+  pointer-events: none;
 }
 
 .status-video-overlay {
