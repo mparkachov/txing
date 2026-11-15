@@ -190,12 +190,12 @@ stopped device. DDEATH is used for device management unavailability.
 ## Office and flight authority
 
 The device adapter submits the correlated command through Office's shared
-Sparkplug publishing and supplies lifecycle messages to the standard
-notification tray and Session Log. It presents session deadlines and uses
-the shared video panel and a separate MAVLink viewer. The MAVLink indicator
-on the device detail route distinguishes service availability from a live
-browser heartbeat. The rig catalog applies the same session freshness check
-and reports service availability. The agent indicator reads the actual agent
+Sparkplug publishing and records lifecycle messages in the Session Log.
+Failures also appear in the notification tray. It presents session deadlines and uses
+the shared video panel and a separate MAVLink viewer. The rig catalog and
+device header report service availability from the Sparkplug shadow. The
+video overlay reports the browser's MAVLink heartbeat. Both routes apply the
+session freshness check to REDCON. The agent indicator reads the actual agent
 shadow and requires a matching live observer for the current ready session.
 
 The MAVLink path uses the ordered, reliable `txing.mavlink.v1` data channel,

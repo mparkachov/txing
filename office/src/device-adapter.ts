@@ -80,7 +80,7 @@ export type DeviceWebAdapter = DeviceAdapterIdentity & {
   renderVideo: (props: DeviceVideoRenderProps) => ReactElement
 }
 
-export type CapabilityStatuses = Partial<Record<ShadowName, { active: boolean; label: string }>>
+export type AgentCapabilityStatus = { active: boolean; label: string }
 export type DeviceCommandTarget = Extract<SparkplugRedconCommandTarget, { kind: 'device' }>
 type RedconLevel = 1 | 2 | 3 | 4
 
@@ -92,8 +92,9 @@ export type DeviceSessionView = {
   canStop: boolean
   selectRedcon: (redcon: RedconLevel) => Promise<void>
   statusDetail: ReactNode
-  capabilities: CapabilityStatuses
+  agentStatus?: AgentCapabilityStatus
   content: ReactElement
+  debugDiagnostics?: ReactElement
 }
 
 export type DeviceSessionProps = {
@@ -103,6 +104,7 @@ export type DeviceSessionProps = {
   agentShadow: unknown
   resolveIdToken: () => Promise<string>
   debugEnabled: boolean
+  onToggleDebug: () => void
   notify: (notification: AppNotificationInput) => void
   log: (notification: AppNotificationInput) => void
   children: (view: DeviceSessionView) => ReactElement
@@ -115,7 +117,7 @@ export type SessionDeviceWebAdapter = DeviceAdapterIdentity & {
     target: DeviceCommandTarget,
     shadows: Partial<Record<ShadowName, unknown>>,
     now: number,
-  ) => { redcon: number | null; capabilities: CapabilityStatuses }
+  ) => { redcon: number | null; agentStatus?: AgentCapabilityStatus }
 }
 
 export type RegisteredDeviceWebAdapter = DeviceWebAdapter | SessionDeviceWebAdapter

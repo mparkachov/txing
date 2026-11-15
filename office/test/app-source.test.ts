@@ -49,6 +49,8 @@ describe('app route catalog source wiring', () => {
     expect(appSource).toContain('const navigationCapabilities =')
     expect(appSource).toContain('className="navigation-capabilities"')
     expect(appSource).toContain('{navigationCapabilities}')
+    expect(appSource).toContain('capabilities={routeHeaderMetadata.capabilities}')
+    expect(appSource).toContain('capabilities={item.capabilities}')
   })
 
   test('wake commands converge from reported shadow redcon without command-status success', () => {

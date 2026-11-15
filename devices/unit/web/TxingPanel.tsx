@@ -1,4 +1,5 @@
 import { getTrackIndicatorPresentation } from './app-model'
+import VideoControlOverlay, { VideoOverlayRow } from '../../../office/src/VideoControlOverlay'
 import VideoPanel from '../../../office/src/VideoPanel'
 import type { McpTransportKind } from '../../../office/src/mcp-descriptor'
 import type { RobotControlState } from '../../../office/src/shadow-api'
@@ -169,94 +170,6 @@ function BatteryMetric({ batteryMv }: { batteryMv: number | null }) {
   )
 }
 
-function DebugGlyph() {
-  return (
-    <svg
-      className="status-video-debug-glyph"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        d="M9 8.5V7a3 3 0 0 1 6 0v1.5M8 10h8m-7 3h6m-5 3h4M7 8l-2-2m14 2 2-2M8 19l-2 2m10-2 2 2M8.5 8h7a1.5 1.5 0 0 1 1.5 1.5v5a5 5 0 0 1-10 0v-5A1.5 1.5 0 0 1 8.5 8Z"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-    </svg>
-  )
-}
-
-function TakeControlGlyph() {
-  return (
-    <svg
-      className="status-video-take-control-glyph"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        d="M12 4.8v5.8M12 13.4v5.8M4.8 12h5.8M13.4 12h5.8"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="2"
-      />
-      <circle
-        cx="12"
-        cy="12"
-        r="6.6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
-      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
-    </svg>
-  )
-}
-
-function ActiveControlGlyph({ ownership }: { ownership: ActiveControlOwnership }) {
-  return (
-    <svg
-      className="status-mcp-control-glyph"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      {ownership === 'current' ? (
-        <path
-          d="M5 12.8 9.4 17 19 7"
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="2.4"
-        />
-      ) : (
-        <>
-          <circle
-            cx="12"
-            cy="12"
-            r="7"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.9"
-          />
-          <path
-            d="M12 7.6v4.8M12 16.2h.01"
-            fill="none"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeWidth="2.2"
-          />
-        </>
-      )}
-    </svg>
-  )
-}
-
 const getActiveControlOwnership = (
   robotControl: RobotControlState | null,
 ): ActiveControlOwnership => {
@@ -267,65 +180,6 @@ const getActiveControlOwnership = (
     return 'none'
   }
   return robotControl.activeHeldByCaller ? 'current' : 'other'
-}
-
-function McpTransportGlyph({ transport }: { transport: McpTransportKind | null }) {
-  const label =
-    transport === 'webrtc-datachannel'
-      ? 'MCP over WebRTC data channel'
-      : transport === 'mqtt-jsonrpc'
-        ? 'MCP over MQTT JSON-RPC'
-        : 'MCP transport pending'
-  const toneClass =
-    transport === 'webrtc-datachannel'
-      ? 'status-mcp-transport-webrtc'
-      : transport === 'mqtt-jsonrpc'
-        ? 'status-mcp-transport-mqtt'
-        : 'status-mcp-transport-pending'
-
-  return (
-    <span
-      className={`status-mcp-transport ${toneClass}`}
-      role="img"
-      aria-label={label}
-      title={label}
-      data-mcp-transport={transport ?? 'pending'}
-    >
-      <svg
-        className="status-mcp-transport-glyph"
-        viewBox="0 0 24 24"
-        aria-hidden="true"
-        focusable="false"
-      >
-        {transport === 'mqtt-jsonrpc' ? (
-          <>
-            <path
-              d="M7 9.2a7.5 7.5 0 0 1 10 0M9.7 12a3.8 3.8 0 0 1 4.6 0"
-              fill="none"
-              stroke="currentColor"
-              strokeLinecap="round"
-              strokeWidth="2"
-            />
-            <path d="M12 16.4h.01" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="3" />
-          </>
-        ) : (
-          <>
-            <path
-              d="M8.2 8.4h7.6M8.2 15.6h7.6"
-              fill="none"
-              stroke="currentColor"
-              strokeLinecap="round"
-              strokeWidth="2"
-            />
-            <circle cx="6" cy="8.4" r="1.8" fill="currentColor" />
-            <circle cx="18" cy="8.4" r="1.8" fill="currentColor" />
-            <circle cx="6" cy="15.6" r="1.8" fill="currentColor" />
-            <circle cx="18" cy="15.6" r="1.8" fill="currentColor" />
-          </>
-        )}
-      </svg>
-    </span>
-  )
 }
 
 function TxingPanel({
@@ -356,109 +210,76 @@ function TxingPanel({
   const activeControlActor = robotControl?.activeControl?.actor
   const shouldRenderTakeControlButton =
     activeControlOwnership === 'none' || activeControlOwnership === 'other'
-  const activeControlLabel =
-    activeControlOwnership === 'current'
-      ? 'You have active control'
-      : activeControlOwnership === 'other' && activeControlActor
-        ? `Active control held by ${activeControlActor}`
-        : activeControlOwnership === 'other'
-          ? 'Active control held by another session'
-          : 'MCP active-control status pending'
-  const takeControlTitle =
-    activeControlOwnership === 'other' && activeControlActor
-      ? `Take active control from ${activeControlActor}`
-      : 'Take active control'
+  const activeControlLabel = activeControlOwnership === 'current' ? 'You have active control'
+    : activeControlOwnership === 'other' ? `Active control held by ${activeControlActor ?? 'another session'}`
+      : activeControlOwnership === 'none' ? 'View only' : 'MCP active-control status pending'
+  const controlOverlay = (
+    <VideoControlOverlay link={{ protocol: 'MCP', transport: mcpTransport }}
+      authority={{
+        state: activeControlOwnership,
+        label: activeControlLabel,
+        action: shouldRenderTakeControlButton ? {
+          label: activeControlOwnership === 'other' ? 'Take over control' : 'Take control',
+          disabled: !isShadowConnected || isTakeControlPending,
+          run: onTakeControl,
+        } : undefined,
+      }} />
+  )
   const videoOverlay = (
-    <div className="status-video-overlay-bar">
-      <div className="status-video-overlay-side status-video-overlay-side-start">
-        {shouldRenderBoardVideo ? (
-          <button
-            type="button"
-            className={`status-video-debug-button ${
-              isDebugEnabled
-                ? 'status-video-debug-button-active'
-                : 'status-video-debug-button-idle'
-            }`}
-            aria-label={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
-            aria-pressed={isDebugEnabled}
-            title={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
-            onClick={onToggleDebug}
-          >
-            <DebugGlyph />
-          </button>
-        ) : null}
-        {shouldRenderTakeControlButton ? (
-          <button
-            type="button"
-            className="status-video-take-control-button"
-            aria-label="Take active control"
-            disabled={!isShadowConnected || isTakeControlPending}
-            title={takeControlTitle}
-            data-mcp-control-owner={activeControlOwnership}
-            onClick={onTakeControl}
-          >
-            <TakeControlGlyph />
-          </button>
-        ) : (
-          <span
-            className={`status-mcp-control status-mcp-control-${activeControlOwnership}`}
-            role="img"
-            aria-label={activeControlLabel}
-            title={activeControlLabel}
-            data-mcp-control-owner={activeControlOwnership}
-          >
-            <ActiveControlGlyph ownership={activeControlOwnership} />
-          </span>
-        )}
-        <McpTransportGlyph transport={mcpTransport} />
-      </div>
-      <div className="status-video-overlay-lockup">
-        <div className="status-txing-title-group" role="group" aria-label={`${deviceLabel} drive indicators`}>
-          <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />
-          <div className="status-name status-txing-name status-video-overlay-name" aria-hidden="true">
-            {deviceLabel}
+    <VideoOverlayRow
+      debug={shouldRenderBoardVideo ? { enabled: isDebugEnabled, toggle: onToggleDebug } : undefined}
+      controls={controlOverlay}
+      center={(
+        <div className="status-video-overlay-lockup">
+          <div className="status-txing-title-group" role="group" aria-label={`${deviceLabel} drive indicators`}>
+            <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />
+            <div className="status-name status-txing-name status-video-overlay-name" aria-hidden="true">
+              {deviceLabel}
+            </div>
+            <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
           </div>
-          <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
         </div>
-      </div>
-      <div className="status-video-overlay-side status-video-overlay-side-end">
-        <div className="status-video-overlay-metrics" aria-label={`${deviceLabel} connectivity indicators`}>
-          <div
-            className={`status-signal ${watchSignalToneClass}`}
-            role="img"
-            aria-label={
-              reportedMcuOnline === true
-                ? `${watchTransport} online`
-                : reportedMcuOnline === false
-                  ? `${watchTransport} offline`
-                  : `${watchTransport} status unavailable`
-            }
-          >
-            <span className="status-signal-bar status-signal-bar-1" aria-hidden="true" />
-            <span className="status-signal-bar status-signal-bar-2" aria-hidden="true" />
-            <span className="status-signal-bar status-signal-bar-3" aria-hidden="true" />
-            <span className="status-signal-bar status-signal-bar-4" aria-hidden="true" />
+      )}
+      indicators={(
+        <div className="status-video-overlay-side status-video-overlay-side-end">
+          <div className="status-video-overlay-metrics" aria-label={`${deviceLabel} connectivity indicators`}>
+            <div
+              className={`status-signal ${watchSignalToneClass}`}
+              role="img"
+              aria-label={
+                reportedMcuOnline === true
+                  ? `${watchTransport} online`
+                  : reportedMcuOnline === false
+                    ? `${watchTransport} offline`
+                    : `${watchTransport} status unavailable`
+              }
+            >
+              <span className="status-signal-bar status-signal-bar-1" aria-hidden="true" />
+              <span className="status-signal-bar status-signal-bar-2" aria-hidden="true" />
+              <span className="status-signal-bar status-signal-bar-3" aria-hidden="true" />
+              <span className="status-signal-bar status-signal-bar-4" aria-hidden="true" />
+            </div>
+            <div
+              className={`status-wifi ${boardWifiToneClass}`}
+              role="img"
+              aria-label={
+                reportedBoardOnline === true
+                  ? 'Board Wi-Fi online'
+                  : reportedBoardOnline === false
+                    ? 'Board Wi-Fi offline'
+                    : 'Board Wi-Fi status unavailable'
+              }
+            >
+              <span className="status-wifi-arc status-wifi-arc-large" aria-hidden="true" />
+              <span className="status-wifi-arc status-wifi-arc-medium" aria-hidden="true" />
+              <span className="status-wifi-arc status-wifi-arc-small" aria-hidden="true" />
+              <span className="status-wifi-dot" aria-hidden="true" />
+            </div>
+            <BatteryMetric batteryMv={reportedBatteryMv} />
           </div>
-          <div
-            className={`status-wifi ${boardWifiToneClass}`}
-            role="img"
-            aria-label={
-              reportedBoardOnline === true
-                ? 'Board Wi-Fi online'
-                : reportedBoardOnline === false
-                  ? 'Board Wi-Fi offline'
-                  : 'Board Wi-Fi status unavailable'
-            }
-          >
-            <span className="status-wifi-arc status-wifi-arc-large" aria-hidden="true" />
-            <span className="status-wifi-arc status-wifi-arc-medium" aria-hidden="true" />
-            <span className="status-wifi-arc status-wifi-arc-small" aria-hidden="true" />
-            <span className="status-wifi-dot" aria-hidden="true" />
-          </div>
-          <BatteryMetric batteryMv={reportedBatteryMv} />
         </div>
-      </div>
-    </div>
+      )}
+    />
   )
 
   return (

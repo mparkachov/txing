@@ -113,8 +113,9 @@ export function useVirtualQuadRedcon(
     const message = readVirtualQuadLifecycleMessage(session, fresh, observedSessionId)
     if (!message || lastMessage.current.get(target.deviceId) === message.dedupeKey) return
     lastMessage.current.set(target.deviceId, message.dedupeKey)
-    notify({ ...message, dedupeKey: `${target.deviceId}:${message.dedupeKey}`, objectId: target.deviceId })
-  }, [fresh, notify, session, target])
+    const report = message.tone === 'error' ? notify : log
+    report({ ...message, dedupeKey: `${target.deviceId}:${message.dedupeKey}`, objectId: target.deviceId })
+  }, [fresh, log, notify, session, target])
 
   useEffect(() => {
     if (!currentPending || command.current !== currentPending) return

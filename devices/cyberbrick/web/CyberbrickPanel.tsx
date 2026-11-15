@@ -1,4 +1,6 @@
+import type { ReactNode } from 'react'
 import { getTrackIndicatorPresentation } from './app-model'
+import { VideoOverlayRow } from '../../../office/src/VideoControlOverlay'
 import VideoPanel from '../../../office/src/VideoPanel'
 import { RoverControllerPanel } from './MavlinkControlPanel'
 
@@ -163,26 +165,6 @@ function BatteryMetric({ batteryMv }: { batteryMv: number | null }) {
   )
 }
 
-function DebugGlyph() {
-  return (
-    <svg
-      className="status-video-debug-glyph"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        d="M9 8.5V7a3 3 0 0 1 6 0v1.5M8 10h8m-7 3h6m-5 3h4M7 8l-2-2m14 2 2-2M8 19l-2 2m10-2 2 2M8.5 8h7a1.5 1.5 0 0 1 1.5 1.5v5a5 5 0 0 1-10 0v-5A1.5 1.5 0 0 1 8.5 8Z"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-    </svg>
-  )
-}
-
 function CyberbrickPanel({
   deviceLabel = 'CYBERBRICK',
   deviceName = 'Cyberbrick',
@@ -203,97 +185,83 @@ function CyberbrickPanel({
   const boardWifiToneClass = getBoardWifiToneClass(reportedBoardOnline)
   const bleSignalToneClass = getBleSignalToneClass(reportedMcuOnline)
   const shouldRenderBoardVideo = isBoardVideoExpanded && reportedRedcon === 1
-  const videoOverlay = (
-    <div className="status-video-overlay-bar">
-      <div className="status-video-overlay-side status-video-overlay-side-start">
-        {shouldRenderBoardVideo ? (
-          <button
-            type="button"
-            className={`status-video-debug-button ${
-              isDebugEnabled
-                ? 'status-video-debug-button-active'
-                : 'status-video-debug-button-idle'
-            }`}
-            aria-label={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
-            aria-pressed={isDebugEnabled}
-            title={isDebugEnabled ? 'Disable Debug' : 'Enable Debug'}
-            onClick={onToggleDebug}
-          >
-            <DebugGlyph />
-          </button>
-        ) : null}
-      </div>
-      <div className="status-video-overlay-lockup">
-        <div className="status-txing-title-group" role="group" aria-label={`${deviceName} drive indicators`}>
-          <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />
-          <div className="status-name status-txing-name status-video-overlay-name" aria-hidden="true">
-            {deviceLabel}
+  const renderOverlay = (controlOverlay: ReactNode) => (
+    <VideoOverlayRow
+      debug={shouldRenderBoardVideo ? { enabled: isDebugEnabled, toggle: onToggleDebug } : undefined}
+      controls={controlOverlay}
+      center={(
+        <div className="status-video-overlay-lockup">
+          <div className="status-txing-title-group" role="group" aria-label={`${deviceName} drive indicators`}>
+            <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />
+            <div className="status-name status-txing-name status-video-overlay-name" aria-hidden="true">
+              {deviceLabel}
+            </div>
+            <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
           </div>
-          <TrackGauge side="Right" speed={reportedBoardRightTrackSpeed} />
         </div>
-      </div>
-      <div className="status-video-overlay-side status-video-overlay-side-end">
-        <div className="status-video-overlay-metrics" aria-label={`${deviceName} connectivity indicators`}>
-          <div
-            className={`status-signal ${bleSignalToneClass}`}
-            role="img"
-            aria-label={
-              reportedMcuOnline === true
-                ? `${watchTransport} online`
-                : reportedMcuOnline === false
-                  ? `${watchTransport} offline`
-                  : `${watchTransport} status unavailable`
-            }
-          >
-            <span className="status-signal-bar status-signal-bar-1" aria-hidden="true" />
-            <span className="status-signal-bar status-signal-bar-2" aria-hidden="true" />
-            <span className="status-signal-bar status-signal-bar-3" aria-hidden="true" />
-            <span className="status-signal-bar status-signal-bar-4" aria-hidden="true" />
+      )}
+      indicators={(
+        <div className="status-video-overlay-side status-video-overlay-side-end">
+          <div className="status-video-overlay-metrics" aria-label={`${deviceName} connectivity indicators`}>
+            <div
+              className={`status-signal ${bleSignalToneClass}`}
+              role="img"
+              aria-label={
+                reportedMcuOnline === true
+                  ? `${watchTransport} online`
+                  : reportedMcuOnline === false
+                    ? `${watchTransport} offline`
+                    : `${watchTransport} status unavailable`
+              }
+            >
+              <span className="status-signal-bar status-signal-bar-1" aria-hidden="true" />
+              <span className="status-signal-bar status-signal-bar-2" aria-hidden="true" />
+              <span className="status-signal-bar status-signal-bar-3" aria-hidden="true" />
+              <span className="status-signal-bar status-signal-bar-4" aria-hidden="true" />
+            </div>
+            <div
+              className={`status-wifi ${boardWifiToneClass}`}
+              role="img"
+              aria-label={
+                reportedBoardOnline === true
+                  ? 'Board Wi-Fi online'
+                  : reportedBoardOnline === false
+                    ? 'Board Wi-Fi offline'
+                    : 'Board Wi-Fi status unavailable'
+              }
+            >
+              <span className="status-wifi-arc status-wifi-arc-large" aria-hidden="true" />
+              <span className="status-wifi-arc status-wifi-arc-medium" aria-hidden="true" />
+              <span className="status-wifi-arc status-wifi-arc-small" aria-hidden="true" />
+              <span className="status-wifi-dot" aria-hidden="true" />
+            </div>
+            <BatteryMetric batteryMv={reportedBatteryMv} />
           </div>
-          <div
-            className={`status-wifi ${boardWifiToneClass}`}
-            role="img"
-            aria-label={
-              reportedBoardOnline === true
-                ? 'Board Wi-Fi online'
-                : reportedBoardOnline === false
-                  ? 'Board Wi-Fi offline'
-                  : 'Board Wi-Fi status unavailable'
-            }
-          >
-            <span className="status-wifi-arc status-wifi-arc-large" aria-hidden="true" />
-            <span className="status-wifi-arc status-wifi-arc-medium" aria-hidden="true" />
-            <span className="status-wifi-arc status-wifi-arc-small" aria-hidden="true" />
-            <span className="status-wifi-dot" aria-hidden="true" />
-          </div>
-          <BatteryMetric batteryMv={reportedBatteryMv} />
         </div>
-      </div>
-    </div>
+      )}
+    />
   )
 
   return (
     <section className="status-hero status-hero-dashboard" aria-label={`${deviceName} status`}>
       <div className="shadow-diagram">
         <div className={`status-node status-node-txing ${shouldRenderBoardVideo ? 'status-node-txing-expanded' : ''}`}>
-          {shouldRenderBoardVideo ? (
-            <VideoPanel
-              channelName={videoChannelName}
-              debugEnabled={isDebugEnabled}
-              onRuntimeError={onBoardVideoRuntimeError}
-              overlay={videoOverlay}
-              resolveIdToken={resolveIdToken}
-            />
-          ) : (
-            <div
-              className="status-video-offline-surface"
-              aria-label={`${deviceName} drive status`}
-              data-drive-mode="mavlink"
-            >
-              {videoOverlay}
-            </div>
-          )}
-          <RoverControllerPanel key={videoChannelName} vehicleName={deviceName} />
+          <RoverControllerPanel key={videoChannelName} vehicleName={deviceName} renderVideo={(controlOverlay) =>
+            shouldRenderBoardVideo ? (
+              <VideoPanel
+                channelName={videoChannelName}
+                debugEnabled={isDebugEnabled}
+                onRuntimeError={onBoardVideoRuntimeError}
+                overlay={renderOverlay(controlOverlay)}
+                resolveIdToken={resolveIdToken}
+              />
+            ) : (
+              <div className="status-video-offline-surface" aria-label={`${deviceName} drive status`} data-drive-mode="mavlink">
+                <span className="status-video-placeholder">Camera unavailable</span>
+                {renderOverlay(controlOverlay)}
+              </div>
+            )
+          } />
         </div>
       </div>
     </section>

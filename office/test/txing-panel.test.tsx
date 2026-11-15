@@ -28,12 +28,11 @@ describe('txing panel', () => {
 
     expect(markup).toContain('BOT')
     expect(markup).toContain('status-video-overlay')
-    expect(markup).toContain('status-video-debug-button')
-    expect(markup).toContain('status-mcp-control-unknown')
-    expect(markup).toContain('aria-label="MCP active-control status pending"')
-    expect(markup).toContain('status-mcp-transport-webrtc')
-    expect(markup).toContain('data-mcp-transport="webrtc-datachannel"')
-    expect(markup).toContain('aria-label="MCP over WebRTC data channel"')
+    expect(markup).toContain('class="video-overlay-icon" aria-label="Enable Debug"')
+    expect(markup).toContain('video-control-overlay')
+    expect(markup).toContain('data-control-owner="unknown"')
+    expect(markup).toContain('MCP active-control status pending')
+    expect(markup).toContain('MCP over WebRTC data channel')
     expect(markup).toContain('aria-label="Enable Debug"')
     expect(markup).toContain('data-track-side="left"')
     expect(markup).toContain('data-track-speed="60"')
@@ -49,7 +48,7 @@ describe('txing panel', () => {
     expect(markup).toContain('aria-label="Board Wi-Fi online"')
     expect(markup).not.toContain('Load Shadow')
     expect(markup).not.toContain('Connect')
-    expect(markup).not.toContain('status-video-take-control-button')
+    expect(markup).not.toContain('aria-label="Take control"')
     expect(markup).not.toContain('status-redcon-dot')
     expect(markup).not.toContain('status-switch-track')
   })
@@ -79,12 +78,12 @@ describe('txing panel', () => {
 
     expect(markup).toContain('status-video-offline-surface')
     expect(markup).toContain('data-drive-mode="mqtt-jsonrpc"')
-    expect(markup).toContain('status-mcp-transport-mqtt')
-    expect(markup).toContain('aria-label="MCP over MQTT JSON-RPC"')
-    expect(markup).toContain('status-mcp-control-unknown')
+    expect(markup).toContain('MCP over MQTT JSON-RPC')
+    expect(markup).toContain('video-control-overlay')
+    expect(markup).toContain('data-control-owner="unknown"')
     expect(markup).toContain('data-track-side="left"')
     expect(markup).toContain('data-track-side="right"')
-    expect(markup).not.toContain('status-video-debug-button')
+    expect(markup).not.toContain('aria-label="Enable Debug"')
     expect(markup).not.toContain('txing-video-panel')
   })
 
@@ -119,11 +118,9 @@ describe('txing panel', () => {
       />,
     )
 
-    expect(markup).toContain('status-video-take-control-button')
-    expect(markup).toContain('aria-label="Take active control"')
-    expect(markup).toContain('title="Take active control"')
-    expect(markup).not.toContain('aria-label="No active controller"')
-    expect(markup).toContain('data-mcp-control-owner="none"')
+    expect(markup).toContain('aria-label="Take control"')
+    expect(markup).toContain('aria-description="MCP over WebRTC data channel · View only"')
+    expect(markup).toContain('data-control-owner="none"')
   })
 
   test('renders current-browser active MCP ownership without a takeover affordance', () => {
@@ -164,10 +161,9 @@ describe('txing panel', () => {
       />,
     )
 
-    expect(markup).toContain('status-mcp-control-current')
-    expect(markup).toContain('aria-label="You have active control"')
-    expect(markup).toContain('data-mcp-control-owner="current"')
-    expect(markup).not.toContain('status-video-take-control-button')
+    expect(markup).toContain('aria-label="MCP over WebRTC data channel · You have active control"')
+    expect(markup).toContain('data-control-owner="current"')
+    expect(markup).not.toContain('aria-label="Take control"')
   })
 
   test('renders an explicit active-control takeover button when another session owns control', () => {
@@ -208,9 +204,8 @@ describe('txing panel', () => {
       />,
     )
 
-    expect(markup).toContain('status-video-take-control-button')
-    expect(markup).toContain('aria-label="Take active control"')
-    expect(markup).toContain('title="Take active control from operator-a"')
-    expect(markup).toContain('data-mcp-control-owner="other"')
+    expect(markup).toContain('aria-label="Take over control"')
+    expect(markup).toContain('aria-description="MCP over WebRTC data channel · Active control held by operator-a"')
+    expect(markup).toContain('data-control-owner="other"')
   })
 })

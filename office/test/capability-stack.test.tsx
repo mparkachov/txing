@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
 import CapabilityStack from '../src/CapabilityStack'
+import { parseCapabilitiesSet } from '../src/catalog-api'
+import { listDeviceWebAdapters } from '../src/device-registry'
 
 describe('capability stack', () => {
   test('renders visible active and inactive capability status chips', () => {
@@ -33,7 +36,6 @@ describe('capability stack', () => {
       /title="video: inactive"[\s\S]*title="mcp: inactive"[\s\S]*title="board: inactive"[\s\S]*title="power: inactive"[\s\S]*title="ble: active"/,
     )
     expect(markup).not.toContain('title="sparkplug: active"')
-    expect(markup).not.toContain('>sparkplug</span>')
     expect(markup).toContain('catalog-status-capability-active')
     expect(markup).toContain('catalog-status-capability-inactive')
   })
@@ -85,7 +87,7 @@ describe('capability stack', () => {
     expect(markup).not.toContain('title="sparkplug: active"')
   })
 
-  test('renders nothing when only invisible capabilities are present', () => {
+  test('omits the capability row for a thing that only declares Sparkplug', () => {
     const markup = renderToStaticMarkup(
       <CapabilityStack
         thingName="raspi"
@@ -98,4 +100,26 @@ describe('capability stack', () => {
 
     expect(markup).toBe('')
   })
+
+  for (const { type } of listDeviceWebAdapters()) {
+    test(`${type} omits only Sparkplug in the catalog and device header`, () => {
+      const manifest = Bun.TOML.parse(readFileSync(
+        new URL(`../../devices/${type}/manifest.toml`, import.meta.url), 'utf8',
+      )) as { capabilities: string[] }
+      const capabilities = parseCapabilitiesSet(manifest.capabilities.join(','))
+      const availability = capabilities.map((name, index) => [name, index % 2 === 0] as const)
+      const sparkplug = { state: { reported: { payload: { metrics: {
+        redcon: 2, capability: Object.fromEntries(availability),
+      } } } } }
+      const common = { thingName: type, label: type, capabilities, sparkplugShadowStatus: 'ready' } as const
+      const catalog = renderToStaticMarkup(<CapabilityStack {...common} sparkplugShadow={sparkplug} />)
+      const device = renderToStaticMarkup(<CapabilityStack {...common}
+        sparkplugShadow={{ namedShadows: { sparkplug } }} className="navigation-capabilities" />)
+      const titles = (markup: string) => Array.from(markup.matchAll(/title="([^"]+)"/g), ([, title]) => title)
+      const expected = availability.filter(([name]) => name !== 'sparkplug').reverse()
+        .map(([name, active]) => `${name}: ${active ? 'active' : 'inactive'}`)
+      expect(titles(catalog)).toEqual(expected)
+      expect(titles(device)).toEqual(expected)
+    })
+  }
 })

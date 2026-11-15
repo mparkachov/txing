@@ -60,27 +60,35 @@ For `unit` devices, the Go unit daemon publishes retained
 `video`. Sparkplug projection reflects those into the capability stack; `video`
 becomes enabled only when the native KVS worker is ready.
 
-The office app must not derive board/MCP/video availability locally from pending
-commands or client-side transport state. Capability indicators reflect the
-Sparkplug named shadow projection. A small delay is acceptable; inconsistent
-client-side capability prediction is not.
+Catalog cards and route headers show every declared capability except
+`sparkplug`, which is represented by the REDCON indicator. The capability
+badges use the reported Sparkplug shadow projection. The virtual quad's
+`agent` badge uses the reported observer state from its `agent` shadow on
+both surfaces. Browser connection status appears in the video overlay.
 
 The device registry selects a type-owned web adapter. The virtual-quad session
 adapter interprets the matching simulation and Sparkplug projections, supplies
 REDCON command state to the shared selector and renders its camera and flight
 panel. Office provides the authenticated shadow reader, command publishing,
-navigation, capability stack and notification stream. The detail-route MAVLink
-indicator reflects heartbeat reception by its browser peer. Media connection
+navigation, capability stack and notification stream. The video overlay shows
+MAVLink heartbeat reception by the browser peer. Media connection
 state has no authority to advance the reported REDCON.
 [Virtual quadcopter architecture](../virtual-quadcopter-architecture.md#office-and-flight-authority)
 
 ## MAVLink controller
 
-Virtual quad, TBot, and Cyberbrick show a controller below the video. TBot
-and Cyberbrick also show it below the video placeholder at REDCON 2. Drag
-the on-screen sticks with a mouse or touch, use the keyboard shortcuts,
-or press a button on a connected gamepad to make it available to Office.
-Office uses the browser's standard controller mapping.
+Virtual quad, TBot, and Cyberbrick show the MAVLink and gamepad icons next
+to Debug in the transparent video overlay. The MAVLink icon acquires
+or releases control, and its green dot indicates a live connection. At
+REDCON 2, rovers show the same icons on the camera placeholder. Unit and
+Mac use the same overlay row for MCP status, and Unit shows its
+active-control action there.
+
+The physical gamepad and keyboard work with the on-screen controller
+closed. Select the gamepad icon to show or hide the on-screen sticks.
+Press a physical gamepad button to make the controller available to Office.
+The green dot on the gamepad icon indicates a connected controller with
+the browser's standard mapping.
 
 | Input | Virtual quad | TBot and Cyberbrick |
 | --- | --- | --- |
@@ -102,10 +110,12 @@ rovers. [DJI stick layout](https://developer.dji.com/mobile-sdk/documentation/in
 
 ## Debug
 
-Open **Debug** from the profile menu on a device page. Office shows one
-read-only JSON panel per named shadow declared by the device. **Load Shadow**
-refreshes the MQTT snapshots. The Agent panel refreshes over HTTPS and shows
-its own read status. Device-specific diagnostics appear above the panels.
+Open **Debug** from the video overlay or from the profile menu on a device
+page. Office shows one read-only JSON panel per named shadow declared by the
+device. **Load Shadow** refreshes the MQTT snapshots. The Agent panel
+refreshes over HTTPS and shows its own read status. Virtual quad, TBot, and
+Cyberbrick use the same **ArduPilot / MAVLink** panel above the shadows for
+connection, control ownership, and telemetry details.
 
 ## Local Development
 

@@ -16,6 +16,9 @@ Keep it short: durable technical details live in focused docs and subproject
   area.
 - Read referenced docs before changing the related behavior. Do not rely on this
   root file as the full project specification.
+- Prioritize consistency across device types in behavior and visual presentation.
+  Reuse shared controls, indicators, and diagnostics. Check existing device
+  views for regressions when changing a shared interface.
 - Use `nerdctl.lima` with the existing Lima engine for local container builds;
   see `docs/agent-guidance/editing-boundaries.md` for tooling guidance.
 

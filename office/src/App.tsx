@@ -1818,6 +1818,10 @@ function App({ initialAuthError = '' }: AppProps) {
     await publishRedconCommand(redcon)
   }
 
+  const handleToggleDebug = (): void => {
+    setIsDebugEnabled((enabled) => !enabled)
+  }
+
   const handleSignOff = (): void => {
     shadowSessionRef.current?.close()
     shadowSessionRef.current = null
@@ -1889,7 +1893,7 @@ function App({ initialAuthError = '' }: AppProps) {
           capabilities={item.capabilities}
           sparkplugShadow={item.sparkplugShadow}
           sparkplugShadowStatus={item.sparkplugShadowStatus}
-          capabilityStatuses={sessionStatus?.capabilities}
+          agentStatus={sessionStatus?.agentStatus}
         />
       </a>
     )
@@ -2065,7 +2069,7 @@ function App({ initialAuthError = '' }: AppProps) {
           capabilities={routeHeaderMetadata.capabilities}
           sparkplugShadow={navigationCapabilityShadow}
           sparkplugShadowStatus={navigationCapabilityStatus}
-          capabilityStatuses={session?.capabilities}
+          agentStatus={session?.agentStatus}
           className="navigation-capabilities"
         />
       ) : null
@@ -2123,9 +2127,7 @@ function App({ initialAuthError = '' }: AppProps) {
               isDebugEnabled={isDebugEnabled}
               isSessionLogVisible={isSessionLogVisible}
               onSignOff={handleSignOff}
-              onToggleDebug={isDeviceShadowTargetCurrent ? () => {
-                setIsDebugEnabled((currentValue) => !currentValue)
-              } : undefined}
+              onToggleDebug={isDeviceShadowTargetCurrent ? handleToggleDebug : undefined}
               onToggleSessionLog={() => {
                 setIsSessionLogVisible((currentValue) => !currentValue)
               }}
@@ -2298,9 +2300,7 @@ function App({ initialAuthError = '' }: AppProps) {
           onTakeControl: () => {
             void takeMcpControl()
           },
-          onToggleDebug: () => {
-            setIsDebugEnabled((currentValue) => !currentValue)
-          },
+          onToggleDebug: handleToggleDebug,
           robotControl: robotState?.control ?? null,
           reportedBatteryMv: primaryReportedBatteryMv,
           reportedBoardLeftTrackSpeed,
@@ -2403,7 +2403,7 @@ function App({ initialAuthError = '' }: AppProps) {
                 ? currentAgentShadow ?? { status: 'loading', json: '', error: '' }
                 : undefined}
               canLoadShadow={canLoadShadow}
-              deviceDiagnostics={deviceDebugDiagnostics}
+              deviceDiagnostics={session?.debugDiagnostics ?? deviceDebugDiagnostics}
               initialSparkplugShadow={routeSparkplugShadow}
               lastShadowUpdateLabel={lastShadowUpdateLabel}
               lastShadowUpdateTitle={lastShadowUpdateTitle}
@@ -2430,6 +2430,7 @@ function App({ initialAuthError = '' }: AppProps) {
         agentShadow={currentAgentShadow?.shadow}
         resolveIdToken={resolveSessionIdToken}
         debugEnabled={isDebugEnabled}
+        onToggleDebug={handleToggleDebug}
         notify={enqueueNotification}
         log={appendSessionLogEntry}
       >

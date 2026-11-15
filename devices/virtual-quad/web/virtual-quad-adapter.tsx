@@ -1,9 +1,9 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import type { DeviceSessionProps, SessionDeviceWebAdapter } from '../../../office/src/device-adapter'
 import { extractReportedRedcon } from '../../../office/src/sparkplug-model'
-import { VirtualQuadLiveView } from './VirtualQuadLiveView'
+import { VirtualQuadLiveView, VirtualQuadMavlinkDiagnostics } from './VirtualQuadLiveView'
 import { readVirtualQuadAgentStatus } from './virtual-quad-agent-status'
-import { readQuadMediaAvailability, type QuadMavlinkStatus } from './virtual-quad-media-status'
+import { readQuadMediaAvailability } from './virtual-quad-media-status'
 import { useVirtualQuadRedcon } from './virtual-quad-redcon'
 import { isVirtualQuadProjectionFresh, readVirtualQuadSession, useVirtualQuadSession } from './virtual-quad-session'
 
@@ -17,23 +17,18 @@ function displayRedcon(redcon: number | null, fresh: boolean) {
 }
 
 function VirtualQuadDeviceView({
-  target, actor, sparkplug, agentShadow, resolveIdToken, debugEnabled, notify, log, children,
+  target, actor, sparkplug, agentShadow, resolveIdToken, debugEnabled, onToggleDebug, notify, log, children,
 }: DeviceSessionProps) {
   const view = useVirtualQuadSession(target, resolveIdToken)
+  const [debugTarget, setDebugTarget] = useState<HTMLDivElement | null>(null)
   const { session, fresh, now } = view
   const commands = useVirtualQuadRedcon(target, view, resolveIdToken, notify, log)
-  const [connection, setConnection] = useState<{ sessionId: string; status: QuadMavlinkStatus } | null>(null)
   const sessionId = session?.sessionId ?? null
-  const onMavlinkStatus = useCallback((status: QuadMavlinkStatus) => {
-    if (sessionId) setConnection({ sessionId, status })
-  }, [sessionId])
 
   const projection = view.sparkplug ?? sparkplug
   const redcon = extractReportedRedcon(projection)
   const media = readQuadMediaAvailability(fresh, session?.phase, redcon, view.sparkplug)
-  const mavlink = !media.mavlink ? 'inactive'
-    : connection?.sessionId === sessionId && connection.status !== 'inactive' ? connection.status
-      : 'connecting'
+  const hasMedia = sessionId !== null && (media.mavlink || media.video)
   const deadline = session?.phase === 'starting' ? session.startupDeadlineMs
     : session?.phase === 'operational' ? session.flightDeadlineMs
       : session?.phase === 'stopping' ? session.shutdownDeadlineMs : null
@@ -51,12 +46,11 @@ function VirtualQuadDeviceView({
         {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}
       </span>
     ),
-    capabilities: {
-      ...(!media.video && { video: { active: false, label: 'inactive' } }),
-      mavlink: { active: mavlink === 'live', label: mavlink },
-      agent: agentCapability(agentShadow, media.video && media.mavlink ? sessionId : null, now),
-    },
-    content: sessionId && (media.mavlink || media.video) ? (
+    agentStatus: agentCapability(agentShadow, media.video && media.mavlink ? sessionId : null, now),
+    debugDiagnostics: hasMedia ? <div ref={setDebugTarget} /> : (
+      <VirtualQuadMavlinkDiagnostics status="inactive" connectionError={null} view={null} videoAvailable={false} />
+    ),
+    content: hasMedia ? (
       <VirtualQuadLiveView
         key={sessionId}
         deviceId={target.deviceId}
@@ -65,7 +59,9 @@ function VirtualQuadDeviceView({
         mavlinkAvailable={media.mavlink}
         resolveIdToken={resolveIdToken}
         debugEnabled={debugEnabled}
-        onMavlinkStatus={onMavlinkStatus}
+        onToggleDebug={onToggleDebug}
+        debugTarget={debugTarget}
+        notify={notify}
       />
     ) : <></>,
   })
@@ -83,11 +79,7 @@ const virtualQuadAdapter: SessionDeviceWebAdapter = {
     const media = readQuadMediaAvailability(fresh, session?.phase, redcon, sparkplug)
     return {
       redcon: displayRedcon(redcon, fresh),
-      capabilities: {
-        video: { active: media.video, label: media.video ? 'active' : 'inactive' },
-        mavlink: { active: media.mavlink, label: media.mavlink ? 'active' : 'inactive' },
-        agent: agentCapability(agent, media.video && media.mavlink ? session?.sessionId ?? null : null, now),
-      },
+      agentStatus: agentCapability(agent, media.video && media.mavlink ? session?.sessionId ?? null : null, now),
     }
   },
 }

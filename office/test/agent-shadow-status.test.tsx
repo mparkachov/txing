@@ -53,23 +53,18 @@ describe('virtual quad agent shadow status', () => {
 
     expect(status(sparkplug('quad-1'))).toEqual({
       redcon: 1,
-      capabilities: {
-        mavlink: { active: true, label: 'active' },
-        video: { active: true, label: 'active' },
-        agent: { active: true, label: 'running' },
-      },
+      agentStatus: { active: true, label: 'running' },
     })
     const degraded = status(sparkplug('quad-1', 2))
     expect(degraded.redcon).toBe(2)
-    expect(degraded.capabilities.mavlink?.active).toBe(true)
-    expect(degraded.capabilities.agent?.active).toBe(false)
+    expect(degraded.agentStatus?.active).toBe(false)
     for (const stale of [
       status(sparkplug('previous-session')),
       status(sparkplug('quad-1', 1, now - 1_001)),
       status(sparkplug('quad-1'), now + 5_000),
     ]) {
       expect(stale.redcon).toBe(3)
-      expect(Object.values(stale.capabilities).every(({ active }) => !active)).toBe(true)
+      expect(stale.agentStatus?.active).toBe(false)
     }
   })
 
@@ -80,21 +75,21 @@ describe('virtual quad agent shadow status', () => {
       capabilities={['agent', 'video']}
       sparkplugShadow={{ state: { reported: { payload: { metrics: { capability: { agent: true, video: true } } } } } }}
       sparkplugShadowStatus="ready"
-      capabilityStatuses={{ agent: { active: false, label: 'stopping' } }}
+      agentStatus={{ active: false, label: 'stopping' }}
     />)
     expect(markup).toContain('catalog-status-capability-inactive" title="agent: stopping"')
     expect(markup).toContain('catalog-status-capability-active" title="video: active"')
   })
 
-  test('a ready MAVLink service remains gray while the browser connects', () => {
+  test('MAVLink availability follows Sparkplug even while the agent is connecting', () => {
     const markup = renderToStaticMarkup(<CapabilityStack
       thingName="quad-1"
       label="Virtual quad"
-      capabilities={['mavlink']}
+      capabilities={['mavlink', 'agent']}
       sparkplugShadow={{ state: { reported: { payload: { metrics: { capability: { mavlink: true } } } } } }}
       sparkplugShadowStatus="ready"
-      capabilityStatuses={{ mavlink: { active: false, label: 'connecting' } }}
+      agentStatus={{ active: false, label: 'connecting' }}
     />)
-    expect(markup).toContain('catalog-status-capability-inactive" title="mavlink: connecting"')
+    expect(markup).toContain('catalog-status-capability-active" title="mavlink: active"')
   })
 })

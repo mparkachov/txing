@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import type { CapabilityStatuses } from './device-adapter'
+import type { AgentCapabilityStatus } from './device-adapter'
 import type { ShadowName } from './shadow-protocol'
 import { extractSparkplugCapabilityAvailability } from './sparkplug-model'
 
@@ -11,16 +11,9 @@ type CapabilityStackProps = {
   capabilities: readonly ShadowName[]
   sparkplugShadow: unknown | null
   sparkplugShadowStatus: CapabilityStackStatus
-  capabilityStatuses?: CapabilityStatuses
+  agentStatus?: AgentCapabilityStatus
   className?: string
 }
-
-const capabilityDisplayAttributes: Partial<Record<ShadowName, { visible: boolean }>> = {
-  sparkplug: { visible: false },
-}
-
-const isCapabilityVisible = (capability: ShadowName): boolean =>
-  capabilityDisplayAttributes[capability]?.visible ?? true
 
 function CapabilityStack({
   thingName,
@@ -28,12 +21,11 @@ function CapabilityStack({
   capabilities,
   sparkplugShadow,
   sparkplugShadowStatus,
-  capabilityStatuses,
+  agentStatus,
   className,
 }: CapabilityStackProps): ReactElement | null {
-  const displayCapabilities = [...capabilities].filter(isCapabilityVisible).reverse()
-
-  if (displayCapabilities.length === 0) {
+  const visibleCapabilities = capabilities.filter((capability) => capability !== 'sparkplug')
+  if (visibleCapabilities.length === 0) {
     return null
   }
 
@@ -41,12 +33,12 @@ function CapabilityStack({
 
   return (
     <span className={classes} aria-label={`Capability status for ${label}`}>
-      {displayCapabilities.map((capability) => {
+      {visibleCapabilities.reverse().map((capability) => {
         const availability =
           sparkplugShadowStatus === 'ready'
             ? extractSparkplugCapabilityAvailability(sparkplugShadow, capability)
             : null
-        const status = capabilityStatuses?.[capability]
+        const status = capability === 'agent' ? agentStatus : undefined
         const isActive = status?.active ?? (availability === true)
         const statusLabel = status?.label ?? (isActive ? 'active' : 'inactive')
         return (

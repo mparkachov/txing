@@ -79,7 +79,7 @@ describe('tbot adapter', () => {
       <MavlinkControlProvider {...providerProps}>
         {tbotDeviceAdapter.renderDetail({
           callMcpTool: async () => null,
-          isBoardVideoExpanded: false,
+          isBoardVideoExpanded: true,
           isDebugEnabled: false,
           isShadowConnected: true,
           isTakeControlPending: false,
@@ -95,7 +95,7 @@ describe('tbot adapter', () => {
           reportedBoardOnline: true,
           reportedBoardRightTrackSpeed: 0,
           reportedMcuOnline: true,
-          reportedRedcon: 2,
+          reportedRedcon: 1,
           resolveIdToken: providerProps.resolveIdToken,
           robotControl: null,
           shadow: {},
@@ -109,9 +109,14 @@ describe('tbot adapter', () => {
       </MavlinkControlProvider>,
     )
 
-    expect(normalMarkup).toContain('aria-label="Take control for TBot"')
+    expect(normalMarkup).toContain('class="video-overlay-icon" aria-label="Enable Debug"')
+    expect(normalMarkup).toContain('aria-label="Take control"')
+    expect(normalMarkup).toContain('aria-label="On-screen controller"')
+    expect(normalMarkup).toContain('aria-expanded="false"')
+    expect(normalMarkup).toContain('class="mavlink-controller" aria-label="TBot controller" hidden=""')
+    expect(normalMarkup.indexOf('video-control-overlay')).toBeLessThan(normalMarkup.indexOf('class="mavlink-controller"'))
     expect(normalMarkup).not.toContain('ArduPilot / MAVLink')
     expect(debugMarkup).toContain('ArduPilot / MAVLink')
-    expect(debugMarkup).not.toContain('status-video-take-control-button')
+    expect(debugMarkup).not.toContain('video-control-overlay')
   })
 })

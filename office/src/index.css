@@ -1313,8 +1313,7 @@ h1 {
 
 .status-video-overlay-side-start {
   justify-content: flex-start;
-  gap: 0.55rem;
-  pointer-events: auto;
+  flex-wrap: wrap;
 }
 
 .status-video-overlay-side-end {
@@ -1336,16 +1335,9 @@ h1 {
   text-shadow: 0 0.12rem 0.28rem rgba(0, 0, 0, 0.82);
 }
 
-.virtual-quad-flight-controls {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.virtual-quad-flight-controls .status-video-overlay-metrics {
-  display: flex;
+.video-control-overlay {
+  display: inline-flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 0.65rem;
 }
 
 .mavlink-controller {
@@ -1353,6 +1345,10 @@ h1 {
   display: grid;
   gap: 0.85rem;
   min-width: 0;
+}
+
+.mavlink-controller[hidden] {
+  display: none;
 }
 
 .mavlink-controller-header,
@@ -1382,7 +1378,7 @@ h1 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-template-areas:
-    "shoulder menu actions"
+    "shoulder . actions"
     "left . actions"
     "left . right";
   gap: 0.45rem;
@@ -1403,7 +1399,6 @@ h1 {
 }
 
 .mavlink-controller-shoulder { grid-area: shoulder; justify-self: start; }
-.mavlink-controller-menu { grid-area: menu; justify-self: center; }
 .mavlink-controller-actions { grid-area: actions; justify-content: center; }
 .mavlink-controller-left { grid-area: left; }
 .mavlink-controller-right { grid-area: right; }
@@ -1452,14 +1447,14 @@ h1 {
   .mavlink-controller-body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-areas:
-      "shoulder menu"
-      "left actions"
+      "shoulder actions"
       "left right";
     border-radius: 1.4rem 1.4rem 2.5rem 2.5rem;
   }
 }
 
-.status-video-debug-button {
+.video-overlay-icon {
+  position: relative;
   width: 2.95rem;
   height: 2.95rem;
   padding: 0;
@@ -1470,137 +1465,49 @@ h1 {
   border: 0;
   background: transparent;
   box-shadow: none;
+  color: rgba(207, 218, 232, 0.88);
   filter: drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
-  line-height: 1;
+  pointer-events: auto;
 }
 
-.status-video-debug-button:hover,
-.status-video-debug-button:focus-visible {
+button.video-overlay-icon:enabled:hover,
+.video-overlay-icon:focus-visible {
   color: rgba(108, 238, 246, 0.98);
-  background: transparent;
-  outline: 1px solid rgba(108, 238, 246, 0.36);
-  outline-offset: 0.2rem;
+  outline: 1px solid rgba(108, 238, 246, 0.58);
+  outline-offset: -0.3rem;
 }
 
-.status-video-debug-button-active {
+.video-overlay-icon[aria-pressed="true"],
+.video-overlay-icon[aria-expanded="true"] {
   color: rgba(108, 238, 246, 0.98);
   filter:
     drop-shadow(0 0 0.35rem rgba(108, 238, 246, 0.42))
     drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
 }
 
-.status-video-debug-button-idle {
-  color: rgba(207, 218, 232, 0.76);
+.video-overlay-icon[data-control-owner="current"] {
+  color: #83eab5;
 }
 
-.status-video-debug-glyph {
-  width: 1.18rem;
-  height: 1.18rem;
-  display: block;
-  flex: 0 0 auto;
+.video-overlay-icon[data-control-owner="other"] {
+  color: #ffce69;
 }
 
-.status-video-take-control-button {
-  width: 2.95rem;
-  height: 2.95rem;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  border: 0;
-  color: rgba(255, 206, 105, 0.96);
-  background: rgba(54, 34, 8, 0.42);
-  box-shadow: inset 0 0 0.9rem rgba(255, 206, 105, 0.12);
-  filter: drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
-  line-height: 1;
+.video-overlay-icon[data-linked="true"]::after {
+  content: "";
+  position: absolute;
+  left: calc(50% + 0.5rem);
+  top: calc(50% + 0.4rem);
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 50%;
+  background: #32d583;
+  pointer-events: none;
 }
 
-.status-video-take-control-button:hover:not(:disabled),
-.status-video-take-control-button:focus-visible:not(:disabled) {
-  color: rgba(255, 224, 153, 1);
-  background: rgba(74, 45, 10, 0.56);
-  outline: 1px solid rgba(255, 206, 105, 0.42);
-  outline-offset: 0.2rem;
-}
-
-.status-video-take-control-button:disabled {
-  opacity: 0.58;
-}
-
-.status-video-take-control-glyph {
-  width: 1.22rem;
-  height: 1.22rem;
-  display: block;
-  flex: 0 0 auto;
-}
-
-.status-mcp-control {
-  width: 2.05rem;
-  height: 2.05rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  color: rgba(207, 218, 232, 0.72);
-  background: rgba(4, 9, 14, 0.42);
-  outline: 1px solid rgba(207, 218, 232, 0.18);
-  filter: drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
-}
-
-.status-mcp-control-current {
-  color: rgba(50, 213, 131, 0.95);
-  outline-color: rgba(50, 213, 131, 0.42);
-  box-shadow: inset 0 0 0.9rem rgba(50, 213, 131, 0.12);
-}
-
-.status-mcp-control-unknown {
-  color: rgba(207, 218, 232, 0.52);
-  outline-color: rgba(207, 218, 232, 0.14);
-}
-
-.status-mcp-control-glyph {
-  width: 1.14rem;
-  height: 1.14rem;
-  display: block;
-  flex: 0 0 auto;
-}
-
-.status-mcp-transport {
-  width: 2.05rem;
-  height: 2.05rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  color: rgba(207, 218, 232, 0.72);
-  background: rgba(4, 9, 14, 0.42);
-  outline: 1px solid rgba(207, 218, 232, 0.18);
-  filter: drop-shadow(0 0.12rem 0.22rem rgba(0, 0, 0, 0.78));
-}
-
-.status-mcp-transport-webrtc {
-  color: rgba(108, 238, 246, 0.96);
-  outline-color: rgba(108, 238, 246, 0.46);
-  box-shadow: inset 0 0 0.9rem rgba(108, 238, 246, 0.12);
-}
-
-.status-mcp-transport-mqtt {
-  color: rgba(50, 213, 131, 0.95);
-  outline-color: rgba(50, 213, 131, 0.42);
-  box-shadow: inset 0 0 0.9rem rgba(50, 213, 131, 0.12);
-}
-
-.status-mcp-transport-pending {
-  color: rgba(207, 218, 232, 0.52);
-  outline-color: rgba(207, 218, 232, 0.14);
-}
-
-.status-mcp-transport-glyph {
-  width: 1.18rem;
-  height: 1.18rem;
-  display: block;
-  flex: 0 0 auto;
+.video-overlay-glyph {
+  width: 1.4rem;
+  height: 1.4rem;
 }
 
 .mavlink-debug-panel {
@@ -1620,19 +1527,11 @@ h1 {
 }
 
 .mavlink-debug-heading span,
-.mavlink-debug-owner,
-.mavlink-debug-flight,
-.mavlink-debug-lease,
-.mavlink-debug-telemetry,
-.mavlink-debug-help {
+.mavlink-debug-panel > p {
   font-size: 0.78rem;
 }
 
-.mavlink-debug-owner,
-.mavlink-debug-flight,
-.mavlink-debug-lease,
-.mavlink-debug-telemetry,
-.mavlink-debug-help {
+.mavlink-debug-panel > p {
   margin: 0.48rem 0;
 }
 
@@ -2460,7 +2359,6 @@ button:disabled {
     justify-items: stretch;
   }
 
-  .status-video-overlay-side-start,
   .status-video-overlay-side-end {
     justify-content: center;
   }

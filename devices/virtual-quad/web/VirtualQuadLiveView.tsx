@@ -1,35 +1,82 @@
-import { useEffect, useEffectEvent, useRef, useState, type RefObject } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { mavlinkDriveRefreshMs, mavlinkWebRtcDataChannelLabel } from '../../../office/src/mavlink-control'
 import { createCredentialProvider } from '../../../office/src/aws-credentials'
+import type { AppNotificationInput } from '../../../office/src/app-notifications'
 import VideoPanel from '../../../office/src/VideoPanel'
+import { VideoOverlayRow, type MavlinkVideoStatus } from '../../../office/src/VideoControlOverlay'
 import MavlinkControllerPanel from '../../../office/src/MavlinkControllerPanel'
+import MavlinkDebugPanel from '../../../office/src/MavlinkDebugPanel'
 import { VirtualQuadFlight, type QuadFlightView } from './virtual-quad-flight'
-import { readQuadMavlinkStatus, type QuadMavlinkStatus } from './virtual-quad-media-status'
+import { readQuadMavlinkStatus } from './virtual-quad-media-status'
 
 const landedLabel: Record<number, string> = { 1: 'Landed', 2: 'Airborne', 3: 'Taking off', 4: 'Landing' }
 
-function VirtualQuadTelemetry({
-  deviceId, actor, resolveIdToken, videoAvailable, videoFrameAt, onMavlinkStatus,
+export function VirtualQuadMavlinkDiagnostics({ status, connectionError, view, videoAvailable }: {
+  status: MavlinkVideoStatus
+  connectionError: string | null
+  view: QuadFlightView | null
+  videoAvailable: boolean
+}) {
+  const owner = view?.held ? 'You have control' : view?.owner ? `Control held by ${view.owner}` : 'No active controller'
+  const connection = status === 'inactive' ? 'MAVLink control peer idle' : `MAVLink ${status}`
+  return (
+    <MavlinkDebugPanel vehicleName="Virtual quadcopter" connection={connection} owner={owner}
+      flight={{ armed: view?.armed ?? null, mode: view?.mode ?? null }}>
+      {videoAvailable && <p>{view?.camera ? 'Camera live' : 'Waiting for camera'}</p>}
+      {view?.landed && <p>{landedLabel[view.landed]}</p>}
+      {view?.position && (
+        <p>
+          Altitude {view.position.altitude.toFixed(1)} m
+          {view.position.heading !== null && <> · Heading {view.position.heading.toFixed(1)}°</>}
+          {' · '}Speed {view.position.speed.toFixed(1)} m/s
+        </p>
+      )}
+      {videoAvailable && view?.supported === false && <p>Flight controls unavailable</p>}
+      {view?.pending && <p role="status">{view.pending}</p>}
+      {connectionError && <p>{connectionError}</p>}
+      {view?.error && <p>{view.error}</p>}
+    </MavlinkDebugPanel>
+  )
+}
+
+export function VirtualQuadLiveView({
+  deviceId, actor, resolveIdToken, videoAvailable, mavlinkAvailable, debugEnabled, onToggleDebug, debugTarget, notify,
 }: {
   deviceId: string
   actor: string
   resolveIdToken: () => Promise<string>
   videoAvailable: boolean
-  videoFrameAt: RefObject<number>
-  onMavlinkStatus: (status: QuadMavlinkStatus) => void
+  mavlinkAvailable: boolean
+  debugEnabled: boolean
+  onToggleDebug: () => void
+  debugTarget: HTMLDivElement | null
+  notify: (notification: AppNotificationInput) => void
 }) {
+  const videoFrameAt = useRef(-Infinity)
   const flight = useRef<VirtualQuadFlight | null>(null)
   const [view, setView] = useState<QuadFlightView | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const readVideoTime = useEffectEvent(() => videoAvailable ? videoFrameAt.current : -Infinity)
-  const mavlinkStatus = readQuadMavlinkStatus(view, connectionError)
+  const mavlinkStatus = mavlinkAvailable ? readQuadMavlinkStatus(view, connectionError) : 'inactive'
+  const flightError = mavlinkAvailable ? view?.error : null
 
   useEffect(() => {
-    onMavlinkStatus(mavlinkStatus)
-  }, [mavlinkStatus, onMavlinkStatus])
-  useEffect(() => () => onMavlinkStatus('inactive'), [onMavlinkStatus])
+    if (flightError) {
+      notify({ tone: 'error', message: flightError, dedupeKey: `mavlink:${deviceId}:${flightError}`, objectId: deviceId })
+    }
+  }, [deviceId, flightError, notify])
 
   useEffect(() => {
+    if (!videoAvailable) videoFrameAt.current = -Infinity
+  }, [videoAvailable])
+
+  useEffect(() => {
+    if (!mavlinkAvailable) {
+      setView(null)
+      setConnectionError(null)
+      return
+    }
     const lifetime = new AbortController()
     let attempt: AbortController | undefined
     let connectionExpiresAt = 0
@@ -131,83 +178,52 @@ function VirtualQuadTelemetry({
       window.clearInterval(timer)
       window.removeEventListener('pagehide', pageHide)
     }
-  }, [actor, deviceId, resolveIdToken])
+  }, [actor, deviceId, mavlinkAvailable, resolveIdToken])
 
-  return (
-    <div className="virtual-quad-flight-controls" aria-label="Virtual quadcopter flight controls">
-      <div className="status-video-overlay-metrics" aria-label="MAVLink telemetry">
-        <span role="status">
-          {mavlinkStatus === 'live' ? 'MAVLink live' : mavlinkStatus === 'waiting for heartbeat' ? 'Waiting for heartbeat'
-            : mavlinkStatus === 'reconnecting' ? `Reconnecting MAVLink · ${connectionError}` : 'Connecting MAVLink'}
-        </span>
-        {videoAvailable && <span>{view?.camera ? 'Camera live' : 'Waiting for camera'}</span>}
-        {view?.mode && <span>Mode {view.mode}</span>}
-        {view?.armed !== null && view?.armed !== undefined && <span>{view.armed ? 'Armed' : 'Disarmed'}</span>}
-        {view?.landed && <span>{landedLabel[view.landed]}</span>}
-        {view?.position && (
-          <>
-            <span>Altitude {view.position.altitude.toFixed(1)} m</span>
-            {view.position.heading !== null && <span>Heading {view.position.heading.toFixed(1)}°</span>}
-            <span>Speed {view.position.speed.toFixed(1)} m/s</span>
-          </>
-        )}
-      </div>
-      {videoAvailable && view?.supported === false && <span>Flight controls unavailable</span>}
-      {videoAvailable && (
-        <MavlinkControllerPanel
-          vehicleName="Virtual quadcopter"
-          profile="quad"
-          held={view?.held ?? false}
-          canMove={view?.canMove ?? false}
-          owner={view?.owner}
-          acquire={{ label: 'Acquire control', enabled: view?.canAcquire ?? false, run: async (signal) => {
-            const controller = flight.current
-            if (!controller || signal.aborted) return
-            const abort = () => controller.close()
-            signal.addEventListener('abort', abort, { once: true })
-            try {
-              await controller.acquire()
-            } finally {
-              signal.removeEventListener('abort', abort)
-            }
-          } }}
-          release={{ enabled: view?.held ?? false, run: () => flight.current?.release() }}
-          takeoff={{ label: 'Take off', enabled: view?.canTakeOff ?? false, run: () => flight.current?.takeOff() }}
-          land={{ label: 'Land', enabled: view?.canLand ?? false, run: () => flight.current?.land() }}
-          sendMotion={(sticks) => flight.current?.sendMotion(sticks)}
-        />
-      )}
-      {view?.pending && <span role="status">{view.pending}</span>}
-      {view?.error && <span role="alert">{view.error}</span>}
-    </div>
-  )
-}
-
-export function VirtualQuadLiveView({
-  deviceId, actor, videoAvailable, mavlinkAvailable, resolveIdToken, debugEnabled, onMavlinkStatus,
-}: {
-  deviceId: string
-  actor: string
-  videoAvailable: boolean
-  mavlinkAvailable: boolean
-  resolveIdToken: () => Promise<string>
-  debugEnabled: boolean
-  onMavlinkStatus: (status: QuadMavlinkStatus) => void
-}) {
-  const videoFrameAt = useRef(-Infinity)
-  useEffect(() => {
-    if (!videoAvailable) videoFrameAt.current = -Infinity
-  }, [videoAvailable])
   if (!videoAvailable && !mavlinkAvailable) return null
   return (
     <section className="card catalog-card catalog-card-detail" aria-label="Virtual quadcopter live view">
-      {videoAvailable && (
-        <VideoPanel channelName={`${deviceId}-board-video`} resolveIdToken={resolveIdToken}
-          debugEnabled={debugEnabled} onFramePresented={() => { videoFrameAt.current = performance.now() }} videoOnly />
-      )}
-      {mavlinkAvailable && (
-        <VirtualQuadTelemetry deviceId={deviceId} actor={actor} resolveIdToken={resolveIdToken}
-          videoAvailable={videoAvailable} videoFrameAt={videoFrameAt} onMavlinkStatus={onMavlinkStatus} />
+      <MavlinkControllerPanel
+        linkStatus={mavlinkStatus}
+        linkDetail={connectionError ?? flightError ?? view?.pending ??
+          (videoAvailable && view?.supported === false ? 'Flight controls unavailable' : null)}
+        showControllerToggle={videoAvailable && mavlinkAvailable}
+        renderVideo={(controlOverlay) => videoAvailable ? (
+          <VideoPanel channelName={`${deviceId}-board-video`} resolveIdToken={resolveIdToken}
+            debugEnabled={debugEnabled} onFramePresented={() => { videoFrameAt.current = performance.now() }}
+            overlay={<VideoOverlayRow controls={controlOverlay} debug={{ enabled: debugEnabled, toggle: onToggleDebug }} />}
+            videoOnly />
+        ) : (
+          <div className="status-video-offline-surface" aria-label="Virtual quadcopter camera unavailable">
+            <span className="status-video-placeholder">Camera unavailable</span>
+            <VideoOverlayRow controls={controlOverlay} />
+          </div>
+        )}
+        vehicleName="Virtual quadcopter"
+        profile="quad"
+        held={mavlinkAvailable && (view?.held ?? false)}
+        canMove={mavlinkAvailable && videoAvailable && (view?.canMove ?? false)}
+        owner={view?.owner}
+        acquire={{ label: 'Acquire control', enabled: mavlinkAvailable && videoAvailable && (view?.canAcquire ?? false), run: async (signal) => {
+          const controller = flight.current
+          if (!controller || signal.aborted) return
+          const abort = () => controller.close()
+          signal.addEventListener('abort', abort, { once: true })
+          try {
+            await controller.acquire()
+          } finally {
+            signal.removeEventListener('abort', abort)
+          }
+        } }}
+        release={{ enabled: view?.held ?? false, run: () => flight.current?.release() }}
+        takeoff={{ label: 'Take off', enabled: mavlinkAvailable && videoAvailable && (view?.canTakeOff ?? false), run: () => flight.current?.takeOff() }}
+        land={{ label: 'Land', enabled: mavlinkAvailable && videoAvailable && (view?.canLand ?? false), run: () => flight.current?.land() }}
+        sendMotion={(sticks) => flight.current?.sendMotion(sticks)}
+      />
+      {debugEnabled && debugTarget && createPortal(
+        <VirtualQuadMavlinkDiagnostics status={mavlinkStatus} connectionError={connectionError}
+          view={mavlinkAvailable ? view : null} videoAvailable={videoAvailable} />,
+        debugTarget,
       )}
     </section>
   )

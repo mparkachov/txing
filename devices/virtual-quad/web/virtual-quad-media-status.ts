@@ -1,6 +1,5 @@
 import { extractSparkplugCapabilityAvailability } from '../../../office/src/sparkplug-model'
-
-export type QuadMavlinkStatus = 'inactive' | 'connecting' | 'waiting for heartbeat' | 'reconnecting' | 'live'
+import type { MavlinkVideoStatus } from '../../../office/src/VideoControlOverlay'
 
 export function readQuadMediaAvailability(
   fresh: boolean, phase: string | undefined, redcon: number | null, sparkplug: unknown,
@@ -15,7 +14,7 @@ export function readQuadMediaAvailability(
 
 export function readQuadMavlinkStatus(
   view: { heartbeat: boolean; connected: boolean } | null, connectionError: string | null,
-): QuadMavlinkStatus {
+): MavlinkVideoStatus {
   if (view?.heartbeat) return 'live'
   if (view?.connected) return 'waiting for heartbeat'
   return connectionError ? 'reconnecting' : 'connecting'

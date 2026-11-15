@@ -180,23 +180,25 @@ per-frame timing, decoded fps, heartbeat and flight observations.
 
 On the selected device route, select REDCON 1 to start and REDCON 4 to stop.
 The REDCON indicator and countdown show startup and shutdown progress.
-Lifecycle messages appear in the notification tray and Session Log.
-When you open an already stopped device, REDCON 4 shows its state. Office
-announces a stop when a session observed on the open page ends.
+The Session Log records simulator startup completion and the end of a
+session observed on the open page. Failures also open a notification.
+When you open an already stopped device, REDCON 4 shows its state.
 
-At REDCON 2, Office can connect to MAVLink in **View only**. The MAVLink dot
-and telemetry panel report the browser peer's connection and heartbeat
+At REDCON 2, Office can connect to MAVLink in **View only**. The MAVLink
+indicator in the video overlay reports the browser peer's connection and heartbeat
 status. At REDCON 1, Office also opens the camera and enables flight actions
 as soon as the browser receives fresh telemetry and video.
 
 Each connection starts in **View only**. With live camera and MAVLink telemetry,
-select **Acquire control** to reserve the free lease. **Take off** selects
-Guided mode, arms through the normal checks, and climbs to 2 m. Office shows
-the controller, camera and telemetry status, mode, arm and landed state,
-altitude, heading, and speed.
+select **Acquire control** in the video overlay to reserve the free lease.
+**Take off** selects
+Guided mode, arms through the normal checks, and climbs to 2 m. Open **Debug**
+for camera status, mode, arm and landed state, altitude, heading, and speed in
+the **ArduPilot / MAVLink** panel.
 
-Use the on-screen sticks, the keyboard shortcuts, or a connected gamepad
-to fly. Centering the sticks
+Use the keyboard shortcuts or a connected gamepad to fly. Select
+**On-screen controller** in the video overlay to show the virtual
+sticks and flight buttons. Centering the sticks
 commands a hover. Use **Land** and check for **Landed** and **Disarmed** in
 the telemetry. **Release control** returns to View only.
 [Office controller mapping](../../docs/components/office.md#mavlink-controller)

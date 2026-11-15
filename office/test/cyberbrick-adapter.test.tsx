@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import cyberbrickDeviceAdapter from '../../devices/cyberbrick/web/cyberbrick-adapter'
 import {
   MavlinkControlProvider,
-  MavlinkDebugPanel,
+  RoverMavlinkDebugPanel,
 } from '../../devices/cyberbrick/web/MavlinkControlPanel'
 
 describe('cyberbrick adapter', () => {
@@ -201,11 +201,15 @@ describe('cyberbrick adapter', () => {
     )
     const debugMarkup = renderToStaticMarkup(
       <MavlinkControlProvider {...providerProps}>
-        <MavlinkDebugPanel vehicleName="Cyberbrick" />
+        <RoverMavlinkDebugPanel vehicleName="Cyberbrick" />
       </MavlinkControlProvider>,
     )
 
-    expect(standardMarkup).toContain('aria-label="Take control for Cyberbrick"')
+    expect(standardMarkup).toContain('aria-label="Take control"')
+    expect(standardMarkup).toContain('aria-label="On-screen controller"')
+    expect(standardMarkup).toContain('aria-expanded="false"')
+    expect(standardMarkup).toContain('class="mavlink-controller" aria-label="Cyberbrick controller" hidden=""')
+    expect(standardMarkup.indexOf('video-control-overlay')).toBeLessThan(standardMarkup.indexOf('class="mavlink-controller"'))
     expect(standardMarkup).toContain('Forward / reverse')
     expect(standardMarkup).not.toContain('aria-label="Input source"')
     expect(standardMarkup).toContain('Steer')
@@ -213,7 +217,7 @@ describe('cyberbrick adapter', () => {
     expect(standardMarkup).not.toContain('ArduPilot / MAVLink')
     expect(debugMarkup).toContain('ArduPilot / MAVLink')
     expect(debugMarkup).toContain('MAVLink control peer idle')
-    expect(debugMarkup).toContain('Use the controller panel')
-    expect(debugMarkup).not.toContain('status-video-take-control-button')
+    expect(debugMarkup).toContain('Use the video overlay')
+    expect(debugMarkup).not.toContain('video-control-overlay')
   })
 })

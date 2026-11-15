@@ -1,4 +1,5 @@
-import { useEffect, useEffectEvent, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useEffectEvent, useId, useRef, useState, type PointerEvent, type ReactNode } from 'react'
+import VideoControlOverlay, { VideoOverlayButton, type MavlinkVideoStatus } from './VideoControlOverlay'
 import {
   areSticksCentered,
   centeredSticks,
@@ -26,7 +27,10 @@ type ControllerProps = {
   held: boolean
   canMove: boolean
   owner?: string | null
-  status?: string
+  linkStatus: MavlinkVideoStatus
+  linkDetail?: string | null
+  showControllerToggle?: boolean
+  renderVideo: (controlOverlay: ReactNode) => ReactNode
   acquire: { label: string; enabled: boolean; run: (signal: AbortSignal) => Promise<void> }
   release: { enabled: boolean; run: Release }
   takeoff?: Action
@@ -48,8 +52,11 @@ function isStandardGamepad(gamepad: Gamepad): boolean {
 }
 
 export default function MavlinkControllerPanel({
-  vehicleName, profile, held, canMove, owner, status, acquire, release, takeoff, land, sendMotion,
+  vehicleName, profile, held, canMove, owner, linkStatus, linkDetail,
+  showControllerToggle = true, renderVideo, acquire, release, takeoff, land, sendMotion,
 }: ControllerProps) {
+  const [controllerOpen, setControllerOpen] = useState(false)
+  const controllerId = useId()
   const [sticks, setSticks] = useState(centeredSticks)
   const [centered, setCentered] = useState(true)
   const [gamepadStatus, setGamepadStatus] = useState('Press a button on the controller to connect')
@@ -279,6 +286,10 @@ export default function MavlinkControllerPanel({
     if (pointers.current[side]?.id !== event.pointerId) return
     delete pointers.current[side]
   }
+  const toggleController = () => {
+    if (controllerOpen && (pointers.current.left || pointers.current.right)) resetInput()
+    setControllerOpen(!controllerOpen)
+  }
   const renderStick = (side: StickSide, horizontal: string, vertical: string) => {
     const x = side === 'left' ? sticks.leftX : sticks.rightX
     const y = side === 'left' ? sticks.leftY : sticks.rightY
@@ -311,36 +322,56 @@ export default function MavlinkControllerPanel({
     )
   }
 
+  const controlOverlay = (
+    <VideoControlOverlay
+      link={{ protocol: 'MAVLink', status: linkStatus, detail: linkDetail }}
+      authority={{
+        state: held ? 'current' : owner ? 'other' : linkStatus === 'live' ? 'none' : 'unknown',
+        label: held ? 'You have control' : owner ? `Control held by ${owner}` : 'View only',
+        action: {
+          label: held ? 'Release control' : acquire.label,
+          disabled: held ? !release.enabled : !acquire.enabled || !centered,
+          run: held ? releaseControl : acquireControl,
+        },
+      }}
+    >
+      {showControllerToggle && (
+        <VideoOverlayButton icon="controller" aria-label="On-screen controller"
+          aria-description={gamepadStatus} title={`On-screen controller · ${gamepadStatus}`}
+          aria-expanded={controllerOpen} aria-controls={controllerId}
+          data-linked={gamepadStatus === 'Gamepad connected'} onClick={toggleController} />
+      )}
+    </VideoControlOverlay>
+  )
+
   return (
-    <section className="mavlink-controller" aria-label={`${vehicleName} controller`}>
-      <div className="mavlink-controller-header">
-        <span role="status">{gamepadStatus}</span>
-      </div>
-      <div className="mavlink-controller-body">
-        <button type="button" className="mavlink-controller-shoulder" disabled={!canMove} onClick={resetInput}>
-          <kbd>LB</kbd> {profile === 'quad' ? 'Hover' : 'Stop'}
-        </button>
-        {renderStick('left', profile === 'quad' ? 'Yaw' : '', profile === 'quad' ? 'Climb / descend' : 'Forward / reverse')}
-        <button type="button" className="mavlink-controller-menu"
-          aria-label={`${held ? 'Release control' : acquire.label} for ${vehicleName}`}
-          disabled={held ? !release.enabled : !acquire.enabled || !centered}
-          onClick={held ? releaseControl : acquireControl}
-        ><kbd>Menu</kbd> {held ? 'Release control' : acquire.label}</button>
-        {(takeoff || land) && <div className="mavlink-controller-actions">
-          {takeoff && (
-            <button type="button" disabled={!takeoff.enabled || !centered} onClick={() => takeOff(false)}><kbd>A</kbd> {takeoff.label}</button>
+    <>
+      {renderVideo(controlOverlay)}
+      <section id={controllerId} className="mavlink-controller" aria-label={`${vehicleName} controller`}
+        hidden={!controllerOpen || !showControllerToggle}>
+        <div className="mavlink-controller-header">
+          {gamepadStatus !== 'Gamepad connected' && <span role="status">{gamepadStatus}</span>}
+        </div>
+        <div className="mavlink-controller-body">
+          <button type="button" className="mavlink-controller-shoulder" disabled={!canMove} onClick={resetInput}>
+            <kbd>LB</kbd> {profile === 'quad' ? 'Hover' : 'Stop'}
+          </button>
+          {renderStick('left', profile === 'quad' ? 'Yaw' : '', profile === 'quad' ? 'Climb / descend' : 'Forward / reverse')}
+          {(takeoff || land) && <div className="mavlink-controller-actions">
+            {takeoff && (
+              <button type="button" disabled={!takeoff.enabled || !centered} onClick={() => takeOff(false)}><kbd>A</kbd> {takeoff.label}</button>
+            )}
+            {land && <button type="button" disabled={!land.enabled} onClick={landControl}><kbd>B</kbd> {land.label}</button>}
+          </div>}
+          {renderStick('right', profile === 'quad' ? 'Move left / right' : '', profile === 'quad' ? 'Move forward / back' : 'Steer')}
+        </div>
+        <div className="mavlink-controller-footer">
+          <span>{profile === 'quad' ? 'WASD move · R/F climb and descend · Q/E yaw' : 'Arrow keys drive · S stops'}</span>
+          {gamepadStatus === 'Gamepad connected' && (
+            <span>Hold Menu to acquire{profile === 'quad' && ' · Hold A to take off'}</span>
           )}
-          {land && <button type="button" disabled={!land.enabled} onClick={landControl}><kbd>B</kbd> {land.label}</button>}
-        </div>}
-        {renderStick('right', profile === 'quad' ? 'Move left / right' : '', profile === 'quad' ? 'Move forward / back' : 'Steer')}
-      </div>
-      <div className="mavlink-controller-footer">
-        <span>{held ? 'Control' : 'View only'}{owner && ` · Controller ${owner}`}{status && ` · ${status}`}</span>
-        <span>{profile === 'quad' ? 'WASD move · R/F climb and descend · Q/E yaw' : 'Arrow keys drive · S stops'}</span>
-        {gamepadStatus === 'Gamepad connected' && (
-          <span>Hold Menu to acquire{profile === 'quad' && ' · Hold A to take off'}</span>
-        )}
-      </div>
-    </section>
+        </div>
+      </section>
+    </>
   )
 }
