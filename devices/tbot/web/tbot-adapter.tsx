@@ -52,7 +52,7 @@ const tbotDeviceAdapter: DeviceWebAdapter = {
   renderDetail: (props) => (
     <CyberbrickPanel
       {...props}
-      deviceLabel="TBOT"
+      deviceLabel={null}
       deviceName="TBot"
       watchTransport="Thread"
     />

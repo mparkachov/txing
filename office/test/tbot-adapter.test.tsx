@@ -4,7 +4,7 @@ import { MavlinkControlProvider } from '../../devices/cyberbrick/web/MavlinkCont
 import tbotDeviceAdapter from '../../devices/tbot/web/tbot-adapter'
 
 describe('tbot adapter', () => {
-  test('uses the independent MAVLink control peer while retaining TBot and Thread presentation', () => {
+  test('uses the independent MAVLink control peer and shows Thread connectivity without a drive gauge group', () => {
     const markup = renderToStaticMarkup(
       tbotDeviceAdapter.renderDetail({
         callMcpTool: async () => null,
@@ -49,7 +49,8 @@ describe('tbot adapter', () => {
     expect(tbotDeviceAdapter.canUseDriveControl(1)).toBe(false)
     expect(tbotDeviceAdapter.canUseDriveControl(2)).toBe(false)
     expect(tbotDeviceAdapter.canUseBoardVideo(1)).toBe(true)
-    expect(markup).toContain('TBOT')
+    expect(markup).not.toContain('TBOT')
+    expect(markup).not.toContain('status-track-gauge')
     expect(markup).toContain('aria-label="Thread online"')
     expect(markup).toContain('data-drive-mode="mavlink"')
     expect(markup).not.toContain('ArduPilot / MAVLink')
@@ -112,6 +113,10 @@ describe('tbot adapter', () => {
     expect(normalMarkup).toContain('class="video-overlay-icon" aria-label="Enable Debug"')
     expect(normalMarkup).toContain('aria-label="Take control"')
     expect(normalMarkup).toContain('aria-label="On-screen controller"')
+    expect(normalMarkup).toContain('aria-label="Thread online"')
+    expect(normalMarkup).toContain('aria-label="Board Wi-Fi online"')
+    expect(normalMarkup).toContain('status-battery-shell')
+    expect(normalMarkup).not.toContain('status-video-overlay-lockup')
     expect(normalMarkup).toContain('aria-expanded="false"')
     expect(normalMarkup).toContain('class="mavlink-controller" aria-label="TBot controller" hidden=""')
     expect(normalMarkup.indexOf('video-control-overlay')).toBeLessThan(normalMarkup.indexOf('class="mavlink-controller"'))

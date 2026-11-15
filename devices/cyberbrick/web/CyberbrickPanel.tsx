@@ -5,7 +5,7 @@ import VideoPanel from '../../../office/src/VideoPanel'
 import { RoverControllerPanel } from './MavlinkControlPanel'
 
 type CyberbrickPanelProps = {
-  deviceLabel?: string
+  deviceLabel?: string | null
   deviceName?: string
   isBoardVideoExpanded: boolean
   isDebugEnabled: boolean
@@ -189,7 +189,7 @@ function CyberbrickPanel({
     <VideoOverlayRow
       debug={shouldRenderBoardVideo ? { enabled: isDebugEnabled, toggle: onToggleDebug } : undefined}
       controls={controlOverlay}
-      center={(
+      center={deviceLabel && (
         <div className="status-video-overlay-lockup">
           <div className="status-txing-title-group" role="group" aria-label={`${deviceName} drive indicators`}>
             <TrackGauge side="Left" speed={reportedBoardLeftTrackSpeed} />

@@ -1317,6 +1317,7 @@ h1 {
 }
 
 .status-video-overlay-side-end {
+  grid-column: -2;
   justify-content: flex-end;
 }
 
