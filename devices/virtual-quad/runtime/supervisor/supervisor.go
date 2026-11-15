@@ -126,8 +126,10 @@ func runWorkload(ctx context.Context, mediaEnv, mediaArgs []string, monitor func
 	}
 	// The pinned SITL build reads message IDs and intervals in milliseconds.
 	// SIM_STATE drives the camera. EKF_STATUS_REPORT and EXTENDED_SYS_STATE gate flight.
+	// ArduCopter slows streams fourfold during parameter transfers. Keep EKF
+	// updates within the media worker's 1500 ms freshness window under that load.
 	intervals := filepath.Join(scratch, "message-intervals-chan0.txt")
-	if err := os.WriteFile(intervals, []byte("108 33\n193 500\n245 200\n"), 0600); err != nil {
+	if err := os.WriteFile(intervals, []byte("108 33\n193 200\n245 200\n"), 0600); err != nil {
 		return fmt.Errorf("configure SITL telemetry: %w", err)
 	}
 	exit := make(chan childResult, 2)

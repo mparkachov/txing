@@ -219,7 +219,9 @@ The simulator bridge verifies readiness, peer identity, and lease epoch
 before forwarding complete MAVLink 2 frames byte for byte to loopback SITL.
 ArduCopter validates the frames and their commands. Office takes off through
 Guided mode and normal ArduCopter arm checks, sends bounded velocity setpoints,
-and requests hover when the controls center. Release, peer loss, lease expiry,
+and requests hover when the controls center. The simulator requests EKF status
+at 5 Hz to keep navigation health current during ArduCopter parameter transfers.
+Release, peer loss, lease expiry,
 media loss or Stop revoke writes and request LAND when the aircraft may be
 airborne. Before granting another lease, the bridge waits for landed and
 disarmed telemetry if it needs to confirm the effects of recent uplink.
