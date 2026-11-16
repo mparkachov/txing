@@ -39,10 +39,10 @@ paths require `protoc`. Generated Go protobuf plugins are pinned and installed
 into the repository temporary directory by
 `just common::board::proto-gen`, so they are not global prerequisites.
 
-Board Alpine builds and cross-distro smoke tests use a locally installed
-`nerdctl` connected to a native Linux/arm64 containerd environment. Verify it
-with `nerdctl info --format '{{.OSType}}/{{.Architecture}}'`; it must report
-`linux/aarch64` or `linux/arm64`.
+Local Linux ARM64 container builds and smoke tests use Apple Container. Check
+the service with `container system status`. See the
+[board build guide](components/board.md#local-development) for the local Alpine
+image and runtime requirements.
 
 Install Mise from its upstream installer, add its activation command to the
 shell startup file, then use it for the versioned developer tools:
@@ -256,8 +256,8 @@ just common::board::hardware-build-native unit
 just common::board::hardware-test-native unit
 just common::board::hardware-build-alpine unit
 just common::board::daemon-build-alpine unit
-just common::board::nerdctl-build unit
-just common::board::nerdctl-smoke unit
+just common::board::alpine-build unit
+just common::board::alpine-smoke unit
 ```
 
 The Go unit daemon loads its default config from

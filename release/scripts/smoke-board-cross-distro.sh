@@ -4,8 +4,8 @@
 # (kernel-only dependency), while the musl-dynamic KVS master runs on Alpine
 # only, against the documented runtime package superset. The last output line
 # of each run must equal the expected version line. Requires a native
-# linux/arm64 container runtime. Local development uses nerdctl; the release
-# workflows set TXING_CONTAINER_CLI=docker for GitHub-hosted runners.
+# linux/arm64 container runtime. Local recipes supply the resolved Apple
+# Container image; the release workflows use Docker and the pinned image.
 set -eu
 
 if [ "$#" -ne 3 ]; then
@@ -21,7 +21,7 @@ debian_image="debian:trixie"
 alpine_image="docker.io/library/alpine:3.24.1"
 platform="linux/arm64"
 alpine_runtime_packages="ca-certificates curl-dev openssl-dev log4cplus-dev libsrtp-dev libusrsctp-dev libwebsockets-dev zlib-dev libcamera-dev protobuf-dev grpc-dev"
-container_cli="${TXING_CONTAINER_CLI:-nerdctl}"
+container_cli="${TXING_CONTAINER_CLI:-docker}"
 
 if [ ! -x "$binary" ]; then
   echo "Board smoke binary is missing or not executable: $binary" >&2
@@ -31,12 +31,10 @@ bin_dir="$(cd "$(dirname "$binary")" && pwd)"
 bin_name="$(basename "$binary")"
 
 case "$container_cli" in
-  nerdctl)
-    command -v nerdctl >/dev/null 2>&1 || {
-      echo "nerdctl is required for the board cross-distro smoke." >&2
-      exit 1
-    }
-    server_platform="$(nerdctl info --format '{{.OSType}}/{{.Architecture}}')"
+  container)
+    alpine_image="${TXING_BOARD_SMOKE_ALPINE_IMAGE:?set by the local board smoke recipe}"
+    server_platform="linux/$(uname -m)"
+    set -- --progress none
     ;;
   docker)
     command -v docker >/dev/null 2>&1 || {
@@ -44,9 +42,10 @@ case "$container_cli" in
       exit 1
     }
     server_platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')"
+    set --
     ;;
   *)
-    echo "Unsupported TXING_CONTAINER_CLI: $container_cli (expected nerdctl or docker)." >&2
+    echo "Unsupported TXING_CONTAINER_CLI: $container_cli (expected container or docker)." >&2
     exit 2
     ;;
 esac
@@ -62,7 +61,9 @@ esac
 run_smoke() {
   smoke_image="$1"
   smoke_setup="$2"
+  shift 2
   output="$("$container_cli" run --rm \
+    "$@" \
     --platform "$platform" \
     --mount "type=bind,source=$bin_dir,target=/smoke,readonly" \
     "$smoke_image" \
@@ -77,11 +78,11 @@ run_smoke() {
 
 case "$kind" in
   static)
-    run_smoke "$debian_image" ""
-    run_smoke "$alpine_image" ""
+    run_smoke "$debian_image" "" "$@"
+    run_smoke "$alpine_image" "" "$@"
     ;;
   musl-libcamera)
-    run_smoke "$alpine_image" "apk add --no-cache -q $alpine_runtime_packages >/dev/null 2>&1; "
+    run_smoke "$alpine_image" "apk add --no-cache -q $alpine_runtime_packages >/dev/null 2>&1; " "$@"
     ;;
   *)
     echo "unknown board binary linkage kind: $kind" >&2

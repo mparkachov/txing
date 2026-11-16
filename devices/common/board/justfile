@@ -26,7 +26,7 @@ mod mavlink 'mavlink.just'
 protoc_gen_go_version := "v1.36.10"
 protoc_gen_go_grpc_version := "v1.5.1"
 
-alpine_build_image := "docker.io/library/alpine:3.24.1"
+alpine_justfile := board_dir + "/alpine.just"
 alpine_build_platform := "linux/arm64"
 
 # Alpine apk ships no static archives for the gRPC stack (doc-30); the
@@ -326,22 +326,23 @@ hardware-test-native device:
 @mavlink-build-alpine device:
     just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" mavlink
 
-nerdctl-build device:
+alpine-build device:
     #!/bin/sh
     set -eu
 
     for command in git jq; do
       if ! command -v "$command" >/dev/null 2>&1; then
-        echo "board nerdctl-build requires '$command'." >&2
+        echo "board alpine-build requires '$command'." >&2
         exit 1
       fi
     done
 
-    just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" all
+    image="$(just --quiet --justfile "{{alpine_justfile}}" image)"
+    just --quiet --justfile "{{board_justfile}}" _alpine-build "{{device}}" all "$image"
 
     device="{{device}}"
     project_root="{{project_root}}"
-    output_root="{{board_dir}}/target/nerdctl-build-$device"
+    output_root="{{board_dir}}/target/alpine-build-$device"
     metadata_path="$output_root/metadata.json"
     bin_dir="$output_root/bin"
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
@@ -363,7 +364,7 @@ nerdctl-build device:
           --arg hardwareWorkerBinaryName "txing-$device-hardware-worker" \
           --arg hardwareWorkerBinaryPath "$bin_dir/txing-$device-hardware-worker" \
           --arg projectRoot "$project_root" \
-          --arg buildImage "{{alpine_build_image}}" \
+          --arg buildImage "$image" \
           --arg buildPlatform "{{alpine_build_platform}}" \
           '{version: $version, kvsVersion: $kvsVersion, commit: $commit, timestamp: $timestamp, outputs: {($daemonBinaryName): $daemonBinaryPath, ($kvsMasterBinaryName): $kvsMasterBinaryPath, ($hardwareWorkerBinaryName): $hardwareWorkerBinaryPath}, projectRoot: $projectRoot, buildImage: $buildImage, buildPlatform: $buildPlatform}' \
           >"$metadata_path"
@@ -383,7 +384,7 @@ nerdctl-build device:
           --arg mavlinkBinaryName "txing-$device-mavlink" \
           --arg mavlinkBinaryPath "$bin_dir/txing-$device-mavlink" \
           --arg projectRoot "$project_root" \
-          --arg buildImage "{{alpine_build_image}}" \
+          --arg buildImage "$image" \
           --arg buildPlatform "{{alpine_build_platform}}" \
           '{version: $version, kvsVersion: $kvsVersion, commit: $commit, timestamp: $timestamp, outputs: {($daemonBinaryName): $daemonBinaryPath, ($kvsMasterBinaryName): $kvsMasterBinaryPath, ($mavlinkBinaryName): $mavlinkBinaryPath}, projectRoot: $projectRoot, buildImage: $buildImage, buildPlatform: $buildPlatform}' \
           >"$metadata_path"
@@ -400,17 +401,17 @@ nerdctl-build device:
     printf '  device: %s\n' "$device"
     printf '  version: %s\n' "$version"
     printf '  commit: %s\n' "$commit"
-    printf '  build image: %s\n' "{{alpine_build_image}}"
+    printf '  build image: %s\n' "$image"
     printf '  daemon binary: %s\n' "$bin_dir/txing-$device-daemon"
     printf '  KVS master binary: %s (%s)\n' "$bin_dir/txing-board-kvs-master" "$kvs_version"
     printf '  %s binary: %s\n' "$component_label" "$bin_dir/$component_binary"
     printf '  metadata: %s\n' "$metadata_path"
 
-nerdctl-smoke device:
+alpine-smoke device:
     #!/bin/sh
     set -eu
     device="{{device}}"
-    bin_dir="{{board_dir}}/target/nerdctl-build-$device/bin"
+    bin_dir="{{board_dir}}/target/alpine-build-$device/bin"
     version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
     kvs_version="$(just --quiet --justfile "{{board_justfile}}" _kvs-version)"
     case "$device" in
@@ -420,19 +421,22 @@ nerdctl-smoke device:
     esac
     for binary in "txing-$device-daemon" "txing-board-kvs-master" "$component_binary"; do
       if [ ! -x "$bin_dir/$binary" ]; then
-        echo "Missing $bin_dir/$binary. Run just common::board::nerdctl-build $device first." >&2
+        echo "Missing $bin_dir/$binary. Run just common::board::alpine-build $device first." >&2
         exit 1
       fi
     done
-    TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+    TXING_BOARD_SMOKE_ALPINE_IMAGE="$(just --quiet --justfile "{{alpine_justfile}}" image)"
+    export TXING_BOARD_SMOKE_ALPINE_IMAGE
+    export TXING_CONTAINER_CLI=container
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/txing-$device-daemon" static "txing-$device-daemon $version"
-    TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/$component_binary" static "$component_binary $version"
-    TXING_CONTAINER_CLI=nerdctl sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
+    sh "{{project_root}}/release/scripts/smoke-board-cross-distro.sh" \
       "$bin_dir/txing-board-kvs-master" musl-libcamera "txing-board-kvs-master $kvs_version"
 
 [private]
-@_alpine-build device component:
+@_alpine-build device component image='':
     #!/bin/sh
     set -eu
 
@@ -440,16 +444,16 @@ nerdctl-smoke device:
     component="{{component}}"
     project_root="{{project_root}}"
     if [ "$device" = "shared" ] && [ "$component" = "kvs-master" ]; then
-      output_root="{{board_dir}}/target/nerdctl-build-kvs-master"
+      output_root="{{board_dir}}/target/alpine-build-kvs-master"
       version="0.0.0-unused"
     else
       just --quiet --justfile "{{board_justfile}}" _require-device "$device"
-      output_root="{{board_dir}}/target/nerdctl-build-$device"
+      output_root="{{board_dir}}/target/alpine-build-$device"
       version="$(just --quiet --justfile "{{board_justfile}}" _device-version "$device")"
     fi
     output_stage="$output_root/alpine-out"
     toolchain_dir="{{static_toolchain_dir}}"
-    image="{{alpine_build_image}}"
+    image="{{image}}"
     platform="{{alpine_build_platform}}"
     kvs_version="$(just --quiet --justfile "{{board_justfile}}" _kvs-version)"
 
@@ -480,18 +484,9 @@ nerdctl-smoke device:
       esac
     fi
 
-    command -v nerdctl >/dev/null 2>&1 || {
-      echo "nerdctl is required to build board projects in Alpine." >&2
-      exit 1
-    }
-    server_platform="$(nerdctl info --format '{{"{{"}}.OSType{{"}}"}}/{{"{{"}}.Architecture{{"}}"}}')"
-    case "$server_platform" in
-      linux/aarch64|linux/arm64) ;;
-      *)
-        echo "board Alpine builds require a native linux/arm64 nerdctl environment, got: $server_platform" >&2
-        exit 1
-        ;;
-    esac
+    if [ -z "$image" ]; then
+      image="$(just --quiet --justfile "{{alpine_justfile}}" image)"
+    fi
 
     if [ "$component" = "all" ]; then
       rm -rf "$output_root"
@@ -499,7 +494,7 @@ nerdctl-smoke device:
     rm -rf "$output_stage"
     install -d "$output_stage" "$output_root/bin" "$toolchain_dir"
 
-    nerdctl run --rm -i \
+    container run --progress none --memory 6g --rm -i \
       --platform "$platform" \
       --mount "type=bind,source=$project_root,target=$project_root,readonly" \
       --mount "type=bind,source=$output_stage,target=/out" \
@@ -517,12 +512,6 @@ nerdctl-smoke device:
       sh -se <<'ALPINE_BUILD'
     set -eu
 
-    expected_release="3.24.1"
-    actual_release="$(cat /etc/alpine-release)"
-    if [ "$actual_release" != "$expected_release" ]; then
-      echo "Expected Alpine $expected_release, got $actual_release" >&2
-      exit 1
-    fi
     if [ "$(uname -m)" != "aarch64" ]; then
       echo "Expected native aarch64 Alpine container, got $(uname -m)" >&2
       exit 1
@@ -574,8 +563,12 @@ nerdctl-smoke device:
     # daemon module and the build runs from there.
     daemon_workdir=""
     generate_go_bindings() {
-      daemon_workdir="$(mktemp -d /tmp/txing-board-daemon-src.XXXXXX)"
+      daemon_stage="$(mktemp -d /tmp/txing-board-daemon-src.XXXXXX)"
+      daemon_workdir="$daemon_stage/devices/common/board/daemon"
+      install -d "$daemon_workdir"
       cp -a "$PWD/devices/common/board/daemon/." "$daemon_workdir/"
+      # Daemon tests load the shared template relative to the package.
+      cp "$PWD/devices/common/daemon.env.template" "$daemon_stage/devices/common/"
       plugin_dir="$(mktemp -d /tmp/txing-protoc-plugins.XXXXXX)"
       GOBIN="$plugin_dir" go install "google.golang.org/protobuf/cmd/protoc-gen-go@$TXING_PROTOC_GEN_GO_VERSION"
       GOBIN="$plugin_dir" go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$TXING_PROTOC_GEN_GO_GRPC_VERSION"
@@ -756,13 +749,13 @@ clean device='':
         "{{native_kvs_master_dir}}/build-tests-$device" \
         "{{native_hardware_worker_dir}}/build-$device" \
         "{{native_hardware_worker_dir}}/build-tests-$device" \
-        "{{board_dir}}/target/nerdctl-build-$device" \
+        "{{board_dir}}/target/alpine-build-$device" \
         "{{board_dir}}/target/docker-build-$device"
     else
       rm -rf \
         "{{native_kvs_master_dir}}"/build-* \
         "{{native_hardware_worker_dir}}"/build-* \
-        "{{board_dir}}"/target/nerdctl-build-* \
+        "{{board_dir}}"/target/alpine-build-* \
         "{{board_dir}}"/target/docker-build-* \
         "{{board_dir}}/aws-kvs-webrtc-sdk-build" \
         "{{board_dir}}/aws-kvs-webrtc-sdk-install" \
@@ -772,7 +765,7 @@ clean device='':
     rm -rf \
       "{{native_kvs_master_dir}}/build" \
       "{{native_kvs_master_dir}}/build-tests" \
-      "{{board_dir}}/target/nerdctl-build-kvs-master"
+      "{{board_dir}}/target/alpine-build-kvs-master"
     rm -rf "{{daemon_dir}}/internal/proto"
 
 @default:

@@ -23,7 +23,8 @@ if [ -f "$marker" ] && [ "$(cat "$marker")" = "$spec" ]; then
 fi
 
 printf 'building static toolchain (%s)\n' "$spec"
-install -d "$prefix"
+# The prefix may be a host bind mount whose mode cannot be changed in the guest.
+mkdir -p "$prefix"
 find "$prefix" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 src="$(mktemp -d "${TMPDIR:-/tmp}/txing-static-toolchain.XXXXXX")"
 cleanup() {

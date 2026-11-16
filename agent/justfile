@@ -132,11 +132,34 @@ _image-package kind:
     shasum -a 256 "$build_id.zip"
     printf '%s\n' "$package_dir/$build_id.zip"
 
+[private]
+@_controller-runtime-image engine:
+    #!/bin/sh
+    set -eu
+    repo=public.ecr.aws/lambda/provided
+    image="$repo:al2023"
+    case "{{engine}}" in
+        container)
+            container image pull --platform linux/arm64 --progress none "$image" >&2
+            digest=$(container image inspect "$image" | jq -er '
+                .[0].variants[]
+                | select(.platform.os == "linux" and .platform.architecture == "arm64")
+                | .digest
+                | select(test("^sha256:[0-9a-f]{64}$"))
+            ')
+            printf '%s@%s\n' "$repo" "$digest"
+            ;;
+        docker)
+            docker pull --platform linux/arm64 "$image" >/dev/null
+            docker image inspect "$image" | jq -er '.[0].RepoDigests[0]'
+            ;;
+    esac
+
 # Build a provided.al2023 ARM64 controller ZIP locally; no AWS calls.
 controller-package: cloud-package
     #!/bin/sh
     set -eu
-    command -v nerdctl.lima >/dev/null 2>&1 || { echo "nerdctl.lima with the Lima BuildKit engine is required for the ARM64 controller package." >&2; exit 1; }
+    container system status >/dev/null
     package_dir="$TMPDIR/agent-cloud-package"
     output_dir=$(mktemp -d "$TMPDIR/agent-controller.XXXXXX")
     cd "{{project_root}}"
@@ -150,15 +173,14 @@ controller-package: cloud-package
     cp "$package_dir/source.tar" "$package_dir/source-sha256.txt" \
         "$package_dir/build-id.txt" "$package_dir/source-revision.txt" "$context_dir/"
     cp "{{agent_dir}}/cloud/Dockerfile" "$context_dir/Dockerfile"
-    nerdctl.lima version > "$output_dir/container-engine.txt"
-    nerdctl.lima build --platform linux/arm64 --progress plain --target controller-export \
+    container system version > "$output_dir/container-engine.txt"
+    container build --cpus 4 --memory 6g --platform linux/arm64 --progress plain --target controller-export \
         --file "$context_dir/Dockerfile" \
         --output "type=local,dest=$artifact_dir" "$context_dir"
     cp "$output_dir/container-engine.txt" "$artifact_dir/provenance/container-engine.txt"
-    nerdctl.lima pull --platform linux/arm64 public.ecr.aws/lambda/provided:al2023 >/dev/null
-    runtime_image=$(nerdctl.lima image inspect public.ecr.aws/lambda/provided:al2023 | jq -er '.[0].RepoDigests[0]')
+    runtime_image=$(just --quiet --justfile "{{agent_dir}}/justfile" _controller-runtime-image container)
     printf '%s\n' "$runtime_image" > "$artifact_dir/provenance/runtime-image.txt"
-    nerdctl.lima run --rm --network none --platform linux/arm64 --entrypoint /bin/sh \
+    container run --progress none --rm --network none --platform linux/arm64 --entrypoint /bin/sh \
         -v "$artifact_dir:/var/task:ro" "$runtime_image" -c \
         'LD_LIBRARY_PATH="/var/task/lib:${LD_LIBRARY_PATH:-}" /lib/ld-linux-aarch64.so.1 --list /var/task/bootstrap' \
         > "$artifact_dir/provenance/runtime-links.txt"
@@ -166,7 +188,7 @@ controller-package: cloud-package
         echo "Controller dependencies are missing from the provided.al2023 package." >&2
         exit 1
     fi
-    if nerdctl.lima run --rm --network none --platform linux/arm64 --entrypoint /var/task/bootstrap -e AWS_LAMBDA_RUNTIME_API= \
+    if container run --progress none --rm --network none --platform linux/arm64 --entrypoint /var/task/bootstrap -e AWS_LAMBDA_RUNTIME_API= \
         -v "$artifact_dir:/var/task:ro" "$runtime_image" \
         > "$artifact_dir/provenance/bootstrap-smoke.txt" 2>&1; then
         echo "Controller unexpectedly started without a Lambda runtime API." >&2
@@ -187,9 +209,24 @@ release-package: cloud-package
     version=$(cat release/versions/agent)
     case "$version" in *[!0-9.]*) echo "Strict MAJOR.MINOR.PATCH required" >&2; exit 1 ;; esac
     printf '%s\n' "$version" | LC_ALL=C grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-    # CI explicitly selects Docker; workstation builds use the existing Lima engine.
-    engine=${TXING_AGENT_CONTAINER_ENGINE:-nerdctl.lima}
-    "$engine" info >/dev/null
+    engine=${TXING_AGENT_CONTAINER_ENGINE:-container}
+    case "$engine" in
+        container)
+            container system status >/dev/null
+            set -- --cpus 4 --memory 6g
+            ;;
+        docker)
+            docker info >/dev/null
+            set --
+            ;;
+        *) echo "Unsupported Agent container engine: $engine" >&2; exit 2 ;;
+    esac
+    run_smoke() {
+        case "$engine" in
+            container) container run --progress none "$@" ;;
+            docker) docker run "$@" ;;
+        esac
+    }
     work=$(mktemp -d "$TMPDIR/agent-release-$version.XXXXXX")
     source_dir="$work/source"
     stage_dir="$work/stage"
@@ -202,21 +239,20 @@ release-package: cloud-package
     cp docs/history/acceptance/agent-physical-acceptance.md "$source_dir/physical-acceptance.md"
     sed -n 's/^FROM \([^ ]*@sha256:[a-f0-9]*\).*/\1/p' agent/cloud/Release.Dockerfile > "$source_dir/container-base.txt"
     test "$(wc -l < "$source_dir/container-base.txt" | tr -d ' ')" = 1
-    "$engine" build --platform linux/arm64 --progress plain --target release-export \
+    "$engine" build "$@" --platform linux/arm64 --progress plain --target release-export \
         --output "type=local,dest=$stage_dir" "$source_dir" > "$work/build.log" 2>&1 || { cat "$work/build.log" >&2; exit 1; }
-    "$engine" pull --platform linux/arm64 public.ecr.aws/lambda/provided:al2023 >/dev/null
-    runtime_image=$("$engine" image inspect public.ecr.aws/lambda/provided:al2023 | jq -er '.[0].RepoDigests[0]')
+    runtime_image=$(just --quiet --justfile "{{agent_dir}}/justfile" _controller-runtime-image "$engine")
     provenance="$stage_dir/controller/provenance"
     printf '%s\n' "$runtime_image" > "$provenance/runtime-image.txt"
     # Variables in the following commands expand inside the container.
     # shellcheck disable=SC2016
-    "$engine" run --rm --network none --platform linux/arm64 --entrypoint /bin/sh \
+    run_smoke --rm --network none --platform linux/arm64 --entrypoint /bin/sh \
         -v "$stage_dir/controller:/var/task:ro" "$runtime_image" -c \
         'LD_LIBRARY_PATH="/var/task/lib:${LD_LIBRARY_PATH:-}" /lib/ld-linux-aarch64.so.1 --list /var/task/bootstrap' > "$provenance/runtime-links.txt"
     if grep -q 'not found' "$provenance/runtime-links.txt"; then
         echo "Missing controller runtime dependencies" >&2; exit 1
     fi
-    if "$engine" run --rm --network none --platform linux/arm64 --entrypoint /var/task/bootstrap \
+    if run_smoke --rm --network none --platform linux/arm64 --entrypoint /var/task/bootstrap \
         -e AWS_LAMBDA_RUNTIME_API= -v "$stage_dir/controller:/var/task:ro" "$runtime_image" > "$provenance/bootstrap-smoke.txt" 2>&1; then
         echo "Controller unexpectedly ran without a Lambda runtime API" >&2; exit 1
     fi
@@ -234,11 +270,11 @@ release-package: cloud-package
     mkdir -p "$smoke"
     unzip -q "$work/one/package/microvm.zip" -d "$smoke"
     image="txing-agent-release:$version"
-    "$engine" build --platform linux/arm64 --progress plain --tag "$image" "$smoke" > "$work/packaged-build.log" 2>&1 || { cat "$work/packaged-build.log" >&2; exit 1; }
-    "$engine" run --rm --network none --platform linux/arm64 --entrypoint /opt/txing/txing-agent "$image" --help > "$work/packaged-help.txt"
+    "$engine" build "$@" --platform linux/arm64 --progress plain --tag "$image" "$smoke" > "$work/packaged-build.log" 2>&1 || { cat "$work/packaged-build.log" >&2; exit 1; }
+    run_smoke --rm --network none --platform linux/arm64 --entrypoint /opt/txing/txing-agent "$image" --help > "$work/packaged-help.txt"
     # The snapshot host must also respond before any identity/credential setup.
     # shellcheck disable=SC2016
-    "$engine" run --rm --network none --platform linux/arm64 --entrypoint /bin/sh "$image" -c \
+    run_smoke --rm --network none --platform linux/arm64 --entrypoint /bin/sh "$image" -c \
         '/opt/txing/txing-agent --microvm --require-assignment --ca /opt/txing/aws-roots.pem & agent_pid=$!; trap "kill $agent_pid; wait $agent_pid || true" EXIT; count=0; until curl --fail --silent --max-time 2 --data "" http://127.0.0.1:8080/aws/lambda-microvms/runtime/v1/ready; do count=$((count + 1)); test "$count" -lt 20 || exit 1; sleep 1; done' \
         > "$work/packaged-ready.txt"
     destination="$TMPDIR/agent-releases/$version"

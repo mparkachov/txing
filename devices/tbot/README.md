@@ -139,8 +139,8 @@ board artifacts from the repository root:
 ```sh
 just tbot::board::test
 just tbot::board::mavlink-build-alpine
-just tbot::board::nerdctl-build
-just tbot::board::nerdctl-smoke
+just tbot::board::alpine-build
+just tbot::board::alpine-smoke
 ```
 
 Follow the [TBot MAVLink runtime](../../docs/components/board.md#tbot-mavlink-runtime)

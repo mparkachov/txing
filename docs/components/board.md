@@ -81,8 +81,8 @@ same KVS bytes from `release/versions/kvs-master` / `kvs-master-v*`.
 Operator commands are device-owned, matching the MCU commands:
 
 ```sh
-just ${TXING_DEVICE}::board::nerdctl-build
-just ${TXING_DEVICE}::board::nerdctl-smoke
+just ${TXING_DEVICE}::board::alpine-build
+just ${TXING_DEVICE}::board::alpine-smoke
 just unit::board::hardware-test-native
 just tbot::board::mavlink-build-alpine
 just cyberbrick::board::mavlink-build-alpine
@@ -2499,12 +2499,11 @@ firmware, sync the refreshed boot files from the kernel package onto the boot
 FAT partition per Alpine's Raspberry Pi sys-install guidance before
 rebooting; the Pi firmware only reads the FAT partition.
 
-Bumping the Alpine release (for example a future move off `v3.24`, or a
-libcamera soname change inside the branch) is one coordinated change: update
-the pinned build image in the board daemon justfile and the release
-KVS workflow container, publish a matching shared KVS release built on that
-Alpine version, and only then move the device apk repositories and run the
-coupled `apk upgrade` + `mise upgrade` window above.
+A move off `v3.24` or a libcamera soname change requires a coordinated rollout.
+Update the local Alpine compatibility check and the release KVS workflow
+container, publish a matching shared KVS release built on that Alpine version,
+then move the device apk repositories and run the coupled `apk upgrade` and
+`mise upgrade` above.
 
 ## Local Development
 
@@ -2516,8 +2515,8 @@ export TXING_DEVICE=tbot            # or: unit, cyberbrick
 just ${TXING_DEVICE}::board::test
 just ${TXING_DEVICE}::board::run
 just ${TXING_DEVICE}::board::daemon-build-alpine
-just ${TXING_DEVICE}::board::nerdctl-build
-just ${TXING_DEVICE}::board::nerdctl-smoke
+just ${TXING_DEVICE}::board::alpine-build
+just ${TXING_DEVICE}::board::alpine-smoke
 just common::board::kvs-test-native
 just common::board::kvs-build-alpine
 just unit::board::hardware-test-native
@@ -2531,14 +2530,17 @@ The local daemon uses
 Provision that directory with `just aws::cert "$THING_ID"` only when AWS
 resource changes are intended.
 
-The `*-build-alpine`, `nerdctl-build`, and `nerdctl-smoke` recipes build and
-verify inside pinned aarch64 containers and require `nerdctl` connected to a
-native `linux/arm64` containerd environment. They assert the linkage contract
-per binary — static daemon and Unit hardware worker or MAVLink service (no ELF interpreter),
-musl-dynamic KVS master with the
-expected libcamera sonames — and `nerdctl-smoke` executes the static pair on
-both `debian:trixie` and pinned Alpine and the KVS master on Alpine, the
-same gates the release workflow enforces.
+The `*-build-alpine`, `alpine-build`, and `alpine-smoke` recipes use Apple
+Container to run native `linux/arm64` guests. The local board and ArduPilot
+recipes refresh `alpine:latest`, resolve its ARM64 manifest digest, and require
+the image to report Alpine v3.24. The full board build records the digest in
+`metadata.json` under `devices/common/board/target/alpine-build-<device>/`.
+
+The build checks the linkage of the static daemon and Unit hardware worker or
+MAVLink service, and the musl-dynamic KVS master with the expected libcamera
+sonames. The smoke recipe runs the static pair on both Debian Trixie and Alpine,
+and the KVS master on Alpine. The release workflows apply the same checks using
+Docker and their pinned Alpine image.
 ## References
 
 - [Board video bridge contract](../contracts/board-video-bridge.md)

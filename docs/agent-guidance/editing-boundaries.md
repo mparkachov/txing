@@ -41,11 +41,10 @@ tooling, shell, infrastructure, or future-work implementation.
   be resumable without another checkout's scratch files. Store credentials
   and sensitive evidence privately. Preserve reusable procedures and
   non-sensitive findings in the owning guide, tracked tooling, or Issue record.
-- Local container builds on this workstation use `nerdctl.lima` with the
-  existing Lima/containerd/BuildKit engine. Check `nerdctl.lima info` and use
-  `nerdctl.lima build`, `pull`, `image inspect`, and `run`. Keep build contexts
-  and exported artifacts under repository `tmp/`. Do not require Docker or
-  buildx for these local commands. CI follows its declared runner tooling.
+- Local container builds on this workstation use Apple Container. Check
+  `container system status` and use `container build`, `container image pull`,
+  `container image inspect`, and `container run`. Keep build contexts and exports
+  under repository `tmp/`. CI follows its declared runner tooling.
 - Default new components and release artifacts to ARM64 where the deployment
   platform supports it. Document the requirement when a component must target
   another architecture.

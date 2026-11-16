@@ -48,12 +48,13 @@ just --version
 uv --version
 bun --version
 node --version
-nerdctl --version
+container --version
 ```
 
-The AWS CLI version must be v2. Board Alpine builds and cross-distro smoke
-tests require a locally installed `nerdctl` connected to a native Linux/arm64
-containerd environment; no Docker group membership is required.
+The AWS CLI version must be v2. Install Apple Container on the Apple Silicon
+workstation and start it with `container system start`. For a Homebrew service
+installation, install the recommended kernel with
+`container system kernel set --recommended` if a kernel is missing.
 
 Day-to-day development commands live in [development.md](./development.md).
 AWS bring-up and teardown live in [aws.md](./aws.md).

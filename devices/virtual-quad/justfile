@@ -13,7 +13,7 @@ microvm-package:
     set -eu
     cd "{{ project_root }}"
     mkdir -p "{{ tmp_dir }}"
-    nerdctl.lima info > /dev/null
+    container system status > /dev/null
     package="$(mktemp -d "{{ tmp_dir }}/virtual-quad.XXXXXXXX")"
     build="$package/build"
     context="$package/context"
@@ -31,7 +31,7 @@ microvm-package:
     cp -R devices/common/board/mavlink/LICENSES devices/common/board/mavlink/PROVENANCE.md \
       "$build/devices/common/board/mavlink/"
     cp devices/virtual-quad/justfile "$build/devices/virtual-quad/"
-    nerdctl.lima build --platform linux/arm64 --progress plain \
+    container build --cpus 4 --memory 6g --platform linux/arm64 --progress plain \
       --file "$build/devices/virtual-quad/runtime/Build.Dockerfile" \
       --target payload --output "type=local,dest=$context" "$build" >&2
     mv "$context/arducopter-source.tar.gz" "$package/"
@@ -40,7 +40,7 @@ microvm-package:
     cp "$package/source-revision.txt" "$package/source-status.txt" "$context/quad/evidence/"
     (cd "$package" && shasum -a 256 arducopter-source.tar.gz runtime-source.tar.gz) \
       > "$context/quad/evidence/source-SHA256SUMS"
-    nerdctl.lima build --platform linux/arm64 --progress plain \
+    container build --cpus 4 --memory 6g --platform linux/arm64 --progress plain \
       --tag txing-virtual-quad:local "$context" >&2
     (cd "$context" && zip -q -r "$package/bundle.zip" Dockerfile microvm-hooks.json quad)
     (cd "$package" && shasum -a 256 bundle.zip arducopter-source.tar.gz runtime-source.tar.gz > SHA256SUMS)
@@ -48,7 +48,13 @@ microvm-package:
     printf '%s\n' "$package/bundle.zip"
 
 runtime-smoke:
-    nerdctl.lima run --rm --network none --stop-timeout 25 txing-virtual-quad:local smoke
+    #!/bin/sh
+    set -eu
+    name="txing-virtual-quad-smoke-$$"
+    trap 'container stop --time 25 "$name" >/dev/null || :; exit 130' INT
+    trap 'container stop --time 25 "$name" >/dev/null || :; exit 143' TERM
+    container run --name "$name" --rm --network none --platform linux/arm64 txing-virtual-quad:local smoke &
+    wait "$!"
 
 [positional-arguments]
 deploy controller='enabled' stack_name='':

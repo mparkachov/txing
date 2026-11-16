@@ -438,14 +438,14 @@ for `workflow_dispatch`, including dispatches that select another branch.
 
 The manual GitHub workflow uses native ARM64 and the same
 `just agent::release-package` recipe as local validation. CI explicitly selects
-Docker. Workstation builds use `nerdctl.lima` with the existing engine.
+Docker. Workstation builds use Apple Container.
 The workflow checks the component's version/tag and creates one immutable
 GitHub archive. The operator publishes that archive separately.
 
-To validate packaging locally, use the existing Lima engine.
+To validate packaging locally, start Apple Container and run the release recipe.
 
 ```sh
-nerdctl.lima info
+container system status
 just agent::release-package
 ```
 
@@ -670,7 +670,7 @@ attachment, ICE/TURN and more than fifteen minutes of observation.
 `just agent::probe-package` prepares the probe. `just agent::cloud-package`
 prepares the production source image context.
 `just agent::controller-package` builds a local ARM64 controller candidate
-using Lima. Use the immutable release workflow for deployed production
+using Apple Container. Use the immutable release workflow for deployed production
 artifacts.
 
 For manual regression checks, record the tested release, device and QGC

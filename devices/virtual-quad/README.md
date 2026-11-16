@@ -34,7 +34,7 @@ census use neither simulator nor observer compute.
 
 ## Build and publish the session image
 
-Run from the repository root with the existing Lima ARM64 engine. For
+Run from the repository root with Apple Container running. For
 publication, build from the reviewed source revision.
 
 ```sh
@@ -43,7 +43,7 @@ bundle=$(just virtual-quad::microvm-package)
 
 The command tests the Go supervisor and the native camera and flight code,
 builds the ARM64 payload, and validates the final image and snapshot-safe
-OpenSSL linking in Lima. The final image defaults to the managed lifecycle
+OpenSSL linking in a Linux ARM64 guest. The final image defaults to the managed lifecycle
 hook listener. It begins a simulation only after a session claim. The recipe
 prints the absolute ZIP path. Keep the bundle, both adjacent source archives
 and `SHA256SUMS` together. The bundle records the repository revision and

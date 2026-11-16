@@ -714,9 +714,9 @@ class VersionEnvironmentTests(unittest.TestCase):
         )
         self.assertIn('platform="linux/arm64"', board_smoke_script)
         self.assertIn(
-            'container_cli="${TXING_CONTAINER_CLI:-nerdctl}"', board_smoke_script
+            'container_cli="${TXING_CONTAINER_CLI:-docker}"', board_smoke_script
         )
-        self.assertIn('nerdctl info --format', board_smoke_script)
+        self.assertIn('TXING_BOARD_SMOKE_ALPINE_IMAGE', board_smoke_script)
         self.assertIn("libcamera-dev", board_smoke_script)
         self.assertIn("static|musl-libcamera", board_smoke_script)
         for workflow in (unit_workflow, cyberbrick_workflow, kvs_workflow):
@@ -729,7 +729,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("needs: [metadata, build, ardupilot, smoke]", tbot_workflow)
         # One shared board justfile serves both device types; only the
         # device-neutral KVS recipes omit the device argument.
-        self.assertIn("nerdctl-smoke device:", board_justfile)
+        self.assertIn("alpine-smoke device:", board_justfile)
         self.assertIn("kvs-test-native:", board_justfile)
         self.assertIn("release/scripts/smoke-board-cross-distro.sh", board_justfile)
 
@@ -758,7 +758,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("HARDWARE_WORKER_VERSION", release_cli)
         self.assertNotIn("packageVersion", release_cli)
         self.assertIn(
-            'components := "rig lambda unit tbot cyberbrick kvs-master office"', release_justfile
+            'components := "agent rig lambda unit tbot cyberbrick kvs-master office"', release_justfile
         )
         self.assertIn('tbot) workflow="release-tbot.yml"', release_justfile)
         self.assertIn('cyberbrick) workflow="release-cyberbrick.yml"', release_justfile)
@@ -784,7 +784,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertNotIn("release/versions/cyberbrick", board_justfile)
         self.assertNotIn("/" + "VERSION", unit_daemon_justfile)
         self.assertIn(
-            'alpine_build_image := "docker.io/library/alpine:3.24.1"',
+            'alpine_justfile := board_dir + "/alpine.just"',
             cyberbrick_daemon_justfile,
         )
         self.assertIn(
@@ -807,7 +807,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("component-scoped under `release/versions/`", development_docs)
         self.assertIn("Office tracks its version for Cloudflare Pages", development_docs)
 
-    def test_unit_daemon_manual_nerdctl_build_replaces_release_channel(self) -> None:
+    def test_unit_daemon_manual_alpine_build_replaces_release_channel(self) -> None:
         removed_workflow = "unit-daemon-feature-" + "prerelease.yml"
         removed_dockerfile = "Dockerfile." + "prerelease-" + "builder"
         removed_cli_flag = "--" + "prerelease"
@@ -817,6 +817,7 @@ class VersionEnvironmentTests(unittest.TestCase):
         board_dir = REPO_ROOT / "devices" / "common" / "board"
         daemon_dir = board_dir / "daemon"
         justfile = (board_dir / "justfile").read_text(encoding="utf-8")
+        alpine_justfile = (board_dir / "alpine.just").read_text(encoding="utf-8")
 
         self.assertFalse(workflow_path.exists())
         self.assertFalse((daemon_dir / "Dockerfile.docker-builder").exists())
@@ -826,15 +827,14 @@ class VersionEnvironmentTests(unittest.TestCase):
         self.assertIn("./cmd/txing-board-daemon", justfile)
         self.assertNotIn("docker-builder-image", justfile)
         self.assertNotIn("docker-builder-shell", justfile)
-        self.assertIn("nerdctl-build device:", justfile)
+        self.assertIn("alpine-build device:", justfile)
         self.assertIn(
-            '"{{board_dir}}/target/nerdctl-build-$device"', justfile
+            '"{{board_dir}}/target/alpine-build-$device"', justfile
         )
-        self.assertIn("nerdctl run --rm -i", justfile)
-        self.assertIn("nerdctl info --format", justfile)
-        self.assertIn(
-            'alpine_build_image := "docker.io/library/alpine:3.24.1"', justfile
-        )
+        self.assertIn("container run --progress none --memory 6g --rm -i", justfile)
+        self.assertIn('container image pull --platform linux/arm64', alpine_justfile)
+        self.assertIn('"$repo:latest"', alpine_justfile)
+        self.assertIn("3.24.*)", alpine_justfile)
         self.assertNotIn("debian:trixie", justfile)
         self.assertIn("GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test ./...", justfile)
         self.assertIn("DaemonVersion=$version", justfile)
