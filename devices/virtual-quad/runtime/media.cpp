@@ -497,6 +497,7 @@ void Run(bool local) {
     std::uint64_t encoded_bytes = 0;
     GstClockTime first_pts = GST_CLOCK_TIME_NONE;
     bool ready = false;
+    bool kvs_ready = false;
     bool produced_keyframe = false;
     while (!stopping) {
         const std::unique_ptr<GstMessage, decltype(&gst_message_unref)> failure(
@@ -567,6 +568,12 @@ void Run(bool local) {
         const bool mavlink = heartbeat && data && data->SignalingConnected();
         const bool video_ready = pose_fresh && produced_keyframe && now - last_frame < 1s &&
             video && video->SignalingConnected();
+        if (!kvs_ready && mavlink && video_ready && navigation) {
+            std::printf("QUAD_KVS_READY elapsed_ms=%lld armed=%s\n",
+                static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count()),
+                sitl.armed ? "true" : "false");
+            kvs_ready = true;
+        }
         if (flight) flight->Tick(!stopping && navigation && mavlink && video_ready);
         if (health_path && now >= next_health) {
             if (!flight && sitl.armed) throw std::runtime_error("read-only simulator unexpectedly armed");
@@ -577,11 +584,11 @@ void Run(bool local) {
         if (!ready && now - start >= 80s) throw std::runtime_error("simulator startup exceeded 80 seconds");
         if (!ready && keyframes && pose_fresh && sitl.boot_ms && sitl.heartbeat != Clock::time_point{} &&
             now - sitl.heartbeat < 2s && now - sitl.attitude < 1s) {
-            std::printf("QUAD_READY mode=%s camera=pose unix_ms=%lld media_elapsed_ms=%lld boot_ms=%u\n",
+            std::printf("QUAD_READY mode=%s camera=pose unix_ms=%lld media_elapsed_ms=%lld boot_ms=%u armed=%s\n",
                 local ? "local" : "kvs",
                 UnixMilliseconds(),
                 static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count()),
-                sitl.boot_ms);
+                sitl.boot_ms, sitl.armed ? "true" : "false");
             ready = true;
             sample_start = now;
             last_boot = sitl.boot_ms;

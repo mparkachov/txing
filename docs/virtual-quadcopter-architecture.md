@@ -8,6 +8,9 @@ starts with the same world and a fresh
 disarmed aircraft. The operating and release procedures live in the
 [device guide](../devices/virtual-quad/README.md).
 
+The deployed architecture is described below. The [approved standard Lambda
+design](#approved-standard-lambda-design) covers the next simulator revision.
+
 ## AWS footprint at REDCON 4
 
 **A stopped virtual quad has a small AWS footprint and zero dedicated
@@ -262,3 +265,71 @@ existing device regression checks. The device guide owns the operator
 procedure. [Runtime evidence](https://github.com/mparkachov/txing/issues/176)
 · [Prior acceptance and operator-approved skips](https://github.com/mparkachov/txing/issues/182)
 · [Consolidation and permanent deployment](https://github.com/mparkachov/txing/issues/183)
+
+## Approved standard Lambda design
+
+Implementation and acceptance are tracked in [milestone 13](https://github.com/mparkachov/txing/milestone/13).
+
+The virtual-quad device Lambda in `eu-central-1` will supervise ArduCopter
+SITL and the media worker for the duration of a Start invocation. Its
+ARM64 `provided.al2023` release ZIP will carry the Go bootstrap, native
+executables, camera and encoding dependencies, and build provenance. Every
+invocation will create its own writable workspace and reap both children
+before returning. The package must run against the Lambda runtime and fit
+the ZIP size limit. This keeps publication on the shared S3-backed Lambda
+release path. [Lambda runtime](https://docs.aws.amazon.com/lambda/latest/dg/lambda-golang.html)
+· [Lambda quotas](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html)
+
+### Event flow and ownership
+
+- **Start.** AWS IoT invokes the device Lambda for the existing Sparkplug
+  REDCON 1 command. The function verifies the registered assignment and
+  awake rig. It uses a version-conditional update of the `simulation`
+  shadow to accept the command against the observed terminal revision
+  before starting any workload. The accepted invocation owns that session's
+  writes. Duplicate commands and stale generations cannot start another
+  workload in the normal flow.
+- **Readiness.** The running invocation derives lifecycle, availability,
+  and expiry from its own child processes. It renews readiness only during
+  the session. Changes committed to `simulation` drive Sparkplug DDATA and
+  Witness remains the writer of the `sparkplug` shadow. Preserve the
+  session ID, readiness watermark and expiry, flight deadline, and
+  command result semantics used by Office and the shared agent. The agent
+  starts in its existing observer mode and the simulator continues to
+  grant one flight lease across all viewers.
+- **Stop.** The REDCON 4 command updates the matching session to
+  `stopping`. The Start invocation listens for changes on its named
+  shadow and reads it after subscribing or reconnecting to cover a missed
+  update. It closes the flight write gate, requests LAND when appropriate,
+  reaps the children, and commits the terminal result. The independent
+  agent lifecycle retires its observer as readiness is withdrawn.
+- **Expiry and failure.** Retain the 90-second startup bound, up to 12
+  minutes of flight, and a shutdown window within the 900-second Lambda
+  timeout. Abrupt Lambda failures emit an EventBridge event that can
+  finalize only the session owned by the failed invocation. When an event
+  is delayed or lost, readiness expires and Office allows a new explicit
+  Start after the previous invocation's hard deadline. A delayed Stop,
+  health update, or failure event cannot change a replacement session.
+  [IoT shadow notifications](https://docs.aws.amazon.com/iot/latest/developerguide/device-shadow-mqtt.html)
+  · [Lambda failure destinations](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-retain-records.html)
+
+The `simulation` shadow replaces the simulator's ledger as the authority
+for session state. Retire its DynamoDB table, simulator MicroVM image,
+worker URL, claim and grant protocol, and recurring repair schedule. The
+shared agent's hosting, cloud rig discovery, Thing and media channels
+remain part of the existing environment. After REDCON 4 settles, simulator
+and observer compute are idle. Shared release storage, logs, IoT, and KVS
+costs follow their existing billing model. KVS can charge for channels
+used earlier in the billing month. [KVS pricing](https://aws.amazon.com/kinesis/video-streams/pricing/)
+
+### Cutover and evidence
+
+Qualify the release ZIP and measure startup, media, flight, and cleanup
+in the target runtime before changing the permanent device. Drain the
+simulator and observer at REDCON 4. Publish the compatible ZIP and update
+the function stack in the same maintenance window using the same Thing
+and channels. Keep the legacy artifacts through acceptance so the prior
+stack and release can be restored if needed. After an accepted
+REDCON 4 → 1 → 4 cycle, verify zero dedicated idle simulator work and
+manually retire the simulator image and retained table. Document the
+validated release, rollback, and cleanup in the device guide.

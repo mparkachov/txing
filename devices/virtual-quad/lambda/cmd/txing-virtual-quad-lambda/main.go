@@ -21,11 +21,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambdamicrovms"
 	"txing.dev/virtual-quad-lambda/internal/controller"
 	"txing.dev/virtual-quad-lambda/internal/lifecycle"
+	"txing.dev/virtual-quad-lambda/internal/qualification"
 	"txing.dev/virtual-quad-lambda/internal/version"
 )
 
 func main() {
 	log.Printf("service=txing-virtual-quad-lambda version=%s cold_start=true", version.Version)
+	if os.Getenv("TXING_VIRTUAL_QUAD_QUALIFICATION") == "true" {
+		lambda.Start(qualification.Handle)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	handler, err := initialize(ctx)
 	cancel()

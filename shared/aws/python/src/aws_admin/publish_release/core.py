@@ -180,12 +180,39 @@ def lambda_current_key(function_name: str) -> str:
     return f"lambda/{function_name}/current/bootstrap.zip"
 
 
-def validate_lambda_zip(path: Path) -> None:
+def validate_lambda_zip(path: Path, *, virtual_quad: bool = False) -> None:
     try:
         with zipfile.ZipFile(path) as archive:
             files = [info.filename for info in archive.infolist() if not info.is_dir()]
     except zipfile.BadZipFile as err:
         raise PublishError(f"{path.name} is not a valid zip file") from err
+    if virtual_quad and len(files) > 1:
+        required = {
+            "bootstrap",
+            "quad/bin/virtual-quad-supervisor",
+            "quad/bin/virtual-quad-media",
+            "quad/bin/arducopter",
+            "quad/arducopter.parm",
+            "quad/lib/ld-linux-aarch64.so.1",
+            "quad/lib/libsoftokn3.so",
+            "quad/lib/libfreebl3.so",
+            "quad/lib/libfreeblpriv3.so",
+            "quad/certs/starfield.pem",
+            "quad/plugins/libgstcoreelements.so",
+            "quad/plugins/libgstx264.so",
+            "quad/plugins/libgstvideoparsersbad.so",
+            "quad/plugins/libgstapp.so",
+        }
+        valid_paths = all(
+            name == "bootstrap"
+            or (
+                name.startswith("quad/")
+                and all(part not in {"", ".", ".."} for part in name.split("/"))
+            )
+            for name in files
+        )
+        if required.issubset(files) and len(files) == len(set(files)) and valid_paths:
+            return
     if files != ["bootstrap"]:
         raise PublishError(
             f"{path.name} must contain exactly one root-level bootstrap executable"
@@ -299,7 +326,9 @@ def publish_lambdas(
                 continue
             asset_path = work_dir / asset.asset_name
             github.download_asset(release, asset.asset_name, asset_path)
-            validate_lambda_zip(asset_path)
+            validate_lambda_zip(
+                asset_path, virtual_quad=asset.artifact_id == "txing-virtual-quad-lambda"
+            )
             version_key = lambda_version_key(asset.artifact_id, release.version)
             current_key = lambda_current_key(asset.artifact_id)
             _upload_file_if_missing(

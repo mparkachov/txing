@@ -14,8 +14,8 @@
     <h1>Virtual quadcopter diagnostics</h1>
     <p><a href="/?signin=1">Sign in through Office</a>, then open this page again in the same tab.</p>
     <form>
-      <label>Video channel <input id="video-channel" required pattern="virtual-quad-[a-z0-9]+-board-video"></label>
-      <label>MAVLink channel <input id="mavlink-channel" required pattern="virtual-quad-[a-z0-9]+-mavlink"></label>
+      <label>Video channel <input id="video-channel" required pattern="[A-Za-z0-9_.-]{1,256}"></label>
+      <label>MAVLink channel <input id="mavlink-channel" required pattern="[A-Za-z0-9_.-]{1,256}"></label>
       <label>RTP time base (UTC ms) <input id="rtp-epoch" type="number" min="1" step="any"></label>
       <label><input id="relay" type="checkbox"> Force TURN</label>
       <button id="join">Join</button>

@@ -58,7 +58,7 @@ type childResult struct {
 }
 
 func startChild(exit chan<- childResult, dir string, env []string, name string, args ...string) (*exec.Cmd, error) {
-	cmd := exec.Command("/opt/quad/bin/"+name, args...)
+	cmd := exec.Command(filepath.Join(quadRoot(), "bin", name), args...)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = dir, os.Stdout, os.Stderr
 	cmd.Env = append(os.Environ(), "HOME="+dir, "XDG_CACHE_HOME="+dir)
 	cmd.Env = append(cmd.Env, env...)
@@ -68,6 +68,13 @@ func startChild(exit chan<- childResult, dir string, env []string, name string, 
 	}
 	go func() { exit <- childResult{name, cmd.Wait()} }()
 	return cmd, nil
+}
+
+func quadRoot() string {
+	if root := os.Getenv("TXING_QUAD_ROOT"); root != "" {
+		return root
+	}
+	return "/opt/quad"
 }
 
 func shutdown(children []*exec.Cmd, pending int, exit <-chan childResult) {
@@ -144,7 +151,7 @@ func runWorkload(ctx context.Context, mediaEnv, mediaArgs []string, monitor func
 	pending++
 	sitl, err := startChild(exit, scratch, nil, "arducopter",
 		"--model=quad", "--speedup=1", "--home=-35.363261,149.165230,584,0", "--wipe",
-		"--defaults=/opt/quad/arducopter.parm",
+		"--defaults="+filepath.Join(quadRoot(), "arducopter.parm"),
 		"--serial0=udpclient:127.0.0.1:14550", "--serial1=none", "--serial2=none")
 	if err != nil {
 		return err
@@ -186,12 +193,16 @@ func main() {
 	switch {
 	case len(os.Args) == 1:
 		err = serveMicroVM()
-	case len(os.Args) == 2 && os.Args[1] == "smoke":
+	case len(os.Args) == 2 && (os.Args[1] == "smoke" || os.Args[1] == "qualify"):
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer stop()
-		err = runWorkload(ctx, nil, []string{"--local"}, nil)
+		var mediaArgs []string
+		if os.Args[1] == "smoke" {
+			mediaArgs = []string{"--local"}
+		}
+		err = runWorkload(ctx, nil, mediaArgs, nil)
 	default:
-		err = errors.New("usage: virtual-quad-supervisor [smoke]")
+		err = errors.New("usage: virtual-quad-supervisor [smoke|qualify]")
 	}
 	if err != nil {
 		log.Fatalf("QUAD_SUPERVISOR_ERROR %v", err)

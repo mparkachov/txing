@@ -110,10 +110,10 @@ txing-virtual-quad-lambda-linux-aarch64.zip
 
 Each `.tar.gz` archive contains one root-level executable with the same command
 name, except TBot and Cyberbrick ArduPilot which also contain their tracked
-defaults files. Each runtime Lambda `.zip` contains one root-level Go executable named
-`bootstrap` for the `provided.al2023` arm64 runtime. Lambda release artifacts
-are built as `linux/arm64` binaries with `CGO_ENABLED=0`, so they are static
-and do not depend on host glibc.
+defaults files. Each runtime Lambda `.zip` contains a root-level Go executable named
+`bootstrap` for the `provided.al2023` arm64 runtime. The virtual-quad ZIP also
+contains its ARM64 simulator and native runtime dependencies. Lambda bootstrap
+executables are built with `CGO_ENABLED=0` and are static.
 Unit, TBot, Cyberbrick, and shared KVS binaries are built in the same pinned Alpine
 release under one linkage contract: the Go daemons, Unit hardware worker, and
 TBot/Cyberbrick MAVLink services are fully static musl binaries that run on both

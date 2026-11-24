@@ -8,6 +8,41 @@ root_justfile := project_root + "/justfile"
 aws_lib := project_root + "/shared/aws/scripts/aws_lib.sh"
 session_template := quad_dir + "/lambda/cmd/txing-virtual-quad-lambda/template.yaml"
 
+lambda-package:
+    #!/bin/sh
+    set -eu
+    cd "{{ project_root }}"
+    mkdir -p "{{ tmp_dir }}"
+    container system status > /dev/null
+    package=$(mktemp -d "{{ tmp_dir }}/virtual-quad-lambda.XXXXXXXX")
+    build="$package/build"
+    payload="$package/payload"
+    mkdir -p "$build" "$payload"
+    for file in devices/common/board/kvs_master/CMakeLists.txt devices/common/board/kvs_master/include \
+      devices/common/board/kvs_master/src devices/common/board/mavlink/include devices/common/kvs \
+      devices/virtual-quad/runtime; do
+      mkdir -p "$build/$(dirname "$file")"
+      cp -R "$file" "$build/$file"
+    done
+    container build --cpus 4 --memory 6g --platform linux/arm64 --progress plain \
+      --file "$build/devices/virtual-quad/runtime/Build.Dockerfile" --target lambda-payload \
+      --output "type=local,dest=$payload" "$build" >&2
+    if [ -d "$payload/out.tar/linux_arm64/quad" ]; then
+      mv "$payload/out.tar/linux_arm64/quad" "$payload/quad"
+    elif [ -f "$payload/out.tar" ]; then
+      tar -xf "$payload/out.tar" -C "$payload"
+      rm "$payload/out.tar"
+    fi
+    git rev-parse HEAD > "$payload/quad/evidence/source-revision.txt"
+    git status --short -- devices/virtual-quad devices/common/board/kvs_master \
+      devices/common/board/mavlink devices/common/kvs > "$payload/quad/evidence/source-status.txt"
+    (cd devices/virtual-quad/lambda && GOCACHE="{{ tmp_dir }}/go-build" GOPATH="{{ tmp_dir }}/go" \
+      CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+      go build -trimpath -tags lambda.norpc -o "$payload/bootstrap" ./cmd/txing-virtual-quad-lambda)
+    test "$(du -sk "$payload" | cut -f1)" -lt 256000
+    (cd "$payload" && zip -q -r "$package/txing-virtual-quad-lambda-linux-aarch64.zip" bootstrap quad)
+    printf '%s\n' "$package/txing-virtual-quad-lambda-linux-aarch64.zip"
+
 microvm-package:
     #!/bin/sh
     set -eu

@@ -30,9 +30,10 @@ environment stack name and omit the redundant `-lambda` suffix, for example
 - `txing-cloud-mcu-lambda`
 - `txing-virtual-quad-lambda`
 
-These functions stay as static `linux/arm64` `bootstrap` executables for
-`provided.al2023`. They are published as release artifacts and updated by
-`release::publish lambda`.
+These functions use static `linux/arm64` `bootstrap` executables for
+`provided.al2023`. The virtual-quad release also packages its simulator and
+native dependencies alongside the bootstrap. They are published as release
+artifacts and updated by `release::publish lambda`.
 
 Milestone 10 introduces one explicit C++ exception: the agent controller,
 `txing-agent-lambda`, under the top-level agent component. It uses the AWS SDK

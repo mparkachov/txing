@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Disposable virtual quad standard Lambda runtime qualification.
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+  ArtifactKey:
+    Type: String
+
+Resources:
+  VideoChannel:
+    Type: AWS::KinesisVideo::SignalingChannel
+    Properties:
+      Name: !Sub ${AWS::StackName}-video
+      Type: SINGLE_MASTER
+
+  MavlinkChannel:
+    Type: AWS::KinesisVideo::SignalingChannel
+    Properties:
+      Name: !Sub ${AWS::StackName}-mavlink
+      Type: SINGLE_MASTER
+
+  QualificationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: QualificationSignaling
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsMaster
+                Resource:
+                  - !GetAtt VideoChannel.Arn
+                  - !GetAtt MavlinkChannel.Arn
+
+  QualificationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      Handler: bootstrap
+      Role: !GetAtt QualificationRole.Arn
+      Timeout: 780
+      MemorySize: 3008
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+      Environment:
+        Variables:
+          TXING_VIRTUAL_QUAD_QUALIFICATION: 'true'
+          QUAD_VIDEO_CHANNEL: !Sub ${AWS::StackName}-video
+          QUAD_MAVLINK_CHANNEL: !Sub ${AWS::StackName}-mavlink
+
+Outputs:
+  FunctionName:
+    Value: !Ref QualificationFunction
+  VideoChannel:
+    Value: !Sub ${AWS::StackName}-video
+  MavlinkChannel:
+    Value: !Sub ${AWS::StackName}-mavlink

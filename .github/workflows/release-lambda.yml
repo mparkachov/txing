@@ -224,6 +224,16 @@ jobs:
             -o "$RUNNER_TEMP/${{ matrix.function_name }}" \
             "${{ matrix.package_path }}"
 
+      - name: Build virtual quad native Lambda payload
+        if: matrix.function_name == 'txing-virtual-quad-lambda'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --platform linux/arm64 \
+            --file devices/virtual-quad/runtime/Build.Dockerfile \
+            --target lambda-payload \
+            --output "type=local,dest=$RUNNER_TEMP/virtual-quad-payload" .
+
       - name: Package ${{ matrix.asset_name }}
         shell: bash
         run: |
@@ -248,9 +258,16 @@ jobs:
             printf '%s\n' "$ldd_output" >&2
             exit 1
           fi
-          (cd "$package_dir" && zip -q "$asset_path" bootstrap)
+          if [ "${{ matrix.function_name }}" = "txing-virtual-quad-lambda" ]; then
+            cp -R "$RUNNER_TEMP/virtual-quad-payload/quad" "$package_dir/quad"
+            git rev-parse HEAD > "$package_dir/quad/evidence/source-revision.txt"
+            (cd "$package_dir" && zip -q -r "$asset_path" bootstrap quad)
+            test "$(du -sk "$package_dir" | cut -f1)" -lt 256000
+          else
+            (cd "$package_dir" && zip -q "$asset_path" bootstrap)
+          fi
           archive_listing="$(unzip -Z1 "$asset_path")"
-          if [ "$archive_listing" != "bootstrap" ]; then
+          if [ "${{ matrix.function_name }}" != "txing-virtual-quad-lambda" ] && [ "$archive_listing" != "bootstrap" ]; then
             echo "Expected ${{ matrix.asset_name }} to contain only root-level bootstrap, got:" >&2
             printf '%s\n' "$archive_listing" >&2
             exit 1

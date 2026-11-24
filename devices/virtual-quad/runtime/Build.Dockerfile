@@ -48,6 +48,9 @@ RUN sdk=/build/kvs-master/aws-kvs-webrtc-sdk/src \
     && cp "$sdk/LICENSE" /out/kvs-sdk/ \
     && find "$sdk" -maxdepth 1 -type f -iname 'notice*' -exec cp {} /out/kvs-sdk/ \;
 
+RUN printf '#include <srtp2/srtp.h>\nint main(void) { return srtp_init() != srtp_err_status_ok; }\n' > /tmp/srtp-test.c \
+    && cc -o /out/srtp-test /tmp/srtp-test.c -lsrtp2
+
 FROM scratch AS payload
 COPY --from=go-build /out/virtual-quad-supervisor /quad/bin/
 COPY --from=native-build /out/arducopter /out/virtual-quad-media /quad/bin/
@@ -56,3 +59,44 @@ COPY --from=native-build /out/kvs-sdk/ /quad/evidence/kvs-sdk/
 COPY --from=native-build /out/arducopter-source.tar.gz /
 COPY devices/common/kvs/sdk.commit /quad/evidence/kvs-sdk.commit
 COPY devices/virtual-quad/runtime/arducopter.parm /quad/
+
+FROM docker.io/library/debian:trixie-slim@sha256:24a01011d10eba3a023bc8585b9650b8b29021240d4217c05b905e09ef4a5232 AS lambda-runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates gstreamer1.0-plugins-bad gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-ugly libcurl4t64 libgcc-s1 libjson-c5 \
+    liblog4cplus-2.0.5t64 libsrtp2-1 libssl3t64 libstdc++6 libusrsctp2 \
+    libwebsockets19t64 patchelf zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=payload /quad/ /stage/quad/
+COPY --from=native-build /out/srtp-test /stage/srtp-test
+RUN set -eu \
+    && mkdir -p /stage/quad/lib /stage/quad/plugins /stage/quad/certs \
+    && cp -L /lib/ld-linux-aarch64.so.1 /stage/quad/lib/ld-linux-aarch64.so.1 \
+    && cp -L /etc/ssl/certs/Starfield_Services_Root_Certificate_Authority_-_G2.pem /stage/quad/certs/starfield.pem \
+    && for module in libsoftokn3.so libfreebl3.so libfreeblpriv3.so; do \
+         cp -L "/usr/lib/aarch64-linux-gnu/$module" /stage/quad/lib/; \
+       done \
+    && for plugin in coreelements x264 videoparsersbad app; do \
+         cp -L "/usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgst${plugin}.so" /stage/quad/plugins/; \
+       done \
+    && for binary in /stage/quad/bin/arducopter /stage/quad/bin/virtual-quad-media /stage/quad/plugins/*.so \
+         /stage/quad/lib/libsoftokn3.so /stage/quad/lib/libfreebl3.so /stage/quad/lib/libfreeblpriv3.so; do \
+         ldd "$binary" > /tmp/quad-ldd \
+         && ! grep -q 'not found' /tmp/quad-ldd \
+         && awk '$2 == "=>" && $3 ~ /^\// { print $3 }' /tmp/quad-ldd | while read -r library; do \
+              cp -L "$library" "/stage/quad/lib/$(basename "$library")"; \
+            done; \
+       done \
+    && for binary in /stage/quad/bin/arducopter /stage/quad/bin/virtual-quad-media; do \
+         patchelf --set-interpreter /var/task/quad/lib/ld-linux-aarch64.so.1 "$binary"; \
+       done \
+    && patchelf --set-interpreter /var/task/quad/lib/ld-linux-aarch64.so.1 /stage/srtp-test \
+    && dpkg-query -W > /stage/quad/evidence/lambda-runtime-packages.txt
+
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:158a9044f9dc0777f098b76c8b54346f6ed4560b9a6a416dec7a5ba3bc483af4 AS lambda-verify
+COPY --from=lambda-runtime /stage/quad/ /var/task/quad/
+COPY --from=lambda-runtime /stage/srtp-test /tmp/srtp-test
+RUN LD_LIBRARY_PATH=/var/task/quad/lib /tmp/srtp-test
+
+FROM scratch AS lambda-payload
+COPY --from=lambda-verify /var/task/quad/ /quad/

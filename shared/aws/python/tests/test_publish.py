@@ -3,16 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 import zipfile
+
+from botocore.exceptions import ClientError
 
 from aws_admin.publish_release.core import (
     GitHubReleaseClient,
     LAMBDA_ASSETS,
     PublishConfig,
     PublishError,
+    ReleaseInfo,
     lambda_current_key,
     lambda_version_key,
     normalize_release_tag,
+    publish_lambdas,
     validate_lambda_zip,
 )
 
@@ -159,6 +164,89 @@ class PublishTests(unittest.TestCase):
                 archive.writestr("nested/bootstrap", b"binary")
             with self.assertRaises(PublishError):
                 validate_lambda_zip(bad_path)
+
+    def test_virtual_quad_runtime_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quad.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("bootstrap", b"binary")
+                archive.writestr("quad/bin/arducopter", b"binary")
+            with self.assertRaises(PublishError):
+                validate_lambda_zip(path, virtual_quad=True)
+            with zipfile.ZipFile(path, "w") as archive:
+                for name in (
+                    "bootstrap", "quad/bin/virtual-quad-supervisor",
+                    "quad/bin/virtual-quad-media", "quad/bin/arducopter",
+                    "quad/arducopter.parm", "quad/lib/libexample.so",
+                    "quad/lib/ld-linux-aarch64.so.1", "quad/certs/starfield.pem",
+                    "quad/lib/libsoftokn3.so", "quad/lib/libfreebl3.so",
+                    "quad/lib/libfreeblpriv3.so",
+                    "quad/plugins/libgstcoreelements.so", "quad/plugins/libgstx264.so",
+                    "quad/plugins/libgstvideoparsersbad.so", "quad/plugins/libgstapp.so",
+                ):
+                    archive.writestr(name, b"payload")
+            validate_lambda_zip(path, virtual_quad=True)
+            with self.assertRaises(PublishError):
+                validate_lambda_zip(path)
+            with zipfile.ZipFile(path, "a") as archive:
+                archive.writestr("quad/../escape", b"invalid")
+            with self.assertRaises(PublishError):
+                validate_lambda_zip(path, virtual_quad=True)
+
+    def test_publishes_virtual_quad_runtime_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "quad.zip"
+            with zipfile.ZipFile(source, "w") as archive:
+                for name in (
+                    "bootstrap", "quad/bin/virtual-quad-supervisor",
+                    "quad/bin/virtual-quad-media", "quad/bin/arducopter",
+                    "quad/arducopter.parm", "quad/lib/ld-linux-aarch64.so.1",
+                    "quad/lib/libsoftokn3.so", "quad/lib/libfreebl3.so",
+                    "quad/lib/libfreeblpriv3.so", "quad/certs/starfield.pem",
+                    "quad/plugins/libgstcoreelements.so", "quad/plugins/libgstx264.so",
+                    "quad/plugins/libgstvideoparsersbad.so", "quad/plugins/libgstapp.so",
+                ):
+                    archive.writestr(name, b"payload")
+
+            asset = LAMBDA_ASSETS[-1]
+            github = MagicMock()
+            github.resolve_release.return_value = ReleaseInfo(
+                tag="lambda-v1.2.3", version="1.2.3", assets={asset.asset_name: "url"}
+            )
+
+            def download_asset(_release, _name, path):
+                path.write_bytes(source.read_bytes())
+
+            github.download_asset.side_effect = download_asset
+            s3 = MagicMock()
+            s3.head_object.side_effect = ClientError(
+                {"Error": {"Code": "404", "Message": "not found"}}, "HeadObject"
+            )
+            uploaded = {}
+            s3.upload_file.side_effect = lambda path, bucket, key: uploaded.update(
+                {key: (bucket, Path(path).read_bytes())}
+            )
+            lambda_client = MagicMock()
+            config = PublishConfig(
+                github_repository="mparkachov/txing", lambda_artifact_bucket="bucket",
+                aws_region="eu-central-1",
+                lambda_function_names={asset.artifact_id: "town-virtual-quad"},
+            )
+            with patch(
+                "aws_admin.publish_release.core.boto3.client", side_effect=[s3, lambda_client]
+            ):
+                result = publish_lambdas("1.2.3", config, github, {asset.artifact_id})
+
+            version_key = lambda_version_key(asset.artifact_id, "1.2.3")
+            current_key = lambda_current_key(asset.artifact_id)
+            self.assertEqual(uploaded, {
+                version_key: ("bucket", source.read_bytes()),
+                current_key: ("bucket", source.read_bytes()),
+            })
+            lambda_client.update_function_code.assert_called_once_with(
+                FunctionName="town-virtual-quad", S3Bucket="bucket", S3Key=version_key
+            )
+            self.assertTrue(result["lambdas"][asset.artifact_id]["updated"])
 
 
 if __name__ == "__main__":

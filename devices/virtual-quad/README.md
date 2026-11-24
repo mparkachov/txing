@@ -34,6 +34,38 @@ census use neither simulator nor observer compute.
 
 ## Build and publish the session image
 
+### Standard Lambda qualification
+
+The standard Lambda release package can be built locally with Apple Container:
+
+```sh
+just virtual-quad::lambda-package
+```
+
+The recipe prints the ZIP path. The shared Lambda release workflow builds the
+same native payload, includes it in the virtual-quad ZIP, and publishes it with
+the other immutable Lambda release artifacts. Before publishing a new release,
+bump `release/versions/lambda` and deploy the updated shared release publisher
+so it accepts the expanded virtual-quad ZIP. The current simulator command
+route continues to use the existing controller until its lifecycle is changed.
+
+For isolated qualification, upload the ZIP to the Lambda artifact bucket and
+deploy `lambda/qualification.template.yaml` in `eu-central-1` with its bucket
+and object key. Its two disposable signaling channels connect the production
+media worker without changing the device's command route. Invoke its output
+function twice and retain the CloudWatch log streams. Each invocation runs the
+production supervisor for 165 seconds by default, then requests shutdown. Pass
+`{"durationSeconds":720}` for a full twelve-minute run. Compare
+`QUAD_READY`, `QUAD_KVS_READY`, `QUAD_MEDIA_SAMPLE`, `QUAD_CHILDREN_REAPED`, and
+the Lambda REPORT records with the startup, cleanup, SITL rate and encoded-frame
+targets below. Confirm the same execution environment handled both invocations
+and inspect each for fresh state. The local Office diagnostics page can join the
+channel names returned by the stack to observe video and MAVLink frames. Remove
+the stack after recording the evidence. Office and agent control are verified
+separately during cutover.
+
+### MicroVM image
+
 Run from the repository root with Apple Container running. For
 publication, build from the reviewed source revision.
 
