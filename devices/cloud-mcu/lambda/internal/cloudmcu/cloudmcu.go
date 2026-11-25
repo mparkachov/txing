@@ -1039,13 +1039,19 @@ func (s RigScheduler) publishInitialVirtualQuadBirth(ctx context.Context, device
 			Reported struct {
 				Phase     string `json:"phase"`
 				SessionID string `json:"sessionId"`
+				Run       struct {
+					HardDeadlineMS int64 `json:"hardDeadlineMs"`
+				} `json:"run"`
 			} `json:"reported"`
 		} `json:"state"`
 	}
 	if err := json.Unmarshal(simulation, &state); err != nil {
 		return err
 	}
-	if state.State.Reported.Phase != "stopped" || state.State.Reported.SessionID != "" {
+	reported := state.State.Reported
+	terminal := (reported.Phase == "stopped" || reported.Phase == "failed") && reported.SessionID == ""
+	expired := reported.SessionID != "" && reported.Run.HardDeadlineMS > 0 && nowMs >= reported.Run.HardDeadlineMS
+	if !terminal && !expired {
 		return nil
 	}
 	topic, err := BuildDeviceTopic(device.TownID, "DBIRTH", device.RigID, device.ThingName)

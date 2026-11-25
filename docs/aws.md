@@ -62,9 +62,9 @@ runtime target. `just release::publish lambda` updates existing runtime Lambda
 functions from a `lambda-v*` GitHub Release; `just release::publish rig` updates
 physical rig host binaries from a `rig-v*` GitHub Release.
 
-Virtual quadcopter sessions use one Linux ARM64 Lambda MicroVM per active
-device in Frankfurt. The device guide owns the [simulator image workflow
-and controller deployment](../devices/virtual-quad/README.md#build-and-publish-the-session-image).
+Virtual quadcopter sessions use a standard Linux ARM64 Lambda invocation per
+active device in Frankfurt. The device guide owns the [simulator release
+and deployment](../devices/virtual-quad/README.md#build-and-publish-the-session-lambda).
 The shared AWS deployment registers its device type and the existing cloud rig
 census announces stopped devices.
 

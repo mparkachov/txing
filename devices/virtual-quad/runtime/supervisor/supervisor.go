@@ -191,8 +191,6 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
 	var err error
 	switch {
-	case len(os.Args) == 1:
-		err = serveMicroVM()
 	case len(os.Args) == 2 && (os.Args[1] == "smoke" || os.Args[1] == "qualify"):
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer stop()
@@ -201,8 +199,14 @@ func main() {
 			mediaArgs = []string{"--local"}
 		}
 		err = runWorkload(ctx, nil, mediaArgs, nil)
+	case len(os.Args) == 3 && os.Args[1] == "managed" && filepath.IsAbs(os.Args[2]):
+		// The Lambda owns the session and reads this per-invocation health file.
+		// SIGTERM still goes through runWorkload's landing and reap sequence.
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		err = runWorkload(ctx, []string{"QUAD_HEALTH_FILE=" + os.Args[2]}, nil, nil)
 	default:
-		err = errors.New("usage: virtual-quad-supervisor [smoke|qualify]")
+		err = errors.New("usage: virtual-quad-supervisor [smoke|qualify|managed HEALTH_FILE]")
 	}
 	if err != nil {
 		log.Fatalf("QUAD_SUPERVISOR_ERROR %v", err)

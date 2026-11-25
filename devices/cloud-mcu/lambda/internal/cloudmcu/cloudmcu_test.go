@@ -270,10 +270,15 @@ func TestVirtualQuadBirthUsesCurrentAssignmentAndStoppedState(t *testing.T) {
 		indexedRig string
 		projection string
 		phase      string
+		sessionID  string
+		deadline   int64
 		simulation bool
 		wantBirth  bool
 	}{
 		{name: "stopped quad moves to new rig", indexedRig: "rig-2", projection: "DBIRTH", phase: "stopped", wantBirth: true},
+		{name: "failed quad moves to new rig", indexedRig: "rig-2", projection: "DBIRTH", phase: "failed", wantBirth: true},
+		{name: "expired invocation becomes discoverable after rig wake", indexedRig: "rig-2", projection: "DBIRTH", phase: "operational", sessionID: "old", deadline: 1714380000000, wantBirth: true},
+		{name: "active invocation is not reborn before its deadline", indexedRig: "rig-2", projection: "DBIRTH", phase: "operational", sessionID: "old", deadline: 1714380000001},
 		{name: "index still shows old rig", indexedRig: "rig-1", projection: "DDEATH", phase: "stopped"},
 		{name: "active quad projection is preserved", indexedRig: "rig-2", projection: "DBIRTH", phase: "operational"},
 		{name: "legacy stopped birth is corrected", indexedRig: "rig-1", projection: "DBIRTH", phase: "stopped", simulation: true, wantBirth: true},
@@ -298,7 +303,8 @@ func TestVirtualQuadBirthUsesCurrentAssignmentAndStoppedState(t *testing.T) {
 				}}}},
 			})
 			aws.shadows[cloudShadowKey(thingName, CapabilitySimulation)] = mustJSON(map[string]any{
-				"state": map[string]any{"reported": map[string]any{"phase": tc.phase}},
+				"state": map[string]any{"reported": map[string]any{"phase": tc.phase, "sessionId": tc.sessionID,
+					"run": map[string]any{"hardDeadlineMs": tc.deadline}}},
 			})
 			device := CloudDevice{ThingName: thingName, TownID: "town-1", RigID: tc.indexedRig}
 			err := NewRigScheduler(aws).publishInitialVirtualQuadBirth(context.Background(), device, 1, 1714380000000)

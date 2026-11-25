@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Isolated virtual quad Lambda event-lifecycle qualification.
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+  ArtifactKey:
+    Type: String
+  TownId:
+    Type: String
+  RigId:
+    Type: String
+  DeviceId:
+    Type: String
+    Default: virtual-quad-qualification192
+    AllowedPattern: 'virtual-quad-[a-z0-9]+'
+  DenyMediaForTest:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+  DenyNotificationsForTest:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+
+Conditions:
+  DenyMedia: !Equals [!Ref DenyMediaForTest, 'true']
+  DenyNotifications: !Equals [!Ref DenyNotificationsForTest, 'true']
+
+Resources:
+  VideoChannel:
+    Type: AWS::KinesisVideo::SignalingChannel
+    Properties:
+      Name: !Sub '${DeviceId}-board-video'
+      Type: SINGLE_MASTER
+
+  MavlinkChannel:
+    Type: AWS::KinesisVideo::SignalingChannel
+    Properties:
+      Name: !Sub '${DeviceId}-mavlink'
+      Type: SINGLE_MASTER
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: lifecycle-qualification
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: iot:DescribeEndpoint
+                Resource: '*'
+              - Effect: Allow
+                Action: iot:DescribeThing
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${DeviceId}'
+                  - !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${RigId}'
+              - Effect: Allow
+                Action: iot:GetThingShadow
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${DeviceId}/*'
+                  - !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${RigId}/sparkplug'
+              - Effect: Allow
+                Action: iot:UpdateThingShadow
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:thing/${DeviceId}/simulation'
+              - Effect: Allow
+                Action: iot:Publish
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/spBv1.0/${TownId}/DDATA/${RigId}/${DeviceId}'
+              - Effect: Allow
+                Action: iot:Connect
+                Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/quad-*'
+              - !If
+                - DenyNotifications
+                - Effect: Deny
+                  Action: iot:Connect
+                  Resource: '*'
+                - !Ref 'AWS::NoValue'
+              - Effect: Allow
+                Action: iot:Subscribe
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/${DeviceId}/shadow/name/simulation/update/documents'
+                  - !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/$aws/things/${RigId}/shadow/name/sparkplug/update/documents'
+              - Effect: Allow
+                Action: iot:Receive
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${DeviceId}/shadow/name/simulation/update/documents'
+                  - !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/$aws/things/${RigId}/shadow/name/sparkplug/update/documents'
+              - Effect: Allow
+                Action:
+                  - kinesisvideo:DescribeSignalingChannel
+                  - kinesisvideo:GetSignalingChannelEndpoint
+                  - kinesisvideo:GetIceServerConfig
+                  - kinesisvideo:ConnectAsMaster
+                Resource: [!GetAtt VideoChannel.Arn, !GetAtt MavlinkChannel.Arn]
+              - !If
+                - DenyMedia
+                - Effect: Deny
+                  Action: kinesisvideo:DescribeSignalingChannel
+                  Resource: '*'
+                - !Ref 'AWS::NoValue'
+              - Effect: Allow
+                Action: events:PutEvents
+                Resource: !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default'
+
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      Handler: bootstrap
+      Role: !GetAtt Role.Arn
+      Timeout: 900
+      MemorySize: 3008
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+
+  InvocationConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref Function
+      Qualifier: '$LATEST'
+      MaximumRetryAttempts: 0
+      MaximumEventAgeInSeconds: 60
+      DestinationConfig:
+        OnFailure:
+          Destination: !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default'
+
+  CommandRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        AwsIotSqlVersion: '2016-03-23'
+        RuleDisabled: false
+        Sql: !Sub >-
+          SELECT 'spBv1.0/${TownId}/DCMD/${RigId}/${DeviceId}' AS mqttTopic,
+          encode(*, 'base64') AS payloadBase64
+          FROM 'txing/qualification/virtual-quad-192/dcmd'
+        Actions:
+          - Lambda: {FunctionArn: !GetAtt Function.Arn}
+
+  CommandPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Function
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt CommandRule.Arn
+
+  ShadowRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        AwsIotSqlVersion: '2016-03-23'
+        RuleDisabled: false
+        Sql: !Sub >-
+          SELECT 'report' AS action, topic(3) AS deviceId
+          FROM '$aws/things/${DeviceId}/shadow/name/simulation/update/documents'
+        Actions:
+          - Lambda: {FunctionArn: !GetAtt Function.Arn}
+
+  ShadowPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Function
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt ShadowRule.Arn
+
+  FailureRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: default
+      EventPattern:
+        source: [lambda]
+        detail-type: ['Lambda Function Invocation Result - Failure']
+        resources:
+          - !GetAtt Function.Arn
+          - !Sub '${Function.Arn}:$LATEST'
+        detail:
+          requestPayload:
+            mqttTopic: [{exists: true}]
+            payloadBase64: [{exists: true}]
+      Targets:
+        - Id: failed-session
+          Arn: !GetAtt Function.Arn
+
+  FailurePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Function
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt FailureRule.Arn
+
+Outputs:
+  FunctionName:
+    Value: !Ref Function
+  DeviceId:
+    Value: !Ref DeviceId
+  CommandTopic:
+    Value: txing/qualification/virtual-quad-192/dcmd

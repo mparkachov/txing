@@ -370,15 +370,12 @@ Alpine release bump requires a shared KVS release built on that Alpine version
 first; the fully static Cyberbrick binaries need a new release only when their
 own code changes.
 
-## Virtual quadcopter session image
+## Virtual quadcopter session Lambda
 
-New virtual quadcopter sessions use the latest active Linux ARM64 Lambda
-MicroVM image version. Each publication stages the runtime bundle and its corresponding
-ArduCopter and txing runtime sources in the environment artifact bucket under
-`virtual-quad/<environment>/<bundle-sha256>/`. The simulator image, controller
-Lambda, Office and agent each follow their owning release workflow. Keep the
-current and rollback image versions with their complete artifacts. See the
-[virtual quadcopter image workflow](../devices/virtual-quad/README.md#build-and-publish-the-session-image)
+The shared Lambda release contains the ARM64 virtual quad bootstrap and its
+packaged simulator and native dependencies. Office and the agent continue to
+follow their own release workflows. Keep the prior Lambda release and stack
+template for rollback. See the [virtual quadcopter release workflow](../devices/virtual-quad/README.md#build-and-publish-the-session-lambda)
 and [Lambda artifacts](#lambda-artifacts).
 
 ## Rig Artifacts

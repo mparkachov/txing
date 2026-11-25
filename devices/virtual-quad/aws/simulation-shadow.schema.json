@@ -100,6 +100,41 @@
                 "null"
               ],
               "minimum": 0
+            },
+            "projectionTimestampMs": {"type": "integer", "minimum": 0},
+            "receipt": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["requestId", "sequence", "redcon", "status", "reason"],
+              "properties": {
+                "requestId": {"type": "string", "minLength": 1},
+                "sequence": {"type": "integer", "minimum": 0},
+                "redcon": {"enum": [1, 4]},
+                "status": {"enum": ["accepted", "succeeded", "failed"]},
+                "reason": {"type": "string"}
+              }
+            },
+            "run": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": [
+                "owner", "townId", "rigId", "startRequestId", "startSequence",
+                "hardDeadlineMs", "simulation", "mavlink", "video"
+              ],
+              "properties": {
+                "owner": {"type": "string", "minLength": 1},
+                "townId": {"type": "string", "minLength": 1},
+                "rigId": {"type": "string", "minLength": 1},
+                "startRequestId": {"type": "string", "minLength": 1},
+                "startSequence": {"type": "integer", "minimum": 0},
+                "stopRequestId": {"type": "string"},
+                "stopSequence": {"type": "integer", "minimum": 0},
+                "hardDeadlineMs": {"type": "integer", "minimum": 1},
+                "simulation": {"type": "boolean"},
+                "mavlink": {"type": "boolean"},
+                "video": {"type": "boolean"},
+                "readinessLostAtMs": {"type": ["integer", "null"], "minimum": 0}
+              }
             }
           }
         }

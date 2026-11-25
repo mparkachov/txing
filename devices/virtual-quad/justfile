@@ -43,60 +43,13 @@ lambda-package:
     (cd "$payload" && zip -q -r "$package/txing-virtual-quad-lambda-linux-aarch64.zip" bootstrap quad)
     printf '%s\n' "$package/txing-virtual-quad-lambda-linux-aarch64.zip"
 
-microvm-package:
-    #!/bin/sh
-    set -eu
-    cd "{{ project_root }}"
-    mkdir -p "{{ tmp_dir }}"
-    container system status > /dev/null
-    package="$(mktemp -d "{{ tmp_dir }}/virtual-quad.XXXXXXXX")"
-    build="$package/build"
-    context="$package/context"
-    mkdir -p "$context"
-    trap 'rm -rf "$build" "$context"' 0
-    git rev-parse HEAD > "$package/source-revision.txt"
-    git status --short -- devices/virtual-quad devices/common/board/kvs_master \
-      devices/common/board/mavlink devices/common/kvs > "$package/source-status.txt"
-    for file in devices/common/board/kvs_master/CMakeLists.txt devices/common/board/kvs_master/include \
-      devices/common/board/kvs_master/src devices/common/board/mavlink/include devices/common/kvs \
-      devices/virtual-quad/runtime; do
-      mkdir -p "$build/$(dirname "$file")"
-      cp -R "$file" "$build/$file"
-    done
-    cp -R devices/common/board/mavlink/LICENSES devices/common/board/mavlink/PROVENANCE.md \
-      "$build/devices/common/board/mavlink/"
-    cp devices/virtual-quad/justfile "$build/devices/virtual-quad/"
-    container build --cpus 4 --memory 6g --platform linux/arm64 --progress plain \
-      --file "$build/devices/virtual-quad/runtime/Build.Dockerfile" \
-      --target payload --output "type=local,dest=$context" "$build" >&2
-    mv "$context/arducopter-source.tar.gz" "$package/"
-    COPYFILE_DISABLE=1 tar -czf "$package/runtime-source.tar.gz" -C "$build" devices
-    cp "$build/devices/virtual-quad/runtime/Dockerfile" "$build/devices/virtual-quad/runtime/microvm-hooks.json" "$context/"
-    cp "$package/source-revision.txt" "$package/source-status.txt" "$context/quad/evidence/"
-    (cd "$package" && shasum -a 256 arducopter-source.tar.gz runtime-source.tar.gz) \
-      > "$context/quad/evidence/source-SHA256SUMS"
-    container build --cpus 4 --memory 6g --platform linux/arm64 --progress plain \
-      --tag txing-virtual-quad:local "$context" >&2
-    (cd "$context" && zip -q -r "$package/bundle.zip" Dockerfile microvm-hooks.json quad)
-    (cd "$package" && shasum -a 256 bundle.zip arducopter-source.tar.gz runtime-source.tar.gz > SHA256SUMS)
-    cat "$package/SHA256SUMS" >&2
-    printf '%s\n' "$package/bundle.zip"
-
-runtime-smoke:
-    #!/bin/sh
-    set -eu
-    name="txing-virtual-quad-smoke-$$"
-    trap 'container stop --time 25 "$name" >/dev/null || :; exit 130' INT
-    trap 'container stop --time 25 "$name" >/dev/null || :; exit 143' TERM
-    container run --name "$name" --rm --network none --platform linux/arm64 txing-virtual-quad:local smoke &
-    wait "$!"
 
 [positional-arguments]
-deploy controller='enabled' stack_name='':
+deploy stack_name='':
     #!/bin/sh
     set -eu
     . "{{ aws_lib }}"
-    aws_env=$(just --justfile "{{ root_justfile }}" _project-aws-env aws "$2")
+    aws_env=$(just --justfile "{{ root_justfile }}" _project-aws-env aws "$1")
     eval "$aws_env"
     txing_aws_init
     if [ "$TXING_AWS_REGION" != eu-central-1 ]; then
@@ -104,112 +57,5 @@ deploy controller='enabled' stack_name='':
       exit 1
     fi
     stack="$(lambda_stack_name virtual-quad)"
-    case "$1" in
-      enabled) enabled=true ;;
-      disabled) enabled=false ;;
-      *) printf '%s\n' 'Expected enabled or disabled.' >&2; exit 1 ;;
-    esac
-    deploy_template "$stack" "{{ session_template }}" \
-      "EnvironmentStackName=$TXING_AWS_STACK" "ControllerEnabled=$enabled"
+    deploy_template "$stack" "{{ session_template }}" "EnvironmentStackName=$TXING_AWS_STACK"
     aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].Outputs' --output json
-
-[positional-arguments]
-publish-image bundle stack_name='':
-    #!/bin/sh
-    set -eu
-    bundle=$1
-    case "$bundle" in
-      /*) ;;
-      *) bundle="{{ invocation_directory() }}/$bundle" ;;
-    esac
-    if [ ! -f "$bundle" ] ||
-      ! unzip -p "$bundle" Dockerfile | grep -Fxq 'ENTRYPOINT ["/opt/quad/bin/virtual-quad-supervisor"]'; then
-      printf '%s\n' 'Pass the bundle.zip from just virtual-quad::microvm-package.' >&2
-      exit 1
-    fi
-    package=$(dirname "$bundle")
-    test "$(basename "$bundle")" = bundle.zip
-    evidence=$(unzip -p "$bundle" quad/evidence/source-SHA256SUMS)
-    sources=$(cd "$package" && shasum -a 256 arducopter-source.tar.gz runtime-source.tar.gz)
-    if [ "$sources" != "$evidence" ]; then
-      printf '%s\n' 'Source archive checksums do not match the bundle.' >&2
-      exit 1
-    fi
-    hooks=$(unzip -p "$bundle" microvm-hooks.json)
-    mkdir -p "{{ tmp_dir }}"
-    . "{{ aws_lib }}"
-    aws_env=$(just --justfile "{{ root_justfile }}" _project-aws-env aws "$2")
-    eval "$aws_env"
-    txing_aws_init
-    if [ "$TXING_AWS_REGION" != eu-central-1 ]; then
-      printf '%s\n' 'Virtual quad sessions require eu-central-1.' >&2
-      exit 1
-    fi
-    aws_quad() { aws --region "$TXING_AWS_REGION" --no-cli-pager --output json "$@"; }
-    stack=$(aws_quad cloudformation describe-stacks --stack-name "$(lambda_stack_name virtual-quad)" --query 'Stacks[0]')
-    output() { printf '%s\n' "$stack" | jq -er --arg key "$1" '.Outputs[] | select(.OutputKey == $key).OutputValue'; }
-    bucket=$(output ArtifactBucket)
-    role=$(output BuildRoleArn)
-    name=$(output ImageName)
-    logs=$(output MicrovmLogGroup)
-    partition=$(printf '%s\n' "$stack" | jq -er '.StackId | split(":")[1]')
-    account=$(printf '%s\n' "$stack" | jq -er '.StackId | split(":")[4]')
-    image_arn="arn:$partition:lambda:$TXING_AWS_REGION:$account:microvm-image:$name"
-    base="arn:$partition:lambda:$TXING_AWS_REGION:aws:microvm-image:al2023-1"
-    connector="arn:$partition:lambda:$TXING_AWS_REGION:aws:network-connector:aws-network-connector:INTERNET_EGRESS"
-    catalog=$(aws_quad lambda-microvms list-managed-microvm-image-versions --image-identifier "$base")
-    base_version=3
-    if ! printf '%s\n' "$catalog" | jq -e --arg major "$base_version" '
-      any(.items[]; .status == "AVAILABLE" and (.imageVersion | split(".")[0]) == $major
-      and any(.supportedCpuConfigurations[]; .architecture == "ARM_64"))' > /dev/null; then
-      printf 'Managed base %s version %s is unavailable for ARM64.\n' "$base" "$base_version" >&2
-      exit 1
-    fi
-    checksum=$(shasum -a 256 "$bundle")
-    prefix="virtual-quad/$TXING_AWS_STACK/${checksum%% *}"
-    input=$(jq -cnS --arg base "$base" --arg version "$base_version" --arg role "$role" \
-      --arg uri "s3://$bucket/$prefix/bundle.zip" --arg logs "$logs" --arg connector "$connector" \
-      --argjson hooks "$hooks" \
-      '{baseImageArn:$base,baseImageVersion:$version,buildRoleArn:$role,codeArtifact:{uri:$uri},
-        logging:{cloudWatch:{logGroup:$logs}},egressNetworkConnectors:[$connector],
-        cpuConfigurations:[{architecture:"ARM_64"}],resources:[{minimumMemoryInMiB:4096}],hooks:$hooks}')
-    identity=$(printf '%s\n%s\n' "$image_arn" "$input" | shasum -a 256)
-    token=${identity%% *}
-    description="txing virtual quad $token"
-    error_file=$(mktemp "{{ tmp_dir }}/quad-image-error.XXXXXXXX")
-    trap 'rm -f "$error_file"' 0
-    if image=$(aws_quad lambda-microvms get-microvm-image --image-identifier "$image_arn" 2>"$error_file"); then
-      versions=$(aws_quad lambda-microvms list-microvm-image-versions --image-identifier "$image_arn")
-      existing=$(printf '%s\n' "$versions" | jq -c --arg description "$description" '
-        [.items[] | select(.description == $description)] | sort_by(.createdAt) | last // empty
-        | {imageArn,imageVersion,state,status,stateReason}')
-      if [ -n "$existing" ]; then
-        printf '%s\n' "$existing" | jq .
-        exit 0
-      fi
-      case "$(printf '%s\n' "$image" | jq -er .state)" in
-        CREATING|UPDATING) printf '%s\n' 'The image already has a build in progress.' >&2; exit 1 ;;
-      esac
-      set -- update-microvm-image --image-identifier "$image_arn"
-    elif grep -Fq ResourceNotFoundException "$error_file"; then
-      set -- create-microvm-image --name "$name"
-    else
-      cat "$error_file" >&2
-      exit 1
-    fi
-    for entry in arducopter-source.tar.gz runtime-source.tar.gz bundle.zip; do
-      file="$package/$entry"
-      key="$prefix/$entry"
-      checksum_b64=$(openssl dgst -sha256 -binary "$file" | openssl base64 -A)
-      test "${#checksum_b64}" -eq 44
-      if ! aws_quad s3api put-object --bucket "$bucket" --key "$key" --body "$file" \
-        --if-none-match '*' --checksum-algorithm SHA256 --checksum-sha256 "$checksum_b64" > /dev/null; then
-        uploaded=$(aws_quad s3api head-object --bucket "$bucket" --key "$key" --checksum-mode ENABLED --query ChecksumSHA256 | jq -er .)
-        if [ "$uploaded" != "$checksum_b64" ]; then
-          printf 'Existing object failed checksum verification for s3://%s/%s\n' "$bucket" "$key" >&2
-          exit 1
-        fi
-      fi
-    done
-    aws_quad lambda-microvms "$@" --cli-input-json "$input" --description "$description" --client-token "$token" \
-      --query '{imageArn:imageArn,imageVersion:imageVersion,state:state,status:status,stateReason:stateReason}'

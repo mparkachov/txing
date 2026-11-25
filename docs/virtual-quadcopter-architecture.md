@@ -8,201 +8,87 @@ starts with the same world and a fresh
 disarmed aircraft. The operating and release procedures live in the
 [device guide](../devices/virtual-quad/README.md).
 
-The deployed architecture is described below. The [approved standard Lambda
-design](#approved-standard-lambda-design) covers the next simulator revision.
-
 ## AWS footprint at REDCON 4
 
-**A stopped virtual quad has a small AWS footprint and zero dedicated
-runtime compute once shutdown settles.** There is no running or suspended
-simulator MicroVM and no running agent observer for the device. ArduCopter,
-the camera renderer, the H.264 encoder and both WebRTC masters run only
-during a simulator session. The shared agent controller retires the observer
-separately, so it can briefly remain in teardown after the simulator reaches
-REDCON 4.
-
-The IoT Thing and its named shadows, the two KVS signaling channel
-registrations, and any terminal DynamoDB session record remain available
-for discovery and the next start. The MicroVM image snapshot and release
-artifacts are stored for reuse. The environment's shared cloud-rig census
-and repair Lambdas still run on their schedules, and an open Office page
-reads status. The rig census announces the stopped device through
-Sparkplug, so it appears in Office and can receive a Start command while
-its rig is awake. [Cloud-rig census](../devices/cloud-mcu/lambda/internal/cloudmcu/cloudmcu.go)
-· [Simulator repair](../devices/virtual-quad/lambda/internal/controller/handler.go)
-· [Agent controller](components/agent.md#controller-and-authorization)
+A stopped virtual quad has no dedicated running simulator or observer compute,
+provisioned simulator concurrency, or simulator repair schedule. The Thing,
+named shadows, signaling channels, release artifacts and logs remain. The
+shared cloud rig census and agent controller retain their existing roles. KVS
+can charge for signaling channels used earlier in the billing month.
 
 ## Component ownership
 
-| Component | Authority and dependencies |
+| Component | Responsibility |
 | --- | --- |
-| Device catalog | The device [manifest](../devices/virtual-quad/manifest.toml) declares its registered type, compatible rig, REDCON levels, shadow schemas/defaults, channel names and Office adapter. The shared [type catalog](../shared/aws/python/src/aws/type_catalog.py) and [enlist handler](../shared/aws/python/src/aws_admin/enlist_txing.py) register that declaration and provision per-device channels and shadow defaults. |
-| Cloud rig | The [cloud rig census](../devices/cloud-mcu/lambda/internal/cloudmcu/cloudmcu.go) announces the rig and publishes the initial virtual device DBIRTH. Its cloud-MCU tick path serves that device type. The rig's born REDCON 1 projection authorizes new simulator sessions. |
-| Session controller | The device [Go Lambda](../devices/virtual-quad/lambda/) validates registry assignments and handles REDCON commands, worker requests and repair. The DynamoDB session ledger owns reservations, grants, deadlines and launch identity. The controller writes the `simulation` shadow and publishes Sparkplug metrics. |
-| Witness | The shared [Sparkplug projector](../witness/) owns operational writes to the `sparkplug` shadow. It validates virtual-quad assignment and orders device events by report timestamp using version-conditional writes. |
-| Simulator | The [runtime](../devices/virtual-quad/runtime/) owns the MicroVM hooks, supervisor, pinned ArduCopter SITL, pose camera, encoder, native KVS bridge and flight lease. The supervisor claims a session and reports health to the controller. The runtime uses the shared [native KVS transport](../devices/common/board/kvs_master/) and generated MAVLink headers. |
-| Office | The [device adapter](../devices/virtual-quad/web/virtual-quad-adapter.tsx) owns session-specific views, readiness, command correlation and browser flight policy. Office owns authentication, shared route navigation, REDCON presentation, notification delivery, shadow reads, KVS viewer transport and MAVLink framing. |
-| Agent | The existing [agent controller and runtime](components/agent.md#profiles-and-lifecycle) own observer lifecycle, media consumption and the `agent` shadow. The simulation session identity fences that observer's activation. |
+| Cloud rig | Announces the enlisted device and authorizes Start when awake. |
+| Device Lambda | Validates commands and conditionally updates the `simulation` shadow. The accepted Start invocation owns the simulator children and their health reports. |
+| `simulation` shadow | Holds the session identity, owner, deadlines, readiness and correlated command result. Its version fences competing changes. |
+| Witness | Projects committed Sparkplug DDATA into the `sparkplug` shadow. |
+| Simulator | ArduCopter SITL and the media worker provide the camera, MAVLink and exclusive flight lease. |
+| Office and agent | Consume the matching readiness projection and connect to the existing KVS channels. The agent retains its independent lifecycle. |
 
 ```mermaid
 flowchart LR
-    O[Office]
-    G[Cloud rig census]
-    C[Virtual quad controller]
-    L[(DynamoDB session ledger)]
-    W[Witness]
-    R[Simulator MicroVM]
-    K[KVS video and MAVLink channels]
-    A[Shared agent controller and observer]
-    G -->|Initial DBIRTH| W
-    O -->|Sparkplug DCMD| C
-    C <-->|Conditional transitions| L
-    C -->|Launch and terminate| R
-    R -->|IAM-signed claim, grant and health| C
-    C -->|DDATA| W
-    C -->|Simulation shadow| O
+    O[Office] -->|Start or Stop DCMD| C[Device Lambda]
+    C <-->|Conditional updates and notifications| S[(Simulation shadow)]
+    S -->|Shadow event| P[Projection invocation]
+    P -->|DDATA| W[Witness]
     W -->|Sparkplug shadow| O
-    C -->|Simulation shadow| A
-    W -->|Sparkplug shadow| A
-    R <-->|Encoded video and MAVLink| K
-    O <-->|Viewer and leased control| K
-    K <-->|Viewer and leased MAVLink| A
-    A -->|Agent shadow| O
+    S --> A[Agent controller]
+    C --> R[SITL and media children]
+    R <--> K[KVS video and MAVLink]
+    O <--> K
+    A <--> K
 ```
-
-The IoT registry is authoritative for assignment. The per-device signaling
-channels `<device-id>-board-video` and `<device-id>-mavlink` persist across
-sessions. Enlistment seeds all five shadows. `mavlink` and `video` carry the
-registered capability defaults shared with the current catalog model.
-The simulator's live service and link state are the fenced Sparkplug
-projection and the connected WebRTC peers. It publishes no retained media
-descriptors or status topics. The media schemas preserve the enlisted shapes.
-The default and fixture documents are examples of those shapes. Operational
-availability and flight ownership are read from the sources in the table.
 
 ## Hosting and runtime
 
-The simulator uses a dedicated Linux ARM64 Lambda MicroVM image in
-`eu-central-1`, with at least 4 GiB of memory. Each session restores a fresh
-VM from the latest active version that AWS selects at launch. A successful
-publication becomes available to new sessions automatically. It uses managed Internet egress,
-`NO_INGRESS`, and a scoped execution role for the virtual-quad KVS channel namespace and
-IAM-authenticated controller URL. The supervisor derives channel names from
-the validated device assignment. The simulator and agent use separate image
-and execution resources. The controller is a short-lived
-`provided.al2023` Lambda with an independent one-minute EventBridge Scheduler
-repair pass. [AWS MicroVM images](https://docs.aws.amazon.com/lambda/latest/dg/microvms-images.html)
-· [AWS Lambda boundary](aws-lambda-boundary.md)
+The Frankfurt ARM64 `provided.al2023` function uses the shared Lambda release
+ZIP, which contains the bootstrap, supervisor, native simulator and media
+dependencies. A Start invocation creates fresh scratch space, launches a wiped
+and disarmed SITL, and owns both children. Lambda is configured for 900 seconds
+and 3008 MiB. There is no simulator MicroVM, DynamoDB ledger, worker URL, grant
+loop or recurring simulator repair invocation. The shared agent's hosting is
+unchanged. [Lambda release boundary](aws-lambda-boundary.md)
 
-The snapshot contains the packaged programs and an idle lifecycle hook
-listener. On restore, the `/run` hook validates the MicroVM ID and assignment
-and obtains short-lived AWS credentials. It starts children only after the
-controller grants the current session. Each run has new scratch and wipes
-SITL state. The supervisor polls grants every two seconds and reports
-health every five. The `/terminate` hook cancels the workload, gives the media
-process time to close its write gate and request LAND, and reaps both
-process groups. The platform duration and the session ledger bound cleanup
-when a process or hook fails. [MicroVM lifecycle](https://docs.aws.amazon.com/lambda/latest/dg/microvms-launching.html)
-
-ArduCopter's built-in quad model owns dynamics, navigation, sensors and
-ground contact. The worker binds MAVLink to loopback, receives truth pose via
-`SIM_STATE` at about 30 Hz, converts it into local coordinates, and
-interpolates pose on a monotonic timeline. The fixed forward camera looks
-slightly down over a landing pad, floor markings and landmark walls. Walls
-and props are visual geometry. The CPU renderer feeds a bounded GStreamer
-x264 pipeline, producing 640 × 360 at 15 fps, about 800 kbps, constrained
-baseline H.264, with a keyframe every second. The shared KVS sender takes
-encoded access units and isolates video peers so slow viewers do not stall
-SITL. [Native camera](../devices/virtual-quad/runtime/camera.cpp)
+ArduCopter owns dynamics, navigation, sensors and ground contact. The media
+worker renders the truth pose into 640 × 360 video at 15 fps and shares the
+native KVS sender for video and MAVLink. The simulator's per-device signaling
+channels survive sessions. [Native camera](../devices/virtual-quad/runtime/camera.cpp)
 · [Board video transport](components/board-video.md)
 
 ## Session lifecycle and readiness
 
-Sparkplug provides the management path. A born virtual quad at REDCON 4
-can receive Start while its cloud rig is awake and Sparkplug is available.
-Office checks this reachability and the terminal session state to enable Start.
-The `simulation` capability is the runtime equivalent of `board` on a physical
-device. The controller
-reports it active when a fresh, granted worker sample confirms a SITL
-heartbeat for the current session. MAVLink and video readiness are reported
-separately. The cloud rig census reports `simulation=false` for a stopped
-device.
+Start and Stop use Sparkplug `DCMD.redcon` with the existing command UUID.
+Start includes the observed terminal revision; Stop names the active session.
+An awake rig and current assignment are required for Start. The Start
+invocation accepts one command using a version-conditional `simulation` shadow
+write before launching anything. A competing invocation cannot acquire that
+session, and an earlier command or invocation cannot finish its replacement.
 
-### Startup sequence
+The supervisor reports local health every five seconds. A fresh heartbeat
+makes simulation available; MAVLink signaling permits REDCON 2. Healthy
+navigation, video and MAVLink make the session operational at REDCON 1 and
+allow Office and the agent to connect. Health expires after 15 seconds; with
+healthy SITL, media recovery has a 30-second bound. Committed simulation changes
+trigger a separate projection invocation, which publishes DDATA for Witness.
+The availability watermark and expiry fence older reports in both consumers.
 
-1. **REDCON 4 → 3 — reserve and launch.** The operator selects REDCON 1
-   in Office. The session controller receives the Sparkplug command,
-   verifies the current device assignment, awake rig and terminal revision,
-   reserves one session in DynamoDB, and requests a new MicroVM from the
-   latest active simulator image. REDCON 3 indicates startup is in progress.
-2. **Activate the simulator inside the MicroVM.** The restored supervisor
-   accepts the run hook and claims the current session from the controller.
-   After the claim is granted, it starts fresh ArduCopter SITL and the media
-   worker. A fresh SITL heartbeat enables `simulation` even if the KVS
-   masters and camera encoder are still starting. The REDCON levels reflect
-   which services have passed their readiness checks. The device can go
-   directly from REDCON 3 to 1 if
-   the first ready health report confirms both services.
-3. **REDCON 2 — expose MAVLink.** The controller receives fresh health
-   showing a SITL heartbeat and connected KVS MAVLink signaling. Office can
-   open the separate MAVLink peer for read-only telemetry. The browser
-   reports MAVLink live after it receives a heartbeat.
-4. **REDCON 1 — expose the camera and enable flight control.** The controller
-   also requires healthy navigation, fresh simulator pose, recent encoded
-   camera frames including an initial keyframe, and connected KVS video
-   signaling. It marks the session operational, and Office opens the camera
-   viewer after observing the matching Sparkplug and simulation reports.
-   The operator can acquire an available flight lease once the browser has
-   fresh telemetry and decoded video.
-5. **Start the optional agent.** Fresh operational REDCON 1
-   makes the device eligible for agent observation. When cloud agent
-   automation is enabled, the agent controller verifies that readiness and
-   starts a separate MicroVM for the same session. The observer connects to
-   both KVS streams independently of Office flight control.
+Startup is bounded to 90 seconds, flight to 12 minutes and cleanup to 30
+seconds inside the 900-second Lambda timeout. Stop changes the matching
+session to `stopping`; the owner receives an IoT MQTT shadow notification,
+closes the flight write gate, requests LAND if needed, reaps its children and
+records REDCON 4. The owner reads the rig and simulation shadows after each
+subscription, including reconnection, to catch changes missed while offline.
+It pauses health renewal during a disconnect and allows up to ten seconds to
+reconnect, bounded by the last readiness expiry. If recovery fails, the
+workload shuts down. A rig sleep or changed assignment also stops the session.
 
-[Command and health handling](../devices/virtual-quad/lambda/internal/controller/handler.go)
-· [Session readiness](../devices/virtual-quad/lambda/internal/lifecycle/record.go)
-· [Media worker](../devices/virtual-quad/runtime/media.cpp)
-· [Agent observation](#agent-observation)
-
-| Phase | REDCON | Evidence and behavior |
-| --- | --- | --- |
-| Stopped or terminal failure | 4 | Sparkplug is available and simulation is inactive. A previous failure carries its outcome and reason. |
-| Starting | 3 or 2 | Simulation becomes active on a fresh SITL heartbeat. MAVLink master readiness permits REDCON 2 and observation. |
-| Operational | 1, with 2 or 3 during readiness loss | Simulation stays active during a media-only outage while the worker heartbeat is fresh and the recovery window is open. REDCON 1 also requires MAVLink, navigation and video readiness. Agent eligibility follows fresh operational REDCON 1. |
-| Stopping | 3 | The controller clears simulation and revokes flight authority when it accepts Stop. It retains the reservation until termination or definitive launch failure. |
-
-Commands are Sparkplug `DCMD.redcon` with levels 1 and 4. A UUID
-`virtualQuad.requestId` correlates the result. Start carries the observed
-`virtualQuad.terminalRevision` as a decimal string and Stop carries the active
-`virtualQuad.sessionId`, including during startup. DynamoDB conditional writes
-fence the request, registry assignment, worker claim and observed health.
-The launch uses the session ID as its idempotency key and records exact
-inputs before dispatch, including the image ARN and absolute lifetime budget.
-Retries reuse the request and token. AWS selects the image version when it
-creates an instance. A competing VM cannot acquire the existing
-claim. The repair pass reconciles unresolved reservations and managed image
-inventory. [Lifecycle implementation](../devices/virtual-quad/lambda/internal/lifecycle/)
+An asynchronous Lambda failure destination emits an EventBridge event whose
+request ID can finalize only the invocation that owned the session. If that
+event is lost, readiness expires and Office can issue a fresh Start after the
+recorded invocation hard deadline. [Session implementation](../devices/virtual-quad/lambda/internal/session/)
 · [Sparkplug lifecycle](sparkplug-lifecycle.md)
-
-Startup has a 90-second deadline. An operational session receives up to
-12 minutes of flight authority within the 840-second total budget, with up
-to 30 seconds reserved for shutdown. Health expires after 15 seconds. A live
-worker with healthy SITL can recover its media masters within 30 seconds of
-a readiness loss. Stop records revocation, requests termination and checks
-for terminal state. Repair retries unresolved cleanup and republishes the
-terminal projection. The simulator, browser and agent each reject stale
-session generations.
-
-The controller-owned `simulation` shadow is the durable session record.
-Office reads phase, deadlines, terminal revision and last outcome even
-when `simulation` is inactive. Its availability watermark and expiry bind
-live capability reports to the current simulator session. Both Office views
-show `simulation` active only when the Sparkplug bit is true and the
-reported availability is current. If health reports stop, the badge expires
-at the published deadline. The existing repair pass reconciles the session
-and publishes the cleared Sparkplug bit. REDCON 4 represents a reachable
-stopped device. DDEATH is used for device management unavailability.
 
 ## Office and flight authority
 
@@ -250,86 +136,7 @@ Agent health is diagnostic and independent of simulator readiness.
 
 ## Release and verification
 
-The runtime, controller Lambda, Office and observer have distinct immutable
-release identities. The device guide links their compatibility and build
-evidence to the exact version used by the simulator.
-[Image publication, deployment and rollback](../devices/virtual-quad/README.md#build-and-publish-the-session-image)
-
-Review source ownership, build inputs and shadow contracts before the live
-checks on the permanent device. Use local native and Go tests for authority,
-lifecycle and failure paths, and Office tests for adapter and command
-behavior. The live acceptance covers discovery, bounded startup, camera and
-MAVLink, exclusive control and manual flight, observer media, loss recovery,
-timeout and fresh restart. It also covers the mixed cloud rig and applicable
-existing device regression checks. The device guide owns the operator
-procedure. [Runtime evidence](https://github.com/mparkachov/txing/issues/176)
-· [Prior acceptance and operator-approved skips](https://github.com/mparkachov/txing/issues/182)
-· [Consolidation and permanent deployment](https://github.com/mparkachov/txing/issues/183)
-
-## Approved standard Lambda design
-
-Implementation and acceptance are tracked in [milestone 13](https://github.com/mparkachov/txing/milestone/13).
-
-The virtual-quad device Lambda in `eu-central-1` will supervise ArduCopter
-SITL and the media worker for the duration of a Start invocation. Its
-ARM64 `provided.al2023` release ZIP will carry the Go bootstrap, native
-executables, camera and encoding dependencies, and build provenance. Every
-invocation will create its own writable workspace and reap both children
-before returning. The package must run against the Lambda runtime and fit
-the ZIP size limit. This keeps publication on the shared S3-backed Lambda
-release path. [Lambda runtime](https://docs.aws.amazon.com/lambda/latest/dg/lambda-golang.html)
-· [Lambda quotas](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html)
-
-### Event flow and ownership
-
-- **Start.** AWS IoT invokes the device Lambda for the existing Sparkplug
-  REDCON 1 command. The function verifies the registered assignment and
-  awake rig. It uses a version-conditional update of the `simulation`
-  shadow to accept the command against the observed terminal revision
-  before starting any workload. The accepted invocation owns that session's
-  writes. Duplicate commands and stale generations cannot start another
-  workload in the normal flow.
-- **Readiness.** The running invocation derives lifecycle, availability,
-  and expiry from its own child processes. It renews readiness only during
-  the session. Changes committed to `simulation` drive Sparkplug DDATA and
-  Witness remains the writer of the `sparkplug` shadow. Preserve the
-  session ID, readiness watermark and expiry, flight deadline, and
-  command result semantics used by Office and the shared agent. The agent
-  starts in its existing observer mode and the simulator continues to
-  grant one flight lease across all viewers.
-- **Stop.** The REDCON 4 command updates the matching session to
-  `stopping`. The Start invocation listens for changes on its named
-  shadow and reads it after subscribing or reconnecting to cover a missed
-  update. It closes the flight write gate, requests LAND when appropriate,
-  reaps the children, and commits the terminal result. The independent
-  agent lifecycle retires its observer as readiness is withdrawn.
-- **Expiry and failure.** Retain the 90-second startup bound, up to 12
-  minutes of flight, and a shutdown window within the 900-second Lambda
-  timeout. Abrupt Lambda failures emit an EventBridge event that can
-  finalize only the session owned by the failed invocation. When an event
-  is delayed or lost, readiness expires and Office allows a new explicit
-  Start after the previous invocation's hard deadline. A delayed Stop,
-  health update, or failure event cannot change a replacement session.
-  [IoT shadow notifications](https://docs.aws.amazon.com/iot/latest/developerguide/device-shadow-mqtt.html)
-  · [Lambda failure destinations](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-retain-records.html)
-
-The `simulation` shadow replaces the simulator's ledger as the authority
-for session state. Retire its DynamoDB table, simulator MicroVM image,
-worker URL, claim and grant protocol, and recurring repair schedule. The
-shared agent's hosting, cloud rig discovery, Thing and media channels
-remain part of the existing environment. After REDCON 4 settles, simulator
-and observer compute are idle. Shared release storage, logs, IoT, and KVS
-costs follow their existing billing model. KVS can charge for channels
-used earlier in the billing month. [KVS pricing](https://aws.amazon.com/kinesis/video-streams/pricing/)
-
-### Cutover and evidence
-
-Qualify the release ZIP and measure startup, media, flight, and cleanup
-in the target runtime before changing the permanent device. Drain the
-simulator and observer at REDCON 4. Publish the compatible ZIP and update
-the function stack in the same maintenance window using the same Thing
-and channels. Keep the legacy artifacts through acceptance so the prior
-stack and release can be restored if needed. After an accepted
-REDCON 4 → 1 → 4 cycle, verify zero dedicated idle simulator work and
-manually retire the simulator image and retained table. Document the
-validated release, rollback, and cleanup in the device guide.
+Build and publish the shared Lambda release, then apply the device stack in a
+single REDCON 4 maintenance window. The [device guide](../devices/virtual-quad/README.md#build-and-publish-the-session-lambda)
+owns packaging, qualification, cutover, rollback and live acceptance. The
+permanent Thing and signaling channels remain in place.

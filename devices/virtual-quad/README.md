@@ -32,155 +32,59 @@ Sparkplug available and simulation inactive. Office lists it under the assigned 
 and enables REDCON 1 while the rig reports awake. Enlistment and the stopped
 census use neither simulator nor observer compute.
 
-## Build and publish the session image
+## Build and publish the session Lambda
 
-### Standard Lambda qualification
-
-The standard Lambda release package can be built locally with Apple Container:
+Build the ARM64 release ZIP with Apple Container from the repository root:
 
 ```sh
 just virtual-quad::lambda-package
 ```
 
-The recipe prints the ZIP path. The shared Lambda release workflow builds the
-same native payload, includes it in the virtual-quad ZIP, and publishes it with
-the other immutable Lambda release artifacts. Before publishing a new release,
-bump `release/versions/lambda` and deploy the updated shared release publisher
-so it accepts the expanded virtual-quad ZIP. The current simulator command
-route continues to use the existing controller until its lifecycle is changed.
+The recipe prints the ZIP path. The shared Lambda release workflow publishes
+the same payload with the other immutable runtime artifacts. Publish the
+reviewed Lambda release through `just release::publish lambda`; see
+[Lambda publication](../../docs/aws.md#deploy-and-publish) for the
+shared release process. Bump `release/versions/lambda` to a new version
+before publishing this change; `0.15.14` has already been released.
 
-For isolated qualification, upload the ZIP to the Lambda artifact bucket and
-deploy `lambda/qualification.template.yaml` in `eu-central-1` with its bucket
-and object key. Its two disposable signaling channels connect the production
-media worker without changing the device's command route. Invoke its output
-function twice and retain the CloudWatch log streams. Each invocation runs the
-production supervisor for 165 seconds by default, then requests shutdown. Pass
-`{"durationSeconds":720}` for a full twelve-minute run. Compare
-`QUAD_READY`, `QUAD_KVS_READY`, `QUAD_MEDIA_SAMPLE`, `QUAD_CHILDREN_REAPED`, and
-the Lambda REPORT records with the startup, cleanup, SITL rate and encoded-frame
-targets below. Confirm the same execution environment handled both invocations
-and inspect each for fresh state. The local Office diagnostics page can join the
-channel names returned by the stack to observe video and MAVLink frames. Remove
-the stack after recording the evidence. Office and agent control are verified
-separately during cutover.
+Qualify the actual release ZIP before changing the permanent device. The
+isolated `lambda/qualification.template.yaml` creates disposable channels and
+runs the production supervisor on ARM64 Lambda. Invoke the function twice,
+including `{"durationSeconds":720}` for a full-duration run. Check startup,
+native library loading, both KVS streams, video and SITL performance, fresh
+state in the reused execution environment, and child reaping. Record the ZIP
+checksum, logs and media measurements in the implementation Issue and remove
+the disposable resources after qualification.
 
-### MicroVM image
+For isolated lifecycle checks, `lambda/lifecycle-qualification.template.yaml`
+uses a manually created disposable device and creates its channels, function,
+scoped IoT command and shadow rules, and an EventBridge failure route. It uses an existing awake cloud rig,
+but sends test commands on a separate qualification topic so the production
+simulator controller cannot receive them. Seed its `simulation` and
+`sparkplug` shadows before testing. To exercise the shared agent and Office,
+declare the `agent` capability on the disposable Thing and initialize the
+`agent`, `mavlink` and `video` shadows too. Stop and drain the observer, then
+delete the test shadows, Thing and stack afterward. The permanent-device command
+route and cutover still require acceptance on that registration.
 
-Run from the repository root with Apple Container running. For
-publication, build from the reviewed source revision.
+### Cutover and rollback
 
-```sh
-bundle=$(just virtual-quad::microvm-package)
-```
-
-The command tests the Go supervisor and the native camera and flight code,
-builds the ARM64 payload, and validates the final image and snapshot-safe
-OpenSSL linking in a Linux ARM64 guest. The final image defaults to the managed lifecycle
-hook listener. It begins a simulation only after a session claim. The recipe
-prints the absolute ZIP path. Keep the bundle, both adjacent source archives
-and `SHA256SUMS` together. The bundle records the repository revision and
-source status, native package versions, pinned ArduCopter commit and recursive
-submodule revisions, the KVS SDK commit and license, and source archive digests.
-The SDK pins its producer and PIC dependencies to v1.6.1 and v1.3.1. Container base
-digests and dependency pins live in [runtime](runtime/). System package versions
-are recorded at build time. The ArduCopter archive contains the corresponding
-source and licenses for the pinned checkout and its submodules.
-
-For a new environment, deploy the shared AWS stack and run
-`just virtual-quad::deploy disabled` to prepare the session table, build role
-and log group before the first image exists. Use the environment's configured
-AWS profile and `TXING_AWS_STACK`. [Environment deployment](../../docs/aws.md#bring-up-order)
+With the virtual quad at REDCON 4 and its agent drained, publish the compatible
+Lambda release and update the function stack in the same maintenance window:
 
 ```sh
-just virtual-quad::publish-image "$bundle"
+just virtual-quad::deploy
 ```
 
-The publisher discovers the shared artifact bucket and build role, checks the
-ARM64 `al2023-1` managed base major version 3, and uploads the bundle and
-source archives to their SHA-256 prefix. It submits the hooks from the bundle.
-The result identifies the exact image ARN and version. Inspect that pair until
-the build is `SUCCESSFUL` and the version is `ACTIVE`. AWS reports the
-resolved base version including its patch level.
-
-```sh
-aws lambda-microvms get-microvm-image-version --region eu-central-1 \
-  --image-identifier <image-arn> --image-version <image-version> \
-  --query '{state:state,status:status,base:baseImageVersion,reason:stateReason,artifact:codeArtifact.uri}'
-```
-
-AWS makes successful builds active automatically. The controller omits the
-image version in new launch requests, so the next Start uses the latest
-active version. Image publication needs no CloudFormation deployment.
-Running simulator sessions keep their current image.
-[AWS MicroVM launch behavior](https://docs.aws.amazon.com/lambda/latest/dg/microvms-launching.html)
-
-For the first installation, stage the compatible controller bootstrap with
-the [Lambda publisher](../../docs/artifacts.md#lambda-artifacts), then enable
-the controller after the image is active. An existing installation using
-a fixed image version needs a one-time migration. Publish `lambda-v0.15.12`
-or later with the existing controller deployed, then run the same command
-to remove the old CloudFormation version parameter and environment setting.
-
-```sh
-just virtual-quad::deploy enabled
-```
-
-For `town`, verify the deployed controller and the image selected by AWS:
-
-```sh
-aws lambda get-function-configuration --region eu-central-1 \
-  --function-name town-virtual-quad \
-  --query '{state:State,update:LastUpdateStatus,code:CodeSha256,architectures:Architectures}'
-aws lambda-microvms get-microvm-image --region eu-central-1 \
-  --image-identifier arn:aws:lambda:eu-central-1:453102798330:microvm-image:town-virtual-quad \
-  --query '{state:state,latest:latestActiveImageVersion}'
-```
-
-Confirm the controller is active and compare `CodeSha256` with the
-base64-encoded SHA-256 of the controller ZIP for the selected Lambda release.
-Use `get-microvm` on the running instance to verify the actual image version
-used in acceptance. Record the source revision, bundle digest and S3 URI,
-image ARN/version and resolved base, controller release and code digest,
-agent release and image version, and Office release or deployment commit.
-The existing `agent-v0.1.3` and Office `0.18.7` support the consolidated
-simulator. Full agent control requires a simulator image with the full
-MAVLink bridge and an agent release that enables the virtual-quad control
-profile. [Agent operation](../../docs/components/agent.md#control-authority)
-· [Office publication](../../docs/components/office.md#cloudflare-pages)
-
-## Drain and rollback
-
-Pause new starts during maintenance. Select REDCON 4 for each active virtual
-quad, including any still starting. Wait until the simulation shadow clears
-its session ID and the agent shadow clears its run and endpoint. Confirm both
-MicroVMs are `TERMINATED` in the image inventories. Keep the command rule,
-controller and repair schedule enabled while sessions drain.
-
-For an image rollback, keep the previous working ARM64 version active
-with its bundle and deactivate the faulty version on the MicroVM image.
-Then verify `latestActiveImageVersion` before starting a new session.
-For example, to fall back from 8.0 to 7.0 in `town` when 8.0 is the only
-newer active version:
-
-```sh
-aws lambda-microvms update-microvm-image-version --region eu-central-1 \
-  --image-identifier arn:aws:lambda:eu-central-1:453102798330:microvm-image:town-virtual-quad \
-  --image-version 8.0 --status INACTIVE
-```
-
-For a controller rollback, use `just release::publish lambda <previous-release>`
-only when rolling back the shared Lambda release is intended, since it also
-updates the other targets. Releases before `lambda-v0.15.12` require the old
-controller template with an explicit image version. Check the controller's
-code digest against the selected release. Roll back Office through Cloudflare
-Pages. Follow the [agent drain and release procedure](../../docs/components/agent.md#enable-and-drain)
-when rolling back the shared observer.
-
-To disable simulator launches after draining, run
-`just virtual-quad::deploy disabled`. This removes the controller, command
-rule and repair schedule. The build resources, session table, Thing and
-channels remain available for re-enablement. Use
-`just virtual-quad::deploy enabled` to restore the controller.
+The stack keeps the existing function name, Thing and channels. After the live
+acceptance below, verify zero simulator and observer compute, no simulator
+provisioned concurrency and no dedicated scheduled invocations. Manually
+retire the old simulator MicroVM image and retained DynamoDB table only after
+acceptance. Keep the previous release and infrastructure template until then.
+To roll back, drain the device again and restore the prior function release
+and prior infrastructure template together, then verify REDCON 4 → 1 → 4.
+The agent and TBot hosting are unchanged. KVS can charge for channels used
+earlier in the billing month.
 
 ## Live media
 
@@ -197,11 +101,9 @@ health or unhealthy SITL retains the 15-second cutoff.
 
 ## Diagnostics
 
-After packaging, run `just virtual-quad::runtime-smoke` to exercise the
-production image's SITL, pose camera and encoder with no network. Compare
-`QUAD_READY mode=local camera=pose` and the 30-second `QUAD_MEDIA_SAMPLE`
-records for SITL speed, encoded fps and valid pose counts. Stop with Ctrl+C
-and check `QUAD_CHILDREN_REAPED`.
+The qualification stack and CloudWatch logs expose `QUAD_READY`,
+`QUAD_MEDIA_SAMPLE`, and `QUAD_CHILDREN_REAPED` for startup, media rate and
+shutdown checks.
 
 The local Office development page at `/virtual-quad-diagnostics.html` uses
 the registered device's channels and the shared KVS viewer. Sign in through
@@ -258,7 +160,7 @@ the build and publication evidence first. Open
 on the mixed rig and confirm the following.
 
 1. The registered device is visible and startable at stopped REDCON 4 with
-   no active simulator or observer VM. Confirm its two registered KVS channels.
+   no active simulator invocation or observer VM. Confirm its two registered KVS channels.
 2. Select REDCON 1. Record readiness and command outcomes across three cold
    starts. Startup is bounded to 90 seconds. Record the actual ready, stop
    and terminal timestamps.
@@ -275,8 +177,8 @@ on the mixed rig and confirm the following.
 4. Verify a normal stop, stop during startup, flight deadline and readiness
    loss recovery. Check that the old session cannot regain authority and
    that restart allocates a new session with a fresh disarmed aircraft.
-   Verify both MicroVMs terminate and the respective shadows clear their
-   active IDs.
+   Verify the simulator invocation and agent observer terminate and the respective
+   shadows clear their active IDs.
 5. Check applicable cloud rig and existing device regressions. Retain the
    [prior acceptance and approved hardware skips](https://github.com/mparkachov/txing/issues/182)
    with the new evidence.
@@ -285,7 +187,7 @@ Use these bounds for the permanent device checks.
 
 | Area | Evidence |
 | --- | --- |
-| Startup and teardown | Three cold starts reach operational within 90 seconds. Healthy Stop from startup or operational reaches terminal state within 30 seconds. Abrupt termination withdraws readiness within 15 seconds of the last health report and the next successful repair pass records the outcome. |
+| Startup and teardown | Three cold starts reach operational within 90 seconds. Healthy Stop from startup or operational reaches terminal state within 30 seconds. Abrupt termination withdraws readiness within 15 seconds of the last health report and the failure destination records the matching outcome; a lost event permits restart after the old invocation deadline. |
 | Flight | Take off to 2 m ± 0.5 m, translate at least 1 m on both horizontal axes, change altitude by at least 0.5 m, yaw at least 45°, and hover within 0.5 m horizontally and vertically over five seconds after settling. Verify landed and disarmed. |
 | Media | With operator and observer joined, sustain 640 × 360 and at least 12 decoded fps in 95% of five-second windows for a full-duration session. Measure p95 pose-to-display below 800 ms and a SITL rate of 0.95–1.05× wall time over rolling 30-second windows. Include forced relay and late joins across the five-minute TURN and ten-minute signaling windows. |
 | Authority loss | Confirm old writes fail and LAND begins within two seconds of server-side revocation. A silently disconnected browser loses its lease within five seconds of its last successful renewal. Check touchdown and disarm in a healthy simulator, and verify terminal cleanup at the session deadline. |

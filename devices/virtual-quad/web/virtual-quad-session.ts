@@ -25,6 +25,7 @@ type Session = {
   startupDeadlineMs: number | null
   flightDeadlineMs: number | null
   shutdownDeadlineMs: number | null
+  hardDeadlineMs: number | null
 }
 
 const integer = (value: unknown): number | null =>
@@ -39,6 +40,7 @@ export const readVirtualQuadSession = (shadow: unknown): Session | null => {
   const terminalRevision = integer(reported?.terminalRevision)
   if (!reported || !phase || terminalRevision === null) return null
   const sessionId = text(reported.sessionId)
+  const run = reported.run && typeof reported.run === 'object' ? reported.run as Record<string, unknown> : null
   const terminal = phase === 'stopped' || phase === 'failed'
   if (terminal ? sessionId !== null : sessionId === null) return null
   return {
@@ -50,6 +52,7 @@ export const readVirtualQuadSession = (shadow: unknown): Session | null => {
     startupDeadlineMs: integer(reported.startupDeadlineMs),
     flightDeadlineMs: integer(reported.flightDeadlineMs),
     shutdownDeadlineMs: integer(reported.shutdownDeadlineMs),
+    hardDeadlineMs: integer(run?.hardDeadlineMs),
   }
 }
 

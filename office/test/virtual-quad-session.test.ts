@@ -61,6 +61,19 @@ test('virtual quad can start through Sparkplug while the simulator is inactive',
   expect(canStartVirtualQuad(target, stopped)).toBe(false)
 })
 
+test('an invocation with a lost terminal event can be restarted only after its hard deadline', () => {
+  const active = readVirtualQuadSession({ state: { reported: {
+    phase: 'operational', sessionId: 'old-session', terminalRevision: 8,
+    run: { hardDeadlineMs: 20_000 },
+  } } })
+  const view = { session: active, sparkplug: { state: { reported: {
+    topic: { groupId: target.groupId, edgeNodeId: target.edgeNodeId, deviceId: target.deviceId, messageType: 'DDATA' },
+    payload: { timestamp: 1_000, metrics: { redcon: 1, capability: { sparkplug: true } } },
+  } } } }
+  expect(canStartVirtualQuad(target, view, 19_999)).toBe(false)
+  expect(canStartVirtualQuad(target, view, 20_000)).toBe(true)
+})
+
 test('Office can observe MAVLink at REDCON 2 before opening flight and camera at REDCON 1', () => {
   const projection = {
     state: { reported: { payload: { metrics: { capability: { mavlink: true, video: true } } } } },

@@ -59,9 +59,11 @@ export function readVirtualQuadCommandResult(action: VirtualQuadCommand, { sessi
   return null
 }
 
-export function canStartVirtualQuad(target: QuadTarget, { session, sparkplug }: Pick<SessionView, 'session' | 'sparkplug'>): boolean {
-  return (session?.phase === 'stopped' || session?.phase === 'failed') &&
-    extractReportedRedcon(sparkplug) === 4 && hasLiveSparkplugDeviceProjection(sparkplug, target) &&
+export function canStartVirtualQuad(target: QuadTarget, { session, sparkplug }: Pick<SessionView, 'session' | 'sparkplug'>, now = Date.now()): boolean {
+  const terminal = session?.phase === 'stopped' || session?.phase === 'failed'
+  const expired = session?.hardDeadlineMs !== null && session?.hardDeadlineMs !== undefined && now >= session.hardDeadlineMs
+  return (terminal || expired) &&
+    (expired || extractReportedRedcon(sparkplug) === 4) && hasLiveSparkplugDeviceProjection(sparkplug, target) &&
     extractSparkplugCapabilityAvailability(sparkplug, 'sparkplug') === true
 }
 
@@ -142,7 +144,7 @@ export function useVirtualQuadRedcon(
   }, [currentPending, notify, now, session, sessionView])
 
   const canStart = target !== null && awakeRigId === rigId && currentPending === null &&
-    canStartVirtualQuad(target, sessionView)
+    canStartVirtualQuad(target, sessionView, now)
   const stopSession = session?.phase === 'starting' || session?.phase === 'operational' ? session.sessionId : null
   const canStop = stopSession !== null && currentPending?.action.redcon !== 4
 

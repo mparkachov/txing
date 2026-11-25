@@ -2,6 +2,7 @@ package qualification
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -29,15 +30,22 @@ func Handle(ctx context.Context, request struct {
 	}
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(duration)*time.Second)
 	defer cancel()
-	mode := "smoke"
+	args := []string{"smoke"}
 	video, mavlink := os.Getenv("QUAD_VIDEO_CHANNEL"), os.Getenv("QUAD_MAVLINK_CHANNEL")
 	if (video == "") != (mavlink == "") {
 		return nil, fmt.Errorf("both qualification channel names are required")
 	}
+	var healthPath string
 	if video != "" {
-		mode = "qualify"
+		dir, err := os.MkdirTemp("", "quad-qualification-")
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(dir)
+		healthPath = filepath.Join(dir, "health.json")
+		args = []string{"managed", healthPath}
 	}
-	cmd := exec.Command(filepath.Join(root, "bin", "virtual-quad-supervisor"), mode)
+	cmd := exec.Command(filepath.Join(root, "bin", "virtual-quad-supervisor"), args...)
 	cmd.Env = append(os.Environ(),
 		"TXING_QUAD_ROOT="+root,
 		"LD_LIBRARY_PATH="+filepath.Join(root, "lib"),
@@ -52,10 +60,36 @@ func Handle(ctx context.Context, request struct {
 	}
 	wait := make(chan error, 1)
 	go func() { wait <- cmd.Wait() }()
-	select {
-	case err := <-wait:
-		return nil, fmt.Errorf("supervisor exited during qualification: %v", err)
-	case <-runCtx.Done():
+	var startupErr error
+	ready := healthPath == ""
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+running:
+	for {
+		select {
+		case err := <-wait:
+			return nil, fmt.Errorf("supervisor exited during qualification: %v", err)
+		case now := <-ticker.C:
+			if !ready {
+				var sample struct {
+					ObservedAt                            int64 `json:"observedAtMs"`
+					Heartbeat, Navigation, Mavlink, Video bool
+				}
+				data, err := os.ReadFile(healthPath)
+				if err == nil && len(data) <= 512 && json.Unmarshal(data, &sample) == nil &&
+					sample.ObservedAt >= now.Add(-2500*time.Millisecond).UnixMilli() && sample.ObservedAt <= now.UnixMilli() &&
+					sample.Heartbeat && sample.Navigation && sample.Mavlink && sample.Video {
+					ready = true
+					log.Printf("QUAD_MANAGED_HEALTH_READY elapsed_ms=%d", time.Since(started).Milliseconds())
+				}
+				if !ready && time.Since(started) >= 90*time.Second {
+					startupErr = fmt.Errorf("managed health did not become ready within 90 seconds")
+					break running
+				}
+			}
+		case <-runCtx.Done():
+			break running
+		}
 	}
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		return nil, fmt.Errorf("stop supervisor: %w", err)
@@ -72,6 +106,9 @@ func Handle(ctx context.Context, request struct {
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if startupErr != nil {
+		return nil, startupErr
 	}
 	elapsed := time.Since(started)
 	log.Printf("QUAD_QUALIFICATION_COMPLETE elapsed_ms=%d", elapsed.Milliseconds())
