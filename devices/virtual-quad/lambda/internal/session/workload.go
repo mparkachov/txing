@@ -53,13 +53,20 @@ func (w *Workload) Err() error { <-w.done; return w.waitErr }
 
 // Health rejects missing, malformed, or stale evidence instead of allowing a
 // frozen media process to keep advertising flight readiness.
-func (w *Workload) Health(now time.Time) Health {
+func (w *Workload) Health() Health {
+	return w.readHealth(time.Now)
+}
+
+func (w *Workload) readHealth(clock func() time.Time) Health {
 	f, err := os.Open(w.health)
 	if err != nil {
 		return Health{}
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, 513))
+	// The media process can atomically replace the file during this read.
+	// Compare its timestamp with a clock sampled after reading it.
+	now := clock()
 	var sample struct {
 		ObservedAt int64 `json:"observedAtMs"`
 		Heartbeat  bool  `json:"heartbeat"`

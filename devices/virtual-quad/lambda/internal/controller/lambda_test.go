@@ -32,7 +32,7 @@ type fakeSimulator struct {
 func (f *fakeSimulator) Done() <-chan struct{} { return f.done }
 func (f *fakeSimulator) Err() error            { return nil }
 func (f *fakeSimulator) Stop() error           { close(f.stopped); return nil }
-func (f *fakeSimulator) Health(time.Time) session.Health {
+func (f *fakeSimulator) Health() session.Health {
 	return session.Health{Heartbeat: true, Navigation: true, Mavlink: true, Video: true}
 }
 

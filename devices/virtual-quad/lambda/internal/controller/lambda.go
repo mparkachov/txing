@@ -37,7 +37,7 @@ type simulator interface {
 	Done() <-chan struct{}
 	Err() error
 	Stop() error
-	Health(time.Time) session.Health
+	Health() session.Health
 }
 
 func NewLambdaHandler(cfg aws.Config, endpoint string, registry Registry, client ReportClient) LambdaHandler {
@@ -355,7 +355,7 @@ subscribed:
 			}
 			updateCtx, cancel := context.WithTimeout(controlCtx, 4*time.Second)
 			current, err := h.shadow.Change(updateCtx, target.DeviceID, func(s *session.State) error {
-				return s.UpdateHealth(owner, workload.Health(time.Now()), time.Now().UnixMilli())
+				return s.UpdateHealth(owner, workload.Health(), time.Now().UnixMilli())
 			})
 			cancel()
 			if errors.Is(err, session.ErrNotOwner) {

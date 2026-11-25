@@ -69,6 +69,13 @@ route and cutover still require acceptance on that registration.
 
 ### Cutover and rollback
 
+The `town` stack was updated to `lambda-v0.15.15` on 2026-11-25. Its
+virtual-quad ZIP SHA-256 is
+`04563809bf61302186a96086cf377351a0c2a4d4f99568cd134468ced8c311f6`.
+Permanent-device flight and retirement acceptance is tracked in
+[#193](https://github.com/mparkachov/txing/issues/193); until that acceptance
+is complete, retain the old simulator image and session table for rollback.
+
 With the virtual quad at REDCON 4 and its agent drained, publish the compatible
 Lambda release and update the function stack in the same maintenance window:
 
@@ -83,6 +90,12 @@ retire the old simulator MicroVM image and retained DynamoDB table only after
 acceptance. Keep the previous release and infrastructure template until then.
 To roll back, drain the device again and restore the prior function release
 and prior infrastructure template together, then verify REDCON 4 → 1 → 4.
+For this `town` cutover, the previous deployed quad artifact matched
+`lambda-v0.15.13`, and its stack template matched the template at commit
+`ff08dc70bdd7e5b63093177417b688ff33029c60`. Restoring the shared release also
+changes the other shared Lambda functions and requires their regression checks.
+After the old simulator image or retained table is retired, that rollback
+requires recreating the retired resources first.
 The agent and TBot hosting are unchanged. KVS can charge for channels used
 earlier in the billing month.
 
