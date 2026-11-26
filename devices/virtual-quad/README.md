@@ -69,12 +69,14 @@ route and cutover still require acceptance on that registration.
 
 ### Cutover and rollback
 
-The `town` stack was updated to `lambda-v0.15.15` on 2026-11-25. Its
-virtual-quad ZIP SHA-256 is
-`04563809bf61302186a96086cf377351a0c2a4d4f99568cd134468ced8c311f6`.
-Permanent-device flight and retirement acceptance is tracked in
-[#193](https://github.com/mparkachov/txing/issues/193); until that acceptance
-is complete, retain the old simulator image and session table for rollback.
+The `town` stack was updated on 2026-11-25 and its function was updated to
+`lambda-v0.15.16` on 2026-11-26. The virtual-quad ZIP SHA-256 is
+`ea5846c489c30506f427c6a43268f347cc936251f64485c704784cf93e8e63d1`.
+Permanent-device flight, agent handoff and retirement evidence is tracked in
+[#193](https://github.com/mparkachov/txing/issues/193). The old simulator image
+and retained session table were retired after the live checks. Two earlier
+agent replacements were not reproduced in the updated release's monitored
+viewer-join retest; their precise cause remains unconfirmed.
 
 With the virtual quad at REDCON 4 and its agent drained, publish the compatible
 Lambda release and update the function stack in the same maintenance window:
