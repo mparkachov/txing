@@ -64,8 +64,8 @@ simulator controller cannot receive them. Seed its `simulation` and
 `sparkplug` shadows before testing. To exercise the shared agent and Office,
 declare the `agent` capability on the disposable Thing and initialize the
 `agent`, `mavlink` and `video` shadows too. Stop and drain the observer, then
-delete the test shadows, Thing and stack afterward. The permanent-device command
-route and cutover still require acceptance on that registration.
+delete the test shadows, Thing and stack afterward. Verify the permanent-device
+command route and cutover on the target registration as described below.
 
 ### Cutover and rollback
 
