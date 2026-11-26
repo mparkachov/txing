@@ -90,14 +90,9 @@ own `just agent::publish <version>` operator workflow. See
 [immutable agent publication](components/agent.md#immutable-releases) for Linux ARM64
 build checks and the separate initial deployment/live acceptance gates.
 
-After a release workflow finishes, the operator Mac deploys CloudFormation
-infrastructure changes and then publishes already-built Lambda runtime
-artifacts with:
-
-```bash
-just aws::deploy
-just release::publish lambda
-```
+Use `just aws::deploy` for CloudFormation infrastructure changes. The `Release
+lambda` workflow publishes the runtime artifacts to AWS after creating the
+release. [Lambda publisher setup and manual recovery](./artifacts.md#lambda-artifacts)
 
 Development direction for installable host tools and board-side native
 artifacts:
@@ -241,8 +236,8 @@ pass a config directory and `all` to also start the Thread and BLE daemons.
 That source-checkout rig loop is for development. Production `raspi` rig hosts
 publish GitHub release assets through root-owned `mise` and systemd via
 `just release::publish rig`. Production `cloud` rig infrastructure is deployed
-through `just aws::deploy`; its runtime Lambda code is published from GitHub
-release artifacts with `just release::publish lambda`.
+through `just aws::deploy`. The shared Lambda release workflow publishes its
+runtime code. [Lambda publication](./artifacts.md#lambda-artifacts)
 
 Board:
 

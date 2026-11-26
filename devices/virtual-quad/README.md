@@ -40,16 +40,14 @@ Build the ARM64 release ZIP with Apple Container from the repository root:
 just virtual-quad::lambda-package
 ```
 
-The recipe prints the ZIP path. The shared Lambda release workflow publishes
-the same payload with the other immutable runtime artifacts. Publish the
-reviewed Lambda release through `just release::publish lambda`; see
-[Lambda publication](../../docs/aws.md#deploy-and-publish) for the
-shared release process. Bump `release/versions/lambda` to a new version
-before publishing this change; `0.15.14` has already been released.
+The recipe prints the ZIP path. The shared Lambda release workflow builds the
+same payload with the other immutable runtime artifacts and publishes their
+code to AWS. Bump `release/versions/lambda` before dispatching a new release.
+[Lambda publication](../../docs/artifacts.md#lambda-artifacts)
 
-Qualify the actual release ZIP before changing the permanent device. The
-isolated `lambda/qualification.template.yaml` creates disposable channels and
-runs the production supervisor on ARM64 Lambda. Invoke the function twice,
+Qualify the candidate ZIP before dispatching a release that changes the
+simulator. The isolated `lambda/qualification.template.yaml` creates disposable
+channels and runs the production supervisor on ARM64 Lambda. Invoke the function twice,
 including `{"durationSeconds":720}` for a full-duration run. Check startup,
 native library loading, both KVS streams, video and SITL performance, fresh
 state in the reused execution environment, and child reaping. Record the ZIP

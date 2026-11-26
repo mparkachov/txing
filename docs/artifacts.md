@@ -135,9 +135,8 @@ Release rollout flow:
    <component>`.
 4. Deploy AWS infrastructure only when the change includes infrastructure;
    artifact-only board releases do not require an AWS or Lambda deploy.
-5. For a Lambda release, publish runtime Lambda code from the operator machine with
-   `just release::publish lambda`. `latest` resolves within the `lambda-v*`
-   release stream.
+5. For a Lambda release, the workflow publishes runtime Lambda code to AWS
+   after uploading the release assets. [Lambda publisher setup](#lambda-artifacts)
 6. If a rig needs new binaries, publish it with `just release::publish rig`.
    Boards still update manually from a root shell with writable root and
    root-owned `mise upgrade`, followed by validation and an explicit restart of
@@ -162,28 +161,52 @@ include the appropriate prefix before relying on `latest`.
 
 ## Lambda Artifacts
 
-Production Lambda code is published to existing AWS Lambda functions from
-GitHub release assets by the operator machine:
+The `Release lambda` workflow publishes the public release to the existing
+Witness, cloud rig, cloud MCU, and virtual-quad Lambda functions. Set up the
+AWS publisher once in an environment with all four runtime functions before
+dispatching the workflow.
+
+1. Run `just aws::deploy` from the intended AWS environment.
+2. Copy `ReleasePublisherFunctionUrl` from the Outputs of the
+   `<TXING_AWS_STACK>-aws-publish-release` CloudFormation stack.
+3. In GitHub, open **Settings → Secrets and variables → Actions → Variables**
+   and set the repository variable `LAMBDA_PUBLISH_URL` to the copied URL.
+
+The Function URL is public. Anyone with the URL can trigger publication of
+the current `lambda-v*` release. AWS uses the publisher's configured repository
+and function names. GitHub Actions sends the release tag over HTTPS without AWS
+credentials. [Function URL access](https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html)
+
+For the first automatic publish, bump `release/versions/lambda`, push the
+intended branch, and dispatch `just release::build lambda`. The **Publish
+runtime Lambda code to AWS** job logs the confirmed tag and all four updates.
+The workflow can succeed only after AWS confirms the code updates. For first-run
+verification, compare `CodeSha256` from `aws lambda get-function-configuration`
+for each function with `openssl dgst -sha256 -binary "$zip" | openssl base64 -A`
+for its downloaded release ZIP. Check `version=<release version> cold_start=true`
+in CloudWatch after the functions run again.
+
+If the AWS job fails after GitHub publishes the release, rerun the failed job
+while its release is current. Updates completed before a failure can already be
+serving the released code. For manual bootstrap or recovery, run this command
+with the AWS CLI credentials in the operator shell.
 
 ```bash
 just release::publish lambda
 ```
 
-`release::publish lambda` invokes the AWS-hosted publisher Lambda. `latest`
-resolves to the newest `lambda-v*` component release, not the repository-wide
-latest release. Explicit `lambda-vX.Y.Z` and bare `X.Y.Z` references select the
-Lambda stream; exact legacy `vX.Y.Z` references remain available only for
-manual rollback to old combined releases. The publisher downloads public GitHub
-release assets over HTTPS, uploads Lambda artifacts, and updates existing
-Lambda functions.
+`release::publish lambda` invokes the same AWS publisher. The default `latest`
+resolves to the newest `lambda-v*` component release. Explicit `lambda-vX.Y.Z`
+and bare `X.Y.Z` references select the Lambda stream. Exact legacy `vX.Y.Z`
+references are available for manual rollback to old combined releases. The
+publisher downloads the public GitHub release ZIPs, uploads them to the Lambda
+artifact bucket, and updates the functions' `$LATEST` code.
 Runtime Lambda CloudFormation deploy recipes seed placeholder bootstrap zips so
 first-time stack creation does not depend on release artifacts already being
 uploaded. Admin Lambda CloudFormation deploy recipes package the current Python
 source into each standalone admin Lambda stack. That admin Python package is not
-semver-release managed; CloudFormation receives the content-addressed
-`cfn/aws-admin/<sha>.zip` key during stack deployment. The optional Lambda
-release argument defaults to `latest`, which resolves within the `lambda-v*`
-runtime Lambda release stream.
+semver-release managed. CloudFormation receives the content-addressed
+`cfn/aws-admin/<sha>.zip` key during stack deployment.
 
 ## Board Assets
 

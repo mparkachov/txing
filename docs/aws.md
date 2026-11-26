@@ -58,9 +58,9 @@ CloudFormation. The AWS deploy recipes create stacks, roles, rules, functions,
 queues, parameters, and placeholder runtime artifacts.
 
 **Publish** means promoting already-built release artifacts to an existing
-runtime target. `just release::publish lambda` updates existing runtime Lambda
-functions from a `lambda-v*` GitHub Release; `just release::publish rig` updates
-physical rig host binaries from a `rig-v*` GitHub Release.
+runtime target. The `Release lambda` workflow publishes runtime Lambda code
+after creating the GitHub release. `just release::publish rig` updates physical
+rig host binaries from a `rig-v*` GitHub Release. [Lambda publisher setup](artifacts.md#lambda-artifacts)
 
 Virtual quadcopter sessions use a standard Linux ARM64 Lambda invocation per
 active device in Frankfurt. The device guide owns the [simulator release
@@ -141,15 +141,10 @@ parameter for custom-resource service tokens. The cloud MCU stack publishes
 `/txing/stack/CloudMcuTickQueueUrl` and `CloudMcuTickQueueArn`; the cloud rig
 stack reads those parameters for SQS access.
 
-`just release::publish lambda` invokes the AWS-hosted publisher Lambda, which
-resolves `latest` from `lambda-v*` GitHub Releases, downloads public Lambda
-release assets, uploads runtime Lambda artifacts, and updates existing runtime
-Lambda functions. Run it after `just release::build lambda` and after the
-standalone Lambda stacks exist. Explicit `lambda-vX.Y.Z` and bare `X.Y.Z`
-references select the Lambda component stream; exact legacy `vX.Y.Z` references
-remain available only for manual rollback to old combined releases.
-The publisher receives its target Lambda names from `/txing/stack/...`
-parameters created by the runtime Lambda stacks.
+The AWS-hosted release publisher uses the target Lambda names configured by its
+stack. After the standalone Lambda stacks exist, set up automatic publishing for
+new GitHub releases. `just release::publish lambda` is the manual path for
+initial stack bring-up and recovery. [Lambda publication and verification](artifacts.md#lambda-artifacts)
 
 Resource names are deterministic from `TXING_AWS_STACK` where AWS exposes a physical name.
 Web hosting is externalized to Cloudflare Pages. The type catalog is

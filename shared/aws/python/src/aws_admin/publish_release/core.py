@@ -303,12 +303,18 @@ def publish_lambdas(
     config: PublishConfig | None = None,
     github: GitHubReleaseClient | None = None,
     function_filter: set[str] | None = None,
+    *,
+    require_all: bool = False,
 ) -> dict[str, object]:
     config = config or PublishConfig.from_env()
     if not config.lambda_artifact_bucket:
         raise PublishError("TXING_LAMBDA_ARTIFACT_BUCKET is required")
     github = github or GitHubReleaseClient(config.github_repository)
     release = github.resolve_release(release_ref)
+    if require_all and any(
+        asset.asset_name not in release.assets for asset in LAMBDA_ASSETS
+    ):
+        raise PublishError(f"release {release.tag} is missing runtime Lambda assets")
     s3 = boto3.client("s3")
     lambda_client = boto3.client("lambda")
     published: dict[str, dict[str, str | bool]] = {}
@@ -342,6 +348,8 @@ def publish_lambdas(
                 config.lambda_artifact_bucket,
                 version_key,
             )
+            if require_all and not updated:
+                raise PublishError(f"runtime Lambda {deployed_function_name} was not updated")
             published[asset.artifact_id] = {
                 "functionName": deployed_function_name,
                 "versionKey": version_key,
@@ -356,14 +364,17 @@ def publish_lambdas(
 
 
 def publish_all(
-    release_ref: str, config: PublishConfig | None = None
+    release_ref: str,
+    config: PublishConfig | None = None,
+    *,
+    github: GitHubReleaseClient | None = None,
+    require_all: bool = False,
 ) -> dict[str, object]:
-    lambda_result = publish_lambdas(release_ref, config=config)
     return {
         "ok": True,
-        "releaseTag": lambda_result["releaseTag"],
-        "version": lambda_result["version"],
-        "lambdas": lambda_result["lambdas"],
+        **publish_lambdas(
+            release_ref, config=config, github=github, require_all=require_all
+        ),
     }
 
 

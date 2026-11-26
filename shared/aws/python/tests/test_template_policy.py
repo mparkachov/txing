@@ -1135,6 +1135,36 @@ class AwsTemplatePolicyTests(unittest.TestCase):
         self.assertNotIn("FunctionUrlConfig", template)
         self.assertNotIn("GITHUB_TOKEN", template)
 
+    def test_release_publisher_grants_public_invocation_through_its_url(self) -> None:
+        publish_template = _aws_lambda_template_text("aws-publish-release")
+        self.assertIn(
+            "  PublishReleaseFunctionUrl:\n"
+            "    Type: AWS::Lambda::Url\n"
+            "    Properties:\n"
+            "      AuthType: NONE\n"
+            "      TargetFunctionArn: !GetAtt PublishReleaseFunction.Arn\n",
+            publish_template,
+        )
+        self.assertIn(
+            "      Action: lambda:InvokeFunctionUrl\n"
+            "      FunctionName: !Ref PublishReleaseFunction\n"
+            "      FunctionUrlAuthType: NONE\n"
+            '      Principal: "*"\n',
+            publish_template,
+        )
+        self.assertIn(
+            "      Action: lambda:InvokeFunction\n"
+            "      FunctionName: !Ref PublishReleaseFunction\n"
+            "      InvokedViaFunctionUrl: true\n"
+            '      Principal: "*"\n',
+            publish_template,
+        )
+        self.assertIn(
+            "  ReleasePublisherFunctionUrl:\n"
+            "    Value: !GetAtt PublishReleaseFunctionUrl.FunctionUrl\n",
+            publish_template,
+        )
+
     def test_cloud_mcu_runtime_uses_release_lambda_assets(self) -> None:
         root_template = (AWS_DIR / "template.yaml").read_text(encoding="utf-8")
         cloud_mcu_template = _cloud_mcu_lambda_template_text()

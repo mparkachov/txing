@@ -30,6 +30,19 @@ jobs:
       release_target: ${{ steps.metadata.outputs.release_target }}
 
     steps:
+      - name: Require the Lambda publisher URL
+        env:
+          LAMBDA_PUBLISH_URL: ${{ vars.LAMBDA_PUBLISH_URL }}
+        shell: sh
+        run: |
+          case "$LAMBDA_PUBLISH_URL" in
+            https://?*) ;;
+            *)
+              echo 'Set the LAMBDA_PUBLISH_URL repository variable to the HTTPS Function URL.' >&2
+              exit 1
+              ;;
+          esac
+
       - name: Check out repository
         uses: actions/checkout@v6
         with:
@@ -344,3 +357,48 @@ jobs:
             --title "$TAG" \
             --notes-file "$notes_file" \
             --latest=false
+
+  publish-aws:
+    name: Publish runtime Lambda code to AWS
+    runs-on: ubuntu-24.04-arm
+    needs: [metadata, publish]
+    permissions: {}
+    timeout-minutes: 6
+
+    steps:
+      - name: Invoke the release publisher
+        env:
+          LAMBDA_PUBLISH_URL: ${{ vars.LAMBDA_PUBLISH_URL }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        shell: sh
+        run: |
+          set -eu
+
+          payload="$(jq -nc --arg release "$TAG" '{release: $release}')"
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          status="$(curl --silent --show-error --proto '=https' \
+            --connect-timeout 10 --max-time 330 \
+            --header 'Content-Type: application/json' --data-binary "$payload" \
+            --output "$response" --write-out '%{http_code}' --url "$LAMBDA_PUBLISH_URL")"
+
+          if [ "$status" != 200 ]; then
+            printf 'AWS publisher returned HTTP %s for %s.\n' "$status" "$TAG" >&2
+            jq -c '{error, releaseTag}' "$response" >&2 || true
+            exit 1
+          fi
+
+          if ! jq -e --arg tag "$TAG" '
+            .ok == true and .releaseTag == $tag and
+            ([
+              .lambdas["txing-witness-lambda"],
+              .lambdas["txing-cloud-rig-lambda"],
+              .lambdas["txing-cloud-mcu-lambda"],
+              .lambdas["txing-virtual-quad-lambda"]
+            ] | all(.[]; .updated == true))
+          ' "$response" >/dev/null; then
+            printf 'AWS publisher did not confirm all four updates for %s.\n' "$TAG" >&2
+            exit 1
+          fi
+
+          jq -c '{releaseTag, lambdas}' "$response"

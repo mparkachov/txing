@@ -46,8 +46,8 @@ associated with a device.
 
 ## AWS Deploy And Runtime Publish
 
-Create or update the CloudFormation-managed AWS infrastructure, then publish
-the already-built runtime Lambda artifacts:
+Use these commands for initial AWS stack bring-up and publication of the
+current runtime Lambda release:
 
 ```sh
 just aws::deploy
@@ -57,9 +57,10 @@ just release::publish lambda
 The cloud MCU deploy step called by `just aws::deploy` owns all cloud
 MCU-specific AWS infrastructure: the `cloud-mcu` type catalog entry, SQS tick
 queues, IPv6-only ECS task network, placeholder task definition, and the two
-runtime Lambda stacks. `just release::publish lambda` updates the existing
-runtime Lambda functions from the `lambda-v*` release stream. The base AWS stack
-only creates the shared `cloud` rig type and common txing infrastructure.
+runtime Lambda stacks. The shared Lambda workflow publishes new `lambda-v*`
+releases to the configured environment. [Lambda publisher setup](../../docs/artifacts.md#lambda-artifacts)
+The base AWS stack creates the shared `cloud` rig type and common txing
+infrastructure.
 The cloud MCU stack publishes queue and runtime values under `/txing/stack/...`;
 the cloud rig stack reads those parameters instead of reading CloudFormation
 outputs from the cloud MCU stack.

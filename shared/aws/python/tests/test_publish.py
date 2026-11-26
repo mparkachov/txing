@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 import zipfile
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, WaiterError
 
 from aws_admin.publish_release.core import (
     GitHubReleaseClient,
@@ -20,6 +21,7 @@ from aws_admin.publish_release.core import (
     publish_lambdas,
     validate_lambda_zip,
 )
+from aws_admin.publish_release.handler import lambda_handler
 
 
 class _FakeGitHubReleaseClient(GitHubReleaseClient):
@@ -247,6 +249,140 @@ class PublishTests(unittest.TestCase):
                 FunctionName="town-virtual-quad", S3Bucket="bucket", S3Key=version_key
             )
             self.assertTrue(result["lambdas"][asset.artifact_id]["updated"])
+
+
+class PublishUrlTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tag = "lambda-v1.2.3"
+        self.functions = {
+            "txing-witness-lambda": "town-witness",
+            "txing-cloud-rig-lambda": "town-cloud-rig",
+            "txing-cloud-mcu-lambda": "town-cloud-mcu",
+            "txing-virtual-quad-lambda": "town-virtual-quad",
+        }
+        self.config = PublishConfig("owner/releases", "bucket", "eu-central-1", self.functions)
+        self.from_env = self.enterContext(patch.object(PublishConfig, "from_env", return_value=self.config))
+        self.assets = [
+            {"name": asset.asset_name, "browser_download_url": f"https://github.com/{asset.asset_name}"}
+            for asset in LAMBDA_ASSETS
+        ]
+        self.get_json = self.enterContext(patch.object(GitHubReleaseClient, "_get_json"))
+        self.get_json.return_value = [
+            {"tag_name": "lambda-v1.2.2", "assets": []},
+            {"tag_name": "rig-v99.0.0", "assets": []},
+            {"tag_name": self.tag, "assets": self.assets},
+        ]
+
+        def write_zip(_release, _asset_name, path):
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("bootstrap", b"runtime code")
+
+        self.download_asset = self.enterContext(
+            patch.object(GitHubReleaseClient, "download_asset", side_effect=write_zip)
+        )
+        self.s3 = MagicMock()
+        self.s3.head_object.side_effect = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+        self.lambda_client = MagicMock()
+        clients = {"s3": self.s3, "lambda": self.lambda_client}
+        self.aws_client = self.enterContext(
+            patch("aws_admin.publish_release.core.boto3.client", side_effect=clients.__getitem__)
+        )
+
+    def url_event(self, **changes) -> dict:
+        return {
+            "version": "2.0",
+            "rawPath": "/",
+            "requestContext": {"http": {"method": "POST"}},
+            "body": json.dumps({"release": self.tag}),
+            "isBase64Encoded": False,
+            **changes,
+        }
+
+    def test_publishes_current_release_and_waits_for_all_updates(self) -> None:
+        response = lambda_handler(self.url_event(), None)
+
+        self.assertEqual(response["statusCode"], 200)
+        result = json.loads(response["body"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["releaseTag"], self.tag)
+        self.assertEqual(set(result["lambdas"]), set(self.functions))
+        self.get_json.assert_called_once_with("https://api.github.com/repos/owner/releases/releases?per_page=100")
+        self.assertEqual(self.download_asset.call_count, 4)
+        self.assertEqual(self.s3.upload_file.call_count, 8)
+        self.assertEqual(
+            self.lambda_client.update_function_code.call_args_list,
+            [
+                call(FunctionName=name, S3Bucket="bucket", S3Key=lambda_version_key(artifact, "1.2.3"))
+                for artifact, name in self.functions.items()
+            ],
+        )
+        self.assertEqual(
+            self.lambda_client.get_waiter.return_value.wait.call_args_list,
+            [call(FunctionName=name) for name in self.functions.values()],
+        )
+        self.assertTrue(all(item["updated"] for item in result["lambdas"].values()))
+
+    def test_rejects_invalid_requests_before_loading_configuration(self) -> None:
+        for status, changes in (
+            (404, {"rawPath": "/unused"}),
+            (405, {"requestContext": {"http": {"method": "GET"}}}),
+            (400, {"body": "{"}),
+            (400, {"body": "null"}),
+            (400, {"body": '{"release":"latest"}'}),
+            (400, {"body": '{"release":"v1.2.3"}'}),
+            (400, {"body": '{"release":"lambda-v1.2.3","repository":"owner/other"}'}),
+            (400, {"isBase64Encoded": True}),
+        ):
+            with self.subTest(changes=changes):
+                self.assertEqual(lambda_handler(self.url_event(**changes), None)["statusCode"], status)
+
+        self.from_env.assert_not_called()
+
+    def test_rejects_stale_release_before_accessing_aws(self) -> None:
+        response = lambda_handler(self.url_event(body='{"release":"lambda-v1.2.2"}'), None)
+
+        self.assertEqual(response["statusCode"], 409)
+        self.assertEqual(json.loads(response["body"])["releaseTag"], self.tag)
+        self.download_asset.assert_not_called()
+        self.aws_client.assert_not_called()
+
+    def test_fails_before_writes_if_the_release_is_missing_an_asset(self) -> None:
+        self.assets.pop()
+
+        with self.assertLogs("aws_admin.publish_release.handler", level="ERROR"):
+            response = lambda_handler(self.url_event(), None)
+
+        self.assertEqual(response["statusCode"], 500)
+        self.aws_client.assert_not_called()
+
+    def test_fails_if_a_runtime_function_is_missing(self) -> None:
+        self.lambda_client.get_function.side_effect = ClientError(
+            {"Error": {"Code": "ResourceNotFoundException"}}, "GetFunction"
+        )
+
+        with self.assertLogs("aws_admin.publish_release.handler", level="ERROR"):
+            response = lambda_handler(self.url_event(), None)
+
+        self.assertEqual(response["statusCode"], 500)
+        self.lambda_client.update_function_code.assert_not_called()
+
+    def test_fails_if_an_aws_code_update_does_not_succeed(self) -> None:
+        self.lambda_client.get_waiter.return_value.wait.side_effect = WaiterError(
+            name="function_updated", reason="UpdateFailed", last_response={}
+        )
+
+        with self.assertLogs("aws_admin.publish_release.handler", level="ERROR"):
+            response = lambda_handler(self.url_event(), None)
+
+        self.assertEqual(response["statusCode"], 500)
+        self.lambda_client.update_function_code.assert_called_once()
+
+    def test_direct_invocation_still_accepts_a_legacy_release_ref(self) -> None:
+        with patch("aws_admin.publish_release.handler.publish_all") as publish:
+            response = lambda_handler({"release": "v1.2.2"}, None)
+
+        publish.assert_called_once_with("v1.2.2", config=self.config)
+        self.assertIs(response, publish.return_value)
 
 
 if __name__ == "__main__":

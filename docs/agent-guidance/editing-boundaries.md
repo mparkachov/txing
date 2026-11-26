@@ -81,8 +81,9 @@ tooling, shell, infrastructure, or future-work implementation.
   deploy bypasses around release versioning.
 - When a change requires a new release artifact, tell the user which component
   version must be bumped before publishing it.
-- The release workflow does not bump versions, commit, push, publish Lambda
-  code to AWS, or publish host binaries. Preserve that separation.
+- Operators bump versions, commit, push, and publish host binaries. The shared
+  Lambda release workflow calls the AWS-hosted publisher after creating the
+  GitHub release. Operators deploy AWS infrastructure separately.
 - Production board and rig binary updates remain manual writable-root
   maintenance actions through root-owned `mise`.
 - Do not add deploy bypasses or automated component-version enforcement checks.

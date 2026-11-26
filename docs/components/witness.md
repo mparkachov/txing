@@ -116,18 +116,13 @@ omit it preserve the existing CloudFormation parameter. Publish a new shared
 `lambda` release for witness source changes before enabling its schedule. The
 controller release must persist `stopRequestedAt` for off-time grace.
 
-Publish release-built runtime Lambda code after the GitHub release exists:
-
-```bash
-just release::publish lambda
-```
+The shared Lambda release workflow publishes release-built runtime code to AWS.
+[Lambda publisher setup and manual recovery](../artifacts.md#lambda-artifacts)
 
 `witness::deploy` creates the shared Lambda artifact bucket when needed and
 seeds a placeholder `lambda/txing-witness-lambda/current/bootstrap.zip` object
-before creating the function. CloudFormation uses this placeholder for bootstrap. Production code comes
-from GitHub release assets.
-`release::publish lambda` publishes the release's Go runtime Lambda artifacts
-together.
+before creating the function. CloudFormation uses this placeholder for bootstrap.
+Production code comes from GitHub release assets.
 
 The deeper projection semantics are documented in:
 

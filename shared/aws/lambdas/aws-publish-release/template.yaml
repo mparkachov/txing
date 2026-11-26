@@ -127,6 +127,28 @@ Resources:
           TXING_LAMBDA_ARTIFACT_BUCKET: !Ref LambdaArtifactsBucketName
           TXING_LAMBDA_FUNCTIONS_JSON: !Sub '{"txing-witness-lambda":"${WitnessFunctionName}","txing-cloud-rig-lambda":"${CloudRigRuntimeFunctionName}","txing-cloud-mcu-lambda":"${CloudMcuRuntimeFunctionName}","txing-virtual-quad-lambda":"${EnvironmentStackName}-virtual-quad"}'
 
+  PublishReleaseFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt PublishReleaseFunction.Arn
+
+  PublishReleasePublicInvokeUrl:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunctionUrl
+      FunctionName: !Ref PublishReleaseFunction
+      FunctionUrlAuthType: NONE
+      Principal: "*"
+
+  PublishReleasePublicInvokeViaUrl:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PublishReleaseFunction
+      InvokedViaFunctionUrl: true
+      Principal: "*"
+
   StackParameterReleasePublisherFunctionName:
     Type: AWS::SSM::Parameter
     Properties:
@@ -146,3 +168,5 @@ Outputs:
     Value: !Ref PublishReleaseFunction
   ReleasePublisherFunctionArn:
     Value: !GetAtt PublishReleaseFunction.Arn
+  ReleasePublisherFunctionUrl:
+    Value: !GetAtt PublishReleaseFunctionUrl.FunctionUrl
